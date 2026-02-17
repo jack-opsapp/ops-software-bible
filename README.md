@@ -172,6 +172,27 @@ Start with the Executive Summary to understand the business context, then procee
 
 ---
 
+### 🔄 [10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md](10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md)
+**Complete Job Lifecycle: Inquiry → Close — Entity Relationships & Automation**
+
+- End-to-end flow: lead → pipeline → estimate → project → tasks → invoice → closed
+- Pipeline as the job spine: all 8 stages with auto-advance triggers and manual overrides
+- Zero duplicate entry design: estimate sends create client + project; approval creates tasks
+- New entities: TaskTemplate, ActivityComment, SiteVisit, ProjectPhoto, GmailConnection
+- Modified entities: LineItem (type/taskTypeId), TaskType (defaultTeamMemberIds), Project (opportunityId), CalendarEvent (eventType), Estimate (projectId), Invoice (projectId/estimateId), Product (type/taskTypeId), Activity (email threading/attachments)
+- Automation rules: client auto-creation, project auto-creation, task generation, status cascades, auto follow-ups
+- Communication logging: manual (call/email/meeting/note) + Gmail auto-logging + activity comments
+- Site visits: schedulable, on-site photo/note capture, lifecycle status, photo continuity to project
+- Gmail integration: company inbox + per-user, incremental sync, inbox leads queue
+- Complete Supabase ALTER TABLE statements and new table SQL
+- 4-phase implementation priority order
+
+**Start here for:** Implementing any feature that spans multiple entities (estimates→tasks, leads→clients, site visits, Gmail)
+
+**Lines:** ~700 | **New Entities:** 5 | **Modified Entities:** 9 | **Automation Rules:** 7
+
+---
+
 ### 🚀 [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)
 **Production deployment and operations**
 
@@ -223,6 +244,12 @@ Start with the Executive Summary to understand the business context, then procee
 **"I need to implement pipeline, estimates, or invoices"**
 → Read [09_FINANCIAL_SYSTEM.md](09_FINANCIAL_SYSTEM.md)
 
+**"I need to understand how entities connect (leads → clients → projects → tasks → invoices)"**
+→ Read [10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md](10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md)
+
+**"I need to implement site visits, Gmail logging, or activity comments"**
+→ Read [10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md](10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md)
+
 **"I need to deploy to production"**
 → Read [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)
 
@@ -230,10 +257,10 @@ Start with the Executive Summary to understand the business context, then procee
 
 ## Documentation Statistics
 
-- **Total Documents:** 10 (including this README)
-- **Total Lines:** ~7,600+ lines of documentation
-- **Total Code Examples:** 100+ code snippets
-- **Coverage:** 351 Swift files, 9 iOS data models, 13+ Supabase tables, 50+ UI components, 40+ Bubble API endpoints, full financial system
+- **Total Documents:** 11 (including this README)
+- **Total Lines:** ~8,300+ lines of documentation
+- **Total Code Examples:** 110+ code snippets
+- **Coverage:** 351 Swift files, 9 iOS data models, 18+ Supabase tables, 50+ UI components, 40+ Bubble API endpoints, full financial system, complete job lifecycle
 
 ---
 
@@ -299,7 +326,7 @@ See `C:\OPS\android-plan-v2\` for the complete Android conversion plan.
 
 **Web App Version:** Next.js, dual-backend (Bubble.io + Supabase), Pipeline/Estimates/Invoices live
 
-**Document Version:** 1.1
+**Document Version:** 1.2 — Added doc 10: complete job lifecycle, entity relationships, site visits, Gmail, activity comments
 
 **Maintainer:** Update these documents when making architectural changes, adding features, or modifying business rules. Keep code examples in sync with actual implementation.
 
