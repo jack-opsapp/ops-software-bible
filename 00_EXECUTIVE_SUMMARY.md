@@ -102,8 +102,9 @@ Based on survey data and target market analysis, OPS serves specialized service-
 - **iOS App:** 207 Swift files
 - **Data Models:** 9 SwiftData entities with relationships
 - **UI Components:** 50+ reusable components
-- **Backend:** Bubble.io REST API + AWS S3 image storage
-- **Architecture:** Offline-first, triple-layer sync strategy
+- **Backend (Mobile):** Bubble.io REST API + AWS S3 image storage
+- **Backend (Web):** Supabase PostgreSQL (30+ tables, RLS, 5 migration files)
+- **Architecture:** Offline-first, triple-layer sync strategy, dual-backend transition
 - **Minimum iOS:** iOS 17+ (modern SwiftUI + SwiftData)
 - **Authentication:** Google Sign-In, Apple Sign-In, Email/Password, 4-digit PIN
 - **Analytics:** Firebase Analytics with Google Ads integration
@@ -133,12 +134,16 @@ Based on survey data and target market analysis, OPS serves specialized service-
 - **Android:** In development (Kotlin + Jetpack Compose, see android-plan-v2)
 
 ### Backend
-- **Bubble.io:** No-code platform with REST API
+- **Bubble.io:** No-code platform with REST API (source of truth for mobile apps)
   - Base URL: `https://opsapp.co/version-test/api/1.1/`
-  - Handles operational data: Projects, Tasks, Clients, Calendar, Company, Users
-- **Supabase (PostgreSQL):** Financial data layer (Web only)
-  - Pipeline/CRM, Estimates, Invoices, Payments, Products, Tax Rates, Accounting Connections
-  - 13+ tables with RLS, DB triggers for payment balance tracking, RPCs for atomic operations
+  - Handles operational data for iOS/Android: Projects, Tasks, Clients, Calendar, Company, Users
+  - Being gradually replaced by Supabase (see transition plan in 06_TECHNICAL_ARCHITECTURE.md)
+- **Supabase (PostgreSQL):** Database layer for OPS Web (source of truth for web app)
+  - **Pipeline/Financial tables** (migrations 001-003): CRM, Estimates, Invoices, Payments, Products, Tax Rates
+  - **Core entity tables** (migration 004): Companies, Users, Clients, Sub-Clients, Task Types, Projects, Calendar Events, Project Tasks, OPS Contacts
+  - **Pipeline reference links** (migration 005): UUID FK columns linking pipeline tables to core entities
+  - 30+ tables with Row-Level Security (RLS), DB triggers, audit logging
+  - Migration API (`POST /api/admin/migrate-bubble`) for bulk Bubble-to-Supabase data transfer
 - **AWS S3:** Image storage with direct upload and Lambda presigned URLs
 - **Firebase:** Analytics tracking, Google Sign-In authentication
 
@@ -223,6 +228,7 @@ Every design decision reflects real-world field experience:
 - Real-time sync indicators, bulk actions, CSV export
 - Keyboard shortcuts (Cmd+B sidebar, command palette)
 - Floating window system (draggable, minimizable create forms)
+- **Project Notes system:** first-class threaded notes with @mentions, author attribution, photo attachments, legacy migration from Bubble teamNotes
 
 ### Active Development (Based on Survey Feedback)
 Survey of target audience revealed critical missing features driving roadmap:
@@ -296,7 +302,7 @@ This Software Bible is considered complete when:
 
 ---
 
-**Last Updated:** February 17, 2026
-**Document Version:** 1.1
+**Last Updated:** February 18, 2026
+**Document Version:** 1.2
 **iOS App Version:** 207 Swift files, iOS 17+, SwiftData + SwiftUI
-**Web App Version:** Next.js, Supabase financial system, Pipeline/Estimates/Invoices live
+**Web App Version:** Next.js, Supabase (core entities + financial system), Pipeline/Estimates/Invoices/Project Notes live

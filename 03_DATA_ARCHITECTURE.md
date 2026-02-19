@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: February 15, 2026
+**Last Updated**: February 18, 2026
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -2273,22 +2273,431 @@ data class ProjectDTO(
 
 ---
 
+---
+
+## Supabase Schema (Bubble Migration)
+
+### Overview
+
+As of February 2026, OPS is migrating operational data from Bubble.io into Supabase (PostgreSQL). The web app (`ops-web`) is the first platform to transition. The iOS and Android apps remain on Bubble until separately converted.
+
+The Supabase schema is organized into two tiers:
+
+1. **Pipeline/Financial Tables** (migrations 001-003) -- Already in production for the web CRM/estimates/invoices system.
+2. **Core Entity Tables** (migration 004) -- Mirrors the 9 Bubble entities into Supabase with proper UUID primary keys, foreign key relationships, and RLS.
+3. **Reference Linking** (migration 005) -- Connects the pre-existing pipeline tables to the new core entity tables via `_ref` UUID foreign key columns.
+
+### Key Architecture Decisions
+
+- **UUID Primary Keys**: All Supabase tables use `UUID PRIMARY KEY DEFAULT gen_random_uuid()`.
+- **`bubble_id TEXT UNIQUE`**: Every core entity table has a `bubble_id` column that stores the original Bubble `_id` string. This enables idempotent migration (upsert on `bubble_id`) and allows services to look up records by either ID system during the transition period.
+- **Row-Level Security (RLS)**: All company-scoped tables use `private.get_user_company_id()` to enforce company isolation. This function extracts `company_id` from the Supabase Auth JWT `app_metadata`.
+- **`updated_at` Triggers**: All tables have `BEFORE UPDATE` triggers that auto-set `updated_at = NOW()` via the shared `update_timestamp()` function.
+- **Soft Delete**: All tables include `deleted_at TIMESTAMPTZ` for soft delete, consistent with the Bubble data model.
+
+### Migration SQL Files
+
+| Migration | File | Status | Description |
+|-----------|------|--------|-------------|
+| 001 | `001_pipeline_schema.sql` | EXECUTED | Pipeline stages, opportunities, estimates, invoices, payments, products, tax rates, activities, follow-ups, document sequences, audit log |
+| 002 | `002_lifecycle_entities.sql` | EXECUTED | Task templates, activity comments, site visits, project photos, Gmail connections, company settings |
+| 003 | `003_create_project_notes.sql` | EXECUTED | Project notes with @mention support |
+| 004 | `004_core_entities.sql` | Pending | 9 core entity tables mirroring Bubble data |
+| 005 | `005_update_pipeline_references.sql` | Pending | Adds `_ref` UUID FK columns to pipeline tables |
+
+---
+
+### Pipeline & Financial Tables (Migrations 001-003)
+
+These tables power the web app's CRM and financial features. They were designed before core entities existed in Supabase, so they reference Bubble IDs via TEXT columns.
+
+**Migration 001 -- Pipeline Schema:**
+
+| Table | Purpose | Key Columns |
+|-------|---------|-------------|
+| `pipeline_stage_configs` | Customizable Kanban stages per company | `company_id`, `name`, `slug`, `sort_order`, `is_won_stage`, `is_lost_stage` |
+| `opportunities` | Pipeline deals/leads | `company_id`, `client_id`, `stage`, `estimated_value`, `project_id` |
+| `stage_transitions` | Immutable log of stage changes | `opportunity_id`, `from_stage`, `to_stage`, `duration_in_stage` |
+| `products` | Service/material catalog | `company_id`, `name`, `default_price`, `unit_cost`, `unit` |
+| `tax_rates` | Tax rate definitions | `company_id`, `name`, `rate` |
+| `estimates` | Quotes/proposals with versioning | `company_id`, `client_id`, `estimate_number`, `version`, `status`, `total` |
+| `invoices` | Bills with DB-trigger-maintained balances | `company_id`, `client_id`, `invoice_number`, `total`, `amount_paid`, `balance_due` |
+| `line_items` | Polymorphic: belongs to estimate OR invoice | `estimate_id`/`invoice_id`, `quantity`, `unit_price`, `line_total` (generated) |
+| `payments` | Payment records (trigger updates invoice balance) | `invoice_id`, `amount`, `payment_method`, `payment_date` |
+| `payment_milestones` | Progress billing schedule on estimates | `estimate_id`, `name`, `type`, `value`, `amount` |
+| `activities` | Communication/event log | `opportunity_id`, `type`, `subject`, `content`, `direction` |
+| `follow_ups` | Scheduled follow-up tasks | `opportunity_id`, `type`, `due_at`, `status` |
+| `document_sequences` | Gapless numbering (EST-2026-00042) | `company_id`, `document_type`, `prefix`, `last_number` |
+| `audit_log` | Append-only financial audit trail | `table_name`, `record_id`, `action`, `old_data`, `new_data` |
+| `valid_status_transitions` | State machine enforcement | `entity_type`, `from_status`, `to_status` |
+
+**Key Database Functions:**
+- `get_next_document_number(company_id, type)` -- Returns gapless document numbers like `EST-2026-00042`
+- `convert_estimate_to_invoice(estimate_id, due_date)` -- Atomic estimate-to-invoice conversion (copies line items, marks estimate as converted, logs activity)
+- `update_invoice_balance()` -- Trigger function that auto-updates `amount_paid`, `balance_due`, and `status` on invoices when payments change
+
+**Migration 002 -- Lifecycle Entities:**
+
+| Table | Purpose |
+|-------|---------|
+| `task_templates` | Default sub-tasks per TaskType (e.g., "Deck Work" -> Footings, Framing, Vinyl) |
+| `activity_comments` | Threaded internal comments on activities |
+| `site_visits` | Scheduled job site visits with photo/note capture |
+| `project_photos` | Structured photo gallery replacing `projectImages` string |
+| `gmail_connections` | OAuth tokens for Gmail auto-logging |
+| `company_settings` | Per-company feature toggles (auto-generate tasks, follow-up days) |
+
+Also adds columns to existing tables: `line_items.type` (LABOR/MATERIAL/OTHER), `line_items.task_type_id`, `products.type`, `products.task_type_id`, `estimates.project_id`, `activities.email_thread_id`, etc.
+
+**Migration 003 -- Project Notes:**
+
+| Table | Purpose |
+|-------|---------|
+| `project_notes` | Per-project notes with @mentions, attachments (JSONB), and soft delete |
+
+---
+
+### Core Entity Tables (Migration 004)
+
+These 9 tables mirror the Bubble data model documented in the SwiftData section above. Each table has a `bubble_id TEXT UNIQUE` column for migration mapping.
+
+#### `companies`
+
+```sql
+CREATE TABLE companies (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bubble_id               TEXT UNIQUE,
+  name                    TEXT NOT NULL,
+  external_id             TEXT,
+  description             TEXT,
+  website                 TEXT,
+  phone                   TEXT,
+  email                   TEXT,
+  address                 TEXT,
+  latitude                DOUBLE PRECISION,
+  longitude               DOUBLE PRECISION,
+  open_hour               TEXT,
+  close_hour              TEXT,
+  logo_url                TEXT,
+  default_project_color   TEXT DEFAULT '#9CA3AF',
+  industries              TEXT[] DEFAULT '{}',
+  company_size            TEXT,
+  company_age             TEXT,
+  referral_method         TEXT,
+  account_holder_id       TEXT,
+  admin_ids               TEXT[] DEFAULT '{}',
+  seated_employee_ids     TEXT[] DEFAULT '{}',
+  max_seats               INT DEFAULT 10,
+  subscription_status     TEXT CHECK (...),  -- trial, active, grace, expired, cancelled
+  subscription_plan       TEXT CHECK (...),  -- trial, starter, team, business
+  subscription_end        TIMESTAMPTZ,
+  subscription_period     TEXT CHECK (...),  -- Monthly, Annual
+  trial_start_date        TIMESTAMPTZ,
+  trial_end_date          TIMESTAMPTZ,
+  seat_grace_start_date   TIMESTAMPTZ,
+  has_priority_support    BOOLEAN DEFAULT FALSE,
+  data_setup_purchased    BOOLEAN DEFAULT FALSE,
+  data_setup_completed    BOOLEAN DEFAULT FALSE,
+  data_setup_scheduled    TIMESTAMPTZ,
+  stripe_customer_id      TEXT,
+  subscription_ids_json   TEXT,
+  created_at              TIMESTAMPTZ DEFAULT NOW(),
+  updated_at              TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at              TIMESTAMPTZ
+);
+-- RLS: id = private.get_user_company_id()
+```
+
+**Notes:**
+- `industries` uses PostgreSQL `TEXT[]` array instead of Bubble's comma-separated string.
+- `admin_ids` and `seated_employee_ids` also use `TEXT[]` arrays (storing Bubble user IDs during transition).
+
+#### `users`
+
+```sql
+CREATE TABLE users (
+  id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bubble_id                   TEXT UNIQUE,
+  company_id                  UUID REFERENCES companies(id) ON DELETE SET NULL,
+  auth_id                     UUID UNIQUE,  -- Links to Supabase Auth (future)
+  first_name                  TEXT NOT NULL,
+  last_name                   TEXT NOT NULL,
+  email                       TEXT,
+  phone                       TEXT,
+  home_address                TEXT,
+  profile_image_url           TEXT,
+  user_color                  TEXT,
+  role                        TEXT DEFAULT 'Field Crew' CHECK (role IN ('Admin','Office Crew','Field Crew')),
+  user_type                   TEXT CHECK (user_type IN ('Employee','Company','Client','Admin')),
+  is_company_admin            BOOLEAN DEFAULT FALSE,
+  has_completed_onboarding    BOOLEAN DEFAULT FALSE,
+  has_completed_tutorial      BOOLEAN DEFAULT FALSE,
+  dev_permission              BOOLEAN DEFAULT FALSE,
+  latitude                    DOUBLE PRECISION,
+  longitude                   DOUBLE PRECISION,
+  location_name               TEXT,
+  client_id                   TEXT,
+  is_active                   BOOLEAN DEFAULT TRUE,
+  stripe_customer_id          TEXT,
+  device_token                TEXT,
+  created_at                  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at                  TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at                  TIMESTAMPTZ
+);
+-- RLS: company_id = private.get_user_company_id()
+-- Indexes: company_id, auth_id, email
+```
+
+**Notes:**
+- `auth_id UUID UNIQUE` links to Supabase Auth. Will be populated during the auth migration phase (not yet implemented).
+- TeamMember from Bubble is NOT a separate table in Supabase -- it is just a view of the `users` table.
+
+#### `clients`
+
+```sql
+CREATE TABLE clients (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bubble_id           TEXT UNIQUE,
+  company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  name                TEXT NOT NULL,
+  email               TEXT,
+  phone_number        TEXT,
+  notes               TEXT,
+  address             TEXT,
+  latitude            DOUBLE PRECISION,
+  longitude           DOUBLE PRECISION,
+  profile_image_url   TEXT,
+  created_at          TIMESTAMPTZ DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at          TIMESTAMPTZ
+);
+-- RLS: company_id = private.get_user_company_id()
+-- Indexes: company_id, (company_id, name)
+```
+
+#### `sub_clients`
+
+```sql
+CREATE TABLE sub_clients (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bubble_id       TEXT UNIQUE,
+  client_id       UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  title           TEXT,
+  email           TEXT,
+  phone_number    TEXT,
+  address         TEXT,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
+);
+-- RLS: company_id = private.get_user_company_id()
+-- CASCADE: deleting a client deletes its sub_clients
+```
+
+#### `task_types_v2`
+
+```sql
+CREATE TABLE task_types_v2 (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bubble_id       TEXT UNIQUE,
+  company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  display         TEXT NOT NULL,
+  color           TEXT NOT NULL DEFAULT '#417394',
+  icon            TEXT,
+  is_default      BOOLEAN DEFAULT FALSE,
+  display_order   INT DEFAULT 0,
+  default_team_member_ids TEXT[] DEFAULT '{}',
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
+);
+-- Named `task_types_v2` to avoid conflict with any existing `task_types` from pipeline
+```
+
+#### `projects`
+
+```sql
+CREATE TABLE projects (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bubble_id           TEXT UNIQUE,
+  company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  client_id           UUID REFERENCES clients(id) ON DELETE SET NULL,
+  title               TEXT NOT NULL,
+  address             TEXT,
+  latitude            DOUBLE PRECISION,
+  longitude           DOUBLE PRECISION,
+  status              TEXT NOT NULL DEFAULT 'RFQ'
+                        CHECK (status IN ('RFQ','Estimated','Accepted','In Progress','Completed','Closed','Archived')),
+  notes               TEXT,
+  description         TEXT,
+  all_day             BOOLEAN DEFAULT FALSE,
+  project_images      TEXT[] DEFAULT '{}',
+  team_member_ids     TEXT[] DEFAULT '{}',
+  opportunity_id      TEXT,
+  start_date          TIMESTAMPTZ,  -- Legacy, computed from tasks in practice
+  end_date            TIMESTAMPTZ,
+  duration            INT,
+  created_at          TIMESTAMPTZ DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at          TIMESTAMPTZ
+);
+-- Indexes: company_id, client_id, (company_id, status)
+```
+
+#### `calendar_events`
+
+```sql
+CREATE TABLE calendar_events (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bubble_id           TEXT UNIQUE,
+  company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  project_id          UUID REFERENCES projects(id) ON DELETE CASCADE,
+  title               TEXT NOT NULL,
+  color               TEXT DEFAULT '#417394',
+  start_date          TIMESTAMPTZ,
+  end_date            TIMESTAMPTZ,
+  duration            INT DEFAULT 1,
+  team_member_ids     TEXT[] DEFAULT '{}',
+  created_at          TIMESTAMPTZ DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at          TIMESTAMPTZ
+);
+-- Indexes: company_id, project_id, (company_id, start_date, end_date)
+```
+
+#### `project_tasks`
+
+```sql
+CREATE TABLE project_tasks (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bubble_id           TEXT UNIQUE,
+  company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  task_type_id        UUID REFERENCES task_types_v2(id) ON DELETE SET NULL,
+  calendar_event_id   UUID REFERENCES calendar_events(id) ON DELETE SET NULL,
+  custom_title        TEXT,
+  task_notes          TEXT,
+  status              TEXT NOT NULL DEFAULT 'Booked'
+                        CHECK (status IN ('Booked','In Progress','Completed','Cancelled')),
+  task_color          TEXT DEFAULT '#417394',
+  display_order       INT DEFAULT 0,
+  team_member_ids     TEXT[] DEFAULT '{}',
+  source_line_item_id TEXT,   -- Traceability: Supabase line item that generated this task
+  source_estimate_id  TEXT,   -- Traceability: Supabase estimate that generated this task
+  created_at          TIMESTAMPTZ DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at          TIMESTAMPTZ
+);
+-- Indexes: project_id, company_id, (project_id, status)
+```
+
+#### `ops_contacts`
+
+```sql
+CREATE TABLE ops_contacts (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  bubble_id   TEXT UNIQUE,
+  name        TEXT NOT NULL,
+  email       TEXT NOT NULL,
+  phone       TEXT,
+  display     TEXT,
+  role        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+-- NOT company-scoped (no RLS). Global OPS support contact list.
+```
+
+---
+
+### Pipeline Reference Columns (Migration 005)
+
+Migration 005 adds `_ref` UUID foreign key columns to existing pipeline tables, linking them to the new core entity tables from migration 004. The original TEXT ID columns are preserved for backward compatibility.
+
+| Table | New Column | References |
+|-------|-----------|------------|
+| `opportunities` | `client_ref UUID` | `clients(id) ON DELETE SET NULL` |
+| `opportunities` | `project_ref UUID` | `projects(id) ON DELETE SET NULL` |
+| `estimates` | `client_ref UUID` | `clients(id) ON DELETE SET NULL` |
+| `estimates` | `project_ref UUID` | `projects(id) ON DELETE SET NULL` |
+| `invoices` | `client_ref UUID` | `clients(id) ON DELETE SET NULL` |
+| `invoices` | `project_ref UUID` | `projects(id) ON DELETE SET NULL` |
+| `line_items` | `task_type_ref UUID` | `task_types_v2(id) ON DELETE SET NULL` |
+| `task_templates` | `task_type_ref UUID` | `task_types_v2(id) ON DELETE SET NULL` |
+| `products` | `task_type_ref UUID` | `task_types_v2(id) ON DELETE SET NULL` |
+| `site_visits` | `client_ref UUID` | `clients(id) ON DELETE SET NULL` |
+| `site_visits` | `project_ref UUID` | `projects(id) ON DELETE SET NULL` |
+
+All new columns have B-tree indexes for fast lookups.
+
+---
+
+### Supabase ↔ Bubble Field Mapping
+
+| Supabase Column | Bubble Field | Notes |
+|----------------|-------------|-------|
+| `id` (UUID) | N/A | New Supabase-generated primary key |
+| `bubble_id` (TEXT) | `_id` | Bubble's original string ID |
+| `company_id` (UUID FK) | `company` / `Company` | Resolved via `bubble_id → UUID` map |
+| `client_id` (UUID FK) | `client` / `parentCompany` | Resolved via map |
+| `deleted_at` (TIMESTAMPTZ) | `deletedAt` | ISO8601 in Bubble, TIMESTAMPTZ in Supabase |
+| `created_at` (TIMESTAMPTZ) | `Created Date` | Auto-set by Supabase |
+| `updated_at` (TIMESTAMPTZ) | `Modified Date` | Auto-set by trigger |
+
+### Dual-Backend Transition Pattern
+
+During the migration period, the system operates in a dual-backend mode:
+
+```
+                    ┌─────────────────┐
+                    │   Bubble.io     │
+                    │  (source of     │
+                    │   truth for     │
+                    │   iOS/Android)  │
+                    └────────┬────────┘
+                             │
+                    Migration API
+                    (one-time bulk copy)
+                             │
+                    ┌────────▼────────┐
+                    │    Supabase     │
+                    │  (source of     │
+                    │   truth for     │
+                    │   web app)      │
+                    └─────────────────┘
+```
+
+**Key rules during transition:**
+1. **Web app reads/writes Supabase** for all core entities.
+2. **iOS app reads/writes Bubble** (unchanged until mobile migration phase).
+3. **Migration is one-directional**: Bubble -> Supabase. Changes made in the web app do NOT sync back to Bubble.
+4. **The migration endpoint is idempotent**: Uses `upsert` with `ON CONFLICT bubble_id`, so it is safe to run multiple times.
+5. **Pipeline tables retain both ID systems**: TEXT Bubble IDs in original columns, UUID references in new `_ref` columns.
+
+---
+
 ## Summary
 
 This data architecture provides:
 
-- **9 core entities** covering all business logic
+- **9 core entities** covering all business logic (documented in both SwiftData and Supabase schemas)
 - **Soft delete support** for data integrity
-- **DTOs for clean API separation**
-- **BubbleFields for byte-perfect mapping**
+- **DTOs for clean API separation** (Bubble -> mobile apps)
+- **BubbleFields for byte-perfect mapping** (critical for iOS/Android)
 - **Computed properties for task-based scheduling**
 - **Defensive patterns to prevent crashes**
+- **Supabase PostgreSQL schema** with UUID PKs, RLS, and `bubble_id` migration mapping
+- **Pipeline/financial tables** with triggers, audit logging, and atomic operations
 
 **Key Principles**:
-1. Always use BubbleFields constants
+1. Always use BubbleFields constants (mobile apps)
 2. Always filter out soft-deleted items
-3. Never pass models across threads
+3. Never pass models across threads (mobile)
 4. Compute project dates from tasks
 5. Check company.adminIds for role detection
+6. Use `bubble_id` for cross-system entity resolution during migration
+7. Web services should query Supabase; mobile services should query Bubble (until mobile migration)
 
 **End of Data Architecture Documentation**

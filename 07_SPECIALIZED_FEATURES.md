@@ -1,8 +1,8 @@
 # 07 - Specialized Features
 
-**Last Updated:** February 15, 2026
+**Last Updated:** February 18, 2026
 **OPS Version:** iOS v1.6, Android Planning Phase
-**Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, and advanced UI patterns.
+**Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, project notes system, and advanced UI patterns.
 
 ---
 
@@ -18,6 +18,7 @@
 8. [Form Sheets with Progressive Disclosure](#8-form-sheets-with-progressive-disclosure)
 9. [Floating Action Menu](#9-floating-action-menu)
 10. [Advanced UI Patterns](#10-advanced-ui-patterns)
+11. [Project Notes System (OPS Web)](#11-project-notes-system-ops-web)
 
 ---
 
@@ -2078,6 +2079,192 @@ OpsEmptyState(
     subtitle: "Create tasks from projects to get started"
 )
 ```
+
+---
+
+## 11. Project Notes System (OPS Web)
+
+### Overview
+
+Project notes were overhauled in February 2026. Notes are now **project-level only** (task-level notes UI was removed) and are first-class entities stored in the Supabase `project_notes` table, replacing the legacy plain-text `teamNotes` field from Bubble.
+
+Each note supports: author attribution, timestamps, @mentions of team members, and photo attachments with captions and markup.
+
+### Architecture
+
+**Data layer:** Supabase `project_notes` table
+**Service:** `src/lib/api/services/project-note-service.ts`
+**Hooks:** `src/lib/hooks/use-project-notes.ts`
+**Components:** `note-card.tsx`, `notes-list.tsx`, `note-composer.tsx`, `mention-textarea.tsx`
+**Types:** `NoteAttachment`, `ProjectNote`, `CreateProjectNote`, `UpdateProjectNote` in `src/lib/types/pipeline.ts`
+
+### Database Table
+
+**Table:** `project_notes`
+**Migration:** `supabase/migrations/EXECUTED/003_create_project_notes.sql`
+
+```sql
+CREATE TABLE IF NOT EXISTS project_notes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id TEXT NOT NULL,
+  company_id TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+  mentioned_user_ids TEXT[] NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ,
+  deleted_at TIMESTAMPTZ
+);
+```
+
+**Indexes:**
+- `idx_project_notes_project_id` -- Partial index on `project_id` WHERE `deleted_at IS NULL` (most common query)
+- `idx_project_notes_mentions` -- GIN index on `mentioned_user_ids` WHERE `deleted_at IS NULL` (for notification queries)
+- `idx_project_notes_company_id` -- Partial index on `company_id` WHERE `deleted_at IS NULL`
+
+**RLS:** Enabled. Policies allow all authenticated users to read, create, and update. Soft delete via `deleted_at` column.
+
+### TypeScript Types
+
+```typescript
+interface NoteAttachment {
+  url: string;
+  thumbnailUrl?: string | null;
+  caption: string | null;
+  markedUpUrl?: string | null;
+  width?: number;
+  height?: number;
+}
+
+interface ProjectNote {
+  id: string;
+  projectId: string;
+  companyId: string;
+  authorId: string;
+  content: string;
+  attachments: NoteAttachment[];
+  mentionedUserIds: string[];
+  createdAt: Date;
+  updatedAt: Date | null;
+  deletedAt: Date | null;
+}
+
+type CreateProjectNote = {
+  projectId: string;
+  companyId: string;
+  authorId: string;
+  content: string;
+  attachments?: NoteAttachment[];
+  mentionedUserIds?: string[];
+};
+
+type UpdateProjectNote = {
+  id: string;
+  content?: string;
+  attachments?: NoteAttachment[];
+  mentionedUserIds?: string[];
+};
+```
+
+### ProjectNoteService
+
+Located at `src/lib/api/services/project-note-service.ts`. Follows the same pattern as other Supabase services.
+
+**Methods:**
+- `fetchNotes(projectId, companyId)` -- Returns all non-deleted notes for a project, ordered by `created_at` descending
+- `createNote(input: CreateProjectNote)` -- Inserts a new note with content, attachments, and mention IDs
+- `updateNote(input: UpdateProjectNote)` -- Partial update; sets `updated_at` timestamp
+- `deleteNote(id)` -- Soft delete via `deleted_at` timestamp
+- `fetchNotesForMentionedUser(userId, companyId)` -- Returns all notes that @mention a specific user (uses GIN index with `contains` operator)
+- `migrateFromLegacy(projectId, companyId, legacyNotes, authorId)` -- One-time migration of legacy `project.notes` (Bubble `teamNotes`) to a `project_notes` row; idempotent (checks if any notes already exist for the project before creating)
+
+**DB-to-TS mapping:** `mapRowToProjectNote(row)` converts snake_case DB rows to camelCase TypeScript objects.
+
+### TanStack Query Hooks
+
+Located at `src/lib/hooks/use-project-notes.ts`. Query key: `projectNotes`.
+
+```typescript
+useProjectNotes(projectId)         // useQuery — fetches notes for a project
+useCreateProjectNote()             // useMutation — creates a note, invalidates project query
+useUpdateProjectNote()             // useMutation — updates a note, invalidates project query
+useDeleteProjectNote()             // useMutation — soft deletes, invalidates project query
+```
+
+All mutation hooks invalidate `queryKeys.projectNotes.byProject(projectId)` on success.
+
+### @Mention System
+
+**Syntax:** `@[Display Name](userId)` -- Markdown-link style with `@` prefix
+
+**Parsing utilities** (in `mention-textarea.tsx`):
+- `extractMentionedUserIds(text)` -- Parses content with regex `/@\[([^\]]+)\]\(([^)]+)\)/g` and returns unique user IDs
+- `parseMentions(text)` -- Returns array of `{ type: "text", value }` and `{ type: "mention", name, userId }` segments
+
+**MentionTextArea component:**
+- Shows user suggestion dropdown when typing `@` followed by text
+- Triggers when `@` is preceded by a space, newline, or is at position 0
+- Filters users by first/last name match (case-insensitive, max 5 suggestions)
+- Arrow keys navigate suggestions, Enter/Tab selects, Escape dismisses
+- Inserts mention in `@[First Last](userId)` format and positions cursor after it
+- Auto-resizes textarea height (max 200px)
+- Dropdown appears above the textarea with dark theme styling (`bg-[#1a1a1a]`)
+
+**Mention rendering** (in `note-card.tsx`):
+- `NoteContent` component parses mention syntax and renders `@DisplayName` as styled spans
+- Mention spans styled with `bg-[#417394]/20 text-[#8BB8D4]` (steel blue accent)
+
+### UI Components
+
+#### NoteCard (`src/components/ops/note-card.tsx`)
+- Displays a single note with author avatar (UserAvatar), display name, time-ago (date-fns `formatDistanceToNow`), and "(edited)" indicator
+- Content rendered with @mention highlighting via `NoteContent` component
+- Photo attachments displayed as a grid of 128x128 thumbnails; uses `markedUpUrl` if available, falls back to `url`
+- Attachment captions shown as overlay at bottom of image
+- Edit/Delete dropdown (three-dot menu) visible on hover, only for the note author (`isOwn` check)
+
+#### NotesList (`src/components/ops/notes-list.tsx`)
+- Renders a list of `NoteCard` components
+- Loading state: 3 skeleton pulse rectangles
+- Empty state: StickyNote icon with "No notes yet" message
+- Builds a `userMap` from the users array for efficient author lookups
+
+#### NoteComposer (`src/components/ops/note-composer.tsx`)
+- Text input using `MentionTextArea` for @mention autocomplete
+- Submit via "Post" button or Ctrl+Enter (Cmd+Enter on Mac) keyboard shortcut
+- Calls `extractMentionedUserIds()` on submit to extract mention IDs from content
+- Resets textarea content and height after submit
+- Submit button styled with `bg-[#417394]` (primary accent) with Send icon
+- Placeholder: "Write a note... (type @ to mention someone)"
+- Disabled state while `isSubmitting`
+
+### Project Details Integration
+
+The Notes tab in the project details page (`src/app/(dashboard)/projects/[id]/page.tsx`) contains:
+
+1. **NoteComposer** at the top for creating new notes
+2. **NotesList** below showing all existing notes
+
+**Legacy migration:** On first visit to the Notes tab, if the project has a legacy `project.notes` string (from Bubble's `teamNotes` field) and no `project_notes` rows exist yet, it automatically calls `ProjectNoteService.migrateFromLegacy()` to create one note from the legacy text. This is idempotent and uses a `useRef` flag (`migrated`) to prevent duplicate calls.
+
+### Changes to Task UI
+
+As part of this overhaul, task-level notes were removed:
+- **task-form.tsx** -- The `taskNotes` field was removed from the form schema and UI
+- **task-list.tsx** -- The `taskNotes` display and mutation references were removed
+
+Notes are now exclusively at the project level, accessed via the Notes tab on the project details page.
+
+### Remaining Work (Tasks 13-20)
+
+The following features are planned but not yet implemented:
+- **Photo attachments in composer** -- Upload, preview, and remove photos when composing a note
+- **Photo caption dialog** -- Add captions to attached photos
+- **Cross-post note photos to project gallery** -- Note photos auto-appear in the project photo gallery
+- **Photo markup** -- Canvas-based annotation with freehand drawing on attached photos
+- **Notification service for @mentions** -- Alert users when they are @mentioned in a note
+- **Edit and delete notes UI** -- Full edit/delete flow (backend supports it, UI wiring pending)
 
 ---
 

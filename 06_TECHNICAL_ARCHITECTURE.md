@@ -2,7 +2,7 @@
 
 **Document Purpose**: Complete technical reference for OPS iOS app architecture, file organization, state management patterns, and development best practices.
 
-**Last Updated**: February 15, 2026
+**Last Updated**: February 18, 2026
 **iOS Codebase**: 351 Swift files, SwiftUI + SwiftData architecture
 **Target Platform**: iOS 17.0+, iPhone/iPad
 
@@ -21,6 +21,7 @@
 9. [Defensive Programming](#defensive-programming)
 10. [Code Organization](#code-organization)
 11. [Testing Requirements](#testing-requirements)
+12. [Dual-Backend Transition Architecture](#dual-backend-transition-architecture)
 
 ---
 
@@ -1698,6 +1699,192 @@ OPS must be tested in **real field conditions**:
 
 ---
 
+## Dual-Backend Transition Architecture
+
+### Current State (February 2026)
+
+OPS is in a **dual-backend transition** from Bubble.io to Supabase. This is the most significant architectural change in the platform's history and affects every layer of the system.
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                         CURRENT STATE (Feb 2026)                       │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  ┌──────────────┐           ┌──────────────────────────────────────┐  │
+│  │  iOS App     │──────────►│          Bubble.io REST API           │  │
+│  │  (SwiftData) │           │  - All CRUD for 9 entity types       │  │
+│  └──────────────┘           │  - Authentication (API token)        │  │
+│                              │  - Soft delete workflows             │  │
+│  ┌──────────────┐           │  - Source of truth for mobile        │  │
+│  │  Android App │──────────►│                                      │  │
+│  │  (Room)      │           └──────────────────────────────────────┘  │
+│  └──────────────┘                                                      │
+│                                                                        │
+│  ┌──────────────┐           ┌──────────────────────────────────────┐  │
+│  │  OPS Web     │──────────►│        Supabase (PostgreSQL)          │  │
+│  │  (Next.js)   │           │  - Pipeline/CRM (est. 001-003)      │  │
+│  └──────────────┘           │  - Core entities (migr. 004)         │  │
+│                              │  - Pipeline refs (migr. 005)         │  │
+│  ┌──────────────┐           │  - RLS company isolation             │  │
+│  │  AWS S3      │           │  - Source of truth for web           │  │
+│  │  (images)    │           └──────────────────────────────────────┘  │
+│  └──────────────┘                                                      │
+│                                                                        │
+│  ┌──────────────┐                                                      │
+│  │  Firebase    │  Analytics + Google Sign-In (iOS/Android)            │
+│  └──────────────┘                                                      │
+│                                                                        │
+│  ┌──────────────┐                                                      │
+│  │  Stripe      │  Subscriptions (via Bubble plugin currently)        │
+│  └──────────────┘                                                      │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### Why Transition?
+
+Bubble.io has served well as a rapid-prototyping backend, but it introduces limitations as OPS scales:
+
+1. **Performance**: Bubble API has high latency compared to Supabase PostgREST
+2. **Cost**: Bubble pricing increases with data volume and API calls
+3. **Control**: No raw database access, no custom indexes, no stored procedures
+4. **Real-time**: Bubble has no real-time subscription capability; Supabase has built-in realtime
+5. **Authentication**: Bubble uses a static API token (not user-scoped); Supabase uses JWT with per-user claims
+6. **Scalability**: Row-level security in Supabase provides automatic multi-tenant isolation
+
+### Migration Strategy
+
+The transition follows a **non-breaking incremental approach**:
+
+**Phase 1 (Complete): Pipeline & Financial Tables**
+- Supabase tables for opportunities, estimates, invoices, payments, products, etc.
+- Web app reads/writes these directly
+- Mobile apps do not interact with these tables
+
+**Phase 2 (Complete): Core Entity Tables**
+- Migration 004 creates Supabase mirrors of all 9 Bubble entity types
+- Migration 005 links pipeline tables to core entities via `_ref` FK columns
+- Bulk migration API copies Bubble data into Supabase (`POST /api/admin/migrate-bubble`)
+- Web app can now read/write core entities from Supabase
+
+**Phase 3 (Planned): Supabase Auth**
+- Replace Firebase + Bubble authentication with Supabase Auth
+- JWT tokens will carry `app_metadata.company_id` for RLS enforcement
+- Mobile apps will authenticate against Supabase instead of Bubble
+- The `private.get_user_company_id()` RLS helper is already built for this
+
+**Phase 4 (Planned): Mobile App Migration**
+- iOS and Android apps switch from Bubble API to Supabase PostgREST
+- CentralizedSyncManager refactored to use Supabase client instead of URLSession/Retrofit to Bubble
+- Offline-first architecture preserved; sync layer adapts to new API format
+- SwiftData/Room models remain the same; only the network layer changes
+
+**Phase 5 (Planned): Bubble Decommission**
+- All clients (web, iOS, Android) use Supabase exclusively
+- Direct S3 presigned URLs replace Bubble-mediated image uploads
+- Direct Stripe integration replaces Bubble's Stripe plugin
+- Bubble.io subscription cancelled
+
+### Key Architectural Decisions
+
+**1. bubble_id Column on Every Entity Table**
+Every Supabase core entity table has a `bubble_id TEXT UNIQUE` column. This is the bridge between the old and new systems. During the transition, it enables:
+- Idempotent migration via `ON CONFLICT (bubble_id)`
+- Cross-referencing between Bubble and Supabase records
+- Gradual migration without data loss
+
+**2. _ref Columns Instead of Overwriting**
+Migration 005 adds new `_ref` UUID columns to pipeline tables rather than modifying existing TEXT ID columns. This ensures:
+- Existing pipeline queries continue to work
+- The migration is non-breaking
+- Both ID systems coexist during transition
+
+**3. Service Role Client for Migration**
+The migration API uses Supabase's service role client (bypasses RLS) because:
+- It migrates data across ALL companies in one pass
+- RLS company isolation would block cross-company bulk operations
+- The service role is never exposed to the browser
+
+**4. RLS Helper in Private Schema**
+The `private.get_user_company_id()` function lives in a `private` schema inaccessible to API users:
+```sql
+CREATE SCHEMA IF NOT EXISTS private;
+
+CREATE OR REPLACE FUNCTION private.get_user_company_id()
+RETURNS UUID AS $$
+  SELECT (auth.jwt() -> 'app_metadata' ->> 'company_id')::UUID;
+$$ LANGUAGE sql STABLE SECURITY DEFINER;
+```
+This prepares for Phase 3 (Supabase Auth) while being callable from RLS policies today.
+
+### Impact on Mobile Architecture
+
+When mobile apps eventually migrate (Phase 4), the changes will be concentrated in the **network layer** only:
+
+| Component | Current (Bubble) | Future (Supabase) |
+|-----------|------------------|-------------------|
+| Data Models | SwiftData / Room | **No change** |
+| Local Storage | SwiftData / Room | **No change** |
+| Sync Strategy | Triple-layer sync | **No change** (same pattern, different API) |
+| API Client | URLSession / Retrofit to Bubble REST | Supabase Swift/Kotlin client |
+| Auth | Static API token + Firebase | Supabase Auth JWT |
+| Image Upload | Direct S3 + Bubble registration | Direct S3 (presigned URLs) |
+| Real-time | Polling (3-min timer) | Supabase Realtime subscriptions |
+| Offline Queue | `needsSync` flag pattern | **No change** |
+
+The offline-first architecture, defensive SwiftData/Room patterns, and sync debouncing will all be preserved. The migration primarily replaces the transport layer, not the application architecture.
+
+### Web App Supabase Patterns
+
+The web app already implements the Supabase patterns that mobile will eventually adopt:
+
+**Query Pattern (TanStack Query + Supabase):**
+```typescript
+// Fetch projects for current company (RLS handles company isolation)
+const { data: projects } = await supabase
+  .from("projects")
+  .select(`
+    *,
+    client:clients(*),
+    tasks:project_tasks(*, task_type:task_types_v2(*))
+  `)
+  .is("deleted_at", null)
+  .order("created_at", { ascending: false });
+```
+
+**Mutation Pattern:**
+```typescript
+// Create a project (company_id injected server-side by RLS context)
+const { data, error } = await supabase
+  .from("projects")
+  .insert({
+    company_id: user.company_id,
+    client_id: selectedClientId,
+    title: formData.title,
+    status: "RFQ",
+    address: formData.address,
+  })
+  .select()
+  .single();
+```
+
+**Realtime Pattern (future mobile):**
+```typescript
+// Subscribe to project changes for current company
+const subscription = supabase
+  .channel("project-changes")
+  .on("postgres_changes", {
+    event: "*",
+    schema: "public",
+    table: "projects",
+    filter: `company_id=eq.${companyId}`,
+  }, (payload) => {
+    // Handle insert/update/delete
+  })
+  .subscribe();
+```
+
+---
+
 ## Summary
 
 ### Architectural Strengths
@@ -1707,6 +1894,7 @@ OPS must be tested in **real field conditions**:
 3. **Defensive SwiftData patterns** - Prevents crashes and corruption
 4. **Clear separation of concerns** - Views, ViewModels, DataController, Managers
 5. **Field-tested optimizations** - Lazy loading, caching, background tasks
+6. **Dual-backend transition** - Non-breaking incremental migration from Bubble to Supabase
 
 ### Architectural Challenges
 
@@ -1714,18 +1902,19 @@ OPS must be tested in **real field conditions**:
 2. **Complex state management** - Multiple sources of truth (AppState, DataController, ViewModels)
 3. **NotificationCenter coupling** - Deep linking via NotificationCenter is brittle
 4. **Large ViewModels** - CalendarViewModel is 500+ lines
+5. **Dual-backend complexity** - During transition, data may exist in both Bubble and Supabase
 
 ### Android Conversion Implications
 
 **Easy to Convert**:
-- Data models (SwiftData → Room entities)
-- Network layer (URLSession → Retrofit)
-- State management (ObservableObject → StateFlow/ViewModel)
+- Data models (SwiftData -> Room entities)
+- Network layer (URLSession -> Retrofit)
+- State management (ObservableObject -> StateFlow/ViewModel)
 
 **Hard to Convert**:
 - SwiftUI views (no 1:1 Compose equivalent)
-- Navigation system (TabView + sheets → Compose Navigation)
-- Environment objects (SwiftUI-specific → Hilt DI)
+- Navigation system (TabView + sheets -> Compose Navigation)
+- Environment objects (SwiftUI-specific -> Hilt DI)
 
 **Critical Patterns to Preserve**:
 - Offline-first architecture
@@ -1737,8 +1926,9 @@ OPS must be tested in **real field conditions**:
 
 **End of Technical Architecture Documentation**
 
-This document provides complete architectural context for OPS iOS app. Reference alongside:
+This document provides complete architectural context for OPS iOS app and the dual-backend transition. Reference alongside:
 - `01_IOS_ARCHITECTURE_OVERVIEW.md` - High-level overview
 - `02_DATA_MODELS.md` - SwiftData models and relationships
-- `03_NETWORKING_AND_SYNC.md` - API and sync details
+- `03_DATA_ARCHITECTURE.md` - Data models, Bubble fields, and Supabase schema
+- `04_API_AND_INTEGRATION.md` - API endpoints, sync details, and migration API
 - `10_ANDROID_CONVERSION_PLAN.md` - Android conversion strategy

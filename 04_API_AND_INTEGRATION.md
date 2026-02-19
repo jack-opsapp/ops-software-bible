@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers all API endpoints, sync strategies, conflict resolution, image handling, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: February 15, 2026
+**Last Updated**: February 18, 2026
 **iOS Reference**: C:\OPS\opsapp-ios\OPS\Network\
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\
 
@@ -22,6 +22,8 @@
 8. [Error Handling & Retry Logic](#error-handling--retry-logic)
 9. [Connectivity Monitoring](#connectivity-monitoring)
 10. [Rate Limiting & Debouncing](#rate-limiting--debouncing)
+11. [Supabase Backend (Web App)](#supabase-backend-web-app)
+12. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
 
 ---
 
@@ -2558,6 +2560,308 @@ WorkManager.getInstance(context).enqueueUniquePeriodicWork(
 
 ---
 
+## Supabase Backend (Web App)
+
+### Dual-Backend Architecture
+
+As of February 2026, OPS operates a **dual-backend architecture**:
+
+- **Bubble.io** remains the backend for the iOS and Android mobile apps (all CRUD, sync, authentication)
+- **Supabase (PostgreSQL)** is the backend for the OPS Web app, hosting both the financial/pipeline data (since the web launch) and now core entity data (companies, users, clients, projects, tasks, etc.) migrated from Bubble
+
+```
+┌─────────────────────┐     ┌──────────────────────────────────────────┐
+│  iOS App / Android   │     │              OPS Web (Next.js)            │
+│                      │     │                                          │
+│  SwiftData / Room    │     │  TanStack Query ─► Supabase Client       │
+│       ↓   ↑         │     │                                          │
+│  Bubble.io REST API  │     │  ┌───────────────┐  ┌─────────────────┐ │
+│  (source of truth    │     │  │  Pipeline /    │  │  Core Entities  │ │
+│   for mobile)        │     │  │  Financials    │  │  (migration 004)│ │
+│                      │     │  │  (001-003)     │  │                 │ │
+└─────────────────────┘     │  └───────────────┘  └─────────────────┘ │
+                             │          Supabase (PostgreSQL)           │
+                             └──────────────────────────────────────────┘
+```
+
+### Supabase Access Pattern
+
+The web app accesses Supabase via two client types:
+
+**1. Browser Client (anon key + RLS)**
+- Used for all standard CRUD from the frontend
+- RLS policies enforce company isolation using JWT `app_metadata.company_id`
+- The `private.get_user_company_id()` function extracts the company ID from the authenticated user's JWT
+
+**2. Service Role Client (bypasses RLS)**
+- Used only in server-side API routes (e.g., the migration endpoint)
+- Required for bulk operations that span multiple companies
+- Never exposed to the browser
+
+### Row-Level Security (RLS)
+
+All core entity tables enforce company-scoped isolation:
+
+```sql
+-- Pattern used on every core entity table
+ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "company_isolation" ON {table}
+  FOR ALL USING (company_id = (SELECT private.get_user_company_id()));
+```
+
+This means:
+- A user from Company A can never read or write Company B's data
+- No application-level filtering is needed; the database enforces isolation
+- The `private` schema helper function reads `auth.jwt() -> 'app_metadata' ->> 'company_id'`
+
+### Supabase Table Summary
+
+The Supabase database contains two categories of tables:
+
+**Pipeline & Financial Tables (Migrations 001-003):**
+Created for the web app's CRM, estimating, and invoicing features.
+
+| Table | Purpose |
+|-------|---------|
+| `pipeline_stage_configs` | Kanban stages per company |
+| `opportunities` | Sales pipeline deals |
+| `stage_transitions` | History of deal stage changes |
+| `estimates` | Quotes/proposals for clients |
+| `invoices` | Client billing |
+| `line_items` | Individual items on estimates/invoices |
+| `products` | Reusable catalog of services/materials |
+| `tax_rates` | Per-company tax configurations |
+| `payments` | Payment records against invoices |
+| `payment_milestones` | Deposit/milestone schedules |
+| `activities` | Activity log (calls, emails, notes) |
+| `follow_ups` | Scheduled follow-up reminders |
+| `document_sequences` | Gapless numbering for EST-/INV- |
+| `audit_log` | Change tracking |
+| `task_templates` | Pre-built sub-tasks per task type |
+| `site_visits` | Scheduled job-site visits |
+| `project_photos` | Photo attachments for projects |
+| `project_notes` | Threaded notes on projects |
+| `company_settings` | Per-company configuration |
+| `gmail_connections` | OAuth tokens for email integration |
+
+**Core Entity Tables (Migration 004):**
+Mirrors the Bubble.io data model for the web app.
+
+| Table | Purpose |
+|-------|---------|
+| `companies` | Organizations/tenants |
+| `users` | All app users (admins, office crew, field crew) |
+| `clients` | Customers that companies serve |
+| `sub_clients` | Additional contacts under a client |
+| `task_types_v2` | Work categories (Framing, Painting, etc.) |
+| `projects` | Jobs/projects for clients |
+| `calendar_events` | Scheduled calendar blocks |
+| `project_tasks` | Individual tasks within projects |
+| `ops_contacts` | OPS support team contacts (not company-scoped) |
+
+**Pipeline Reference Columns (Migration 005):**
+Adds UUID foreign key columns (`_ref` suffix) to pipeline tables that previously only had Bubble TEXT IDs, linking them to the new core entity tables.
+
+---
+
+## Bubble-to-Supabase Migration API
+
+### Overview
+
+The migration API is a **one-shot bulk data transfer** endpoint that copies all entity data from Bubble.io into the corresponding Supabase core entity tables. It is designed for the transition period while both backends coexist.
+
+**Endpoint**: `POST /api/admin/migrate-bubble`
+**Source File**: `ops-web/src/app/api/admin/migrate-bubble/route.ts` (~1,134 lines)
+**Authentication**: Requires `devPermission === true` on the requesting user's Bubble record
+**Trigger**: Developer Settings tab in the web app (only visible when `devPermission` is true)
+
+### Request Format
+
+```json
+POST /api/admin/migrate-bubble
+Content-Type: application/json
+
+{
+  "userId": "1234567890x999888"
+}
+```
+
+The `userId` is the Bubble user ID of the person initiating the migration. The endpoint fetches the user from Bubble and verifies their `devPermission` field is `true`.
+
+### Response Format
+
+```json
+{
+  "success": true,
+  "stats": {
+    "companies": 3,
+    "users": 15,
+    "clients": 42,
+    "subClients": 8,
+    "taskTypes": 12,
+    "projects": 87,
+    "calendarEvents": 204,
+    "projectTasks": 156,
+    "opsContacts": 4,
+    "pipelineRefsUpdated": 38,
+    "errors": []
+  }
+}
+```
+
+On failure (e.g., permission denied or unexpected exception):
+
+```json
+{
+  "error": "Error message string",
+  "stats": { ... }  // partial stats if migration started before failure
+}
+```
+
+### Authentication Flow
+
+```
+1. Client sends { userId: "..." }
+2. Server fetches user from Bubble:
+   GET /api/1.1/obj/user/{userId}
+3. Server checks: dto.devPermission === true
+4. If false → 403 Forbidden
+5. If true → proceed with migration
+```
+
+**Why Bubble auth, not Supabase auth?** During the transition period, the migration is initiated from the web app but must verify against Bubble (the current source of truth for user permissions). The `devPermission` field is a Bubble-only boolean that marks internal OPS developers.
+
+### Migration Process (10 Phases)
+
+The migration executes in **strict dependency order** (parents before children) so that foreign key references can be resolved:
+
+```
+Phase 1:  Companies        → builds companyIdMap
+Phase 2:  Users            → builds userIdMap (uses companyIdMap)
+Phase 3:  Clients          → builds clientIdMap (uses companyIdMap)
+Phase 4:  Sub-Clients      → uses clientIdMap + companyIdMap
+Phase 5:  Task Types       → builds taskTypeIdMap (uses companyIdMap)
+Phase 6:  Projects         → builds projectIdMap (uses companyIdMap + clientIdMap)
+Phase 7:  Calendar Events  → builds calendarEventIdMap (uses companyIdMap + projectIdMap)
+Phase 8:  Project Tasks    → uses projectIdMap + taskTypeIdMap + calendarEventIdMap + companyIdMap
+Phase 9:  OPS Contacts     → standalone (no company scope)
+Phase 10: Pipeline Refs    → updates _ref columns using all IdMaps
+```
+
+Each phase:
+1. Fetches ALL records from the Bubble Data API (paginated, 100 per page)
+2. Transforms Bubble DTO fields into Supabase column values
+3. Upserts into Supabase using `onConflict: "bubble_id"` (idempotent)
+4. Builds an `IdMap` (Map<bubbleId, supabaseUuid>) for downstream phases to resolve FKs
+
+### IdMap Pattern (bubble_id to UUID)
+
+The core technique for linking Bubble references to Supabase records:
+
+```typescript
+type IdMap = Map<string, string>; // bubbleId → supabaseUuid
+
+// Building the map after upsert:
+const { data } = await supabase
+  .from("companies")
+  .upsert({ bubble_id: dto._id, name: dto.companyName, ... }, { onConflict: "bubble_id" })
+  .select("id, bubble_id");
+
+if (data) {
+  for (const row of data) {
+    companyIdMap.set(row.bubble_id, row.id);
+  }
+}
+
+// Using the map in a downstream phase:
+const supabaseCompanyId = companyIdMap.get(dto.company);  // Bubble company ID → UUID
+const supabaseClientId = clientIdMap.get(dto.client);     // Bubble client ID → UUID
+```
+
+### Idempotent Upsert
+
+Every entity uses **upsert on `bubble_id` conflict**, making the migration safe to re-run:
+
+```typescript
+const { data, error } = await supabase
+  .from("clients")
+  .upsert(
+    {
+      bubble_id: dto._id,
+      company_id: companyIdMap.get(dto.company),
+      name: dto.name ?? "Unknown",
+      email: dto.email ?? null,
+      // ... all fields
+    },
+    { onConflict: "bubble_id" }
+  )
+  .select("id, bubble_id");
+```
+
+- First run: INSERT new rows
+- Subsequent runs: UPDATE existing rows (matched by `bubble_id`)
+- No duplicates, no data loss
+
+### Data Transformation Details
+
+The migration performs several data normalizations:
+
+**Date Handling:**
+- Company subscription dates may be UNIX timestamps (from Stripe) or ISO8601 strings (from Bubble)
+- The `parseFlexibleDate()` helper handles both formats
+- Standard dates use `parseBubbleDate()` and convert to ISO8601 for PostgreSQL
+
+**Phone Normalization:**
+- SubClient phone fields can be `string` or `number` type in Bubble
+- `normalizePhone()` converts numeric phones to strings
+
+**Status Normalization:**
+- Task statuses go through `normalizeTaskStatus()` to handle the "Scheduled" to "Booked" migration
+- Subscription status/plan values are lowercased and validated against PostgreSQL CHECK constraints
+
+**Reference Resolution:**
+- Bubble stores references as either bare IDs (`"1234567890x999888"`) or sometimes as full objects
+- `resolveBubbleReference()` and `resolveBubbleReferences()` handle both formats
+
+### Post-Migration Steps
+
+After all 9 entity types are migrated, two additional passes run:
+
+**1. User Admin Flag Update:**
+After companies and users are both migrated, the migration loops through companies and sets `is_company_admin = true` for any user whose `bubble_id` appears in the company's `admin_ids` array.
+
+**2. Project Team Member Computation:**
+After tasks are migrated, for each project, the migration collects all unique `team_member_ids` from the project's tasks and writes them to `projects.team_member_ids`. This matches the iOS behavior where project team members are computed from task assignments.
+
+**3. Pipeline Reference Updates (Phase 10):**
+Updates `_ref` UUID columns on pipeline tables (opportunities, estimates, invoices, line_items, task_templates, products, site_visits) by matching existing Bubble TEXT IDs to the newly created UUID records.
+
+### Error Handling
+
+- Each entity migration is wrapped in a try/catch
+- Individual record failures are logged but do not abort the entire migration
+- The `stats.errors` array accumulates error messages (capped to prevent huge responses)
+- The migration returns partial stats even on failure so the developer can see progress
+
+### Developer Settings UI
+
+The migration is triggered from the **Developer Settings** tab in the web app's settings page:
+
+- **Visibility**: Only shown when the logged-in user has `devPermission === true`
+- **Action**: "Migrate Bubble Data" button that calls `POST /api/admin/migrate-bubble`
+- **Feedback**: Shows real-time progress and final stats (counts per entity, errors)
+
+### Future Direction
+
+The migration API is a stepping stone in the broader Bubble-to-Supabase transition:
+
+1. **Current**: Web app reads/writes core entities from Supabase; mobile apps still use Bubble
+2. **Next**: Implement Supabase Auth to replace Firebase + Bubble auth (JWT with `app_metadata.company_id`)
+3. **Then**: Mobile apps switch from Bubble API to Supabase PostgREST/realtime
+4. **Eventually**: Bubble.io is decommissioned entirely; Supabase + direct S3 + direct Stripe become the sole backend
+
+---
+
 **End of Document**
 
-This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire sync system, API integration, image handling, and error management with full fidelity to the iOS implementation.
+This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire sync system, API integration, image handling, error management, and the Bubble-to-Supabase migration pathway with full fidelity to the current implementation.

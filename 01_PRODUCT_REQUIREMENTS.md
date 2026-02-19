@@ -69,6 +69,7 @@ This document catalogs every feature, user story, business rule, and functional 
 - **Team Assignment** - Assign multiple crew members to projects
 - **Photo Documentation** - Capture and attach photos to projects (S3 storage)
 - **Notes & Description** - Long-form text fields for project details
+- **Project Notes System (OPS Web)** - First-class notes with @mentions, author attribution, timestamps, and photo attachments (replaces legacy plain-text teamNotes field from Bubble; see [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11)
 
 #### Project Viewing
 - **Project Details View** - Comprehensive project overview
@@ -76,7 +77,7 @@ This document catalogs every feature, user story, business rule, and functional 
 - **Breadcrumb Navigation** - Company → Client → Project hierarchy
 - **Location Card** - Address display with "Get Directions" button
 - **Client Info Card** - Client contact details with tap-to-call/email
-- **Notes Card** - Expandable notes section
+- **Notes Card** - Expandable notes section (iOS: plain text; OPS Web: threaded notes with @mentions, author attribution, photo attachments — see [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11)
 - **Team Members Card** - Assigned crew with avatars
 - **Task List** - All tasks grouped by status
 - **Image Gallery** - Project photos with full-screen viewer
@@ -109,7 +110,7 @@ This document catalogs every feature, user story, business rule, and functional 
 - **Breadcrumb Navigation** - Company → Client → Project → Task hierarchy
 - **Location Card** - Project address with "Get Directions"
 - **Client Info Card** - Client contact details
-- **Notes Card** - Task-specific notes
+- **Notes Card** - Task-specific notes (iOS only; OPS Web removed task-level notes in Feb 2026 — notes are now project-level only)
 - **Team Members Card** - Assigned crew for task
 - **Dates Section** - Scheduled start/end dates from calendar event
 - **Previous/Next Navigation** - Navigate between tasks in project
@@ -1086,9 +1087,9 @@ Based on survey feedback from target market, these features are planned:
    - Commission reports per user
    - Payment history
 
-3. **Photo Markup**
-   - Captions on photos
-   - Arrows and annotations
+3. **Photo Markup** (partially underway via Notes Overhaul — see [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11)
+   - Captions on photos (planned for note attachments)
+   - Arrows and annotations (canvas markup planned for note photo attachments)
    - Notes and labels
    - Before/after comparisons
 
@@ -1117,7 +1118,7 @@ Based on survey feedback from target market, these features are planned:
 
 ---
 
-**Last Updated:** February 17, 2026
-**Document Version:** 1.1
+**Last Updated:** February 18, 2026
+**Document Version:** 1.2
 **iOS App Version:** 207 Swift files, iOS 17+, SwiftData + SwiftUI
-**Web App:** Pipeline, Estimates, Invoices, Products live in ops-web (Supabase)
+**Web App:** Pipeline, Estimates, Invoices, Products, Project Notes live in ops-web (Supabase)

@@ -668,11 +668,9 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
    - Phone (tap to call)
    - Address (tap to map)
 
-4. **Notes Card**
-   - Note icon
-   - "NOTES" section header
-   - Notes text (expandable)
-   - "Show more" / "Show less" toggle
+4. **Notes Card** (iOS) / **Notes Tab** (OPS Web)
+   - **iOS:** Note icon, "NOTES" section header, Notes text (expandable), "Show more" / "Show less" toggle
+   - **OPS Web (Feb 2026 overhaul):** Full threaded notes tab with NoteComposer (text input with @mention autocomplete, Ctrl+Enter submit), NotesList (list of NoteCards with author avatar, time-ago, @mention rendering, photo grid, edit/delete dropdown), legacy migration from Bubble teamNotes on first visit. Notes are project-level only (task-level notes removed). See [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11 for full details.
 
 5. **Description Card**
    - Document icon
@@ -1204,6 +1202,6 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 
 ---
 
-**Last Updated:** February 15, 2026
-**Document Version:** 1.0
+**Last Updated:** February 18, 2026
+**Document Version:** 1.1
 **iOS App Version:** 207 Swift files, iOS 17+, SwiftData + SwiftUI

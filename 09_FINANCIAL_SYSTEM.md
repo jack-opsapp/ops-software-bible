@@ -620,7 +620,7 @@ isFollowUpToday(followUp)     // true if Pending and due today
 
 ## Supabase Schema Reference
 
-### Tables (15 total)
+### Tables (16 total)
 
 | Table | Purpose |
 |---|---|
@@ -637,6 +637,7 @@ isFollowUpToday(followUp)     // true if Pending and due today
 | `accounting_connections` | QuickBooks/Sage OAuth connections |
 | `activities` | Communication and event log |
 | `follow_ups` | Scheduled follow-up reminders |
+| `project_notes` | Project-level notes with @mentions and attachments (Feb 2026) |
 
 ### DB Conventions
 
@@ -741,6 +742,6 @@ Hooks are in `src/lib/hooks/`:
 
 ---
 
-**Last Updated**: February 17, 2026
-**Document Version**: 1.0
+**Last Updated**: February 18, 2026
+**Document Version**: 1.1
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`
