@@ -146,10 +146,11 @@ Start with the Executive Summary to understand the business context, then procee
 - Form sheets with progressive disclosure
 - Floating Action Menu
 - Advanced UI patterns
+- **Project Notes System (OPS Web)** — first-class notes with @mentions, author attribution, photo attachments, legacy migration
 
 **Start here for:** Implementing complex features
 
-**Lines:** ~900 | **Features:** 10
+**Lines:** ~1,100 | **Features:** 11
 
 ---
 
@@ -190,6 +191,24 @@ Start with the Executive Summary to understand the business context, then procee
 **Start here for:** Implementing any feature that spans multiple entities (estimates→tasks, leads→clients, site visits, Gmail)
 
 **Lines:** ~700 | **New Entities:** 5 | **Modified Entities:** 9 | **Automation Rules:** 7
+
+---
+
+### 🌐 [11_CLIENT_PORTAL.md](11_CLIENT_PORTAL.md)
+**Client-Facing Portal: Estimates, Invoices, Questions, Payments & Messaging (OPS Web)**
+
+- Client portal architecture: separate auth (magic link + email verification), 30-day sessions
+- 6 new Supabase tables: portal_tokens, portal_sessions, portal_branding, line_item_questions, line_item_answers, portal_messages
+- Line-item questions: unique feature — 5 answer types (text, select, multiselect, color, number) attached to estimate line items
+- Company-customizable branding: 3 templates (Modern, Classic, Bold), light/dark mode, accent color, logo
+- Estimate approve/decline, Stripe invoice payments, project photos + timeline, two-way messaging
+- Admin features: branding settings tab, question editor in estimate builder, portal inbox, share button
+- SendGrid email templates, TanStack Query hooks, activity logging
+- ~50 new files, 6 services, 13 API routes
+
+**Start here for:** Implementing the client portal (web)
+
+**Lines:** ~600 | **Tables:** 6 | **Pages:** 8 | **Components:** 14
 
 ---
 
@@ -244,11 +263,17 @@ Start with the Executive Summary to understand the business context, then procee
 **"I need to implement pipeline, estimates, or invoices"**
 → Read [09_FINANCIAL_SYSTEM.md](09_FINANCIAL_SYSTEM.md)
 
+**"I need to implement project notes or @mentions"**
+→ Read [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11
+
 **"I need to understand how entities connect (leads → clients → projects → tasks → invoices)"**
 → Read [10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md](10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md)
 
 **"I need to implement site visits, Gmail logging, or activity comments"**
 → Read [10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md](10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md)
+
+**"I need to implement the client portal (magic links, estimates, payments, messaging)"**
+→ Read [11_CLIENT_PORTAL.md](11_CLIENT_PORTAL.md)
 
 **"I need to deploy to production"**
 → Read [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)
@@ -257,10 +282,10 @@ Start with the Executive Summary to understand the business context, then procee
 
 ## Documentation Statistics
 
-- **Total Documents:** 11 (including this README)
-- **Total Lines:** ~8,300+ lines of documentation
-- **Total Code Examples:** 110+ code snippets
-- **Coverage:** 351 Swift files, 9 iOS data models, 18+ Supabase tables, 50+ UI components, 40+ Bubble API endpoints, full financial system, complete job lifecycle
+- **Total Documents:** 12 (including this README)
+- **Total Lines:** ~9,100+ lines of documentation
+- **Total Code Examples:** 120+ code snippets
+- **Coverage:** 351 Swift files, 9 iOS data models, 25+ Supabase tables, 50+ UI components, 40+ Bubble API endpoints, full financial system, complete job lifecycle, project notes system, client portal
 
 ---
 
@@ -320,13 +345,13 @@ See `C:\OPS\android-plan-v2\` for the complete Android conversion plan.
 
 ## Maintenance
 
-**Last Updated:** February 17, 2026
+**Last Updated:** February 18, 2026
 
 **iOS App Version:** 207 Swift files, iOS 17+, SwiftData + SwiftUI
 
-**Web App Version:** Next.js, dual-backend (Bubble.io + Supabase), Pipeline/Estimates/Invoices live
+**Web App Version:** Next.js, dual-backend (Bubble.io + Supabase), Pipeline/Estimates/Invoices/Project Notes/Client Portal live
 
-**Document Version:** 1.2 — Added doc 10: complete job lifecycle, entity relationships, site visits, Gmail, activity comments
+**Document Version:** 1.4 — Added Client Portal documentation (magic link auth, estimate approve/decline, line-item questions, Stripe payments, two-way messaging, company branding)
 
 **Maintainer:** Update these documents when making architectural changes, adding features, or modifying business rules. Keep code examples in sync with actual implementation.
 
