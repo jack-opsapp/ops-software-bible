@@ -20,7 +20,7 @@ Start with the Executive Summary to understand the business context, then procee
 - Elevator pitch (founder's authentic voice)
 - Target market and user personas (Admin, Office Crew, Field Crew)
 - Core value propositions and competitive advantages
-- Key statistics (207 Swift files, 9 data models, pricing)
+- Key statistics (437 Swift files, 24 SwiftData models, pricing)
 - Technology stack overview
 - Product vision and roadmap
 
@@ -60,7 +60,7 @@ Start with the Executive Summary to understand the business context, then procee
 ### 🗄️ [03_DATA_ARCHITECTURE.md](03_DATA_ARCHITECTURE.md)
 **Complete data model reference**
 
-- All 9 SwiftData models with full property lists
+- All 24 SwiftData models (11 core + 13 Supabase-backed) with full property lists
 - Entity relationships and cardinality
 - BubbleFields.swift constants (byte-perfect API mappings)
 - All DTOs with conversion logic
@@ -71,25 +71,27 @@ Start with the Executive Summary to understand the business context, then procee
 
 **Start here for:** Implementing the data layer
 
-**Lines:** ~1,200 | **Models:** 9 | **DTOs:** 8
+**Lines:** ~1,200 | **Models:** 24 | **DTOs:** 8+
 
 ---
 
 ### 🔄 [04_API_AND_INTEGRATION.md](04_API_AND_INTEGRATION.md)
 **API endpoints and sync strategy**
 
-- Complete Bubble.io API endpoint catalog
+- Supabase as primary backend: 15 repositories, 30 tables, Realtime WebSocket subscriptions
 - Triple-layer sync strategy (immediate, event-driven, periodic)
-- CentralizedSyncManager implementation (~1,801 lines)
+- SupabaseSyncManager (replaced CentralizedSyncManager)
 - Image upload/S3 integration
 - Stripe subscription integration
 - Firebase Analytics (30+ tracked events)
+- OneSignal push notifications
 - Error handling and retry logic
 - Rate limiting and 2-second debouncing
+- Bubble.io legacy API reference (for historical context)
 
 **Start here for:** Implementing backend integration and sync
 
-**Lines:** ~1,084 | **Endpoints:** 40+ | **Events:** 30+
+**Lines:** ~1,284 | **Repositories:** 15 | **Tables:** 30 | **Events:** 30+
 
 ---
 
@@ -117,7 +119,7 @@ Start with the Executive Summary to understand the business context, then procee
 ### 🏗️ [06_TECHNICAL_ARCHITECTURE.md](06_TECHNICAL_ARCHITECTURE.md)
 **Code structure and architectural patterns**
 
-- Complete directory structure (351 Swift files)
+- Complete directory structure (437 Swift files)
 - SwiftUI + SwiftData architecture
 - State management (AppState, DataController, ViewModels)
 - Navigation system (TabView + NavigationStack)
@@ -129,7 +131,7 @@ Start with the Executive Summary to understand the business context, then procee
 
 **Start here for:** Understanding code organization and patterns
 
-**Lines:** ~800 | **Files:** 351 | **Patterns:** 8
+**Lines:** ~800 | **Files:** 437 | **Patterns:** 8
 
 ---
 
@@ -157,7 +159,7 @@ Start with the Executive Summary to understand the business context, then procee
 ### 💰 [09_FINANCIAL_SYSTEM.md](09_FINANCIAL_SYSTEM.md)
 **Pipeline, Estimates, Invoices & Financial Architecture (OPS Web)**
 
-- Dual-database architecture (Bubble.io for ops data, Supabase for financial data)
+- Supabase as primary backend for all data (financial + operational)
 - Pipeline/CRM: 8-stage Kanban, drag-and-drop, stage transitions, follow-ups, activity timeline
 - Estimates: quote builder, line items, optional items, deposit/milestones, estimate→invoice RPC
 - Invoices: billing documents, payment recording, DB-trigger-maintained balances, payment voiding
@@ -180,7 +182,7 @@ Start with the Executive Summary to understand the business context, then procee
 - Pipeline as the job spine: all 8 stages with auto-advance triggers and manual overrides
 - Zero duplicate entry design: estimate sends create client + project; approval creates tasks
 - New entities: TaskTemplate, ActivityComment, SiteVisit, ProjectPhoto, GmailConnection
-- Modified entities: LineItem (type/taskTypeId), TaskType (defaultTeamMemberIds), Project (opportunityId), CalendarEvent (eventType), Estimate (projectId), Invoice (projectId/estimateId), Product (type/taskTypeId), Activity (email threading/attachments)
+- Modified entities: LineItem (type/taskTypeId), TaskType (defaultTeamMemberIds), Project (opportunityId), CalendarEvent (removed — scheduling now on ProjectTask), Estimate (projectId), Invoice (projectId/estimateId), Product (type/taskTypeId), Activity (email threading/attachments)
 - Automation rules: client auto-creation, project auto-creation, task generation, status cascades, auto follow-ups
 - Communication logging: manual (call/email/meeting/note) + Gmail auto-logging + activity comments
 - Site visits: schedulable, on-site photo/note capture, lifecycle status, photo continuity to project
@@ -285,7 +287,7 @@ Start with the Executive Summary to understand the business context, then procee
 - **Total Documents:** 12 (including this README)
 - **Total Lines:** ~9,100+ lines of documentation
 - **Total Code Examples:** 120+ code snippets
-- **Coverage:** 351 Swift files, 9 iOS data models, 25+ Supabase tables, 50+ UI components, 40+ Bubble API endpoints, full financial system, complete job lifecycle, project notes system, client portal
+- **Coverage:** 437 Swift files, 24 SwiftData models, 30 Supabase tables, 15 repositories, 50+ UI components, full financial system, complete job lifecycle, project notes system, client portal, inventory system, photo annotations, in-app notifications
 
 ---
 
@@ -308,7 +310,7 @@ This documentation is considered complete when:
 
 ✅ An agent with **zero prior context** can read these documents and build a fully functional OPS web application with 100% feature parity to iOS
 
-✅ All 9 SwiftData models documented with complete property lists and relationships
+✅ All 24 SwiftData models documented with complete property lists and relationships
 
 ✅ All API endpoints cataloged with request/response formats
 
@@ -345,13 +347,15 @@ See `C:\OPS\android-plan-v2\` for the complete Android conversion plan.
 
 ## Maintenance
 
-**Last Updated:** February 18, 2026
+**Last Updated:** February 28, 2026
 
-**iOS App Version:** 207 Swift files, iOS 17+, SwiftData + SwiftUI
+**iOS App Version:** 437 Swift files, 24 SwiftData models, iOS 17+, Supabase primary backend
 
-**Web App Version:** Next.js, dual-backend (Bubble.io + Supabase), Pipeline/Estimates/Invoices/Project Notes/Client Portal live
+**Web App Version:** Next.js, Supabase (30 tables, 13 migrations), Pipeline/Estimates/Invoices/Project Notes/Inventory/Notifications/Client Portal live
 
-**Document Version:** 1.4 — Added Client Portal documentation (magic link auth, estimate approve/decline, line-item questions, Stripe payments, two-way messaging, company branding)
+**Ecosystem:** ops-site (marketing website), ops-learn (learning platform), try-ops (interactive tutorial/demo)
+
+**Document Version:** 1.5 — Updated to reflect Supabase as primary backend, 437 Swift files, 24 SwiftData models, ecosystem apps, inventory/notifications/photo annotations
 
 **Maintainer:** Update these documents when making architectural changes, adding features, or modifying business rules. Keep code examples in sync with actual implementation.
 

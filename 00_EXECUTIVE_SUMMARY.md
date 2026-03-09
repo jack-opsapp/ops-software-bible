@@ -35,28 +35,36 @@ Based on survey data and target market analysis, OPS serves specialized service-
 
 **Not for:** General contractors, project management for construction sites, multi-trade coordination
 
-### User Personas
+### User Personas (5 Roles)
 
-**1. Admin (Company Owner)**
-- Full system access
-- Manages company settings, subscription, billing
+OPS uses a granular RBAC+ABAC permissions system with 5 preset roles, ~55 permissions, and scope support (`all`, `assigned`, `own`). See `03_DATA_ARCHITECTURE.md` > Permissions System Tables for the complete schema.
+
+**1. Admin (Hierarchy 1)**
+- Full system access including billing, roles, and all settings
+- Only role that can assign roles to other users
+- Manages company settings, subscription, team structure
+
+**2. Owner (Hierarchy 2)**
+- Full access except billing and role assignment
+- Can manage company settings and integrations
 - Oversees all projects, tasks, crew assignments
-- Sets up employees and client records
-- Views analytics and company performance
 
-**2. Office Crew**
-- Office staff managing scheduling and coordination
+**3. Office (Hierarchy 3)**
+- Office staff with full project and financial access
 - Creates and schedules projects and tasks
-- Assigns field crews to jobs
-- Manages client communication
-- Updates job status based on field reports
-- No field work responsibilities
+- Manages clients, estimates, invoices, pipeline
+- No company settings, billing, or role management
 
-**3. Field Crew**
+**4. Operator (Hierarchy 4)**
+- Lead tech / field supervisor
+- Creates projects, tasks, clients, estimates
+- Edits only assigned work (scoped access)
+- No pipeline, inventory, or admin access
+
+**5. Crew (Hierarchy 5)**
 - Workers in the field using the app on job sites
-- Views assigned tasks and schedules
-- Navigates to job sites with turn-by-turn directions
-- Updates task status (Unstarted, In Progress, Completed, Billed)
+- Views and edits only assigned tasks and projects
+- Creates expenses and personal calendar events
 - Captures and uploads job photos
 - Works in environments with poor connectivity, wearing gloves, in bright sunlight
 
@@ -99,15 +107,18 @@ Based on survey data and target market analysis, OPS serves specialized service-
 ## Key Statistics
 
 ### Technical Metrics (As of Feb 2026)
-- **iOS App:** 207 Swift files
-- **Data Models:** 9 SwiftData entities with relationships
+- **iOS App:** 437 Swift files
+- **Data Models:** 25 SwiftData entities (11 core + 14 Supabase-backed)
 - **UI Components:** 50+ reusable components
-- **Backend (Mobile):** Bubble.io REST API + AWS S3 image storage
-- **Backend (Web):** Supabase PostgreSQL (30+ tables, RLS, 5 migration files)
-- **Architecture:** Offline-first, triple-layer sync strategy, dual-backend transition
+- **Backend (Primary):** Supabase PostgreSQL — 15 repositories, 33 tables (10 core + 14 pipeline/financial + 6 inventory + 3 permissions), RLS (company isolation + permission-based on financial tables), Realtime WebSocket subscriptions, 16 migration files
+- **Permissions:** RBAC+ABAC system — 5 preset roles, ~55 granular permissions, scope support (all/assigned/own), 4 enforcement layers (RLS, route guard, UI gating, API checks)
+- **Backend (Legacy):** Bubble.io — still used for some onboarding flows, being phased out
+- **Image Storage:** AWS S3 with Lambda presigned URLs
+- **Architecture:** Offline-first, triple-layer sync strategy, Supabase as primary backend
 - **Minimum iOS:** iOS 17+ (modern SwiftUI + SwiftData)
 - **Authentication:** Google Sign-In, Apple Sign-In, Email/Password, 4-digit PIN
-- **Analytics:** Firebase Analytics with Google Ads integration
+- **Analytics:** Firebase Analytics (analytics only)
+- **Push Notifications:** OneSignal
 
 ### Business Metrics (As of Feb 15, 2026)
 - **Stage:** Early-stage, actively iterating
@@ -134,29 +145,32 @@ Based on survey data and target market analysis, OPS serves specialized service-
 - **Android:** In development (Kotlin + Jetpack Compose, see android-plan-v2)
 
 ### Backend
-- **Bubble.io:** No-code platform with REST API (source of truth for mobile apps)
-  - Base URL: `https://opsapp.co/version-test/api/1.1/`
-  - Handles operational data for iOS/Android: Projects, Tasks, Clients, Calendar, Company, Users
-  - Being gradually replaced by Supabase (see transition plan in 06_TECHNICAL_ARCHITECTURE.md)
-- **Supabase (PostgreSQL):** Database layer for OPS Web (source of truth for web app)
-  - **Pipeline/Financial tables** (migrations 001-003): CRM, Estimates, Invoices, Payments, Products, Tax Rates
-  - **Core entity tables** (migration 004): Companies, Users, Clients, Sub-Clients, Task Types, Projects, Calendar Events, Project Tasks, OPS Contacts
-  - **Pipeline reference links** (migration 005): UUID FK columns linking pipeline tables to core entities
-  - 30+ tables with Row-Level Security (RLS), DB triggers, audit logging
+- **Supabase (PostgreSQL):** Primary backend for both iOS and Web
+  - 15 Supabase repository classes (typed CRUD, company-scoped)
+  - 33 tables: 10 core entity + 14 pipeline/financial + 6 inventory + 3 permissions
+  - Row-Level Security (RLS) on all tables — company isolation on core tables, permission-based RLS on financial tables
+  - RBAC+ABAC permissions system: 5 preset roles, ~55 permissions, scope support
+  - Realtime WebSocket subscriptions for live data sync
+  - 16 migration files
   - Migration API (`POST /api/admin/migrate-bubble`) for bulk Bubble-to-Supabase data transfer
+- **Bubble.io (Legacy):** Original no-code backend, now being phased out
+  - Still referenced in some onboarding workflows (BubbleFields.swift has been removed)
+  - CentralizedSyncManager (Bubble-backed) replaced by SupabaseSyncManager
 - **AWS S3:** Image storage with direct upload and Lambda presigned URLs
-- **Firebase:** Analytics tracking, Google Sign-In authentication
+- **Firebase:** Analytics tracking only (Google Sign-In handled via OAuth)
+- **OneSignal:** Push notifications
 
 ### Data Layer
 - **SwiftData:** Apple's modern data persistence (iOS 17+)
-  - 9 @Model entities with relationships
-  - Offline-first architecture with sync flags
+  - 25 @Model entities (11 core + 14 Supabase-backed) registered in Schema
+  - Offline-first architecture with sync flags (`needsSync`, `lastSyncedAt`)
   - Soft delete pattern (deleted items marked, not removed)
   - Migration system via UserDefaults flags
 
 ### Authentication & Security
 - **OAuth:** Google Sign-In + Apple Sign-In via Firebase
 - **Local Security:** 4-digit PIN (stored in Keychain, resets on app background)
+- **Permissions:** RBAC+ABAC system — 5 preset roles, ~55 permissions with scopes (all/assigned/own), enforced at DB (RLS), route, UI, and API layers
 - **Subscription Enforcement:** Stripe integration via Bubble.io
 
 ### Mapping & Navigation
@@ -204,15 +218,26 @@ Every design decision reflects real-world field experience:
 
 ## Product Vision: Current State + Roadmap
 
-### Current State (iOS App + Web App)
+### Current State (iOS App + Web App + Ecosystem)
 
-**iOS App (207 Swift files):**
+**iOS App (437 Swift files, 25 SwiftData models):**
 - Job scheduling and crew assignment
-- Offline-first architecture
+- Offline-first architecture with Supabase as primary backend
 - Turn-by-turn navigation to job sites
 - Photo documentation with in-app camera
+- Photo annotations (markup, labels on job photos)
 - Task status tracking (Unstarted, In Progress, Completed, Billed)
-- Calendar/timeline views
+- Calendar/timeline views with personal events and time-off requests
+- **Job Board (redesigned March 2026):** Role-based section system
+  - Field crew: My Tasks (filtered by explicit assignment) + My Projects (assigned projects only)
+  - Office crew: Projects list + Tasks list + Kanban status view
+  - Admin + pipeline permission: all of the above + Pipeline CRM section
+  - Universal search sheet (role-filtered, pipeline-gated) accessible from header
+  - `DirectionalDragModifier` for conflict-free horizontal swipe within scroll views
+  - Accessibility-aware animations via `Animation.accessibleEaseInOut()` — respects iOS Reduce Motion setting
+- Pipeline CRM (iOS — opportunities, stage transitions; pipeline section in Job Board)
+- Inventory system (items, units, tags, snapshots)
+- In-app notifications (OneSignal push + local notification records)
 - Dark theme optimized for field use
 - 4-digit PIN security
 - Google Sign-In authentication
@@ -229,6 +254,12 @@ Every design decision reflects real-world field experience:
 - Keyboard shortcuts (Cmd+B sidebar, command palette)
 - Floating window system (draggable, minimizable create forms)
 - **Project Notes system:** first-class threaded notes with @mentions, author attribution, photo attachments, legacy migration from Bubble teamNotes
+- **Calendar/Schedule system:** 5-view calendar (month, week, day, team timeline, agenda) with drag-and-drop scheduling, event resize, click-to-create, detail panel, multi-filter sidebar, conflict detection, keyboard shortcuts, responsive (mobile/tablet/desktop)
+
+**Ecosystem Apps:**
+- **ops-site** — Marketing website (Next.js)
+- **ops-learn** — Learning platform (Next.js, Supabase)
+- **try-ops** — Interactive tutorial/demo, browser-based (Next.js), no download required
 
 ### Active Development (Based on Survey Feedback)
 Survey of target audience revealed critical missing features driving roadmap:
@@ -290,7 +321,7 @@ This executive summary is the entry point for the OPS Software Bible. For detail
 This Software Bible is considered complete when:
 
 1. ✅ An agent with **zero prior context** can read these documents and build a fully functional OPS web application with 100% feature parity to iOS
-2. ✅ All 9 SwiftData models are documented with complete property lists and relationships
+2. ✅ All 25 SwiftData models are documented with complete property lists and relationships
 3. ✅ All API endpoints are cataloged with request/response formats
 4. ✅ All 50+ UI components are documented with usage patterns
 5. ✅ Color palette, typography, and design constants are verified from production code
@@ -302,7 +333,8 @@ This Software Bible is considered complete when:
 
 ---
 
-**Last Updated:** February 18, 2026
-**Document Version:** 1.2
-**iOS App Version:** 207 Swift files, iOS 17+, SwiftData + SwiftUI
-**Web App Version:** Next.js, Supabase (core entities + financial system), Pipeline/Estimates/Invoices/Project Notes live
+**Last Updated:** March 2, 2026
+**Document Version:** 1.5
+**iOS App Version:** 437 Swift files, 25 SwiftData models, iOS 17+, Supabase primary backend
+**Web App Version:** Next.js, Supabase (33 tables, 16 migrations), Pipeline/Estimates/Invoices/Project Notes/Inventory/Notifications/Permissions/Calendar live
+**Ecosystem:** ops-site (marketing), ops-learn (learning platform), try-ops (interactive tutorial)

@@ -2,8 +2,8 @@
 
 **Document Purpose**: Complete technical reference for OPS iOS app architecture, file organization, state management patterns, and development best practices.
 
-**Last Updated**: February 18, 2026
-**iOS Codebase**: 351 Swift files, SwiftUI + SwiftData architecture
+**Last Updated**: March 8, 2026
+**iOS Codebase**: 437+ Swift files, SwiftUI + SwiftData architecture
 **Target Platform**: iOS 17.0+, iPhone/iPad
 
 ---
@@ -22,6 +22,7 @@
 10. [Code Organization](#code-organization)
 11. [Testing Requirements](#testing-requirements)
 12. [Dual-Backend Transition Architecture](#dual-backend-transition-architecture)
+13. [Crew Location Tracking Architecture](#crew-location-tracking-architecture)
 
 ---
 
@@ -42,11 +43,14 @@ OPS uses a **field-first architecture** designed for reliability, offline capabi
 ```
 ├── UI Layer: SwiftUI (declarative, native)
 ├── Data Layer: SwiftData (persistence, queries)
-├── Network Layer: URLSession + async/await
-├── State Management: ObservableObject + @Published
+├── Network Layer: Supabase Swift SDK + async/await
+├── Sync Engine: Operation Log + Replay (SyncEngine, OutboundProcessor, InboundProcessor)
+├── State Management: ObservableObject + @Published + @Observable
 ├── Navigation: TabView + NavigationStack
-├── Background Tasks: BackgroundTaskManager
+├── Maps: Mapbox SDK (MapboxMaps)
+├── Background Tasks: BackgroundSyncScheduler (BGTaskScheduler)
 ├── Image Handling: FileManager (not UserDefaults)
+├── Payments: Stripe SDK
 └── Authentication: Keychain + UserDefaults
 ```
 
@@ -55,22 +59,22 @@ OPS uses a **field-first architecture** designed for reliability, offline capabi
 ```
 ┌─────────────────────────────────────────────────────┐
 │                    Views (SwiftUI)                   │
-│   351 .swift files organized by feature domain      │
+│   437 .swift files organized by feature domain      │
 ├─────────────────────────────────────────────────────┤
 │              State Management Layer                  │
-│   AppState, DataController, ViewModels              │
+│   AppState, DataController, ViewModels (7 files)   │
 ├─────────────────────────────────────────────────────┤
 │                  Business Logic                      │
-│   Managers, Services, Utilities (26 files)         │
+│   Managers, Services, Utilities (25 files)         │
 ├─────────────────────────────────────────────────────┤
 │                   Data Layer                         │
-│   SwiftData Models (9 entities), DTOs (11 types)   │
+│   SwiftData Models (24 entities), DTOs (16 types)  │
 ├─────────────────────────────────────────────────────┤
 │                  Network Layer                       │
-│   CentralizedSyncManager, APIService, Endpoints     │
+│   SyncEngine, Processors, Supabase Repositories    │
 ├─────────────────────────────────────────────────────┤
 │                 Platform Services                    │
-│   CoreLocation, UserNotifications, MapKit          │
+│   CoreLocation, UserNotifications, Mapbox          │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -78,39 +82,56 @@ OPS uses a **field-first architecture** designed for reliability, offline capabi
 
 ## Directory Structure
 
-### Complete File Organization (351 Swift Files)
+### Complete File Organization (437 Swift Files)
 
 ```
-OPS/
-├── OPSApp.swift                    # App entry point, model container setup
+OPS/OPS/
+├── OPSApp.swift                    # App entry point, model container setup (24 models)
 ├── AppDelegate.swift               # Remote notifications, background tasks
 ├── AppState.swift                  # Global app state (project mode, UI flags)
 ├── ContentView.swift               # Root view, auth routing, PIN gating
 │
-├── DataModels/ (19 files)
+├── DataModels/ (35 files)
 │   ├── Project.swift               # Project entity with computed dates
 │   ├── ProjectTask.swift           # Task entity with calendar integration
-│   ├── CalendarEvent.swift         # Calendar display entity (task-linked)
 │   ├── TaskType.swift              # Customizable task categories
+│   ├── TaskStatusOption.swift      # Task status configuration
 │   ├── Client.swift                # Client management
 │   ├── SubClient.swift             # Additional client contacts
 │   ├── User.swift                  # Team members with role-based access
 │   ├── Company.swift               # Organization entity
 │   ├── TeamMember.swift            # Team member legacy model
 │   ├── OpsContact.swift            # Contacts integration
+│   ├── SyncOperation.swift         # Offline sync queue entries
 │   ├── Status.swift                # Project status enum
 │   ├── UserRole.swift              # Role-based permissions
-│   ├── BubbleTypes.swift           # Bubble API type definitions
-│   ├── BubbleImage.swift           # S3 image handling
 │   ├── SubscriptionEnums.swift     # Subscription types
-│   ├── TaskStatusOption.swift      # Task status configuration
-│   └── (3 more supporting files)
+│   ├── InventoryItem.swift         # Inventory item entity
+│   ├── InventorySnapshot.swift     # Inventory count snapshots
+│   ├── InventorySnapshotItem.swift # Individual snapshot line items
+│   ├── InventoryTag.swift          # Inventory tagging/categorization
+│   ├── InventoryUnit.swift         # Units of measure
+│   ├── Enums/ (3 files)
+│   │   ├── ActivityType.swift      # CRM activity type definitions
+│   │   ├── FinancialEnums.swift    # Invoice/payment status enums
+│   │   └── PipelineStage.swift     # Sales pipeline stage definitions
+│   └── Supabase/ (14 files)
+│       ├── Opportunity.swift       # Sales pipeline opportunity
+│       ├── Activity.swift          # CRM activity log entry
+│       ├── FollowUp.swift          # Scheduled follow-up actions
+│       ├── StageTransition.swift   # Pipeline stage change history
+│       ├── Estimate.swift          # Project cost estimates
+│       ├── EstimateLineItem.swift  # Individual estimate line items
+│       ├── Invoice.swift           # Client invoices
+│       ├── InvoiceLineItem.swift   # Individual invoice line items
+│       ├── Payment.swift           # Payment records
+│       ├── Product.swift           # Products/materials catalog
+│       ├── SiteVisit.swift         # Site visit records
+│       ├── ProjectNote.swift       # Project notes
+│       ├── PhotoAnnotation.swift   # Photo markup annotations
+│       └── CalendarUserEvent.swift # Personal events + time-off requests (added 2026-03-02)
 │
-├── Network/ (44 files)
-│   ├── API/ (3 files)
-│   │   ├── APIService.swift        # Core HTTP client (URLSession)
-│   │   ├── BubbleFields.swift      # Field name constants (CRITICAL)
-│   │   └── APIError.swift          # Error types
+├── Network/ (54 files — updated 2026-03-08)
 │   ├── Auth/ (6 files)
 │   │   ├── AuthManager.swift       # Authentication coordinator
 │   │   ├── GoogleSignInManager.swift
@@ -118,155 +139,447 @@ OPS/
 │   │   ├── KeychainManager.swift   # Secure token storage
 │   │   ├── SimplePINManager.swift  # 4-digit PIN (iOS)
 │   │   └── AuthError.swift
-│   ├── DTOs/ (11 files)
-│   │   ├── ProjectDTO.swift        # Project API mapping
-│   │   ├── TaskDTO.swift           # Task API mapping
-│   │   ├── CalendarEventDTO.swift  # Calendar API mapping
-│   │   ├── ClientDTO.swift         # Client API mapping
-│   │   ├── UserDTO.swift           # User API mapping
-│   │   ├── CompanyDTO.swift        # Company API mapping
-│   │   └── (5 more DTOs)
-│   ├── Endpoints/ (7 files)
-│   │   ├── ProjectEndpoints.swift
-│   │   ├── TaskEndpoints.swift
-│   │   ├── CalendarEventEndpoints.swift
-│   │   ├── ClientEndpoints.swift
-│   │   └── (3 more endpoint files)
-│   ├── Sync/ (2 files)
-│   │   ├── CentralizedSyncManager.swift  # Master sync orchestrator (~2,200 lines)
-│   │   └── BackgroundTaskManager.swift   # iOS background task scheduling
+│   ├── DTOs/ (5 files)
+│   │   ├── InventoryItemDTO.swift
+│   │   ├── InventorySnapshotDTO.swift
+│   │   ├── InventorySnapshotItemDTO.swift
+│   │   ├── InventoryUnitDTO.swift
+│   │   └── InventoryTagDTO.swift
+│   ├── Supabase/ (30 files — updated 2026-03-02)
+│   │   ├── SupabaseService.swift   # Core Supabase client wrapper
+│   │   ├── SupabaseConfig.swift    # Supabase URL/keys configuration
+│   │   ├── DTOs/ (12 files)
+│   │   │   ├── CoreEntityDTOs.swift           # Project/Task/User/Client/Company DTOs
+│   │   │   ├── CoreEntityConverters.swift     # DTO-to-SwiftData model converters
+│   │   │   ├── OpportunityDTOs.swift          # Pipeline opportunity DTOs
+│   │   │   ├── EstimateDTOs.swift             # Estimate DTOs
+│   │   │   ├── InvoiceDTOs.swift              # Invoice DTOs
+│   │   │   ├── ProductDTOs.swift              # Product catalog DTOs
+│   │   │   ├── InventoryDTOs.swift            # Inventory DTOs
+│   │   │   ├── ProjectNoteDTOs.swift          # Project notes DTOs
+│   │   │   ├── PhotoAnnotationDTOs.swift      # Photo annotation DTOs
+│   │   │   ├── NotificationDTO.swift          # Push notification DTOs
+│   │   │   ├── CalendarUserEventDTOs.swift    # Personal event / time-off DTOs (added 2026-03-02)
+│   │   │   └── SupabaseDateParsing.swift      # Date format parsing utilities
+│   │   └── Repositories/ (16 files)
+│   │       ├── ProjectRepository.swift
+│   │       ├── TaskRepository.swift
+│   │       ├── ClientRepository.swift
+│   │       ├── UserRepository.swift
+│   │       ├── CompanyRepository.swift
+│   │       ├── TaskTypeRepository.swift
+│   │       ├── OpportunityRepository.swift
+│   │       ├── EstimateRepository.swift
+│   │       ├── InvoiceRepository.swift
+│   │       ├── ProductRepository.swift
+│   │       ├── InventoryRepository.swift
+│   │       ├── AccountingRepository.swift
+│   │       ├── ProjectNoteRepository.swift
+│   │       ├── PhotoAnnotationRepository.swift
+│   │       ├── NotificationRepository.swift
+│   │       └── CalendarUserEventRepository.swift  # CRUD for calendar_user_events (added 2026-03-02)
+│   ├── Sync/ (8 files — rebuilt 2026-03-08)
+│   │   ├── SyncEngine.swift             # @MainActor @Observable central orchestrator (push/pull cycles, lifecycle)
+│   │   ├── OutboundProcessor.swift      # @MainActor local→server push with operation coalescing + dependency ordering
+│   │   ├── InboundProcessor.swift       # @MainActor server→local pull with field-level merge protection
+│   │   ├── RealtimeProcessor.swift      # @MainActor ObservableObject Supabase Realtime WebSocket (9 entity types)
+│   │   ├── PhotoProcessor.swift         # @MainActor adaptive photo uploads (WiFi 3 concurrent, cellular 1)
+│   │   ├── BackgroundSyncScheduler.swift  # BGTaskScheduler wrapper (refresh 15min, processing 30min)
+│   │   ├── SyncTypes.swift              # Shared enums (SyncError, ConnectionState, SyncEntityType — 24 types)
+│   │   ├── SyncStatusProvider.swift     # UI state bridge for sync indicators
+│   │   └── SupabaseSyncManager.swift    # Legacy adapter (retained for entity fetch methods not yet migrated)
 │   ├── Services/ (1 file)
 │   │   └── AppMessageService.swift
-│   ├── ConnectivityMonitor.swift   # Network reachability observer
+│   ├── ConnectivityManager.swift   # @MainActor ObservableObject NWPathMonitor with quality scoring + lying WiFi detection
 │   ├── ImageSyncManager.swift      # S3 image upload/download
 │   ├── S3UploadService.swift       # Direct S3 upload
-│   └── PresignedURLUploadService.swift
+│   ├── PresignedURLUploadService.swift
+│   └── PhotoAnnotationSyncManager.swift  # Photo annotation sync
 │
-├── ViewModels/ (2 files)
+├── ViewModels/ (7 files)
 │   ├── CalendarViewModel.swift     # Calendar state, date selection, filters
-│   └── ProjectsViewModel.swift     # Project list state
+│   ├── ProjectsViewModel.swift     # Project list state
+│   ├── PipelineViewModel.swift     # Sales pipeline state
+│   ├── OpportunityDetailViewModel.swift  # Opportunity detail state
+│   ├── EstimateViewModel.swift     # Estimate management state
+│   ├── InvoiceViewModel.swift      # Invoice management state
+│   └── ProjectNotesViewModel.swift # Project notes state
 │
-├── Views/ (200+ files organized by feature)
+├── Views/ (~192 files organized by feature)
 │   ├── MainTabView.swift           # Tab navigation root
 │   ├── LoginView.swift             # Authentication entry
+│   ├── ForgotPasswordView.swift    # Password reset
 │   ├── SplashScreen.swift          # App launch screen
 │   ├── SimplePINEntryView.swift    # PIN authentication UI
+│   ├── ScheduleView.swift          # Calendar/schedule tab root
+│   ├── SettingsView.swift          # Settings tab root
 │   │
 │   ├── Home/ (2 files)
 │   │   ├── HomeView.swift          # Project carousel, quick actions
 │   │   └── HomeContentView.swift   # Home screen content wrapper
 │   │
-│   ├── JobBoard/ (17 files)
-│   │   ├── JobBoardView.swift      # Main job board interface
-│   │   ├── JobBoardDashboard.swift # Analytics dashboard
-│   │   ├── UniversalJobBoardCard.swift  # Project/task card component
-│   │   ├── ProjectFormSheet.swift  # Project create/edit form
-│   │   ├── TaskFormSheet.swift     # Task create/edit form
-│   │   ├── ClientSheet.swift       # Client form
-│   │   ├── ClientListView.swift    # Client directory
+│   ├── JobBoard/ (21 files)
+│   │   ├── JobBoardView.swift             # Main job board — role-based section switcher
+│   │   ├── JobBoardProjectListView.swift  # Projects section (office/admin)
+│   │   ├── JobBoardMyTasksView.swift      # My Tasks section (field crew)
+│   │   ├── JobBoardKanbanView.swift       # Kanban status view (office/admin)
+│   │   ├── JobBoardAnalyticsView.swift    # Analytics dashboard
+│   │   ├── UniversalJobBoardCard.swift    # Universal project/task/client card
+│   │   ├── UniversalSearchBar.swift       # Inline search bar component
+│   │   ├── UniversalSearchSheet.swift     # Full-screen role-filtered search sheet
+│   │   ├── ProjectFormSheet.swift         # Project create/edit form
+│   │   ├── TaskFormSheet.swift            # Task create/edit form
+│   │   ├── ClientSheet.swift              # Client form
+│   │   ├── ClientListView.swift           # Client directory
 │   │   ├── CopyFromProjectSheet.swift
-│   │   ├── TaskTypeSheet.swift     # Task type management
-│   │   └── (8 more job board components)
+│   │   ├── TaskTypeSheet.swift            # Task type management
+│   │   ├── TaskTypeDetailSheet.swift
+│   │   ├── QuickActionSheetHeader.swift
+│   │   ├── TaskManagementSheets.swift
+│   │   ├── ProjectManagementSheets.swift
+│   │   ├── ProjectListFilterSheet.swift
+│   │   ├── TaskListFilterSheet.swift
+│   │   └── SortOptions.swift
 │   │
-│   ├── Calendar Tab/ (14 files)
-│   │   ├── MonthGridView.swift     # Month calendar grid
-│   │   ├── Components/ (10 files)
-│   │   │   ├── CalendarEventCard.swift
+│   ├── Calendar Tab/ (15 files — updated 2026-03-02)
+│   │   ├── DayCanvasView.swift     # Horizontal 3-page day pager (replaces ProjectListView)
+│   │   ├── MonthGridView.swift     # Full month grid (pinch-to-collapse)
+│   │   ├── Components/ (13 files)
+│   │   │   ├── CalendarEventCard.swift          # Task card with DayPosition multi-day bleed
+│   │   │   ├── CalendarUserEventCard.swift       # Personal event / time-off card (added 2026-03-02)
 │   │   │   ├── CalendarHeaderView.swift
 │   │   │   ├── CalendarFilterView.swift
+│   │   │   ├── CalendarDaySelector.swift        # Week strip + month grid toggle
+│   │   │   ├── WeekDayCell.swift                # Day cell with density bars
+│   │   │   ├── PersonalEventSheet.swift         # Create personal event bottom sheet (added 2026-03-02)
+│   │   │   ├── TimeOffRequestSheet.swift        # Submit time-off request bottom sheet (added 2026-03-02)
+│   │   │   ├── ProjectSearchFilterView.swift
+│   │   │   ├── ProjectSearchSheet.swift
+│   │   │   ├── DatePickerPopover.swift
 │   │   │   ├── DayCell.swift
-│   │   │   └── (6 more components)
-│   │   └── ProjectViews/ (2 files)
-│   │       ├── ProjectListView.swift
-│   │       └── DayEventsSheet.swift
+│   │   │   └── SegmentedBorder.swift
+│   │   │
+│   │   # Deleted: CalendarToggleView.swift (replaced by CalendarDaySelector month toggle)
+│   │   # Deleted: ProjectListView.swift (replaced by DayCanvasView)
 │   │
-│   ├── Settings/ (20 files)
-│   │   ├── SettingsView.swift      # Settings root
+│   ├── Settings/ (23 files)
 │   │   ├── ProfileSettingsView.swift
 │   │   ├── SecuritySettingsView.swift
 │   │   ├── NotificationSettingsView.swift
 │   │   ├── MapSettingsView.swift
 │   │   ├── DataStorageSettingsView.swift
+│   │   ├── AppSettingsView.swift
+│   │   ├── ProjectSettingsView.swift
+│   │   ├── TaskSettingsView.swift
+│   │   ├── OrganizationSettingsView.swift
+│   │   ├── InventorySettingsView.swift
+│   │   ├── IntegrationsSettingsView.swift
+│   │   ├── SchedulingTypeExplanationView.swift
+│   │   ├── WhatsNewView.swift
+│   │   ├── ComingSoonView.swift
+│   │   ├── SettingsSearchSheet.swift
 │   │   ├── Organization/ (3 files)
 │   │   │   ├── OrganizationDetailsView.swift
 │   │   │   ├── ManageTeamView.swift
 │   │   │   └── ManageSubscriptionView.swift
-│   │   └── (12 more settings views)
+│   │   └── Components/ (4 files)
+│   │       ├── SettingsComponents.swift
+│   │       ├── ReportIssueView.swift
+│   │       ├── FeatureRequestView.swift
+│   │       ├── NotificationSettingsControls.swift
+│   │       └── ProjectNotificationPreferences.swift
 │   │
-│   ├── Components/ (90+ files organized by domain)
-│   │   ├── Common/ (30 files)
+│   ├── Components/ (76 files organized by domain)
+│   │   ├── Common/ (26 files)
 │   │   │   ├── LoadingOverlay.swift
 │   │   │   ├── CustomTabBar.swift
+│   │   │   ├── TabBarBackground.swift
 │   │   │   ├── AppHeader.swift
 │   │   │   ├── SearchField.swift
-│   │   │   └── (26 more common components)
+│   │   │   ├── AddressSearchField.swift
+│   │   │   ├── AddressAutocompleteField.swift
+│   │   │   ├── CustomAlert.swift
+│   │   │   ├── DeleteConfirmation.swift
+│   │   │   ├── DeletionSheet.swift
+│   │   │   ├── TacticalLoadingBar.swift
+│   │   │   ├── NotificationBanner.swift
+│   │   │   ├── NavigationBanner.swift
+│   │   │   ├── StorageOptionSlider.swift
+│   │   │   ├── ImageSyncProgressView.swift
+│   │   │   ├── ExpandableNotesView.swift
+│   │   │   ├── UnassignedRolesOverlay.swift
+│   │   │   ├── AppMessageView.swift
+│   │   │   ├── RefreshIndicator.swift
+│   │   │   ├── NavigationControlsView.swift
+│   │   │   ├── ContactDetailSheet.swift
+│   │   │   ├── PushInMessage.swift
+│   │   │   ├── ReassignmentRows.swift
+│   │   │   ├── LocationPermissionView.swift
+│   │   │   ├── FilterSheet.swift
+│   │   │   └── CompanyTeamListView.swift
 │   │   ├── Cards/ (5 files)
 │   │   │   ├── ClientInfoCard.swift
+│   │   │   ├── CompanyContactCard.swift
 │   │   │   ├── LocationCard.swift
 │   │   │   ├── NotesCard.swift
 │   │   │   └── TeamMembersCard.swift
-│   │   ├── Project/ (8 files)
+│   │   ├── Project/ (9 files)
 │   │   │   ├── ProjectCard.swift
+│   │   │   ├── ProjectCarousel.swift
+│   │   │   ├── ProjectHeader.swift
+│   │   │   ├── ProjectActionBar.swift
 │   │   │   ├── ProjectDetailsView.swift
 │   │   │   ├── TaskDetailsView.swift
-│   │   │   └── (5 more project components)
+│   │   │   ├── TaskCompletionChecklistSheet.swift
+│   │   │   ├── ProjectSheetContainer.swift
+│   │   │   ├── ProjectSummaryCard.swift
+│   │   │   └── ProjectNotesView.swift
 │   │   ├── Images/ (6 files)
+│   │   │   ├── ImagePicker.swift
+│   │   │   ├── ImagePickerView.swift
+│   │   │   ├── ProjectImagesSimple.swift
+│   │   │   ├── ProjectImagesSection.swift
+│   │   │   ├── ProjectImageView.swift
+│   │   │   ├── ProjectPhotosGrid.swift
+│   │   │   └── PhotoAnnotationView.swift
 │   │   ├── Map/ (4 files)
-│   │   ├── User/ (8 files)
-│   │   └── (30+ more component files)
+│   │   │   ├── ProjectMapAnnotation.swift
+│   │   │   ├── MiniMapView.swift
+│   │   │   ├── ProjectMapView.swift
+│   │   │   └── RouteDirectionsView.swift
+│   │   ├── User/ (7 files)
+│   │   │   ├── CompanyTeamMembersListView.swift
+│   │   │   ├── ProjectTeamView.swift
+│   │   │   ├── OrganizationTeamView.swift
+│   │   │   ├── TeamMemberListView.swift
+│   │   │   ├── TaskTeamView.swift
+│   │   │   ├── UserProfileCard.swift
+│   │   │   └── ContactDetailView.swift
+│   │   ├── Contact/ (3 files)
+│   │   │   ├── ContactCreatorView.swift
+│   │   │   ├── ContactPicker.swift
+│   │   │   └── ContactUpdater.swift
+│   │   ├── Client/ (2 files)
+│   │   │   ├── SubClientListView.swift
+│   │   │   └── SubClientEditSheet.swift
+│   │   ├── Event/ (1 file)
+│   │   │   └── EventCarousel.swift
+│   │   ├── Tasks/ (1 file)
+│   │   │   └── TaskListView.swift
+│   │   ├── Task/ (1 file)
+│   │   │   └── TaskSelectorBar.swift
+│   │   ├── Scheduling/ (1 file)
+│   │   │   └── CalendarSchedulerSheet.swift
+│   │   ├── Sync/ (2 files — updated 2026-03-08)
+│   │   │   ├── SyncStatusIndicator.swift
+│   │   │   └── SyncRingView.swift         # Rotating arc indicator shown in AppHeader during sync
+│   │   ├── Team/ (2 files)
+│   │   │   ├── TeamRoleManagementView.swift
+│   │   │   └── TeamRoleAssignmentSheet.swift
+│   │   ├── FloatingActionMenu.swift
+│   │   ├── UserAvatar.swift
+│   │   ├── CompanyAvatar.swift
+│   │   ├── ProfileImageUploader.swift
+│   │   └── OptionalSectionPill.swift
 │   │
-│   ├── Debug/ (10 files)
+│   ├── Pipeline/ (12 files)
+│   │   ├── PipelineView.swift
+│   │   ├── PipelineTabView.swift
+│   │   ├── PipelinePlaceholderView.swift
+│   │   ├── PipelineStageStrip.swift
+│   │   ├── OpportunityCard.swift
+│   │   ├── OpportunityDetailView.swift
+│   │   ├── OpportunityFormSheet.swift
+│   │   ├── OpportunityBadgeView.swift
+│   │   ├── ActivityFormSheet.swift
+│   │   ├── ActivityRowView.swift
+│   │   ├── FollowUpRowView.swift
+│   │   └── MarkLostSheet.swift
+│   │
+│   ├── Inventory/ (12 files)
+│   │   ├── InventoryView.swift
+│   │   ├── InventoryListView.swift
+│   │   ├── InventoryFormSheet.swift
+│   │   ├── InventoryManageTagsSheet.swift
+│   │   ├── SnapshotListView.swift
+│   │   ├── QuantityAdjustmentSheet.swift
+│   │   ├── BulkQuantityAdjustmentSheet.swift
+│   │   ├── BulkTagsSheet.swift
+│   │   └── Import/ (4 files)
+│   │       ├── SpreadsheetImportSheet.swift
+│   │       ├── ImportConfigView.swift
+│   │       ├── ColumnMappingView.swift
+│   │       └── ImportPreviewView.swift
+│   │
+│   ├── Estimates/ (6 files)
+│   │   ├── EstimatesListView.swift
+│   │   ├── EstimateDetailView.swift
+│   │   ├── EstimateFormSheet.swift
+│   │   ├── EstimateCard.swift
+│   │   ├── LineItemEditSheet.swift
+│   │   └── ProductPickerSheet.swift
+│   │
+│   ├── Invoices/ (4 files)
+│   │   ├── InvoicesListView.swift
+│   │   ├── InvoiceDetailView.swift
+│   │   ├── InvoiceCard.swift
+│   │   └── PaymentRecordSheet.swift
+│   │
+│   ├── Accounting/ (1 file)
+│   │   └── AccountingDashboard.swift
+│   │
+│   ├── Products/ (2 files)
+│   │   ├── ProductsListView.swift
+│   │   └── ProductFormSheet.swift
+│   │
+│   ├── Notifications/ (1 file)
+│   │   └── NotificationListView.swift  # Includes SyncStatusSection showing pending/failed operations with per-item retry
+│   │
+│   ├── Debug/ (8 files)
 │   │   ├── DeveloperDashboard.swift
-│   │   ├── CalendarEventsDebugView.swift
-│   │   └── (8 more debug tools)
+│   │   ├── ClearDataView.swift
+│   │   ├── ScheduledTasksDebugView.swift
+│   │   ├── TaskTypesDebugView.swift
+│   │   ├── TaskListDebugView.swift
+│   │   ├── TaskTestView.swift
+│   │   ├── OnboardingPreviewView.swift
+│   │   └── CreateDefaultInventoryUnitsView.swift
 │   │
 │   └── Subscription/ (4 files)
 │       ├── SubscriptionLockoutView.swift
-│       └── (3 more subscription views)
+│       ├── GracePeriodBanner.swift
+│       ├── SeatManagementView.swift
+│       └── PlanSelectionView.swift
 │
-├── Onboarding/ (45 files)
-│   ├── Container/
+├── Onboarding/ (56 files)
+│   ├── OnboardingCopy.swift        # Copy text constants
+│   ├── Container/ (1 file)
 │   │   └── OnboardingContainer.swift
-│   ├── Coordinators/
+│   ├── Coordinators/ (1 file)
 │   │   └── OnboardingCoordinator.swift
-│   ├── Manager/
+│   ├── Manager/ (1 file)
 │   │   └── OnboardingManager.swift
-│   ├── Screens/ (14 files)
+│   ├── State/ (1 file)
+│   │   └── OnboardingState.swift
+│   ├── Models/ (1 file)
+│   │   └── OnboardingModels.swift
+│   ├── Services/ (1 file)
+│   │   └── OnboardingService.swift
+│   ├── ViewModels/ (1 file)
+│   │   └── OnboardingViewModel.swift
+│   ├── Screens/ (13 files)
 │   │   ├── WelcomeScreen.swift
 │   │   ├── UserTypeSelectionScreen.swift
 │   │   ├── CompanySetupScreen.swift
-│   │   └── (11 more screens)
-│   ├── Views/ (15 files)
-│   ├── Components/ (9 files)
-│   └── (7 more onboarding files)
+│   │   ├── SignupScreen.swift
+│   │   ├── ProfileScreen.swift
+│   │   ├── ProfileJoinScreen.swift
+│   │   ├── ProfileCompanyScreen.swift
+│   │   ├── CredentialsScreen.swift
+│   │   ├── LoginScreen.swift
+│   │   ├── ReadyScreen.swift
+│   │   ├── PostTutorialCTAScreen.swift
+│   │   ├── CodeEntryScreen.swift
+│   │   ├── CompanyDetailsScreen.swift
+│   │   └── CompanyCodeScreen.swift
+│   ├── Views/ (18 files)
+│   │   ├── OnboardingPresenter.swift
+│   │   ├── OnboardingPreviewHelpers.swift
+│   │   ├── OnboardingContainerView.swift
+│   │   ├── OnboardingFlowPreview.swift
+│   │   ├── Screens/ (10 files)
+│   │   │   ├── OrganizationJoinView.swift
+│   │   │   ├── FieldSetupView.swift
+│   │   │   ├── EmailView.swift
+│   │   │   ├── UserInfoView.swift
+│   │   │   ├── CompanyCreationLoadingView.swift
+│   │   │   ├── CompanyContactView.swift
+│   │   │   ├── CompanyAddressView.swift
+│   │   │   ├── CompanyBasicInfoView.swift
+│   │   │   ├── WelcomeView.swift
+│   │   │   ├── CompletionView.swift
+│   │   │   ├── CompanyCodeDisplayView.swift
+│   │   │   ├── TeamInvitesView.swift
+│   │   │   ├── PermissionsView.swift
+│   │   │   ├── CompanyCodeInputView.swift
+│   │   │   ├── BillingInfoView.swift
+│   │   │   ├── CompanyDetailsView.swift
+│   │   │   └── UserTypeSelectionView.swift
+│   │   └── Components/ (2 files)
+│   │       ├── OnboardingComponents.swift
+│   │       └── AnimatedOPSLogo.swift
+│   └── Components/ (10 files)
+│       ├── OnboardingProgressBar.swift
+│       ├── OnboardingScaffold.swift
+│       ├── PillButtonGroup.swift
+│       ├── OnboardingHeader.swift
+│       ├── UserTypeSelectionContent.swift
+│       ├── SocialAuthButton.swift
+│       ├── OnboardingHelpSheet.swift
+│       ├── TypewriterText.swift
+│       ├── OnboardingPrimaryButton.swift
+│       ├── CompanyCodeDisplay.swift
+│       └── OnboardingLoadingOverlay.swift
 │
-├── Tutorial/ (19 files)
+├── Tutorial/ (21 files)
+│   ├── Analytics/ (1 file)
+│   │   └── TutorialAnalyticsService.swift
 │   ├── Data/ (6 files)
 │   │   ├── TutorialDemoDataManager.swift
 │   │   ├── DemoProjects.swift
-│   │   └── (4 more demo data files)
+│   │   ├── DemoClients.swift
+│   │   ├── DemoTaskTypes.swift
+│   │   ├── DemoTeamMembers.swift
+│   │   └── DemoIDs.swift
+│   ├── Environment/ (1 file)
+│   │   └── TutorialEnvironment.swift
 │   ├── State/ (2 files)
 │   │   ├── TutorialStateManager.swift
 │   │   └── TutorialPhase.swift
-│   ├── Views/ (6 files)
+│   ├── Flows/ (1 file)
+│   │   └── TutorialLauncherView.swift
+│   ├── Utilities/ (1 file)
+│   │   └── PreferenceKeys.swift
+│   ├── Views/ (7 files)
 │   │   ├── TutorialOverlayView.swift
 │   │   ├── TutorialTooltipView.swift
-│   │   └── (4 more tutorial views)
-│   └── (5 more tutorial files)
+│   │   ├── TutorialCollapsibleTooltip.swift
+│   │   ├── TutorialSwipeIndicator.swift
+│   │   ├── TutorialInlineSheet.swift
+│   │   ├── TutorialActionBar.swift
+│   │   └── TutorialCompletionView.swift
+│   └── Wrappers/ (2 files)
+│       ├── TutorialCreatorFlowWrapper.swift
+│       └── TutorialEmployeeFlowWrapper.swift
 │
-├── Map/ (13 files)
-│   ├── Core/ (4 files)
-│   │   ├── MapCoordinator.swift    # Map state management
-│   │   ├── NavigationEngine.swift  # Turn-by-turn navigation
-│   │   ├── LocationService.swift   # CoreLocation wrapper
-│   │   └── KalmanHeadingFilter.swift  # Heading smoothing
-│   └── Views/ (9 files)
-│       ├── MapView.swift
-│       ├── MapNavigationView.swift
-│       └── (7 more map views)
+├── Map/ (19 files)
+│   ├── Core/ (6 files)
+│   │   ├── OPSMapCoordinator.swift    # Map state management
+│   │   ├── OPSNavigationManager.swift # Turn-by-turn navigation
+│   │   ├── GeofenceManager.swift      # Geofencing for job sites
+│   │   ├── OPSMapStyle.swift          # Custom map styling
+│   │   ├── MapStyleApplicator.swift   # Style application logic
+│   │   └── MapboxConfig.swift         # Mapbox SDK configuration
+│   ├── Models/ (1 file)
+│   │   └── CrewLocationUpdate.swift   # Real-time crew position model
+│   ├── Annotations/ (2 files)
+│   │   ├── CrewAnnotationRenderer.swift   # Crew member map pins
+│   │   └── ProjectAnnotationRenderer.swift # Project location pins
+│   ├── Services/ (2 files)
+│   │   ├── CrewLocationBroadcaster.swift  # Publishes device location to Supabase
+│   │   └── CrewLocationSubscriber.swift   # Subscribes to crew locations via Supabase Realtime
+│   └── Views/ (8 files)
+│       ├── OPSMapView.swift
+│       ├── OPSMapContainer.swift
+│       ├── MapLocationPermissionView.swift
+│       ├── NavigationHeader.swift
+│       ├── MapFilterChips.swift
+│       ├── ProjectPinCard.swift
+│       ├── CrewTooltipCard.swift
+│       └── GeofenceBannerView.swift
 │
-├── Utilities/ (26 files)
-│   ├── DataController.swift        # Central data coordinator (300+ lines)
+├── Utilities/ (25 files)
+│   ├── DataController.swift        # Central data coordinator (800+ lines)
 │   ├── DataHealthManager.swift     # Data integrity checks
 │   ├── AnalyticsManager.swift      # Event tracking
 │   ├── ImageFileManager.swift      # File-based image storage
@@ -274,44 +587,83 @@ OPS/
 │   ├── LocationManager.swift       # Location permissions + updates
 │   ├── NotificationManager.swift   # Push notification handling
 │   ├── SubscriptionManager.swift   # Stripe subscription sync
-│   └── (18 more utility files)
+│   ├── FieldErrorHandler.swift     # User-facing error display
+│   ├── DebugLogger.swift           # Debug logging utilities
+│   ├── InProgressManager.swift     # In-progress state tracking
+│   ├── NotificationBatcher.swift   # Notification batching
+│   ├── OnboardingAnalyticsService.swift  # Onboarding event tracking
+│   ├── SpreadsheetParser.swift     # CSV/spreadsheet import parsing
+│   ├── AppConfiguration.swift      # App-level config
+│   ├── DateHelper.swift            # Date formatting utilities
+│   ├── StripeConfiguration.swift   # Stripe SDK configuration
+│   ├── UIComponents.swift          # Shared UI helpers
+│   ├── TabBarPadding.swift         # Tab bar spacing utilities
+│   ├── SwiftDataHelper.swift       # SwiftData convenience methods
+│   ├── ArrayTransformer.swift      # Array value transformer
+│   ├── SwipeBackGestureModifier.swift  # Swipe-to-go-back modifier
+│   ├── SwipeBackGesture.swift      # Swipe gesture recognizer
+│   ├── KeyboardDismissalModifier.swift # Keyboard dismiss on tap
+│   └── UIColor+Hex.swift           # UIColor hex string conversion
 │
-├── Styles/ (17 files)
+├── Styles/ (19 files)
 │   ├── OPSStyle.swift              # Design system constants
 │   ├── Fonts.swift                 # Typography definitions
-│   └── Components/ (15 files)
+│   └── Components/ (17 files)
 │       ├── ButtonStyles.swift
 │       ├── CardStyles.swift
 │       ├── FormInputs.swift
-│       └── (12 more style components)
+│       ├── FormTextField.swift
+│       ├── ExpandableSection.swift
+│       ├── IconBadge.swift
+│       ├── SectionCard.swift
+│       ├── SegmentedControl.swift
+│       ├── TaskLineItem.swift
+│       ├── StatusBadge.swift
+│       ├── ProfileCard.swift
+│       ├── OPSComponents.swift
+│       ├── CategoryCard.swift
+│       ├── ListItems.swift
+│       ├── NotesDisplayField.swift
+│       ├── SettingsHeader.swift
+│       └── StandardSheetToolbar.swift
 │
 ├── Extensions/ (4 files)
 │   ├── String+AddressFormatting.swift
 │   ├── UIApplication+Extensions.swift
-│   └── (2 more extensions)
+│   ├── UIImage+Extensions.swift
+│   └── UIKit+Extensions.swift
 │
-├── Services/ (1 file)
-│   └── OneSignalService.swift      # Push notification provider
+├── Services/ (2 files)
+│   ├── OneSignalService.swift      # Push notification provider
+│   └── StripeService.swift         # Stripe payment integration
 │
-└── Navigation/ (1 file)
-    └── PersistentNavigationHeader.swift
+├── V2/ (1 file)
+│   └── CertificationsSettingsView.swift  # Future certifications feature
+│
+└── Tests/ (1 file)
+    └── MapTapGestureTest.swift     # Map gesture test
 ```
 
 ### File Count Summary
 
 ```
-Total: 351 Swift files
+Total: 437 Swift files
 
 By Category:
-- Views/UI: ~200 files (57%)
-- Network/API: 44 files (13%)
-- Onboarding: 45 files (13%)
-- Utilities: 26 files (7%)
-- Tutorial: 19 files (5%)
-- Data Models: 19 files (5%)
-- Map: 13 files (4%)
-- Styles: 17 files (5%)
-- Other: ~18 files (5%)
+- Views/UI: ~192 files (44%)
+- Onboarding: 56 files (13%)
+- Network/API: 50 files (11%)
+- DataModels: 35 files (8%)
+- Utilities: 25 files (6%)
+- Tutorial: 21 files (5%)
+- Map: 19 files (4%)
+- Styles: 19 files (4%)
+- ViewModels: 7 files (2%)
+- Root files: 4 files (1%)
+- Extensions: 4 files (1%)
+- Services: 2 files (<1%)
+- V2: 1 file (<1%)
+- Tests: 1 file (<1%)
 ```
 
 ---
@@ -324,9 +676,10 @@ By Category:
 // OPSApp.swift
 @main
 struct OPSApp: App {
-    // Shared model container for entire app
+    // Shared model container for entire app (24 models)
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
+            // Core data models (11)
             User.self,
             Project.self,
             Company.self,
@@ -336,8 +689,22 @@ struct OPSApp: App {
             ProjectTask.self,
             TaskType.self,
             TaskStatusOption.self,
-            CalendarEvent.self,
-            OpsContact.self
+            SyncOperation.self,
+            OpsContact.self,
+            // Supabase-backed models (13)
+            Opportunity.self,
+            Activity.self,
+            FollowUp.self,
+            StageTransition.self,
+            Estimate.self,
+            EstimateLineItem.self,
+            Invoice.self,
+            InvoiceLineItem.self,
+            Payment.self,
+            Product.self,
+            SiteVisit.self,
+            ProjectNote.self,
+            PhotoAnnotation.self
         ])
 
         let modelConfiguration = ModelConfiguration(
@@ -357,6 +724,8 @@ struct OPSApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(dataController)
+                .environmentObject(notificationManager)
+                .environmentObject(subscriptionManager)
         }
         .modelContainer(sharedModelContainer)
     }
@@ -379,7 +748,7 @@ final class Project: Identifiable {
 
     // MARK: - Computed Properties
     var computedStartDate: Date? {
-        tasks.compactMap { $0.calendarEvent?.startDate }.min()
+        tasks.compactMap { $0.startDate }.min()
     }
 
     // MARK: - Relationships
@@ -420,21 +789,24 @@ func fetchActiveProjects() -> [Project] {
 ### DTO to Model Conversion
 
 ```swift
-// DTOs handle API ↔ SwiftData conversion
-struct ProjectDTO: Decodable {
-    let id: String
-    let name: String
+// DTOs handle Supabase ↔ SwiftData conversion
+// Core entities use CoreEntityDTOs.swift and CoreEntityConverters.swift
+// Domain-specific entities have dedicated DTO files (EstimateDTOs, InvoiceDTOs, etc.)
+
+// Example from CoreEntityDTOs.swift
+struct SupabaseProjectDTO: Codable {
+    let id: UUID
+    let companyId: UUID
+    let title: String
     let status: String?
+    let address: String?
+    let bubbleId: String?
+    // ... additional fields
 
-    enum CodingKeys: String, CodingKey {
-        case id = "_id"
-        case name = "Name"
-        case status = "Status"
-    }
-
-    func toModel() -> Project {
-        let project = Project(id: id, title: name, companyId: "")
+    func toSwiftDataModel() -> Project {
+        let project = Project(id: id.uuidString, title: title, companyId: companyId.uuidString)
         project.status = Status(rawValue: status ?? "") ?? .rfq
+        project.address = address
         return project
     }
 }
@@ -463,8 +835,9 @@ struct ProjectDTO: Decodable {
             ┌────────────┼────────────┐
             ▼            ▼            ▼
 ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│ ViewModels   │ │   Managers   │ │ SyncManager  │
-│ (per-screen) │ │  (services)  │ │ (background) │
+│ ViewModels   │ │   Managers   │ │ SyncEngine   │
+│ (per-screen) │ │  (services)  │ │ (Op Log +    │
+│              │ │              │ │  Replay)     │
 └──────────────┘ └──────────────┘ └──────────────┘
 ```
 
@@ -566,13 +939,17 @@ class DataController: ObservableObject {
 
     // MARK: - Dependencies
     let authManager: AuthManager
-    let apiService: APIService
     private let keychainManager: KeychainManager
-    private let connectivityMonitor: ConnectivityMonitor
     var modelContext: ModelContext?
 
+    // MARK: - Sync Engine (added 2026-03-08)
+    var syncEngine: SyncEngine!           // Central sync orchestrator (created eagerly in setModelContext)
+    var connectivity: ConnectivityManager! // NWPathMonitor with quality scoring (created eagerly in setModelContext)
+
+    // MARK: - Legacy Adapter
+    var syncManager: SupabaseSyncManager! // Retained for entity fetch methods not yet migrated
+
     // MARK: - Public Access
-    var syncManager: CentralizedSyncManager!
     var imageSyncManager: ImageSyncManager!
     @Published var simplePINManager = SimplePINManager()
 
@@ -580,10 +957,6 @@ class DataController: ObservableObject {
     init() {
         self.keychainManager = KeychainManager()
         self.authManager = AuthManager()
-        self.connectivityMonitor = ConnectivityMonitor()
-        self.apiService = APIService(authManager: authManager)
-
-        setupConnectivityMonitoring()
 
         Task {
             await checkExistingAuth()
@@ -594,6 +967,8 @@ class DataController: ObservableObject {
     @MainActor
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context
+        self.connectivity = ConnectivityManager()
+        self.syncEngine = SyncEngine(modelContext: context, connectivity: connectivity)
 
         Task {
             await cleanupDuplicateUsers()
@@ -608,18 +983,10 @@ class DataController: ObservableObject {
     @MainActor
     func initializeSyncManager() {
         guard let modelContext = modelContext else { return }
-        guard syncManager == nil else { return }
-
-        self.syncManager = CentralizedSyncManager(
-            modelContext: modelContext,
-            apiService: apiService,
-            connectivityMonitor: connectivityMonitor
-        )
 
         self.imageSyncManager = ImageSyncManager(
             modelContext: modelContext,
-            apiService: apiService,
-            connectivityMonitor: connectivityMonitor
+            connectivityMonitor: connectivity
         )
     }
 
@@ -653,28 +1020,19 @@ struct ContentView: View {
 
 **Pattern**: ViewModels handle screen-specific state and business logic.
 
-**Example: CalendarViewModel** (500 lines)
+**Example: CalendarViewModel** (updated 2026-03-02)
 
 ```swift
 class CalendarViewModel: ObservableObject {
     // MARK: - Published Properties
     @Published var selectedDate: Date = Date()
-    @Published var viewMode: CalendarViewMode = .week
+    @Published var isMonthExpanded: Bool = false          // Added: week strip ↔ month grid toggle
     @Published var projectIdsForSelectedDate: [String] = []
-    @Published var calendarEventIdsForSelectedDate: [String] = []
     @Published var selectedTeamMemberIds: Set<String> = []
     @Published var selectedTaskTypeIds: Set<String> = []
 
     // MARK: - Dependencies
     var dataController: DataController?
-
-    // MARK: - Computed Properties
-    var projectsForSelectedDate: [Project] {
-        guard let dataController = dataController else { return [] }
-        return projectIdsForSelectedDate.compactMap {
-            dataController.getProject(id: $0)
-        }
-    }
 
     // MARK: - Actions
     func selectDate(_ date: Date, userInitiated: Bool = false) {
@@ -682,27 +1040,22 @@ class CalendarViewModel: ObservableObject {
         loadProjectsForDate(date)
     }
 
-    func applyFilters(
-        teamMemberIds: Set<String>,
-        taskTypeIds: Set<String>
-    ) {
-        selectedTeamMemberIds = teamMemberIds
-        selectedTaskTypeIds = taskTypeIds
-        clearProjectCountCache()
-        loadProjectsForDate(selectedDate)
-    }
-
-    private func loadProjectsForDate(_ date: Date) {
-        guard let dataController = dataController else { return }
-        var events = dataController.getCalendarEventsForCurrentUser(for: date)
-        events = applyEventFilters(to: events)
-
-        DispatchQueue.main.async { [weak self] in
-            self?.calendarEventIdsForSelectedDate = events.map { $0.id }
+    func toggleMonthExpanded() {                          // Added: called by AppHeader month icon tap
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+            isMonthExpanded.toggle()
         }
     }
+
+    func userEvents(for date: Date) -> [CalendarUserEvent] { ... }  // Added: query CalendarUserEvents
+    func loadUserEvents() async { ... }                             // Added: fetch from Supabase
+
+    func applyFilters(teamMemberIds: Set<String>, taskTypeIds: Set<String>) { ... }
 }
 ```
+
+**Removed from CalendarViewModel (2026-03-02)**:
+- `shouldShowDaySheet: Bool` — no longer needed (DayCanvasView replaced DayEventsSheet pattern)
+- `resetDaySheetState()` — removed with above
 
 **Usage Pattern**:
 ```swift
@@ -968,9 +1321,14 @@ let manager = NotificationManager.shared
 OPSApp
   ├── DataController (singleton)
   │     ├── AuthManager
-  │     ├── APIService
-  │     ├── ConnectivityMonitor
-  │     ├── SyncManager (initialized on login)
+  │     ├── ConnectivityManager (created eagerly in setModelContext)
+  │     ├── SyncEngine (created eagerly in setModelContext)
+  │     │     ├── OutboundProcessor (push with coalescing + backoff)
+  │     │     ├── InboundProcessor (pull with field-level merge)
+  │     │     ├── RealtimeProcessor (WebSocket subscriptions)
+  │     │     ├── PhotoProcessor (adaptive photo uploads)
+  │     │     └── BackgroundSyncScheduler (BGTask scheduling)
+  │     ├── SupabaseSyncManager (legacy adapter — retained for entity fetches)
   │     └── ImageSyncManager (initialized on login)
   │
   ├── AppState (singleton)
@@ -1067,87 +1425,55 @@ enum AuthError: Error, LocalizedError {
 ### Error Handling in Network Layer
 
 ```swift
-// APIService.swift
-func request<T: Decodable>(
-    endpoint: String,
-    method: HTTPMethod
-) async throws -> T {
-    // Step 1: Build request
-    guard let url = URL(string: baseURL + endpoint) else {
-        throw APIError.invalidResponse
-    }
+// SupabaseService.swift - Supabase client handles network errors
+// Repository pattern wraps Supabase calls with error handling
 
-    var request = URLRequest(url: url)
-    request.httpMethod = method.rawValue
-
+// Example: ProjectRepository.swift
+func fetchProjects(companyId: String) async throws -> [SupabaseProjectDTO] {
     do {
-        // Step 2: Execute request
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        // Step 3: Validate response
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
-        }
-
-        switch httpResponse.statusCode {
-        case 200...299:
-            // Success - decode response
-            do {
-                return try JSONDecoder().decode(T.self, from: data)
-            } catch {
-                print("[API_ERROR] Decoding failed: \(error)")
-                throw APIError.decodingError(error)
-            }
-        case 401:
-            throw APIError.unauthorized
-        case 429:
-            throw APIError.rateLimited
-        default:
-            throw APIError.serverError(httpResponse.statusCode)
-        }
-    } catch let error as APIError {
-        // Re-throw APIError as-is
-        throw error
+        let response: [SupabaseProjectDTO] = try await supabase
+            .from("projects")
+            .select()
+            .eq("company_id", value: companyId)
+            .is("deleted_at", value: nil)
+            .execute()
+            .value
+        return response
     } catch {
-        // Wrap unknown errors
-        print("[API_ERROR] Network error: \(error)")
-        throw APIError.networkError(error)
+        print("[API_ERROR] Failed to fetch projects: \(error)")
+        throw error
     }
 }
 ```
 
-### Error Handling in Sync Manager
+### Error Handling in Sync Engine (Updated 2026-03-08)
 
 ```swift
-// CentralizedSyncManager.swift
-func syncProjects() async {
-    do {
-        // Attempt sync
-        let projects = try await apiService.fetchProjects()
-
-        // Update local database
-        await MainActor.run {
-            for projectDTO in projects {
-                let project = projectDTO.toModel()
-                modelContext.insert(project)
-            }
-            try? modelContext.save()
-        }
-    } catch APIError.unauthorized {
-        // Critical: Force logout
-        print("[SYNC] Unauthorized - forcing logout")
-        await MainActor.run {
-            NotificationCenter.default.post(name: .forceLogout, object: nil)
-        }
-    } catch APIError.rateLimited {
-        // Temporary: Schedule retry
-        print("[SYNC] Rate limited - scheduling retry in 60s")
-        scheduleRetry(delay: 60)
-    } catch {
-        // Non-critical: Continue with local data
-        print("[SYNC] Sync failed: \(error) - continuing with local data")
-    }
+// SyncTypes.swift — error classification
+enum SyncError: Error {
+    case network(Error)       // Retryable — OutboundProcessor applies exponential backoff
+    case conflict(String)     // Field-level merge — InboundProcessor preserves pending local fields
+    case permanent(Error)     // Non-retryable — operation marked failed, surfaced in UI
+    case authentication       // Triggers re-auth flow
 }
+
+// OutboundProcessor.swift — push error handling
+// Each SyncOperation tracks retryCount. On failure:
+//   - Retryable errors: increment retryCount, backoff = min(pow(2, retryCount), 60) seconds
+//   - Max 20 retries before marking as permanently failed
+//   - Permanent errors: mark operation as failed immediately
+//   - Failed operations surfaced in SyncStatusSection (NotificationListView)
+
+// InboundProcessor.swift — pull conflict handling
+// Before overwriting any field from server data:
+//   - Checks for pending SyncOperations targeting that field
+//   - If pending local change exists, server value is skipped (local wins)
+//   - If no pending local change, server value is applied
+
+// RealtimeProcessor.swift — WebSocket error handling
+// On disconnect: records timestamp, stops subscriptions
+// On reconnect: performs catch-up delta sync from disconnect timestamp
+// Falls back gracefully to polling if WebSocket unavailable
 ```
 
 ### Error Display in Views
@@ -1197,7 +1523,13 @@ print("[API_ERROR] Request failed: \(error)")
 
 **Common Tags**:
 - `[APP_LAUNCH]` - App initialization
-- `[SYNC]` - Sync operations
+- `[SYNC]` - Sync operations (SyncEngine)
+- `[SYNC_PUSH]` - OutboundProcessor push operations
+- `[SYNC_PULL]` - InboundProcessor pull operations
+- `[SYNC_RT]` - RealtimeProcessor WebSocket events
+- `[SYNC_PHOTO]` - PhotoProcessor upload operations
+- `[SYNC_BG]` - BackgroundSyncScheduler task events
+- `[CONNECTIVITY]` - ConnectivityManager state changes
 - `[AUTH]` - Authentication
 - `[API_ERROR]` - API failures
 - `[DATA_HEALTH]` - Data integrity
@@ -1236,10 +1568,10 @@ func projectCount(for date: Date) -> Int {
 
 func loadProjectsForDate(_ date: Date) {
     // Only load projects for ONE date at a time
-    var events = dataController.getCalendarEventsForCurrentUser(for: date)
+    var scheduledTasks = dataController.getScheduledTasksForCurrentUser(for: date)
 
     // Cache count for calendar rendering
-    projectCountCache[formatDateKey(date)] = events.count
+    projectCountCache[formatDateKey(date)] = scheduledTasks.count
 }
 ```
 
@@ -1313,57 +1645,102 @@ class ImageCache {
 }
 ```
 
-### 4. Background Sync
+### 4. Offline-First Sync Engine (Rebuilt 2026-03-08)
 
-**Problem**: Foreground syncs block UI.
+**Problem**: Foreground syncs block UI; offline mutations could be lost.
 
-**Solution**: Background task scheduling.
+**Solution**: Operation Log + Replay pattern. Every mutation creates an immutable `SyncOperation` record, applies optimistically to SwiftData, and queues for push.
+
+**Core architecture:**
 
 ```swift
-// BackgroundTaskManager.swift
+// SyncEngine.swift — @MainActor @Observable central orchestrator
+// Key methods:
+//   triggerSync()      — debounced push+pull cycle
+//   fullSync()         — called on app launch via performAppLaunchSync()
+//   pushPending()      — delegates to OutboundProcessor
+//   pullDelta()        — delegates to InboundProcessor
+//   recordOperation()  — creates SyncOperation, called by DataController mutation methods
+//   startRealtime()    — starts RealtimeProcessor WebSocket subscriptions
+//   stopRealtime()     — stops subscriptions (called on background transition)
+//   registerBackgroundTasks() — registers BGTask identifiers
+//   scheduleBackgroundSync()  — schedules next background run
+```
+
+**Outbound push (OutboundProcessor.swift):**
+- Operation coalescing: merges multiple updates to the same entity into one push
+- Dependency ordering: creates are pushed before child entities
+- Exponential backoff: `min(pow(2, retryCount), 60)` seconds, max 20 retries
+- Errors classified as retryable vs. permanent via `SyncTypes.swift` helper
+
+**Inbound pull (InboundProcessor.swift):**
+- Field-level merge: before overwriting any field, checks for pending `SyncOperation` records on that field
+- Fields with pending local changes are preserved (local wins for pending ops)
+
+**Realtime (RealtimeProcessor.swift):**
+- Supabase Realtime WebSocket subscriptions for 9 entity types
+- Field-level merge protection same as InboundProcessor
+- Tracks disconnect/reconnect timestamps for catch-up delta sync on reconnect
+
+**Photo uploads (PhotoProcessor.swift):**
+- Adaptive concurrency: 3 concurrent uploads on WiFi, 1 on cellular
+- Local save with thumbnail generation
+- Cleanup of synced originals to reclaim storage
+
+**Background scheduling (BackgroundSyncScheduler.swift):**
+```swift
+// BGTaskScheduler wrapper
+// Refresh task: 15-minute interval
+// Processing task: 30-minute interval
+// Identifiers registered in Info.plist
+
 func scheduleBackgroundSync() {
-    let request = BGAppRefreshTaskRequest(identifier: "co.opsapp.sync")
-    request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15 min
+    let refreshRequest = BGAppRefreshTaskRequest(identifier: "co.opsapp.sync.refresh")
+    refreshRequest.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
 
-    do {
-        try BGTaskScheduler.shared.submit(request)
-    } catch {
-        print("[BG_SYNC] Failed to schedule: \(error)")
-    }
-}
+    let processingRequest = BGProcessingTaskRequest(identifier: "co.opsapp.sync.processing")
+    processingRequest.earliestBeginDate = Date(timeIntervalSinceNow: 30 * 60)
+    processingRequest.requiresNetworkConnectivity = true
 
-// Handle background task
-BGTaskScheduler.shared.register(forTaskWithIdentifier: "co.opsapp.sync") { task in
-    Task {
-        await syncManager.triggerBackgroundSync()
-        task.setTaskCompleted(success: true)
-    }
+    try? BGTaskScheduler.shared.submit(refreshRequest)
+    try? BGTaskScheduler.shared.submit(processingRequest)
 }
 ```
 
-### 5. Debouncing Sync Triggers
+**Connectivity (ConnectivityManager.swift):**
+```swift
+// @MainActor ObservableObject
+// NWPathMonitor with:
+//   - Performance tracking and quality scoring
+//   - Lying WiFi detection (connected but no internet)
+//   - Publishes ConnectionState enum with quality level
+//   - Triggers sync on connectivity restore via NotificationCenter
+```
 
-**Problem**: Rapid changes trigger redundant syncs.
+**OPSApp.swift lifecycle integration:**
+```swift
+// scenePhase handler:
+//   .active  → triggerSync() + startRealtime() on return from background
+//   .background → scheduleBackgroundSync() + stopRealtime() after 30s delay
+// ConnectivityManager notification handler triggers sync on connectivity restore
+```
 
-**Solution**: 2-second debounce delay.
+### 5. Mutation Recording (replaces debounced sync triggers)
+
+**Problem**: Rapid changes trigger redundant syncs; offline mutations must survive app termination.
+
+**Solution**: Every mutation creates an immutable `SyncOperation` persisted in SwiftData, then triggers a coalesced push cycle.
 
 ```swift
-// CentralizedSyncManager.swift
-private var syncDebounceTimer: Timer?
-private let syncDebounceDelay: TimeInterval = 2.0
-
-func markEntityForSync<T: PersistentModel>(_ entity: T) {
-    entity.needsSync = true
-    entity.syncPriority = 2
-
-    // Debounce: Cancel pending sync, schedule new one
-    syncDebounceTimer?.invalidate()
-    syncDebounceTimer = Timer.scheduledTimer(withTimeInterval: syncDebounceDelay, repeats: false) { _ in
-        Task {
-            await self.triggerBackgroundSync()
-        }
-    }
-}
+// DataController mutation methods now call:
+syncEngine.recordOperation(
+    entityType: .project,
+    entityId: project.id,
+    operationType: .update,
+    fields: ["status": "In Progress"]
+)
+// SyncOperation is persisted immediately in SwiftData
+// OutboundProcessor coalesces multiple updates to the same entity before pushing
 ```
 
 ### 6. Query Optimization
@@ -1482,8 +1859,10 @@ func logout() {
     try? modelContext.delete(model: User.self)
     try? modelContext.delete(model: Client.self)
     try? modelContext.delete(model: ProjectTask.self)
-    try? modelContext.delete(model: CalendarEvent.self)
     try? modelContext.delete(model: TaskType.self)
+    try? modelContext.delete(model: Opportunity.self)
+    try? modelContext.delete(model: Estimate.self)
+    try? modelContext.delete(model: Invoice.self)
     try? modelContext.save()
 
     // Clear UserDefaults
@@ -1556,7 +1935,7 @@ Text(project.client!.name)  // CRASH if client is nil
 
 **Properties**:
 - Published: `@Published var isLoading = false`
-- Private: `private let apiService: APIService`
+- Private: `private let supabaseService: SupabaseService`
 - Computed: `var isActive: Bool { status == .inProgress }`
 
 **Functions**:
@@ -1606,11 +1985,11 @@ class ExampleManager: ObservableObject {
     @Published var isActive = false
 
     // MARK: - Private Properties
-    private let apiService: APIService
+    private let supabaseService: SupabaseService
 
     // MARK: - Initialization
-    init(apiService: APIService) {
-        self.apiService = apiService
+    init(supabaseService: SupabaseService) {
+        self.supabaseService = supabaseService
     }
 
     // MARK: - Public Methods
@@ -1712,7 +2091,7 @@ OPS is in a **dual-backend transition** from Bubble.io to Supabase. This is the 
 │                                                                        │
 │  ┌──────────────┐           ┌──────────────────────────────────────┐  │
 │  │  iOS App     │──────────►│          Bubble.io REST API           │  │
-│  │  (SwiftData) │           │  - All CRUD for 9 entity types       │  │
+│  │  (SwiftData) │           │  - Legacy CRUD for core entities     │  │
 │  └──────────────┘           │  - Authentication (API token)        │  │
 │                              │  - Soft delete workflows             │  │
 │  ┌──────────────┐           │  - Source of truth for mobile        │  │
@@ -1761,7 +2140,7 @@ The transition follows a **non-breaking incremental approach**:
 - Mobile apps do not interact with these tables
 
 **Phase 2 (Complete): Core Entity Tables**
-- Migration 004 creates Supabase mirrors of all 9 Bubble entity types
+- Migration 004 creates Supabase mirrors of core Bubble entity types
 - Migration 005 links pipeline tables to core entities via `_ref` FK columns
 - Bulk migration API copies Bubble data into Supabase (`POST /api/admin/migrate-bubble`)
 - Web app can now read/write core entities from Supabase
@@ -1772,10 +2151,10 @@ The transition follows a **non-breaking incremental approach**:
 - Mobile apps will authenticate against Supabase instead of Bubble
 - The `private.get_user_company_id()` RLS helper is already built for this
 
-**Phase 4 (Planned): Mobile App Migration**
+**Phase 4 (In Progress): Mobile App Migration**
 - iOS and Android apps switch from Bubble API to Supabase PostgREST
-- CentralizedSyncManager refactored to use Supabase client instead of URLSession/Retrofit to Bubble
-- Offline-first architecture preserved; sync layer adapts to new API format
+- SyncEngine (rebuilt 2026-03-08) handles all Supabase sync via Operation Log + Replay pattern; remaining Bubble endpoints to be retired
+- Offline-first architecture preserved; SyncEngine adapts to new API format
 - SwiftData/Room models remain the same; only the network layer changes
 
 **Phase 5 (Planned): Bubble Decommission**
@@ -1816,22 +2195,58 @@ $$ LANGUAGE sql STABLE SECURITY DEFINER;
 ```
 This prepares for Phase 3 (Supabase Auth) while being callable from RLS policies today.
 
+**5. Permission System RLS Helpers (Migration 015-016)**
+Two additional private functions support the RBAC permission system:
+
+```sql
+-- Resolves app-level user UUID from Supabase auth.uid()
+-- (auth.uid() is the Supabase Auth UUID, different from users.id)
+CREATE OR REPLACE FUNCTION private.get_current_user_id()
+RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = '' AS $$
+  SELECT id FROM public.users
+  WHERE auth_id = (SELECT auth.uid())::text
+  LIMIT 1
+$$;
+
+-- Cached permission check — resolves user ID once per transaction
+CREATE OR REPLACE FUNCTION private.current_user_has_permission(
+  p_permission app_permission
+) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = '' AS $$
+DECLARE v_user_id uuid;
+BEGIN
+  v_user_id := current_setting('app.current_user_id', true)::uuid;
+  IF v_user_id IS NULL THEN
+    v_user_id := (SELECT private.get_current_user_id());
+    IF v_user_id IS NULL THEN RETURN false; END IF;
+    PERFORM set_config('app.current_user_id', v_user_id::text, true);
+  END IF;
+  RETURN public.has_permission(v_user_id, p_permission);
+END;
+$$;
+```
+
+These are used by permission-based RLS policies on financial tables (invoices, estimates, payments, line_items, expenses, accounting_connections). See `04_API_AND_INTEGRATION.md` > Permission-Based RLS for details.
+
 ### Impact on Mobile Architecture
 
 When mobile apps eventually migrate (Phase 4), the changes will be concentrated in the **network layer** only:
 
-| Component | Current (Bubble) | Future (Supabase) |
+| Component | Current (Bubble) | Current/Future (Supabase) |
 |-----------|------------------|-------------------|
 | Data Models | SwiftData / Room | **No change** |
 | Local Storage | SwiftData / Room | **No change** |
-| Sync Strategy | Triple-layer sync | **No change** (same pattern, different API) |
-| API Client | URLSession / Retrofit to Bubble REST | Supabase Swift/Kotlin client |
+| Sync Strategy | Triple-layer sync | **SyncEngine** — Operation Log + Replay (rebuilt 2026-03-08) |
+| API Client | SupabaseService + Repositories (partially migrated) | Supabase Swift/Kotlin client (full) |
 | Auth | Static API token + Firebase | Supabase Auth JWT |
-| Image Upload | Direct S3 + Bubble registration | Direct S3 (presigned URLs) |
-| Real-time | Polling (3-min timer) | Supabase Realtime subscriptions |
-| Offline Queue | `needsSync` flag pattern | **No change** |
+| Image Upload | Direct S3 + Bubble registration | Direct S3 (presigned URLs) via PhotoProcessor |
+| Real-time | Polling (3-min timer) | RealtimeProcessor — Supabase Realtime WebSocket (9 entity types) |
+| Offline Queue | `needsSync` flag pattern | **SyncOperation** records in SwiftData with OutboundProcessor coalescing |
+| Connectivity | ConnectivityMonitor (basic reachability) | **ConnectivityManager** — NWPathMonitor with quality scoring + lying WiFi detection |
+| Background Sync | BackgroundTaskManager | **BackgroundSyncScheduler** — BGTaskScheduler (refresh 15min, processing 30min) |
 
-The offline-first architecture, defensive SwiftData/Room patterns, and sync debouncing will all be preserved. The migration primarily replaces the transport layer, not the application architecture.
+The offline-first architecture, defensive SwiftData/Room patterns, and operation coalescing will all be preserved. The migration primarily replaces the transport layer, not the application architecture.
 
 ### Web App Supabase Patterns
 
@@ -1885,30 +2300,90 @@ const subscription = supabase
 
 ---
 
+## Crew Location Tracking Architecture
+
+### Overview
+
+OPS includes a real-time crew location tracking system that enables admins/office crew to see field crew positions on the map. The architecture spans several files across Map/ and Utilities/.
+
+### Key Components
+
+| File | Path | Purpose |
+|------|------|---------|
+| `LocationManager.swift` | `Utilities/` | Core CLLocationManager wrapper. Publishes user coordinates, heading, and course. Handles permission requests and location update lifecycle. |
+| `CrewLocationBroadcaster.swift` | `Map/Services/` | Broadcasts the current device's location via Supabase Realtime and persists to the `crew_locations` table. Active only when the user is clocked in. |
+| `CrewLocationSubscriber.swift` | `Map/Services/` | Subscribes to crew location updates for the current org. Loads initial state from Supabase DB, then polls every 15 seconds for updates from other devices. |
+| `CrewLocationUpdate.swift` | `Map/Models/` | Data model for a single crew location update (userId, lat/lng, heading, speed, accuracy, battery level, current task/project info). |
+| `GeofenceManager.swift` | `Map/Core/` | Monitors the nearest 18 job sites using CLCircularRegion. Surfaces clock-in/out banners on region entry/exit with 15-second auto-dismiss. |
+| `CrewAnnotationRenderer.swift` | `Map/Annotations/` | Renders crew member pins on the Mapbox map. |
+| `LocationPermissionView.swift` | `Views/Components/Common/` | UI for requesting location permissions. |
+| `MapLocationPermissionView.swift` | `Map/Views/` | Map-specific location permission prompt. |
+
+### Data Flow
+
+```
+LocationManager (CoreLocation)
+    │
+    ▼
+CrewLocationBroadcaster
+    │ (publishes to Supabase crew_locations table)
+    │ (posts NotificationCenter .crewLocationDidUpdate)
+    ▼
+Supabase crew_locations table
+    │
+    ▼
+CrewLocationSubscriber (polls DB every 15s)
+    │ (also receives local NotificationCenter updates)
+    ▼
+@Published crewLocations: [String: CrewLocationUpdate]
+    │
+    ▼
+CrewAnnotationRenderer → Mapbox map pins
+CrewTooltipCard → crew detail popups
+```
+
+### Geofencing
+
+GeofenceManager uses iOS region monitoring (`CLCircularRegion`) for the nearest 18 project sites. On entry/exit, it publishes `pendingArrival` or `pendingDeparture` events, which trigger the `GeofenceBannerView` clock-in/out UI.
+
+---
+
 ## Summary
 
 ### Architectural Strengths
 
 1. **SwiftUI + SwiftData** - Modern, declarative, native iOS
-2. **Offline-first** - Local persistence with background sync
-3. **Defensive SwiftData patterns** - Prevents crashes and corruption
-4. **Clear separation of concerns** - Views, ViewModels, DataController, Managers
-5. **Field-tested optimizations** - Lazy loading, caching, background tasks
-6. **Dual-backend transition** - Non-breaking incremental migration from Bubble to Supabase
+2. **Offline-first with Operation Log** - Immutable SyncOperation records survive app termination, coalesced push on reconnect
+3. **Field-level merge protection** - InboundProcessor and RealtimeProcessor preserve pending local changes during server pulls
+4. **Defensive SwiftData patterns** - Prevents crashes and corruption
+5. **Clear separation of concerns** - Views, ViewModels, DataController, SyncEngine, Processors
+6. **Field-tested optimizations** - Lazy loading, caching, adaptive photo uploads, background tasks
+7. **Dual-backend transition** - Non-breaking incremental migration from Bubble to Supabase
+
+### Architectural Strengths (Sync Engine — Added 2026-03-08)
+
+1. **Operation coalescing** - OutboundProcessor merges multiple updates to the same entity before pushing
+2. **Dependency ordering** - Creates are pushed before child entities
+3. **Exponential backoff** - `min(pow(2, retryCount), 60)` seconds with max 20 retries
+4. **Adaptive photo uploads** - 3 concurrent on WiFi, 1 on cellular
+5. **Lying WiFi detection** - ConnectivityManager detects connected-but-no-internet states
+6. **Realtime WebSocket** - RealtimeProcessor subscribes to 9 entity types with catch-up delta sync on reconnect
+7. **UI sync visibility** - SyncRingView in AppHeader, SyncStatusSection in NotificationListView
 
 ### Architectural Challenges
 
-1. **No automated tests** - Regression risk
-2. **Complex state management** - Multiple sources of truth (AppState, DataController, ViewModels)
+1. **No automated tests** - Regression risk (1 test file exists: MapTapGestureTest.swift)
+2. **Complex state management** - Multiple sources of truth (AppState, DataController, 7 ViewModels)
 3. **NotificationCenter coupling** - Deep linking via NotificationCenter is brittle
 4. **Large ViewModels** - CalendarViewModel is 500+ lines
-5. **Dual-backend complexity** - During transition, data may exist in both Bubble and Supabase
+5. **Dual-backend complexity** - During transition, some data flows through Bubble while new features use Supabase directly
+6. **Legacy sync adapter** - SupabaseSyncManager retained for entity fetch methods not yet migrated to SyncEngine
 
 ### Android Conversion Implications
 
 **Easy to Convert**:
 - Data models (SwiftData -> Room entities)
-- Network layer (URLSession -> Retrofit)
+- Network layer (Supabase Swift SDK -> Supabase Kotlin SDK)
 - State management (ObservableObject -> StateFlow/ViewModel)
 
 **Hard to Convert**:
@@ -1917,16 +2392,180 @@ const subscription = supabase
 - Environment objects (SwiftUI-specific -> Hilt DI)
 
 **Critical Patterns to Preserve**:
-- Offline-first architecture
+- Offline-first architecture with Operation Log + Replay
 - Defensive data patterns (IDs not models, explicit saves)
 - Soft delete strategy
-- Background sync debouncing
+- Operation coalescing and field-level merge protection
+- Adaptive connectivity handling (WiFi vs. cellular concurrency)
+
+---
+
+## Job Board Architecture (Redesigned March 2026)
+
+### Overview
+
+The Job Board is the central operational hub of OPS. It was redesigned in March 2026 to support a fully role-based section system replacing the old single-view approach.
+
+### JobBoardSection Enum
+
+```swift
+// File: Views/JobBoard/JobBoardView.swift
+enum JobBoardSection: String, CaseIterable {
+    case myTasks    = "MY TASKS"      // Field crew: tasks explicitly assigned to user
+    case myProjects = "MY PROJECTS"   // Field crew: projects user is a team member of
+    case projects   = "PROJECTS"      // Office/Admin: all company projects with filters
+    case tasks      = "TASKS"         // Office/Admin: all company tasks with filters
+    case kanban     = "KANBAN"        // Office/Admin: project distribution by status
+    case pipeline   = "PIPELINE"      // Admin + specialPermissions("pipeline"): CRM pipeline
+}
+```
+
+### Role-Based Section Visibility
+
+**Legacy implementation** (being migrated to permission-based checks):
+
+```swift
+// LEGACY: Uses UserRole enum. Being replaced by permission checks:
+// - job_board.manage_sections → shows section picker
+// - pipeline.view → shows Pipeline section
+// - projects.view scope=assigned → limits to My Tasks / My Projects
+func visibleSections(for user: User?) -> [JobBoardSection] {
+    guard let user = user else { return [.projects] }
+    switch user.role {
+    case .fieldCrew:
+        return [.myTasks, .myProjects]
+    case .officeCrew:
+        return [.projects, .tasks, .kanban]
+    case .admin:
+        var sections: [JobBoardSection] = [.projects, .tasks, .kanban]
+        if user.specialPermissions.contains("pipeline") {
+            sections.append(.pipeline)
+        }
+        return sections
+    }
+}
+
+// Default starting section per role
+func defaultSection(for user: User?) -> JobBoardSection {
+    guard let user = user else { return .projects }
+    return user.role == .fieldCrew ? .myTasks : .projects
+}
+```
+
+**Permission-based replacement**: With the new RBAC system, section visibility should use `can("job_board.manage_sections")` for the section picker and `can("pipeline.view")` for the Pipeline section. Users with `projects.view` scoped to `assigned` see only My Tasks / My Projects.
+
+**Key business rules:**
+- Field crew: Section picker is hidden. Always shows `.myTasks` (no toggle to other sections)
+- Office crew: Sees projects, tasks, kanban — no pipeline unless granted
+- Admin: Sees pipeline section only if `specialPermissions.contains("pipeline")`
+- Tutorial mode: Forces `.projects` section for tutorial phases that require it
+
+### Section Views
+
+| Section | View | Purpose |
+|---------|------|---------|
+| `.myTasks` | `JobBoardMyTasksView` | Field crew personal task list, filtered by explicit assignment |
+| `.myProjects` | `JobBoardProjectListView` (filtered) | Field crew project list, filtered to assigned projects only |
+| `.projects` | `JobBoardProjectListView` | All company projects with status/team filters |
+| `.tasks` | `JobBoardTasksView` (inline in JobBoardView) | All company tasks with status/type filters |
+| `.kanban` | `JobBoardKanbanView` | Project distribution across statuses as proportional bars |
+| `.pipeline` | `PipelineView()` | CRM pipeline — uses `@EnvironmentObject`, takes no init parameters |
+
+### JobBoardMyTasksView
+
+```
+File: Views/JobBoard/JobBoardMyTasksView.swift
+```
+
+- Shows tasks from `assignedProjects` where `task.getTeamMemberIds().contains(userId)`
+- **No fallback for unassigned tasks** — tasks with no explicit assignment are NOT shown
+- `MyTasksFilter` enum: `.all`, `.today`, `.upcoming`, `.completed`
+- Groups tasks by project using collapsible `ProjectTaskGroup`
+- Has skeleton loading state and retry error state
+
+### JobBoardKanbanView
+
+```
+File: Views/JobBoard/JobBoardKanbanView.swift
+```
+
+- Shows proportional fill bars for 5 project statuses: `.rfq`, `.estimated`, `.accepted`, `.inProgress`, `.completed`
+- Fill width = `count / totalActiveProjects` (excludes `.closed`)
+- Tap a bar → expands inline with project cards on a tinted backdrop
+- Uses `.accessibleEaseInOut(duration: 0.25)` for all transitions
+
+### UniversalSearchSheet
+
+```
+File: Views/JobBoard/UniversalSearchSheet.swift
+```
+
+- Opened via `AppState.showingJobBoardSearch = true` from the header search button
+- Role-filtered: field crew sees only their assigned projects
+- **Pipeline-gated**: users without `specialPermissions.contains("pipeline")` cannot see `.rfq` or `.estimated` projects in search results
+- Searches: project title, client name, address; task `displayTitle` and `taskNotes`
+- Pinned section headers: `[ PROJECTS ]`, `[ TASKS ]`
+- Auto-focuses keyboard on appear
+
+### DirectionalDragModifier
+
+```
+File: Views/Components/Common/DirectionalDragModifier.swift
+```
+
+Resolves the scroll-vs-swipe gesture conflict on `UniversalJobBoardCard` inside `ScrollView`.
+
+```swift
+// Commits to a drag axis within the first 10pt of movement:
+// - Horizontal intent → captures the swipe for status change
+// - Vertical intent → releases gesture to ScrollView for normal scrolling
+struct DirectionalDragModifier: ViewModifier {
+    let isEnabled: Bool
+    var onChanged: ((CGFloat) -> Void)?
+    var onEnded: ((CGFloat) -> Void)?
+
+    @GestureState private var dragState: DragAxisState = .undecided
+    private let threshold: CGFloat = 10
+
+    // dragState is still valid in onEnded — @GestureState resets AFTER onEnded fires
+}
+```
+
+Used via the `.directionalDrag(isEnabled:onChanged:onEnded:)` View extension.
+
+### AppState.showingJobBoardSearch
+
+`AppState` (file: `AppState.swift`) publishes `showingJobBoardSearch: Bool` to trigger the search sheet from any context (e.g., header button in `AppHeader`).
+
+```swift
+// In AppHeader, search button:
+Button { appState.showingJobBoardSearch = true } label: { ... }
+
+// In JobBoardView, sheet binding:
+.sheet(isPresented: $appState.showingJobBoardSearch) {
+    UniversalSearchSheet()
+}
+```
+
+### Accessibility-Aware Animations
+
+All Job Board animations use `Animation.accessibleEaseInOut()` from `Extensions/Animation+Accessible.swift`:
+
+```swift
+extension Animation {
+    static func accessibleEaseInOut(duration: Double = 0.25) -> Animation? {
+        UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: duration)
+    }
+}
+```
+
+**Never use `.spring()` in any Job Board view** — or anywhere in OPS. Spring animations do not respect the Reduce Motion accessibility setting.
 
 ---
 
 **End of Technical Architecture Documentation**
 
-This document provides complete architectural context for OPS iOS app and the dual-backend transition. Reference alongside:
+This document provides complete architectural context for OPS iOS app, the offline-first sync engine (rebuilt 2026-03-08), and the dual-backend transition. Reference alongside:
 - `01_IOS_ARCHITECTURE_OVERVIEW.md` - High-level overview
 - `02_DATA_MODELS.md` - SwiftData models and relationships
 - `03_DATA_ARCHITECTURE.md` - Data models, Bubble fields, and Supabase schema

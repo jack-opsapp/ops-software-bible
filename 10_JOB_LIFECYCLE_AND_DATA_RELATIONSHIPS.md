@@ -4,7 +4,7 @@
 
 **Purpose**: Defines the complete data flow for a trade job from first contact through to a paid invoice. Documents all entity relationships, automation triggers, new entities, and required changes to existing entities. This is the master reference for how leads, pipeline, clients, estimates, projects, tasks, and invoices inter-operate.
 
-**Last Updated**: February 17, 2026
+**Last Updated**: February 28, 2026
 **Designed With**: ops-web codebase + ops-software-bible review session
 
 ---
@@ -161,9 +161,9 @@ Project (Accepted)
 ProjectTasks created (status: Booked)
   Each task stores: sourceLineItemId, sourceEstimateId
        │
-       │  tasks scheduled
+       │  tasks scheduled (dates stored on ProjectTask)
        ▼
-CalendarEvents created
+Task startDate/endDate set
        │  first task starts
        ▼
 Project (InProgress)
@@ -211,7 +211,7 @@ Staff is assessing scope. Site visit may be booked.
 
 **Actions available from card:**
 - Log activity (call, meeting, site visit)
-- Book site visit (creates SiteVisit + CalendarEvent)
+- Book site visit (creates SiteVisit — scheduling dates stored on the visit/task directly; CalendarEvent model has been removed)
 - Create follow-up reminder
 - Update estimated value as scope clarifies
 
@@ -472,11 +472,15 @@ interface Project {
 
 ---
 
-### `CalendarEvent` (Bubble) — MODIFIED
+### `CalendarEvent` (Bubble) — REMOVED
 
-Loosen required fields to support site visits (which exist before a project):
+> **NOTE:** The `CalendarEvent` model has been fully removed from the iOS codebase. Scheduling dates are now stored directly on `ProjectTask` (via `startDate`/`endDate` properties). Project dates are computed from their child tasks. The schema below is retained as historical reference for the Bubble backend, which may still have this data type.
 
 ```typescript
+// REMOVED — Historical reference only.
+// Scheduling is now task-based: ProjectTask.startDate / ProjectTask.endDate.
+// Site visit scheduling uses SiteVisit entity directly.
+
 type CalendarEventType = 'task' | 'site_visit' | 'other'
 
 interface CalendarEvent {
@@ -818,6 +822,8 @@ Activity: Sent Estimate #042 to John Smith        ● 2 hours ago
 
 A scheduled or ad-hoc visit to a job site for scope assessment, client meeting, or project check-in. Can exist before a project (on an Opportunity) or after (on a Project).
 
+> **iOS status**: The `SiteVisit` SwiftData model exists (`OPS/OPS/DataModels/Supabase/SiteVisit.swift`) but no dedicated iOS views have been built yet. The site visit UI described below is design spec only at this time.
+
 ```typescript
 type SiteVisitStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled'
 
@@ -858,7 +864,7 @@ interface SiteVisit {
 ```
 BOOK SITE VISIT (from Opportunity card or Calendar)
   → SiteVisit created (status: scheduled)
-  → CalendarEvent created (eventType: site_visit, opportunityId set)
+  → SiteVisit scheduled (scheduling dates stored on SiteVisit/task directly; CalendarEvent model removed)
   → Activity auto-logged: "Site visit scheduled — Feb 20 @ 10am"
   → Opportunity stage → qualifying (if currently new_lead)
 
@@ -1259,6 +1265,8 @@ The `Project.projectImages` field (comma-separated string) is deprecated. Migrat
 
 ## Gmail Integration
 
+> **Platform status**: Gmail integration API routes exist on OPS-Web (`/api/integrations/gmail/`, `gmail-service.ts`, `use-gmail-connections.ts`). No Gmail integration exists on iOS — there are no Gmail-related Swift files in the iOS codebase.
+
 ### Connection Architecture
 
 Two tiers of Gmail connection:
@@ -1346,7 +1354,7 @@ GmailConnection ────── Company ──── CompanySettings
                    │
               ProjectTask[] ←── sourceLineItemId
                    │
-              CalendarEvent
+              (startDate / endDate on task)
                    │
               (schedule)
 
@@ -1358,8 +1366,8 @@ GmailConnection ────── Company ──── CompanySettings
           │
      ActivityComment[]
           │
-     SiteVisit[] ──── CalendarEvent
-          │                (eventType: site_visit)
+     SiteVisit[] ──── (dates stored directly; CalendarEvent removed)
+          │
           └── photos[] ──► ProjectPhoto[]
                            (on job win)
 
@@ -1500,7 +1508,7 @@ ALTER TABLE activities ADD COLUMN project_id text;
 ### Implementation Priority Order
 
 **Phase 1 — Data layer (no UI changes yet):**
-1. Add new Bubble fields: `TaskType.defaultTeamMemberIds`, `Project.opportunityId`, `ProjectTask` source fields, `CalendarEvent` new fields
+1. Add new Bubble fields: `TaskType.defaultTeamMemberIds`, `Project.opportunityId`, `ProjectTask` source fields (CalendarEvent has been removed — scheduling dates are on ProjectTask directly)
 2. Create Bubble `TaskTemplate` data type
 3. Supabase: alter `line_items`, `estimates`, `invoices`, `products`, `opportunities`, `activities`
 4. Supabase: create `activity_comments`, `site_visits`, `project_photos`, `gmail_connections`, `company_settings`
@@ -1523,6 +1531,66 @@ ALTER TABLE activities ADD COLUMN project_id text;
 15. Incremental sync worker
 16. Inbox Leads queue UI
 17. Email thread grouping in Activity timeline
+
+### Implementation Status by Platform (as of February 2026)
+
+#### Pipeline — iOS Views (Built)
+
+The Pipeline tab is fully implemented on iOS with the following views in `OPS/OPS/Views/Pipeline/`:
+
+| File | Purpose |
+|---|---|
+| `PipelineTabView.swift` | Top-level tab container |
+| `PipelineView.swift` | Main Kanban board view |
+| `PipelineStageStrip.swift` | Horizontal stage selector strip |
+| `PipelinePlaceholderView.swift` | Empty state placeholder |
+| `OpportunityCard.swift` | Pipeline card for a single opportunity |
+| `OpportunityDetailView.swift` | Full detail view for an opportunity |
+| `OpportunityFormSheet.swift` | Create/edit opportunity form |
+| `OpportunityBadgeView.swift` | Stage/status badge component |
+| `ActivityFormSheet.swift` | Log activity from opportunity |
+| `ActivityRowView.swift` | Single activity row in timeline |
+| `FollowUpRowView.swift` | Follow-up reminder row |
+| `MarkLostSheet.swift` | Mark opportunity as lost (with reason prompt) |
+
+#### Estimates — iOS Views (Built)
+
+Estimates are fully implemented on iOS with the following views in `OPS/OPS/Views/Estimates/`:
+
+| File | Purpose |
+|---|---|
+| `EstimatesListView.swift` | List of estimates (filterable) |
+| `EstimateDetailView.swift` | Full estimate detail view |
+| `EstimateFormSheet.swift` | Create/edit estimate |
+| `EstimateCard.swift` | Summary card for estimate lists |
+| `LineItemEditSheet.swift` | Add/edit individual line items |
+| `ProductPickerSheet.swift` | Pick from product catalog when adding line items |
+
+#### Invoices — iOS Views (Built)
+
+Invoices are fully implemented on iOS with the following views in `OPS/OPS/Views/Invoices/`:
+
+| File | Purpose |
+|---|---|
+| `InvoicesListView.swift` | List of invoices (filterable) |
+| `InvoiceDetailView.swift` | Full invoice detail view |
+| `InvoiceCard.swift` | Summary card for invoice lists |
+| `PaymentRecordSheet.swift` | Record a payment against an invoice |
+
+#### SiteVisit — Model Only (No iOS Views)
+
+The `SiteVisit` data model exists at `OPS/OPS/DataModels/Supabase/SiteVisit.swift` (SwiftData `@Model` with fields: `id`, `opportunityId`, `companyId`, `status`, `scheduledAt`, `completedAt`, `notes`, `address`, `assignedTo`, `createdAt`). However, no dedicated iOS views exist for site visits yet. Site visit UI (create, on-site capture, complete) is not yet built on iOS.
+
+#### Gmail Integration — Web Only (No iOS Implementation)
+
+Gmail integration API routes exist on the web backend (`OPS-Web/src/app/api/integrations/gmail/`):
+- `route.ts` — main Gmail integration endpoint
+- `callback/route.ts` — OAuth callback handler
+- `manual-sync/route.ts` — manual sync trigger
+
+Supporting web services: `gmail-service.ts`, `use-gmail-connections.ts`, `integration-service.ts`, `integrations-tab.tsx`, `inbox-leads-queue.tsx`.
+
+No Gmail integration exists on iOS. There are no Gmail-related Swift files in the iOS codebase.
 
 ---
 

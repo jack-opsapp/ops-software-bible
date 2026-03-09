@@ -1,8 +1,8 @@
 # 05 - Design System
 
 **OPS Software Bible - Chapter 5**
-**Last Updated**: February 15, 2026
-**iOS App Version**: 207 files
+**Last Updated**: February 28, 2026
+**iOS App Version**: 437 Swift files (76 component files in Views/Components/)
 **Purpose**: Complete design system reference for iOS and Android implementations
 
 ---
@@ -92,33 +92,33 @@ OPS exists to make trade workers' lives easier through technology that "just wor
 #### Primary Colors
 
 ```swift
-// Primary Accent (Steel Blue) - #417394
-// RGB: 65, 115, 148
+// Primary Accent (Steel Blue) - #597794
+// RGB: 89, 119, 148
 // Used for: Interactive elements, primary buttons, clickable icons
 static let primaryAccent = Color("AccentPrimary")
 ```
 
 ```swift
-// Secondary Accent (Amber/Gold) - #C4A868
-// RGB: 196, 168, 104
-// Used for: Active project indicators, secondary emphasis
-// ONLY use for active items, NEVER for decoration
+// Secondary Accent - DEPRECATED (now matches primaryAccent #597794)
+// RGB: 89, 119, 148
+// Previously was Amber/Gold (#C4A868), now identical to primaryAccent.
+// Will be removed after active-state migration.
 static let secondaryAccent = Color("AccentSecondary")
 ```
 
 #### Background Colors
 
 ```swift
-// Background (Pure Black) - #000000
-// RGB: 0, 0, 0
+// Background (Near Black) - #0A0A0A
+// RGB: 10, 10, 10
 // Used for: Main app background
 // Benefits: Reduces glare, conserves battery, high contrast
 static let background = Color("Background")
 ```
 
 ```swift
-// Card Background (Dark Gray) - #191919
-// RGB: 25, 25, 25
+// Card Background (Dark Gray) - #141414
+// RGB: 20, 20, 20
 // Used for: Card surfaces, content containers
 static let cardBackground = Color("CardBackground")
 ```
@@ -141,13 +141,15 @@ static let primaryText = Color("TextPrimary")
 ```
 
 ```swift
-// Secondary Text (Medium Gray) - ~#AAAAAA
+// Secondary Text (Medium Gray) - #999999
+// RGB: 153, 153, 153
 // Used for: Supporting text, labels, captions
 static let secondaryText = Color("TextSecondary")
 ```
 
 ```swift
-// Tertiary Text (Dark Gray) - ~#777777
+// Tertiary Text (Dark Gray) - #666666
+// RGB: 102, 102, 102
 // Used for: Hints, disabled text, less important info
 static let tertiaryText = Color("TextTertiary")
 ```
@@ -155,13 +157,15 @@ static let tertiaryText = Color("TextTertiary")
 #### Status Colors
 
 ```swift
-// Success (Muted Green) - Exact value TBD
+// Success (Muted Olive-Green) - #A5B368
+// RGB: 165, 179, 104
 // Used for: Completed status, success messages
 static let successStatus = Color("StatusSuccess")
 ```
 
 ```swift
-// Warning (Amber) - Exact value TBD
+// Warning (Amber Gold) - #C4A868
+// RGB: 196, 168, 104
 // Used for: Warning messages, attention needed
 static let warningStatus = Color("StatusWarning")
 ```
@@ -204,25 +208,29 @@ static let archivedStatus = Color("StatusArchived")
 #### Border & Overlay Colors
 
 ```swift
-// Card Border (White 20% opacity)
+// Card Border (White 10% opacity)
 // Standard border for most cards
-static let cardBorder = Color.white.opacity(0.2)
+static let cardBorder = Color.white.opacity(0.10)
 
-// Card Border Subtle (White 5% opacity)
+// Card Border Subtle (White 8% opacity)
 // For less prominent cards and subtle divisions
-static let cardBorderSubtle = Color.white.opacity(0.05)
+static let cardBorderSubtle = Color.white.opacity(0.08)
 
-// Input Field Border (White 20% opacity)
-// For text fields, form controls
-static let inputFieldBorder = Color.white.opacity(0.2)
+// Input Field Border (White 10% opacity)
+// For text fields, form controls, avatar circles
+static let inputFieldBorder = Color.white.opacity(0.10)
 
-// Button Border (White 40% opacity)
+// Button Border (White 15% opacity)
 // For secondary action buttons
-static let buttonBorder = Color.white.opacity(0.4)
+static let buttonBorder = Color.white.opacity(0.15)
 
-// Separator (White 15% opacity)
+// Dark Border (Black 50% opacity)
+// Used by GracePeriodBanner
+static let darkBorder = Color.black.opacity(0.5)
+
+// Separator (White 10% opacity)
 // For divider lines
-static let separator = Color.white.opacity(0.15)
+static let separator = Color.white.opacity(0.10)
 ```
 
 ### Color Usage Rules
@@ -240,12 +248,9 @@ static let separator = Color.white.opacity(0.15)
   - Text (except links/buttons)
 
 #### Secondary Accent Usage
-- **ONLY** use to indicate active projects or active state
-- Never use for:
-  - General UI decoration
-  - Non-active items
-  - Backgrounds
-  - Borders (unless indicating active state)
+- **DEPRECATED**: `secondaryAccent` now matches `primaryAccent` (#597794). It will be removed after the active-state migration.
+- Previously was ONLY used for active projects/active state indicators.
+- New code should use `primaryAccent` directly instead of `secondaryAccent`.
 
 #### Background Usage
 - **CRITICAL**: Never use `.opacity()` modifiers on background colors
@@ -285,13 +290,13 @@ Text("No projects found")
 
 #### Primary: Mohave
 - **Weights**: Light, Regular, Medium, SemiBold, Bold
-- **Use for**: Titles, body text, buttons, most UI elements
+- **Use for**: Titles, body text, headings, status badges, most UI elements
 - **Characteristics**: Modern, clean, highly legible at all sizes
 - **Field-optimized**: Excellent readability in bright sunlight
 
 #### Supporting: Kosugi
 - **Weight**: Regular (with optional .weight() modifier)
-- **Use for**: Subtitles, captions, labels, supporting text
+- **Use for**: Subtitles, captions, labels, buttons, section labels, supporting text
 - **Characteristics**: Excellent small-size legibility, provides visual contrast
 - **Purpose**: Creates clear hierarchy when paired with Mohave
 
@@ -372,16 +377,44 @@ static let cardBody = Font.custom("Mohave-Regular", size: 14)
 // Use for: Card description text, card details
 ```
 
+#### Headings
+
+```swift
+// Heading - Mohave Medium, 20pt
+static let heading = Font.custom("Mohave-Medium", size: 20)
+// Use for: Section headings, medium-prominence titles
+
+// Heading Large - Mohave SemiBold, 24pt
+static let headingLarge = Font.custom("Mohave-SemiBold", size: 24)
+// Use for: Prominent section headings
+```
+
+#### Display
+
+```swift
+// Display Large - Mohave Bold, 48pt
+static let displayLarge = Font.custom("Mohave-Bold", size: 48)
+// Use for: Hero numbers, large data displays
+
+// Display XL - Mohave Bold, 60pt
+static let displayXL = Font.custom("Mohave-Bold", size: 60)
+// Use for: Splash/loading screen numbers, maximum visual impact
+```
+
 #### UI Elements
 
 ```swift
-// Button - Mohave Regular, 16pt
-static let button = Font.custom("Mohave-Regular", size: 16)
+// Button - Kosugi Regular, 14pt — ALL CAPS via .textCase(.uppercase)
+static let button = Font.custom("Kosugi-Regular", size: 14)
 // Use for: Button labels, primary actions
 
-// Small Button - Mohave Medium, 14pt
-static let smallButton = Font.custom("Mohave-Medium", size: 14)
+// Small Button - Kosugi Regular, 12pt — ALL CAPS via .textCase(.uppercase)
+static let smallButton = Font.custom("Kosugi-Regular", size: 12)
 // Use for: Compact buttons, secondary actions
+
+// Section Label - Kosugi Regular, 12pt — ALL CAPS, tracked
+static let sectionLabel = Font.custom("Kosugi-Regular", size: 12)
+// Use for: Section labels, grouped content headers
 
 // Status - Mohave Medium, 12pt
 static let status = Font.custom("Mohave-Medium", size: 12)
@@ -431,11 +464,13 @@ Text("Status").font(.system(size: 12))               // Hardcoded
 
 ```swift
 // Standard spacing units
-static let spacing1 = 4.0   // Half unit (use sparingly)
-static let spacing2 = 8.0   // Base unit
-static let spacing3 = 16.0  // Standard spacing
-static let spacing4 = 24.0  // Section spacing
-static let spacing5 = 32.0  // Large spacing
+static let spacing1 = 4.0     // Half unit (use sparingly)
+static let spacing2 = 8.0     // Base unit
+static let spacing2_5 = 12.0  // Between spacing2 and spacing3
+static let spacing3 = 16.0    // Standard spacing
+static let spacing3_5 = 20.0  // Between spacing3 and spacing4
+static let spacing4 = 24.0    // Section spacing
+static let spacing5 = 32.0    // Large spacing
 ```
 
 ```swift
@@ -483,11 +518,11 @@ Button("Delete") { }
 
 ```swift
 // Corner radius variants
-static let cornerRadius = 5.0         // Standard UI elements
-static let buttonRadius = 5.0         // Buttons
-static let smallCornerRadius = 2.5    // Badges, small elements
-static let cardCornerRadius = 8.0     // Cards, larger containers
-static let largeCornerRadius = 12.0   // Modals, sheets
+static let cornerRadius = 3.0         // Standard UI elements
+static let buttonRadius = 3.0         // Buttons
+static let smallCornerRadius = 2.0    // Badges, small elements
+static let cardCornerRadius = 4.0     // Cards, larger containers
+static let largeCornerRadius = 4.0    // Modals, sheets
 ```
 
 ### Padding & Margins
@@ -675,7 +710,7 @@ StandardCard {
 - Background: cardBackground
 - Border: cardBorder, 1pt
 - Padding: 16pt all sides
-- Corner radius: 8pt
+- Corner radius: 4pt (cardCornerRadius)
 ```
 
 #### Elevated Card
@@ -690,7 +725,7 @@ ElevatedCard {
 - Background: cardBackgroundDark
 - Shadow: card shadow preset
 - Padding: 16pt
-- Corner radius: 8pt
+- Corner radius: 4pt (cardCornerRadius)
 ```
 
 #### Interactive Card
@@ -720,7 +755,7 @@ AccentCard(accentColor: OPSStyle.Colors.primaryAccent) {
 - Colored left border (4pt width)
 - Background: cardBackground
 - Padding: 16pt
-- Corner radius: 8pt
+- Corner radius: 4pt (cardCornerRadius)
 ```
 
 ### Form Components
@@ -1057,11 +1092,16 @@ Image(systemName: OPSStyle.Icons.checkmarkCircle)
 ### Icon Sizing
 
 ```swift
-// Standard icon sizes
-- Small: 14pt (in text, inline)
-- Medium: 20pt (in buttons, cards)
-- Large: 24pt (standalone, headers)
-- Extra Large: 48pt (empty states, hero icons)
+// Standard icon sizes (OPSStyle.Layout.IconSize)
+- XS: 12pt (tiny indicators)
+- SM: 16pt (inline icons, captions)
+- MD: 20pt (standard icons)
+- LG: 24pt (section header icons)
+- XL: 32pt (action icons, prominent UI)
+- XXL: 48pt (large decorative icons, empty states)
+
+// Tab bar icon size
+- tabBarIconSize: 28pt
 ```
 
 ---
@@ -1261,7 +1301,7 @@ OptionalSectionPill(
 - Border: secondaryText opacity 1.0
 - Font: captionBold
 - Padding: 12pt
-- Corner radius: 8pt
+- Corner radius: 4pt (cardCornerRadius)
 - Icon + text + chevron
 ```
 
@@ -1326,7 +1366,7 @@ VStack(alignment: .leading, spacing: 8) {
 #### Border Visual Hierarchy
 
 **Structural Elements** (Pills, Section Containers):
-- Border: `Color.white.opacity(0.2)` or `secondaryText`
+- Border: `Color.white.opacity(0.10)` or `secondaryText`
 - Purpose: Group content, show boundaries
 - More visible to indicate structure
 
@@ -1493,11 +1533,11 @@ VStack {
 ```swift
 // Standard border (most common)
 .stroke(OPSStyle.Colors.cardBorder, lineWidth: 1)
-// = Color.white.opacity(0.2)
+// = Color.white.opacity(0.10)
 
 // Subtle border (less prominent cards)
 .stroke(OPSStyle.Colors.cardBorderSubtle, lineWidth: 1)
-// = Color.white.opacity(0.05)
+// = Color.white.opacity(0.08)
 
 // No border (rare, only when card already has strong visual boundary)
 ```
@@ -1571,12 +1611,12 @@ struct ScaleButtonStyle: ButtonStyle {
 PrimaryButton(title: "Save Project", action: saveProject)
 
 // Visual Properties
-- Background: primaryAccent (#417394)
+- Background: primaryAccent (#597794)
 - Text: White
-- Font: button (Mohave Regular 16pt)
+- Font: button (Kosugi Regular 14pt, ALL CAPS)
 - Height: 56pt
 - Full width
-- Corner radius: 5pt
+- Corner radius: 3pt
 
 // Usage
 - One per screen maximum (occasionally two if equal weight)
@@ -1613,7 +1653,7 @@ SecondaryButton(title: "Cancel", action: dismiss)
 - Font: button
 - Height: 56pt
 - Full width
-- Corner radius: 5pt
+- Corner radius: 3pt
 
 // Usage
 - Paired with primary buttons
@@ -1633,7 +1673,7 @@ DestructiveButton(title: "Delete Project", action: deleteProject)
 - Font: button
 - Height: 56pt
 - Full width
-- Corner radius: 5pt
+- Corner radius: 3pt
 
 // Usage
 - Delete, Remove, Archive (if destructive)
@@ -1810,9 +1850,9 @@ Every design decision must consider:
 
 ```swift
 // ✅ High contrast pairs (field-tested)
-primaryText on background        // #E5E5E5 on #000000
-primaryAccent on background      // #417394 on #000000
-white on primaryAccent           // White on #417394
+primaryText on background        // #E5E5E5 on #0A0A0A
+primaryAccent on background      // #597794 on #0A0A0A
+white on primaryAccent           // White on #597794
 white on errorStatus             // White on #93321A
 
 // ⚠️ Avoid in critical text
@@ -1909,6 +1949,31 @@ if needsSync {
 
 ## 12. Accessibility Standards
 
+### Reduce Motion Support
+
+OPS fully supports the iOS **Reduce Motion** accessibility setting via the `Animation+Accessible.swift` extension.
+
+```swift
+// Check state directly if needed
+if UIAccessibility.isReduceMotionEnabled {
+    // Skip animation entirely
+} else {
+    // Run animation
+}
+
+// Preferred: use the extension — it handles the check automatically
+withAnimation(.accessibleEaseInOut()) {
+    state.toggle()
+}
+```
+
+When Reduce Motion is enabled:
+- `Animation.accessibleEaseInOut()` returns `nil` → SwiftUI applies state changes instantly, no motion
+- All view transitions that use this extension are automatically instant
+- Cards, section expands, filter chips, kanban bars, search sheets — all respect the setting
+
+**Do not use `.spring()` anywhere in OPS.** Spring animations cannot return `nil` and will always animate regardless of the accessibility setting.
+
 ### VoiceOver Support
 
 #### Accessibility Labels
@@ -1988,18 +2053,42 @@ All OPSStyle colors are pre-verified for contrast compliance:
 
 ## 13. Animation & Motion
 
+### Accessibility-Aware Animations (REQUIRED)
+
+**All animations in OPS must use `Animation.accessibleEaseInOut()`. Never use `.spring()` or raw `.easeInOut()` in view code.**
+
+```swift
+// File: Extensions/Animation+Accessible.swift
+extension Animation {
+    static func accessibleEaseInOut(duration: Double = 0.25) -> Animation? {
+        UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: duration)
+    }
+}
+```
+
+This extension:
+- Returns `nil` when iOS **Reduce Motion** is enabled — SwiftUI treats `nil` as instant (no animation)
+- Defaults to 0.25s easeInOut when motion is allowed
+- Is used via `withAnimation(.accessibleEaseInOut())` or `.animation(.accessibleEaseInOut(), value: …)`
+
+**Rationale:** `.spring()` ignores the Reduce Motion accessibility setting and can cause motion sickness for sensitive users. `accessibleEaseInOut()` is a global enforcer of the iOS Reduce Motion preference across the entire app.
+
 ### Animation Standards
 
 ```swift
-// Standard animation (most common)
-static let standard = SwiftUI.Animation.easeInOut(duration: 0.3)
+// Standard state change (0.25s default)
+withAnimation(.accessibleEaseInOut()) {
+    isExpanded.toggle()
+}
 
-// Quick animation (subtle changes)
-static let quick = SwiftUI.Animation.easeOut(duration: 0.15)
+// Quick UI feedback (filter chip tap, toggle)
+withAnimation(.accessibleEaseInOut(duration: 0.2)) {
+    activeFilter = .today
+}
 
-// Spring animation (natural movement)
-withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-    // state change
+// Slow/deliberate (calendar expand, section transitions)
+withAnimation(.accessibleEaseInOut(duration: 0.35)) {
+    isMonthExpanded.toggle()
 }
 ```
 
@@ -2024,7 +2113,7 @@ withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
             swipeOffset = value.translation.width
         }
         .onEnded { value in
-            withAnimation(.spring(response: 0.3)) {
+            withAnimation(.accessibleEaseInOut(duration: 0.2)) {
                 swipeOffset = 0
             }
         }
@@ -2041,7 +2130,7 @@ if isExpanded {
 
 // Toggle with animation
 Button("Expand") {
-    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+    withAnimation(.accessibleEaseInOut(duration: 0.2)) {
         isExpanded.toggle()
     }
 }
@@ -2054,7 +2143,7 @@ struct ScaleButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .animation(.accessibleEaseInOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 ```
@@ -2285,11 +2374,11 @@ For Android conversion, here are the equivalent concepts:
 ```swift
 // iOS (SwiftUI)
 Color("AccentPrimary")
-Color.white.opacity(0.2)
+Color.white.opacity(0.10)
 
 // Android (Compose)
 colorResource(R.color.accent_primary)
-Color.White.copy(alpha = 0.2f)
+Color.White.copy(alpha = 0.1f)
 ```
 
 ### Typography
@@ -2337,24 +2426,97 @@ OpsButton(
 ## Appendix B: Component File Locations (iOS)
 
 ```
-C:\OPS\opsapp-ios\OPS\Views\Components\
-├── Cards\
+OPS/OPS/Views/Components/ (76 files)
+├── Cards/
 │   ├── ClientInfoCard.swift
+│   ├── CompanyContactCard.swift
 │   ├── LocationCard.swift
 │   ├── NotesCard.swift
 │   └── TeamMembersCard.swift
-├── Common\
+├── Client/
+│   ├── SubClientEditSheet.swift
+│   └── SubClientListView.swift
+├── Common/
 │   ├── AddressAutocompleteField.swift
+│   ├── AddressSearchField.swift
 │   ├── AppHeader.swift
+│   ├── AppMessageView.swift
+│   ├── CompanyTeamListView.swift
+│   ├── ContactDetailSheet.swift
+│   ├── CustomAlert.swift
 │   ├── CustomTabBar.swift
+│   ├── DeleteConfirmation.swift
+│   ├── DeletionSheet.swift
+│   ├── ExpandableNotesView.swift
+│   ├── FilterSheet.swift
+│   ├── ImageSyncProgressView.swift
 │   ├── LoadingOverlay.swift
+│   ├── LocationPermissionView.swift
+│   ├── NavigationBanner.swift
+│   ├── NavigationControlsView.swift
+│   ├── NotificationBanner.swift
+│   ├── PushInMessage.swift
+│   ├── ReassignmentRows.swift
+│   ├── RefreshIndicator.swift
 │   ├── SearchField.swift
+│   ├── StorageOptionSlider.swift
+│   ├── TabBarBackground.swift
+│   ├── TacticalLoadingBar.swift
 │   └── UnassignedRolesOverlay.swift
-├── Project\
+├── Contact/
+│   ├── ContactCreatorView.swift
+│   ├── ContactPicker.swift
+│   └── ContactUpdater.swift
+├── Event/
+│   └── EventCarousel.swift
+├── Images/
+│   ├── ImagePicker.swift
+│   ├── ImagePickerView.swift
+│   ├── PhotoAnnotationView.swift
+│   ├── ProjectImagesSection.swift
+│   ├── ProjectImagesSimple.swift
+│   ├── ProjectImageView.swift
+│   └── ProjectPhotosGrid.swift
+├── Map/
+│   ├── MiniMapView.swift
+│   ├── ProjectMapAnnotation.swift
+│   ├── ProjectMapView.swift
+│   └── RouteDirectionsView.swift
+├── Project/
+│   ├── ProjectActionBar.swift
 │   ├── ProjectCard.swift
+│   ├── ProjectCarousel.swift
 │   ├── ProjectDetailsView.swift
+│   ├── ProjectHeader.swift
+│   ├── ProjectNotesView.swift
+│   ├── ProjectSheetContainer.swift
+│   ├── ProjectSummaryCard.swift
+│   ├── TaskCompletionChecklistSheet.swift
 │   └── TaskDetailsView.swift
-└── FloatingActionMenu.swift
+├── Scheduling/
+│   └── CalendarSchedulerSheet.swift
+├── Sync/
+│   └── SyncStatusIndicator.swift
+├── Task/
+│   └── TaskSelectorBar.swift
+├── Tasks/
+│   └── TaskListView.swift
+├── Team/
+│   ├── TeamRoleAssignmentSheet.swift
+│   └── TeamRoleManagementView.swift
+├── User/
+│   ├── CompanyTeamMembersListView.swift
+│   ├── ContactDetailView.swift
+│   ├── OrganizationTeamView.swift
+│   ├── ProjectTeamView.swift
+│   ├── TaskTeamView.swift
+│   ├── TeamMemberListView.swift
+│   └── UserProfileCard.swift
+├── CompanyAvatar.swift
+├── FloatingActionMenu.swift
+├── OptionalSectionPill.swift
+├── ProfileImageUploader.swift
+└── UserAvatar.swift
 ```
 
 ---

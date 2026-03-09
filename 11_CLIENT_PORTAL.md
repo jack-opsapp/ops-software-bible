@@ -1,5 +1,7 @@
 # 11_CLIENT_PORTAL.md
 
+**Last Updated**: February 28, 2026
+
 ## Document Purpose
 
 Complete reference for the OPS Client Portal — a client-facing web portal within the OPS web app where end customers (homeowners, property managers) can view project status, approve/decline estimates, answer line-item questions, pay invoices via Stripe, view project photos, and message the company. Company-customizable branding with 3 templates, light/dark mode, and accent colors.
@@ -122,6 +124,19 @@ Client ↔ company messaging. Two sender types.
 | content | TEXT NOT NULL | |
 | read_at | TIMESTAMPTZ | null = unread |
 | created_at | TIMESTAMPTZ | |
+
+### Migration 009: line_item_answers Unique Constraint Fix
+
+Migration file: `supabase/migrations/009_fix_line_item_answers_unique.sql` (pending)
+
+Adds the missing `UNIQUE` constraint on `(question_id, client_id)` to the `line_item_answers` table. This constraint is required for the upsert operations in `LineItemQuestionService.submitAnswer()`, which uses `ON CONFLICT (question_id, client_id)` to update existing answers rather than creating duplicates.
+
+```sql
+ALTER TABLE line_item_answers
+  ADD CONSTRAINT uq_answer_question_client UNIQUE (question_id, client_id);
+```
+
+> **Migration numbering collision:** Two migration files share the `009` prefix. `009_blog_schema.sql` (blog categories, topics, and posts tables) has already been executed and lives in `EXECUTED/009_blog_schema.sql`. The pending `009_fix_line_item_answers_unique.sql` remains in the migrations root. These were authored independently and collided on the same sequence number.
 
 ---
 
@@ -425,6 +440,7 @@ Portal-specific hooks in `src/lib/hooks/`. All use `portalFetch()` helper (adds 
 
 **Database:**
 - `supabase/migrations/007_portal_schema.sql`
+- `supabase/migrations/009_fix_line_item_answers_unique.sql` — unique constraint fix for line_item_answers upsert
 
 **Types:**
 - `src/lib/types/portal.ts`

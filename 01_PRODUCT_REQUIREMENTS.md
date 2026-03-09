@@ -69,7 +69,7 @@ This document catalogs every feature, user story, business rule, and functional 
 - **Team Assignment** - Assign multiple crew members to projects
 - **Photo Documentation** - Capture and attach photos to projects (S3 storage)
 - **Notes & Description** - Long-form text fields for project details
-- **Project Notes System (OPS Web)** - First-class notes with @mentions, author attribution, timestamps, and photo attachments (replaces legacy plain-text teamNotes field from Bubble; see [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11)
+- **Project Notes System (iOS & OPS Web)** - Per-project message board with timestamped notes, @mentions with autocomplete, author attribution (name + avatar), and photo attachments. On iOS, notes are displayed in a scrollable list with a compose bar and mention suggestion overlay. Notes sync to Supabase via `ProjectNoteRepository`. Replaces the legacy plain-text teamNotes field from Bubble. See [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11.
 
 #### Project Viewing
 - **Project Details View** - Comprehensive project overview
@@ -77,7 +77,7 @@ This document catalogs every feature, user story, business rule, and functional 
 - **Breadcrumb Navigation** - Company → Client → Project hierarchy
 - **Location Card** - Address display with "Get Directions" button
 - **Client Info Card** - Client contact details with tap-to-call/email
-- **Notes Card** - Expandable notes section (iOS: plain text; OPS Web: threaded notes with @mentions, author attribution, photo attachments — see [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11)
+- **Notes Card** - Expandable notes section (iOS & OPS Web: threaded notes with @mentions, author attribution, timestamps — see [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11)
 - **Team Members Card** - Assigned crew with avatars
 - **Task List** - All tasks grouped by status
 - **Image Gallery** - Project photos with full-screen viewer
@@ -96,7 +96,7 @@ This document catalogs every feature, user story, business rule, and functional 
 - **Edit Tasks** - Update any field with permission-based restrictions
 - **Delete Tasks** - Soft delete (marked for deletion, synced to server)
 - **Task Types** - Customizable categories with colors and icons
-- **Task Status Workflow** - Booked → In Progress → Completed (or Cancelled)
+- **Task Status Workflow** - Active → Completed (or Cancelled). Legacy values (Booked, Scheduled, In Progress) are mapped to Active on decode.
 - **Team Assignment** - Assign multiple crew members to tasks
 - **Calendar Integration** - Link tasks to calendar events for scheduling
 - **Task Ordering** - Display order within projects
@@ -125,60 +125,107 @@ This document catalogs every feature, user story, business rule, and functional 
 
 #### Calendar Views
 - **Monthly View** - Traditional month grid with event indicators
-- **Weekly View** - Week-at-a-glance with time slots
-- **Daily View** - Single-day schedule detail
-- **Timeline View** - Chronological project/task list
-- **Today View** - Focus on current day's schedule
+- **Weekly View** - Week-at-a-glance with hourly time grid (default desktop view)
+- **Daily View** - Single-day hourly schedule detail
+- **Team Timeline View** - Gantt-style horizontal timeline with one row per crew member (web)
+- **Agenda View** - Chronological scrollable list grouped by date (mobile default)
 
 #### Calendar Event Management
-- **Create Events** - Linked to tasks (task-only scheduling as of Nov 2025)
-- **Edit Events** - Update dates, duration, team assignments
-- **Delete Events** - Remove scheduling (soft delete)
+- **Create Events** - Click empty slot to quick-create, or click-and-drag time range to create with pre-filled times (web)
+- **Edit Events** - Inline detail panel (Sheet, side="right") with title, time range, project, type, team editing (web)
+- **Delete Events** - From detail panel, context menu, or keyboard shortcut
+- **Drag-and-Drop Scheduling** - Drag events to new times/days with ghost preview and real-time time labels (web, @dnd-kit)
+- **Event Resize** - Bottom-edge drag handle with 15-minute snap grid (web)
 - **Multi-Day Events** - Span events across multiple days
 - **Duration Management** - Calculate duration from start/end dates
 - **Team Assignment** - Assign crew to calendar events
-- **Color Coding** - Events inherit task type colors
+- **Color Coding** - Events inherit task type colors (install=blue, repair=amber, inspection=emerald, maintenance=violet, consultation=rose, estimate=cyan, other=slate)
+- **Context Menu** - Right-click event for Edit, Duplicate, Delete (web)
+- **Conflict Detection** - Red glow on overlapping events per team member, detected via `detectConflicts()` utility
 
 #### Filtering & Organization
-- **Filter by Team Member** - View only assigned events
-- **Filter by Status** - Show/hide completed, cancelled events
-- **Filter by Project** - Isolate events for specific projects
-- **Date Range Selection** - Custom date range views
+- **Filter Sidebar** - Collapsible left panel with multi-select filters (web, 260px)
+- **Filter by Team Member** - Checkbox list with avatars
+- **Filter by Task Type** - Color-coded checkboxes
+- **Filter by Project** - Searchable multi-select
+- **Filter by Status** - Upcoming, In Progress, Past checkboxes
+- **Unscheduled Tasks Panel** - Draggable tasks with no calendar event; drop onto calendar to schedule (web)
+- **Filter Chips** - Active filter count in toolbar
+- **Clear All** - One-click reset all filters
 
-### 5. Job Board
+#### Keyboard Navigation (Web)
+- **View Switching** - D (day), W (week), M (month), T (team), A (agenda)
+- **Date Navigation** - ArrowLeft/Right (period-aware: day/week/month)
+- **Quick Actions** - Y (today), C (create), E (edit selected), Delete/Backspace (delete selected)
+- **Event Navigation** - Tab/Shift+Tab (cycle events), Enter (open detail panel), Escape (close panels)
 
-#### View Modes
-- **Dashboard View** - Overview of active projects
-- **Section View** - Organize by custom sections (Unscheduled, This Week, Next Week, etc.)
-- **Search & Filter** - Find projects by title, client, status
+#### Responsive Layout (Web)
+- **Desktop (≥1200px)** - Three-panel: filter sidebar + calendar grid + detail panel
+- **Tablet (768–1199px)** - Two-panel, sidebar available
+- **Mobile (<768px)** - Agenda view default, filter sidebar hidden, bottom sheets for details
 
-#### Job Board Sections
-- **Predefined Sections:**
-  - Unscheduled (projects with no tasks or no calendar events)
-  - This Week (tasks scheduled for current week)
-  - Next Week (tasks scheduled for next week)
-  - In Progress (tasks marked as in progress)
-  - Completed (tasks marked as completed)
-  - All Projects (comprehensive list)
+### 5. Job Board (Redesigned March 2026)
 
-- **Custom Sections** - Create user-defined organizational sections
-- **Collapsible Sections** - Expand/collapse for focus
-- **Section Reordering** - Drag to reorder sections
+The Job Board uses a role-based section system. Each role sees a different set of sections.
 
-#### Universal Job Card
-- **Project Title** - Primary identifier
-- **Client Name** - Associated client
-- **Status Badge** - Color-coded project status
-- **Unscheduled Badge** - Indicates projects with no scheduled tasks
-- **Date Display** - Scheduled start/end dates
-- **Team Avatars** - Assigned crew members
-- **Location Indicator** - Address snippet
-- **Quick Actions** - Swipe actions for common tasks
+#### Role-Based Sections
 
-#### Role-Based Access
-- **Admin** - Full access to all projects, all sections
-- **Office Crew** - Full access to all projects, all sections
-- **Field Crew** - Access only to assigned projects, dashboard view only (no section picker)
+| Section | Field Crew | Office Crew | Admin |
+|---------|-----------|-------------|-------|
+| My Tasks | ✅ (default) | ❌ | ❌ |
+| My Projects | ✅ | ❌ | ❌ |
+| Projects | ❌ | ✅ (default) | ✅ (default) |
+| Tasks | ❌ | ✅ | ✅ |
+| Kanban | ❌ | ✅ | ✅ |
+| Pipeline | ❌ | ✅ (with `pipeline` permission) | ✅ (with `pipeline` permission) |
+
+**Note:** Field crew do not see the section picker. Section switching is not available to field crew.
+
+#### My Tasks Section (Field Crew)
+- Shows tasks explicitly assigned to the current user only
+- Tasks with no explicit assignment are NOT shown (no fallback to all project tasks)
+- Filter chips: ALL / TODAY / UPCOMING / COMPLETED
+- Tasks grouped by project, collapsible groups
+- Empty state: "No tasks assigned to you"
+
+#### My Projects Section (Field Crew)
+- Shows only projects where the user is a team member
+- Swipe-to-change-status on cards
+- Read access + status update only
+
+#### Projects Section (Office/Admin)
+- All company projects with filters (status, team member, search)
+- Swipe-to-change-status on cards
+- Closed/archived projects in collapsible section
+
+#### Tasks Section (Office/Admin)
+- All company tasks across all projects
+- Filter by status, type, team member
+
+#### Kanban Section (Office/Admin)
+- Project count distribution across statuses: RFQ → Estimated → Accepted → In Progress → Completed
+- Proportional fill bars; tap to expand and view project cards per status
+
+#### Pipeline Section (Admin + `pipeline` permission)
+- CRM pipeline for lead/deal management
+- Gated by `User.specialPermissions.contains("pipeline")`
+
+#### Universal Job Card (`UniversalJobBoardCard`)
+- **Project Title** — Primary identifier
+- **Client Name** — Associated client
+- **Status Badge** — Color-coded using `OPSStyle.Colors.statusColor(for:)`
+- **Unscheduled Badge** — Projects with no scheduled active tasks
+- **Date Display** — Scheduled start/end dates
+- **Team Avatars** — Assigned crew members
+- **Location Indicator** — Address snippet
+- **Quick Actions** — Swipe gestures for status change
+- **Directional Drag** — `DirectionalDragModifier` resolves scroll vs. swipe conflict
+
+#### Universal Search Sheet
+- Opened from header search button (`AppState.showingJobBoardSearch`)
+- Role-filtered: field crew sees only assigned projects/tasks
+- Pipeline-gated: no RFQ/Estimated projects for non-pipeline users
+- Searches project title, client name, address, task title, task notes
 
 ### 6. Client Management
 
@@ -271,7 +318,7 @@ This document catalogs every feature, user story, business rule, and functional 
   3. **Periodic Sync** - 3-minute retry for failed syncs
 
 #### Sync Operations
-- **CentralizedSyncManager** - Orchestrates all sync operations
+- **SupabaseSyncManager** - Orchestrates all sync operations (replaced CentralizedSyncManager)
 - **Per-Entity Sync** - Individual sync methods for each data model
 - **Conflict Resolution** - Push local changes first, then fetch and replace with server
 - **Server Wins** - Server data takes precedence in conflicts
@@ -291,7 +338,7 @@ This document catalogs every feature, user story, business rule, and functional 
 #### User Settings
 - **Profile Management** - Edit name, email, phone
 - **PIN Management** - Set, change, reset 4-digit PIN
-- **Notification Preferences** - (Future feature)
+- **Notification Preferences** - NotificationSettingsView with per-project notification controls (see Feature 19)
 - **Theme Settings** - (Currently dark theme only)
 
 #### Company Settings (Admin Only)
@@ -394,6 +441,38 @@ This document catalogs every feature, user story, business rule, and functional 
 - **As an admin**, I want to get turn-by-turn directions to job sites so that I can navigate efficiently
 - **As an admin**, I want to see project locations on a map so that I can visualize job distribution
 
+#### Pipeline / CRM
+- **As an admin**, I want to manage a pipeline of leads on my phone so that I can track sales opportunities in the field
+- **As an admin**, I want to swipe opportunity cards to advance or mark deals as lost so that I can update pipeline status quickly
+- **As an admin**, I want to log activities (notes, calls, emails, meetings, site visits) on opportunities so that I have a record of interactions
+- **As an admin**, I want to see pipeline metrics (deals count, weighted value, total value) so that I understand my sales pipeline
+- **As an admin**, I want to filter opportunities by stage so that I can focus on specific parts of the funnel
+- **As an admin**, I want to view estimates, invoices, and accounting from the Pipeline tab so that all CRM data is in one place
+
+#### Inventory
+- **As an admin**, I want to track inventory items with quantities and units so that I know what materials I have on hand
+- **As an admin**, I want to set warning and critical quantity thresholds so that I know when to reorder supplies
+- **As an admin**, I want to organize inventory with tags so that I can categorize materials by type or use
+- **As an admin**, I want to import inventory from spreadsheets (CSV/XLSX) so that I can onboard existing inventory quickly
+- **As an admin**, I want to adjust quantities with quick +/- buttons so that inventory updates are fast on site
+- **As an admin**, I want to view inventory snapshots so that I can see historical inventory levels
+
+#### Photo Annotations
+- **As an admin**, I want to draw on project photos so that I can mark up issues or instructions for my crew
+- **As an admin**, I want to add text notes to annotated photos so that I can explain the markups
+
+#### Notifications
+- **As an admin**, I want to receive in-app notifications for mentions and project updates so that I stay informed
+- **As an admin**, I want to tap a notification to navigate to the relevant project so that I can quickly review updates
+
+#### Project Notes
+- **As an admin**, I want to post timestamped notes on projects with @mentions so that my team can communicate in context
+- **As an admin**, I want to see who posted each note and when so that I can track project communications
+
+#### Crew Location
+- **As an admin**, I want to see my crew's live locations on a map so that I can coordinate field operations
+- **As an admin**, I want to see crew battery level and last update time so that I know their tracking status
+
 #### Subscription
 - **As an admin**, I want to view my subscription plan so that I know what I'm paying for
 - **As an admin**, I want to upgrade my plan so that I can add more users
@@ -482,6 +561,15 @@ This document catalogs every feature, user story, business rule, and functional 
 - **As field crew**, I want to capture photos of work so that I can document progress
 - **As field crew**, I want photos to upload automatically when I have signal so that office sees updates
 - **As field crew**, I want to view project photos so that I can see previous work
+- **As field crew**, I want to annotate photos with drawings and notes so that I can highlight issues on site
+
+#### Notifications
+- **As field crew**, I want to receive notifications when I'm mentioned in a project note so that I can respond promptly
+- **As field crew**, I want to tap a notification to go directly to the project so that I can see context quickly
+
+#### Project Notes
+- **As field crew**, I want to post notes on my assigned projects so that I can communicate updates to the office
+- **As field crew**, I want to @mention team members in notes so that they get notified
 
 #### Calendar & Schedule
 - **As field crew**, I want to view my calendar so that I know my schedule
@@ -546,9 +634,8 @@ This document catalogs every feature, user story, business rule, and functional 
    - Status changes trigger sync immediately
 
 2. **Task Status Transitions**
-   - Booked (formerly Scheduled) is initial state
-   - Can move to In Progress or Cancelled from Booked
-   - Can move to Completed from In Progress
+   - Active is the initial state (replaces legacy "Booked"/"Scheduled"/"In Progress" which are all mapped to Active on decode)
+   - Can move to Completed or Cancelled from Active
    - Cannot revert from Completed (must create new task)
    - Status changes trigger haptic feedback
 
@@ -580,38 +667,63 @@ This document catalogs every feature, user story, business rule, and functional 
 
 ### Permission Rules
 
-1. **Role-Based Permissions**
+1. **RBAC+ABAC Permission System (March 2026)**
 
-   | Feature | Admin | Office Crew | Field Crew |
-   |---------|-------|-------------|------------|
-   | View all projects | ✅ | ✅ | ❌ (assigned only) |
-   | Create projects | ✅ | ✅ | ❌ |
-   | Edit projects | ✅ | ✅ | ❌ |
-   | Delete projects | ✅ | ✅ | ❌ |
-   | Change project status | ✅ | ✅ | ✅ |
-   | Create tasks | ✅ | ✅ | ❌ |
-   | Edit tasks | ✅ | ✅ | ❌ |
-   | Delete tasks | ✅ | ✅ | ❌ |
-   | Change task status | ✅ | ✅ | ✅ |
-   | Schedule tasks | ✅ | ✅ | ❌ |
-   | Create clients | ✅ | ✅ | ❌ |
-   | Edit clients | ✅ | ✅ | ❌ |
-   | Delete clients | ✅ | ✅ | ❌ |
-   | View calendar | ✅ | ✅ | ✅ |
-   | Edit calendar | ✅ | ✅ | ❌ |
-   | View job board sections | ✅ | ✅ | ❌ (dashboard only) |
-   | Company settings | ✅ | ❌ | ❌ |
-   | Subscription management | ✅ | ❌ | ❌ |
-   | Manage team members | ✅ | ❌ | ❌ |
-   | Take photos | ✅ | ✅ | ✅ |
-   | Get directions | ✅ | ✅ | ✅ |
+   OPS uses a granular permission system with 5 preset roles, ~55 dot-notation permissions, and scope support (`all`, `assigned`, `own`). Permissions are stored in Supabase (`roles`, `role_permissions`, `user_roles` tables) and enforced at multiple layers (RLS, route guard, UI gating, API checks).
 
-2. **Role Detection Logic**
-   - Check company.adminIds first (explicit admin designation)
-   - Then check user.employeeType field
-   - Default to Field Crew if no explicit role set
+   **5 Preset Roles (hierarchy 1=highest to 5=lowest):**
 
-3. **Subscription-Based Access**
+   | Role | Hierarchy | Summary |
+   |------|-----------|---------|
+   | Admin | 1 | Full system access including billing, roles, and all settings |
+   | Owner | 2 | Full access except billing and role assignment |
+   | Office | 3 | Full project/financial access, no company settings or role management |
+   | Operator | 4 | Lead tech — creates projects/estimates, edits assigned work only |
+   | Crew | 5 | Field-only — views/edits assigned work, creates expenses |
+
+   **Key Permission Matrix (scope in parentheses):**
+
+   | Feature | Admin | Owner | Office | Operator | Crew |
+   |---------|-------|-------|--------|----------|------|
+   | View projects | all | all | all | all | assigned |
+   | Create projects | all | all | all | all | — |
+   | Edit projects | all | all | all | assigned | — |
+   | Delete projects | all | all | — | — | — |
+   | Create tasks | all | all | all | all | — |
+   | Edit tasks | all | all | all | assigned | assigned |
+   | Change task status | all | all | all | assigned | assigned |
+   | View clients | all | all | all | all | assigned |
+   | Create clients | all | all | all | all | — |
+   | View calendar | all | all | all | all | own |
+   | Edit calendar | all | all | all | own | — |
+   | Job board sections | all | all | all | all | assigned |
+   | Pipeline | all | all | all | — | — |
+   | Estimates (view/create) | all | all | all | all / own | — |
+   | Invoices (view) | all | all | all | all | — |
+   | Expenses (view/create) | all | all | all | own | own |
+   | Expenses (approve) | all | all | all | — | — |
+   | Inventory | all | all | all | — | — |
+   | Team management | all | all | — | — | — |
+   | Assign roles | all | — | — | — | — |
+   | Company settings | all | all | — | — | — |
+   | Billing settings | all | — | — | — | — |
+   | Map crew locations | all | all | all | — | — |
+   | Photos (view/upload) | all | all | all | all | assigned |
+   | Notifications | own | own | own | own | own |
+
+   *See `03_DATA_ARCHITECTURE.md` > Permissions System Tables for the complete schema and full permission grants per role.*
+
+2. **Role Assignment**
+   - Each user has exactly one role (stored in `user_roles` table, 1:1 relationship)
+   - Roles are assigned by users with the `team.assign_roles` permission (Admin only by default)
+   - New users without a role assignment fall back to the legacy `user.role` field for backward compatibility
+   - Custom roles can be created per company with any combination of the ~55 permissions
+
+3. **Legacy Role Detection (being replaced)**
+   - The old system checked `company.adminIds` first, then `user.employeeType`, defaulting to Field Crew
+   - This is superseded by the `user_roles` table but remains as a fallback during transition
+
+4. **Subscription-Based Access**
    - Trial: 30 days, all features, 10 seats
    - Expired: Lockout screen, no app access
    - Active paid: All features, seat limit enforced
@@ -667,9 +779,9 @@ This document catalogs every feature, user story, business rule, and functional 
    - Validate phone format on display
 
 4. **Enum Mapping**
-   - Status enums: "Scheduled" renamed to "Booked" (Nov 2025)
-   - DTOs handle backward compatibility (map "Scheduled" to .booked)
-   - Send "Booked" to Bubble (API updated Nov 2025)
+   - Task status enum values: `active`, `completed`, `cancelled`
+   - DTOs handle backward compatibility: legacy values "Scheduled", "Booked", "booked", "In Progress", "in_progress" all map to `.active`; "Completed" maps to `.completed`; "Cancelled" maps to `.cancelled`
+   - Send lowercase values (`active`, `completed`, `cancelled`) to Supabase
 
 ---
 
@@ -707,7 +819,7 @@ The app must function fully without internet connectivity. All features must be 
 
 2. **Connectivity Monitoring**
    - ConnectivityMonitor tracks network status
-   - Notifies CentralizedSyncManager when connectivity restored
+   - Notifies SupabaseSyncManager when connectivity restored
    - Visual indicator in UI shows sync status
    - User can manually trigger sync
 
@@ -961,9 +1073,9 @@ The app must function fully without internet connectivity. All features must be 
 
 ---
 
-### 14. Pipeline / CRM (OPS Web)
+### 14. Pipeline / CRM (iOS & OPS Web)
 
-#### Pipeline Board
+#### Pipeline Board — OPS Web
 - **8-Stage Kanban Board** — New Lead, Qualifying, Quoting, Quoted, Follow-Up, Negotiation, Won, Lost
 - **Drag-and-Drop** — Move opportunities between stages via @dnd-kit
 - **Stage Transitions** — Every stage move recorded as immutable history
@@ -974,6 +1086,34 @@ The app must function fully without internet connectivity. All features must be 
 - **Won/Lost Prompts** — Loss reason required when moving to Lost; actual value for Won
 - **Terminal Columns** — Won and Lost are narrower, separate from active stages
 
+#### Pipeline Tab — iOS
+The Pipeline tab on iOS is a dedicated tab that appears conditionally based on the user having the `pipeline` special permission. It contains a segmented nav with four sections: **Pipeline**, **Estimates**, **Invoices**, and **Accounting**.
+
+**Pipeline Section (iOS):**
+- **Stage-Filtered List** — Opportunities displayed as cards, filterable by stage via a horizontal scrollable stage strip (PipelineStageStrip). Each stage chip shows a stage-colored dot and count.
+- **Metrics Strip** — Displays active deals count, weighted pipeline value, and total pipeline value as metric pills.
+- **Search** — Search bar to filter deals by contact name.
+- **Opportunity Cards** — Each card shows contact name, estimated value, job description, stage indicator (colored dot + name), days in stage, and stale warning icon. Cards use a left color stripe matching the stage color.
+- **Swipe Gestures** — Swipe right to advance to next stage (green reveal); swipe left to mark as lost (red reveal).
+- **Opportunity Detail View** — Full detail view with three sub-tabs: Details (contact info, deal info), Activity (logged activities), and Follow-Ups (scheduled reminders). Includes "Advance to [Next Stage]" button and overflow menu (Edit, Mark Won, Mark Lost, Delete).
+- **Create/Edit Opportunities** — OpportunityFormSheet with contact fields (name, phone, email), deal details (job description, estimated value, source picker). Source options: Referral, Website, Email, Phone, Walk-in, Social Media, Other.
+- **Log Activity** — ActivityFormSheet supports types: Note, Call, Email, Meeting, Site Visit. Each activity includes a notes field.
+- **Mark as Lost** — MarkLostSheet requires a loss reason before confirming.
+
+**Estimates Section (iOS):**
+- EstimatesListView (content managed in Pipeline tab)
+
+**Invoices Section (iOS):**
+- InvoicesListView (content managed in Pipeline tab)
+
+**Accounting Section (iOS):**
+- AccountingDashboard (content managed in Pipeline tab)
+
+**Pipeline Stages (Shared iOS & Web):**
+- `PipelineStage` enum: newLead, qualifying, quoting, quoted, followUp, negotiation, won, lost
+- Terminal stages: won and lost (cannot advance further)
+- Each stage has a display name, color, and `next` stage for progression
+
 #### Lead Management
 - **Create Leads** — With or without an existing client record (inline contact fields)
 - **Lead Sources** — Referral, Website, Email, Phone, Walk-In, Social Media, Repeat Client, Other
@@ -983,7 +1123,7 @@ The app must function fully without internet connectivity. All features must be 
 - **Address** — Job site address for the lead
 
 #### Activity Timeline
-- **Activity Types** — Note, Email, Call, Meeting, Estimate Sent/Accepted/Declined, Invoice Sent, Payment Received, Stage Change, Created, Won, Lost, System
+- **Activity Types** — Note, Email, Call, Meeting, Estimate Sent/Accepted/Declined, Invoice Sent, Payment Received, Stage Change, Created, Won, Lost, Site Visit, System
 - **Direction** — Inbound or Outbound (for calls/emails)
 - **Duration** — For calls and meetings
 
@@ -1069,6 +1209,120 @@ Draft → Sent → AwaitingPayment → PartiallyPaid → Paid
 - **Webhook Support** — Webhook verifier token stored for incoming webhooks
 - *Full bidirectional sync implementation: planned/in progress*
 
+### 19. In-App Notifications (iOS)
+
+#### Notification System
+- **Notification List View** — Accessible from the app header, shows recent notifications in a scrollable list with unread indicators (blue dot), notification icon by type, title, body, and relative timestamp.
+- **Notification Types** — `mention` (blue accent icon), `assignment` (green icon), `update` (gray icon), and generic/default (gray bell icon).
+- **Notification DTO** — Each notification has: id, userId, companyId, type, title, body, optional projectId, optional noteId, isRead flag, and createdAt timestamp.
+- **Mark as Read** — Individual notifications marked as read on tap. "Mark All Read" button in toolbar clears all unread.
+- **Deep Linking** — Tapping a notification with a projectId dismisses the notification list and navigates to the project details view.
+- **Unread Count** — `appState.unreadNotificationCount` tracks unread count, updated on load and on tap.
+- **Notification Banner** — Slide-down banner (NotificationBanner) for transient in-app alerts with success/error/info types, auto-dismisses after 2 seconds.
+
+#### Push Notifications
+- **OneSignal Integration** — Push notifications via OneSignal SDK.
+- **Notification Categories** — Project, Schedule, Team, General, Project Assignment, Project Update, Project Completion, Project Advance.
+- **Deep Link Handlers** — Push notifications can deep-link to: project details (OpenProjectDetails), task details (OpenTaskDetails), schedule view (OpenSchedule), job board (OpenJobBoard).
+- **Sync on Deep Link** — If the target project/task is not found locally, a full sync is triggered before navigation.
+
+#### Notification Settings
+- **NotificationSettingsView** — Allows users to configure notification preferences.
+- **Per-Project Preferences** — ProjectNotificationPreferences for granular control.
+- **Notification Batching** — NotificationBatcher coalesces rapid notifications.
+
+### 20. Photo Annotations (iOS)
+
+#### Annotation System
+- **PencilKit Drawing Canvas** — Full-screen annotation view (PhotoAnnotationView) overlays a PencilKit canvas on top of project photos for freehand drawing.
+- **Drawing Tools** — Default tool is a thin white pen (3pt width). Full PencilKit tool picker available (pen, marker, pencil, eraser, ruler, color picker) via the system PKToolPicker.
+- **Input Support** — Works with both finger and Apple Pencil (`drawingPolicy = .anyInput`), optimized for field use without a stylus.
+- **Undo/Clear** — Undo last stroke button and full clear drawing button.
+- **Text Notes** — Bottom bar text field for adding a text note alongside the drawing annotation.
+- **Save to Supabase** — Annotations saved via PhotoAnnotationSyncManager. The drawing is rendered as a transparent PNG overlay and uploaded to cloud storage. The annotation URL is stored alongside the original photo URL.
+- **Offline Support** — PKDrawing data stored locally (`localDrawingData` on the PhotoAnnotation model) for offline editing. Synced when connectivity is available.
+
+#### Data Model
+- **PhotoAnnotation** — SwiftData model: id, projectId, companyId, photoURL, annotationURL (cloud-rendered overlay), note (text), authorId, createdAt, updatedAt, deletedAt, localDrawingData (PKDrawing binary), needsSync flag.
+- **Supabase Sync** — PhotoAnnotationRepository handles CRUD operations. PhotoAnnotationSyncManager handles rendering and uploading the drawing overlay.
+
+### 21. Inventory Management (iOS)
+
+#### Inventory Tab
+- **Conditional Tab** — The Inventory tab appears in the tab bar only for users with `inventoryAccess` set to `true` on their user profile. Uses the `shippingbox.fill` SF Symbol icon.
+- **Inventory View** — Main view (InventoryView) with search, tag filtering, sort options (Tag, Name, Quantity, Threshold), and pinch-to-zoom card scaling (0.8x to 1.5x, persisted in AppStorage).
+
+#### Item Management
+- **Create Items** — InventoryFormSheet with name, quantity, unit (from company-defined units), tags, SKU/part number, description, notes, and quantity thresholds (warning + critical levels).
+- **Edit Items** — Same form sheet in edit mode with pre-populated fields and delete option.
+- **Quantity Adjustment** — Dedicated QuantityAdjustmentSheet with large quantity display, configurable quick-adjust buttons (-100, -50, -10, -1, +1, +10, +50, +100), direct-entry editing, and change indicator showing old → new value. Adjustment settings persisted in UserDefaults.
+- **Bulk Quantity Adjustment** — BulkQuantityAdjustmentSheet applies the same adjustment to all selected items simultaneously with preview of each item's new quantity.
+- **Selection Mode** — Long-press to enter multi-select mode with selection stripe indicators, enabling bulk operations.
+
+#### Tag System
+- **Item Tags** — Free-form tags per item, displayed as monochromatic badges. Tags are company-scoped InventoryTag entities with their own Supabase sync.
+- **Tag Management** — InventoryManageTagsSheet for renaming or deleting tags globally across all items, with item count per tag and search.
+- **Bulk Tag Editing** — BulkTagsSheet for adding/removing tags across multiple selected items, with create-new-tag inline, pending changes preview, and available/current tag sections.
+- **Predictive Tag Input** — Tag input field shows matching suggestions from existing company tags as the user types.
+
+#### Inventory Cards
+- **Progressive Disclosure** — Card detail scales with pinch-to-zoom: at minimum scale only name and quantity shown; at 0.9x tags appear; at 1.0x full metadata (SKU, threshold badges) visible.
+- **Threshold Status** — Items show color-coded threshold badges (warning/critical) based on per-item or per-tag threshold settings.
+- **Long-Press Actions** — Context menu for Select, Edit, Delete on each card.
+
+#### Snapshots
+- **Inventory Snapshots** — SnapshotListView displays historical snapshots of inventory state. Each snapshot records item count, creation timestamp, and whether it was automatic or manual.
+- **Snapshot Detail** — Shows summary (date, type, items count) and a list of all items at that point in time with their quantities and units.
+
+#### Spreadsheet Import
+- **File Import** — SpreadsheetImportSheet supports CSV and XLSX file import via iOS file picker.
+- **Import Wizard** — 5-step flow: Select File → Configure (data orientation, import mode) → Map Fields (column-to-field mapping) → Preview (with duplicate detection against existing inventory) → Import (progress bar with per-item status).
+- **Import Modes** — Multiple Items (standard row-per-item), Single Item (one item from row data), Variations (grid format where rows are items and columns are variations).
+- **Duplicate Detection** — Imported items compared against existing company inventory for name matches.
+
+#### Data Model
+- **InventoryItem** — SwiftData model with: id, name, quantity, companyId, unitId, itemDescription, sku, notes, imageUrl, warningThreshold, criticalThreshold, tagIds, tagNames (computed), unit relationship, tags relationship.
+- **InventoryTag** — Company-scoped tag entity with name, optional warning/critical thresholds. Synced to Supabase via junction table (item_tags).
+- **InventoryUnit** — Company-defined units (e.g., "pcs", "ft", "lbs") with display label and sort order.
+- **Supabase Sync** — InventoryRepository handles CRUD for items, tags, units, and snapshots. Tag-item relationships managed via `setItemTags` junction table operations.
+
+### 22. Crew Location Tracking (iOS)
+
+#### Location Broadcasting
+- **CrewLocationBroadcaster** — Broadcasts the current user's GPS location when clocked in. Publishes updates locally (via NotificationCenter) and persists to Supabase `crew_locations` table via upsert.
+- **Adaptive Frequency** — When moving (speed > 1 m/s): broadcasts every 5 seconds, persists every 10 seconds. When stationary: broadcasts every 30 seconds, persists every 60 seconds.
+- **Noise Filtering** — Rejects stale readings (>10s old), inaccurate readings (>50m accuracy), and identical consecutive coordinates.
+- **Battery & Background** — Tracks device battery level and foreground/background state in each update.
+
+#### Location Subscribing
+- **CrewLocationSubscriber** — Subscribes to crew location updates for the current organization. Loads initial state from Supabase DB, listens for local broadcasts, and polls the DB every 15 seconds for updates from other devices.
+- **Live Map** — `crewLocations` dictionary keyed by userId provides real-time crew positions for map display.
+
+#### Location Data Model
+- **CrewLocationUpdate** — Struct containing: userId, orgId, firstName, lastName, lat, lng, heading, speed, accuracy, timestamp, batteryLevel, isBackground, currentTaskName, currentProjectName, currentProjectId, currentProjectAddress, phoneNumber.
+- **Map Annotations** — CrewAnnotationRenderer and ProjectAnnotationRenderer display crew members and projects on the map with custom annotations.
+
+### 23. Dynamic Tab Bar (iOS)
+
+#### Tab Configuration
+The iOS tab bar is **dynamic** — tabs are computed at runtime based on user permissions and company settings. There is **no standalone Map tab**. The tab bar is rendered by `CustomTabBar` which accepts an array of `TabItem` and displays a sliding accent-colored indicator bar.
+
+**Base Tabs (always present):**
+1. **Home** — `house.fill` icon. Displays HomeView with map and active project info.
+2. **Job Board** — `briefcase.fill` icon. Displays JobBoardView. Visible to all roles (admin, office crew, field crew).
+3. **Schedule** — `calendar` icon. Displays ScheduleView.
+4. **Settings** — `gearshape.fill` icon. Displays SettingsView. Always the last tab.
+
+**Conditional Tabs:**
+- **Pipeline** — `chart.bar.xaxis` icon (OPSStyle.Icons.pipelineChart). Inserted after Home, before Job Board. Visible only to users with `pipeline` in their `specialPermissions` array. Displays PipelineTabView.
+- **Inventory** — `shippingbox.fill` icon. Inserted after Job Board, before Schedule. Visible only to users with `inventoryAccess = true`. Displays InventoryView.
+
+**Tab Index Computation:**
+- Tab indices are dynamically computed based on which conditional tabs are active.
+- `selectedTab` is reset to 0 (Home) if the current tab index becomes invalid after a permission change.
+- Tab count changes trigger indicator position recalculation in CustomTabBar.
+- The Floating Action Menu is hidden on Settings and Pipeline tabs.
+
 ---
 
 ## Future Features (Roadmap)
@@ -1087,9 +1341,9 @@ Based on survey feedback from target market, these features are planned:
    - Commission reports per user
    - Payment history
 
-3. **Photo Markup** (partially underway via Notes Overhaul — see [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11)
-   - Captions on photos (planned for note attachments)
-   - Arrows and annotations (canvas markup planned for note photo attachments)
+3. **Photo Markup** (iOS implementation complete — see Feature 20 below; web planned via Notes Overhaul)
+   - ~~Captions on photos~~ (implemented on iOS as text notes per annotation)
+   - ~~Arrows and annotations~~ (implemented on iOS via PencilKit drawing canvas)
    - Notes and labels
    - Before/after comparisons
 
@@ -1099,11 +1353,11 @@ Based on survey feedback from target market, these features are planned:
    - Monthly schedules
    - Recurring project templates
 
-5. **Materials/Inventory Tracking**
-   - Materials list per job
-   - Inventory management
-   - Purchase orders
-   - Material cost tracking
+5. **Materials/Inventory Tracking** (iOS implementation complete — see Feature 21 below)
+   - ~~Inventory management~~ (implemented on iOS with full CRUD, tags, units, thresholds, snapshots, spreadsheet import)
+   - Materials list per job (not yet implemented)
+   - Purchase orders (not yet implemented)
+   - Material cost tracking (not yet implemented)
 
 6. **Time-Specific Scheduling**
    - Schedule tasks with specific times (not just dates)
@@ -1118,7 +1372,7 @@ Based on survey feedback from target market, these features are planned:
 
 ---
 
-**Last Updated:** February 18, 2026
-**Document Version:** 1.2
-**iOS App Version:** 207 Swift files, iOS 17+, SwiftData + SwiftUI
+**Last Updated:** February 28, 2026
+**Document Version:** 1.3
+**iOS App Version:** iOS 17+, SwiftData + SwiftUI. Features include: Pipeline/CRM, Inventory, Photo Annotations, In-App Notifications, Project Notes, Crew Location Tracking, Dynamic Tab Bar.
 **Web App:** Pipeline, Estimates, Invoices, Products, Project Notes live in ops-web (Supabase)

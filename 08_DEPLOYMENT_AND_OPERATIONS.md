@@ -1,7 +1,7 @@
 # 08 - Deployment and Operations
 
-**Document Version:** 1.0
-**Last Updated:** February 15, 2026
+**Document Version:** 1.1
+**Last Updated:** February 28, 2026
 **Status:** Production Reference
 
 ---
@@ -16,15 +16,17 @@
 6. [Error Logging and Monitoring](#error-logging-and-monitoring)
 7. [Testing Requirements](#testing-requirements)
 8. [App Store Deployment](#app-store-deployment)
-9. [Data Migrations](#data-migrations)
-10. [Bubble.io Backend Configuration](#bubbleio-backend-configuration)
-11. [Production Checklist](#production-checklist)
+9. [OPS-Web Deployment](#ops-web-deployment)
+10. [Ecosystem Apps Deployment](#ecosystem-apps-deployment)
+11. [Data Migrations](#data-migrations)
+12. [Bubble.io Backend Configuration](#bubbleio-backend-configuration)
+13. [Production Checklist](#production-checklist)
 
 ---
 
 ## Overview
 
-This document covers all operational aspects of deploying and maintaining the OPS iOS application in production. OPS is a field-first application designed for trade workers, requiring special consideration for offline functionality, device compatibility, and real-world job site conditions.
+This document covers all operational aspects of deploying and maintaining the OPS platform in production. The platform consists of the OPS iOS app, OPS-Web (the admin/management web dashboard), and several supporting web properties. OPS is a field-first application designed for trade workers, requiring special consideration for offline functionality, device compatibility, and real-world job site conditions.
 
 ### Core Deployment Principles
 
@@ -96,6 +98,7 @@ This document covers all operational aspects of deploying and maintaining the OP
 // Package.swift equivalent
 dependencies: [
     .package(url: "https://github.com/firebase/firebase-ios-sdk", from: "12.6.0"),
+    .package(url: "https://github.com/supabase/supabase-swift", from: "2.41.1"),
     .package(url: "https://github.com/stripe/stripe-ios", from: "23.0.0"),
     .package(url: "https://github.com/google/GoogleSignIn-iOS", from: "7.0.0"),
     .package(url: "https://github.com/OneSignal/OneSignal-iOS-SDK", from: "5.0.0"),
@@ -140,7 +143,7 @@ Custom fonts must be included and registered in Info.plist:
 
 ### Required Secrets
 
-#### 1. Bubble.io API Configuration
+#### 1. Bubble.io API Configuration (Legacy)
 
 **Production API:**
 ```
@@ -148,7 +151,9 @@ Base URL: https://opsapp.co/version-test/api/1.1/
 API Token: f81e9da85b7a12e996ac53e970a52299
 ```
 
-**Stored in:** `APIService.swift` (hardcoded - consider moving to build config)
+**Stored in:** Legacy — `APIService.swift` has been removed. Bubble credentials are no longer used by the primary sync path. Supabase config is in `SupabaseConfig.swift`.
+
+**Note:** The backend is migrating from Bubble.io to Supabase. The iOS app now uses `AppConfiguration.apiBaseURL` (`https://app.opsapp.co`) for API routes (handled by OPS-Web on Vercel) and connects directly to Supabase for database operations via `SupabaseConfig.swift`. Bubble endpoints remain active for legacy data sync.
 
 **Security Note:** API token is currently embedded in source. For production, this should be:
 - Stored in Xcode configuration settings
@@ -253,16 +258,66 @@ API Token: f81e9da85b7a12e996ac53e970a52299
 
 **App ID:** `0fc0a8e0-9727-49b6-9e37-5d6d919d741f`
 
-**Initialized in:** `AppDelegate.swift`
+**Initialized in:** `AppDelegate.swift` (iOS) and hardcoded in `OPS-Web/src/app/api/notifications/send/route.ts` (web)
+
 ```swift
+// iOS - AppDelegate.swift
 OneSignal.initialize("0fc0a8e0-9727-49b6-9e37-5d6d919d741f", withLaunchOptions: nil)
+```
+
+**Architecture:** The iOS app sends push notifications by calling the OPS-Web API route (`POST /api/notifications/send`), which handles the OneSignal REST API server-side. The `ONESIGNAL_REST_API_KEY` is stored only on the server (Vercel env var), never exposed to clients. The iOS `OneSignalService.swift` sends requests to `AppConfiguration.apiBaseURL` (`https://app.opsapp.co`) with a Firebase auth token.
+
+**OPS-Web Server-Side Config (Vercel env var):**
+```
+ONESIGNAL_REST_API_KEY=  # [V] Stored in Vercel, never in client code
 ```
 
 **APNs Certificate:** Must be uploaded to OneSignal dashboard
 - Development: Development Push Certificate (.p12)
 - Production: Production Push Certificate (.p12)
 
-#### 6. Stripe Configuration
+#### 6. Supabase Configuration
+
+**iOS (hardcoded in `SupabaseConfig.swift`):**
+```swift
+static let url = URL(string: "https://ijeekuhbatykdomumfjx.supabase.co")!
+static let anonKey = "eyJhbGciOiJIUzI1NiIs..." // Safe to embed; RLS protects data
+```
+
+**OPS-Web (environment variables):**
+```
+NEXT_PUBLIC_SUPABASE_URL=               # [V] e.g. https://ijeekuhbatykdomumfjx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=          # [V] Public anon key (client-side, RLS-protected)
+SUPABASE_SERVICE_ROLE_KEY=              # [V] Server-only — bypasses RLS
+```
+
+**Client types used in OPS-Web:**
+- **Browser client** (`src/lib/supabase/client.ts`): Uses anon key + Firebase JWT as `accessToken` so Supabase validates via third-party auth JWKS.
+- **Server client** (`src/lib/supabase/server-client.ts`): Uses `SUPABASE_SERVICE_ROLE_KEY`, bypasses RLS. For API routes and cron jobs.
+- **Admin client** (`src/lib/supabase/admin-client.ts`): Also uses service role key, used for admin panel queries across all companies.
+
+**ops-site and ops-learn also require Supabase env vars:**
+```
+NEXT_PUBLIC_SUPABASE_URL=               # Same Supabase project URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY=          # Same anon key
+SUPABASE_SERVICE_ROLE_KEY=              # Server-side only
+```
+
+#### 7. iOS API Base URL
+
+**Configured in:** `AppConfiguration.swift`
+```swift
+static let apiBaseURL = URL(string: "https://app.opsapp.co")!
+```
+
+The iOS app points to OPS-Web (`app.opsapp.co`) for API routes including:
+- Push notifications (`/api/notifications/send`)
+- Presigned URL uploads
+- Auth verification
+
+This is distinct from the Supabase project URL (`ijeekuhbatykdomumfjx.supabase.co`) used for direct database operations.
+
+#### 8. Stripe Configuration
 
 **Environment:** Live Mode (matches Bubble production)
 
@@ -1264,6 +1319,248 @@ Note: App is designed for use with work gloves on job sites, hence larger touch 
 
 ---
 
+## OPS-Web Deployment
+
+### Overview
+
+OPS-Web is the primary web application — the admin dashboard, management portal, and API backend for the OPS platform. It is deployed on Vercel.
+
+**Production URL:** `https://app.opsapp.co`
+**Framework:** Next.js 15.1+ (with Turbopack for dev)
+**Hosting:** Vercel
+
+### Vercel Configuration
+
+**File:** `OPS-Web/vercel.json`
+```json
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "regions": ["iad1"],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "X-XSS-Protection", "value": "1; mode=block" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" }
+      ]
+    }
+  ]
+}
+```
+
+**Key details:**
+- **Region:** `iad1` (US East — Virginia). All serverless functions run in this region, close to the Supabase project.
+- **Security headers:** Applied to all routes. Prevents MIME-sniffing, clickjacking, XSS, and restricts referrer/opener policies.
+- **Framework detection:** Explicitly set to `nextjs`.
+
+### Next.js Configuration
+
+**File:** `OPS-Web/next.config.ts`
+```typescript
+{
+  images: {
+    remotePatterns: [
+      { protocol: "https", hostname: "*.amazonaws.com", pathname: "/ops-app-files-prod/**" }
+    ]
+  },
+  experimental: {
+    optimizePackageImports: ["lucide-react", "recharts", "date-fns"]
+  }
+}
+```
+
+- Remote images are allowed only from the S3 bucket `ops-app-files-prod`.
+- Bundle optimization enabled for large icon/chart/date libraries.
+
+### OPS-Web Environment Variables
+
+All env vars are documented in `.env.example`. Legend: `[V]` = configured in Vercel, `[_]` = not yet in Vercel.
+
+| Category | Variable | Scope | Status |
+|----------|----------|-------|--------|
+| **Firebase (client)** | `NEXT_PUBLIC_FIREBASE_API_KEY` | Client | [V] |
+| | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Client | [V] |
+| | `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | Client | [V] |
+| | `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | Client | [V] |
+| | `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | Client | [V] |
+| | `NEXT_PUBLIC_FIREBASE_APP_ID` | Client | [V] |
+| | `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` | Client | [V] |
+| **Firebase Admin** | `FIREBASE_ADMIN_PRIVATE_KEY` | Server | [V] |
+| | `FIREBASE_ADMIN_CLIENT_EMAIL` | Server | [V] |
+| **Supabase** | `NEXT_PUBLIC_SUPABASE_URL` | Client | [V] |
+| | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Client | [V] |
+| | `SUPABASE_SERVICE_ROLE_KEY` | Server | [V] |
+| **Stripe** | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Client | [V] |
+| | `STRIPE_SECRET_KEY` | Server | [V] |
+| | `STRIPE_WEBHOOK_SECRET` | Server | [V] |
+| | `STRIPE_PRICE_*` (6 plan price IDs) | Server | [_] |
+| **AWS S3** | `AWS_ACCESS_KEY_ID` | Server | [_] |
+| | `AWS_SECRET_ACCESS_KEY` | Server | [_] |
+| | `AWS_S3_BUCKET` (`ops-app-files-prod`) | Server | [_] |
+| | `AWS_REGION` (`us-west-2`) | Server | [_] |
+| **SendGrid** | `SENDGRID_API_KEY` | Server | [V] |
+| | `SENDGRID_FROM_EMAIL` (`noreply@opsapp.co`) | Server | [V] |
+| **Gmail OAuth** | `GOOGLE_GMAIL_CLIENT_ID` | Server | [V] |
+| | `GOOGLE_GMAIL_CLIENT_SECRET` | Server | [V] |
+| **Twilio** | `TWILIO_ACCOUNT_SID` | Server | [V] |
+| | `TWILIO_AUTH_TOKEN` | Server | [V] |
+| | `TWILIO_PHONE_NUMBER` | Server | [V] |
+| **OneSignal** | `ONESIGNAL_REST_API_KEY` | Server | [V] |
+| **App URLs** | `NEXT_PUBLIC_APP_URL` (`https://app.opsapp.co`) | Client | [V] |
+| | `NEXT_PUBLIC_BASE_URL` (`https://app.opsapp.co`) | Client | [V] |
+| **Auth** | `APPLE_CLIENT_ID` | Server | [V] |
+| | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Client | [V] |
+| **Cron** | `CRON_SECRET` | Server | [V] |
+| **Analytics** | `NEXT_PUBLIC_GA_MEASUREMENT_ID` | Client | [V] |
+| | `GA4_PROPERTY_ID` | Server | [_] |
+| **Blog** | `BLOG_API_KEY` | Server | [_] |
+
+**Local development:** Copy `.env.example` to `.env.local` and fill values, or pull from Vercel with `npx vercel env pull .env.local`.
+
+### Build & Scripts
+
+```json
+{
+  "dev": "next dev --turbopack",
+  "build": "next build",
+  "start": "next start",
+  "lint": "next lint",
+  "type-check": "tsc --noEmit",
+  "test": "vitest",
+  "test:e2e": "playwright test",
+  "format": "prettier --write .",
+  "format:check": "prettier --check ."
+}
+```
+
+### Key Dependencies
+
+- **@supabase/supabase-js** `^2.95.3` — Supabase client
+- **firebase** `^11.1.0` / **firebase-admin** `^13.6.1` — Auth (client + server)
+- **@stripe/stripe-js** `^8.7.0` / **stripe** `^20.3.1` — Payments
+- **@sendgrid/mail** `^8.1.6` — Transactional email
+- **twilio** `^5.12.2` — SMS
+- **@aws-sdk/client-s3** `^3.992.0` — Image uploads
+- **next** `^15.1.0` — Framework
+- **react** `^19.0.0` — UI
+
+### Deployment Process
+
+OPS-Web deploys automatically via Vercel on push to the linked branch. No manual deployment steps required.
+
+1. Push to main branch (or configured production branch)
+2. Vercel detects push, runs `next build`
+3. Serverless functions deploy to `iad1` region
+4. Security headers applied per `vercel.json`
+5. Production URL: `https://app.opsapp.co`
+
+---
+
+## Ecosystem Apps Deployment
+
+### Overview
+
+In addition to the iOS app and OPS-Web, the OPS platform includes three supporting web properties, all deployed on Vercel.
+
+### ops-site (Marketing Website)
+
+**Purpose:** Public marketing website for OPS
+**Framework:** Next.js 16.1.6 (React 19)
+**Styling:** Tailwind CSS 4
+**Hosting:** Vercel (no `vercel.json` — uses Vercel defaults)
+
+**Key dependencies:**
+- `@supabase/ssr` `^0.8.0` + `@supabase/supabase-js` `^2.97.0` — Supabase SSR client
+- `@vercel/analytics` `^1.6.1` — Vercel Analytics
+- `@vercel/speed-insights` `^1.3.1` — Vercel Speed Insights
+- `framer-motion` `^12.34.3` — Animations
+- `openai` `^6.24.0` — AI features
+- `isomorphic-dompurify` `^3.0.0` — HTML sanitization
+
+**Next.js config (`next.config.ts`):**
+```typescript
+{
+  images: {
+    remotePatterns: [
+      { protocol: 'https', hostname: '**.cdn.bubble.io' }
+    ]
+  }
+}
+```
+
+**Environment variables (from `.env.example`):**
+```
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+NEXT_PUBLIC_GA_MEASUREMENT_ID=
+NEXT_PUBLIC_SITE_URL=
+OPENAI_API_KEY=
+```
+
+### ops-learn (Learning Platform)
+
+**Purpose:** Educational content and training platform for OPS users
+**Framework:** Next.js 16.1.6 (React 19)
+**Styling:** Tailwind CSS 4
+**Hosting:** Vercel (no `vercel.json` — uses Vercel defaults)
+
+**Key dependencies:**
+- `@supabase/ssr` `^0.8.0` + `@supabase/supabase-js` `^2.97.0` — Supabase SSR client
+- `firebase` `^12.9.0` + `firebase-admin` `^13.6.1` — Auth
+- `stripe` `^20.4.0` — Payments
+- `openai` `^6.25.0` — AI features
+- `framer-motion` `^12.34.3` — Animations
+- `isomorphic-dompurify` `^3.0.0` — HTML sanitization
+
+**Next.js config (`next.config.ts`):** Default (no custom config).
+
+**Environment variables (from `.env.local.example`):**
+```
+NEXT_PUBLIC_SUPABASE_URL=https://ijeekuhbatykdomumfjx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+```
+
+**Note:** ops-learn uses `SUPABASE_SERVICE_ROLE_KEY` server-side (in `src/lib/supabase/server.ts`) for enrollment writes, falling back to anon key if unavailable.
+
+### try-ops (Interactive Demo / Tutorial)
+
+**Purpose:** Interactive web-based tutorial/demo of the OPS app experience
+**Framework:** Next.js 14.2 (React 18)
+**Styling:** Tailwind CSS 3.4
+**Hosting:** Vercel
+
+**Vercel config (`vercel.json`):**
+```json
+{
+  "framework": "nextjs"
+}
+```
+
+**Next.js config (`next.config.js`):**
+```javascript
+{
+  images: {
+    domains: ['opsapp.co']
+  }
+}
+```
+
+**Key dependencies:**
+- `framer-motion` `^12.34.0` — Animations
+- `zustand` `^5.0.11` — State management
+- No Supabase, Firebase, or Stripe dependencies (self-contained demo)
+
+### Shared Infrastructure Notes
+
+All ecosystem apps share the same Supabase project (`ijeekuhbatykdomumfjx.supabase.co`). The Supabase env vars (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) must be configured in each Vercel project that requires them (OPS-Web, ops-site, ops-learn). try-ops does not connect to Supabase.
+
+---
+
 ## Data Migrations
 
 ### Migration Strategy
@@ -1321,6 +1618,8 @@ if !UserDefaults.standard.bool(forKey: "remote_cache_cleared_v2") {
 - Temporary increase in network usage
 
 #### 3. Project-Level Calendar Events Cleanup (v1)
+
+> **HISTORICAL NOTE:** The `CalendarEvent` model has been fully removed from the iOS codebase. Scheduling dates are now stored directly on `ProjectTask` (via `startDate`/`endDate` properties). The migration documented below ran once to clean up legacy data and is retained here as historical reference only.
 
 **Flag:** `project_events_cleaned_v1`
 
@@ -1568,9 +1867,12 @@ Fields:
 - modifiedDate (date)
 ```
 
-#### CalendarEvent
+#### CalendarEvent (REMOVED)
+
+> **NOTE:** The `CalendarEvent` model has been fully removed from the iOS codebase. Scheduling dates are now stored directly on `ProjectTask` (via `startDate`/`endDate`). The Bubble backend may still contain this data type as legacy data. The schema below is retained as historical reference.
+
 ```
-Fields:
+Fields (historical):
 - title (text)
 - startDate (date)
 - endDate (date)
@@ -1581,7 +1883,7 @@ Fields:
 - modifiedDate (date)
 ```
 
-**Critical:** All CalendarEvents must have taskId set (task-only scheduling migration)
+**Historical note:** All CalendarEvents were required to have taskId set (task-only scheduling migration). This model has since been removed entirely — scheduling is now handled via ProjectTask.startDate/endDate.
 
 ### Option Sets
 
@@ -1817,12 +2119,19 @@ static let firstName = "first_name"
 - [ ] Google Ads conversion tracking verified
 - [ ] OneSignal app created and configured
 - [ ] APNs certificates uploaded to OneSignal (Production)
-- [ ] Stripe live mode enabled in Bubble
-- [ ] AWS S3 bucket created (ops-app-images)
+- [ ] Stripe live mode enabled
+- [ ] AWS S3 bucket created (ops-app-files-prod)
 - [ ] AWS IAM user created with S3 permissions
-- [ ] Bubble.io production environment live
+- [ ] Supabase project provisioned (ijeekuhbatykdomumfjx)
+- [ ] Bubble.io production environment live (legacy)
 - [ ] Custom domain configured (opsapp.co)
 - [ ] SSL certificate valid
+- [ ] OPS-Web deployed on Vercel (app.opsapp.co)
+- [ ] OPS-Web Vercel env vars configured (all [V] items from .env.example)
+- [ ] ONESIGNAL_REST_API_KEY set in Vercel env vars
+- [ ] ops-site deployed on Vercel
+- [ ] ops-learn deployed on Vercel
+- [ ] try-ops deployed on Vercel
 
 #### Secrets Management
 - [ ] AWS credentials added to Xcode build settings (not in code)
@@ -1831,6 +2140,8 @@ static let firstName = "first_name"
 - [ ] Firebase config file (GoogleService-Info.plist) included
 - [ ] Google Sign-In client ID configured
 - [ ] OneSignal app ID configured
+- [ ] Supabase URL and anon key configured (iOS + all web apps)
+- [ ] SUPABASE_SERVICE_ROLE_KEY set in Vercel (OPS-Web, ops-site, ops-learn)
 
 #### Code Quality
 - [ ] All console logs reviewed (remove sensitive data)
@@ -1922,7 +2233,9 @@ static let firstName = "first_name"
 - [ ] iOS version compatibility check
 - [ ] Third-party SDK updates
 - [ ] Security audit
-- [ ] Bubble.io plan review (usage vs. limits)
+- [ ] Bubble.io plan review (usage vs. limits — legacy)
+- [ ] Vercel usage review (OPS-Web, ops-site, ops-learn, try-ops)
+- [ ] Supabase usage review (database size, API calls, storage)
 
 ---
 
@@ -1933,17 +2246,21 @@ static let firstName = "first_name"
 **Production:**
 - App Store: https://apps.apple.com/app/ops/[APP_ID]
 - Website: https://opsapp.co
+- OPS-Web (Admin Dashboard): https://app.opsapp.co
 - Support: https://opsapp.co/support
 - Privacy Policy: https://opsapp.co/privacy
-- Bubble API: https://opsapp.co/version-test/api/1.1/
+- Bubble API (legacy): https://opsapp.co/version-test/api/1.1/
+- Supabase Project: https://ijeekuhbatykdomumfjx.supabase.co
 
 **Developer Portals:**
 - Apple Developer: https://developer.apple.com
 - App Store Connect: https://appstoreconnect.apple.com
 - Firebase Console: https://console.firebase.google.com
+- Supabase Dashboard: https://supabase.com/dashboard
 - Stripe Dashboard: https://dashboard.stripe.com
 - OneSignal Dashboard: https://onesignal.com
 - AWS Console: https://console.aws.amazon.com
+- Vercel Dashboard: https://vercel.com (OPS-Web, ops-site, ops-learn, try-ops)
 - Bubble Editor: https://bubble.io/[APP_NAME]
 
 ### Support Contacts
@@ -1992,3 +2309,4 @@ This deployment and operations guide should be reviewed quarterly and updated wi
 - Lessons learned from production incidents
 - Updated third-party service configurations
 - New monitoring and alerting strategies
+- Changes to ecosystem app deployments (Vercel, Supabase, etc.)

@@ -2,1963 +2,872 @@
 
 **OPS Software Bible - Complete API and Integration Architecture**
 
-**Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers all API endpoints, sync strategies, conflict resolution, image handling, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
+**Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: February 18, 2026
-**iOS Reference**: C:\OPS\opsapp-ios\OPS\Network\
-**Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\
+**Last Updated**: March 8, 2026
+**iOS Reference**: `OPS/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
+**Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
 ---
 
 ## Table of Contents
 
 1. [Backend Overview](#backend-overview)
-2. [API Endpoints Catalog](#api-endpoints-catalog)
-3. [Sync Architecture](#sync-architecture)
-4. [CentralizedSyncManager](#centralizedsyncmanager)
-5. [Image Upload & S3 Integration](#image-upload--s3-integration)
-6. [Stripe Subscription Integration](#stripe-subscription-integration)
-7. [Firebase Analytics](#firebase-analytics)
-8. [Error Handling & Retry Logic](#error-handling--retry-logic)
-9. [Connectivity Monitoring](#connectivity-monitoring)
-10. [Rate Limiting & Debouncing](#rate-limiting--debouncing)
-11. [Supabase Backend (Web App)](#supabase-backend-web-app)
-12. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
+2. [Supabase Configuration](#supabase-configuration)
+3. [Supabase Repositories](#supabase-repositories)
+4. [SyncEngine (Offline-First Orchestrator)](#syncengine-offline-first-orchestrator)
+5. [SupabaseSyncManager (Legacy Adapter)](#supabasesyncmanager-legacy-adapter)
+6. [OutboundProcessor (Push Queue)](#outboundprocessor-push-queue)
+7. [InboundProcessor & Conflict Resolution (Field-Level Merge)](#inboundprocessor--conflict-resolution-field-level-merge)
+8. [RealtimeProcessor (WebSocket)](#realtimeprocessor-websocket)
+9. [BackgroundSyncScheduler](#backgroundsyncscheduler)
+10. [PhotoProcessor & Image Upload](#photoprocessor--image-upload)
+11. [ConnectivityManager](#connectivitymanager)
+12. [OneSignal Push Notifications](#onesignal-push-notifications)
+13. [Firebase Analytics](#firebase-analytics)
+14. [Stripe Subscription Integration](#stripe-subscription-integration)
+15. [Error Handling & Retry Logic](#error-handling--retry-logic)
+16. [Rate Limiting & Debouncing](#rate-limiting--debouncing)
+17. [Supabase Table Reference](#supabase-table-reference)
+18. [Bubble.io (Legacy)](#bubbleio-legacy)
+19. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
 
 ---
 
 ## Backend Overview
 
-### Bubble.io REST API
+### Architecture Summary
 
-OPS uses Bubble.io as the backend platform, providing a fully-managed REST API for all data operations.
+OPS uses **Supabase (PostgreSQL)** as the primary backend for both the iOS app and the OPS Web app. Supabase provides:
+- PostgreSQL database with Row-Level Security (RLS)
+- Native authentication (Apple Sign-In + Google Sign-In via `signInWithIdToken`)
+- Realtime WebSocket subscriptions for push-based data updates
+- RESTful PostgREST API consumed via the `supabase-swift` SDK
 
-**Base URL**: `https://opsapp.co/version-test/api/1.1/`
+**OPS-Web** (`https://app.opsapp.co`) serves as the API gateway for operations that require server-side secrets, including:
+- Presigned URL generation for S3 image uploads (`/api/uploads/presign`)
+- OneSignal push notification routing (`/api/notifications/send`)
+- Stripe subscription management
 
-**Alternative URL** (legacy): `https://ops-app-36508.bubbleapps.io/version-test/api/1.1`
+**Bubble.io** is **legacy** -- see the [Bubble.io (Legacy)](#bubbleio-legacy) section for details on what remains.
 
-**Authentication**: Bearer token (API token-based, not user-based)
+### System Diagram
+
 ```
-Authorization: Bearer f81e9da85b7a12e996ac53e970a52299
-```
-
-**API Token**: `f81e9da85b7a12e996ac53e970a52299` (hardcoded in AppConfiguration)
-
-**Important**: Unlike typical REST APIs, Bubble does NOT require user-specific auth tokens. The API token is static and shared across all requests. User context is determined by passing user IDs in request parameters.
-
-### API Architecture Types
-
-Bubble provides two distinct API endpoint types:
-
-#### 1. Data API (CRUD Operations)
-**Pattern**: `/api/1.1/obj/{dataType}`
-
-**Operations**:
-- **GET**: Fetch records (with optional constraints, pagination, sorting)
-- **POST**: Create new records
-- **PATCH**: Update existing records (by ID)
-- **DELETE**: Hard delete records (DEPRECATED - use workflow soft delete instead)
-
-**Response Format**:
-```json
-{
-  "response": {
-    "cursor": 0,
-    "results": [...],
-    "remaining": 25,
-    "count": 100
-  }
-}
+iOS App (SwiftData)                   OPS Web (Next.js)
+    |                                      |
+    |-- supabase-swift SDK ------------->  Supabase (PostgreSQL + Auth + Realtime)
+    |                                      |
+    |-- HTTPS --------> app.opsapp.co ----+--- /api/uploads/presign --> AWS S3
+    |                                      +--- /api/notifications/send --> OneSignal
+    |                                      +--- /api/stripe/* --> Stripe
+    |
+    |-- OneSignalFramework (receive push)
+    |-- FirebaseAnalytics (event tracking)
 ```
 
-#### 2. Workflow API (Custom Operations)
-**Pattern**: `/api/1.1/wf/{workflowName}`
+### Authentication Flow
 
-**Method**: POST only
-
-**Use Cases**:
-- Complex multi-step operations
-- Batch updates
-- Soft deletes with cascade logic
-- Image registration
-- Custom business logic
-
-**Response Format**:
-```json
-{
-  "response": {
-    "status": "success",
-    ...
-  }
-}
-```
-
-### Field Conditions & Rate Limiting
-
-**Timeout**: 30 seconds (field workers may have poor connectivity)
-
-**Rate Limiting**:
-- Minimum 0.5 seconds between requests
-- Automatic exponential backoff on failures
-- Retry logic: 3 attempts with 2s, 4s delays
-
-**Network Optimization**:
-- HTTP/2 for better performance
-- Connection pooling (max 5 per host)
-- `waitsForConnectivity = true` (don't fail immediately on network loss)
+1. User signs in with Apple or Google via native iOS SDK
+2. The ID token is passed to Supabase Auth via `signInWithIdToken`
+3. Supabase creates or matches a user, returns a session JWT
+4. All subsequent Supabase requests use the session JWT automatically (anon key + RLS)
+5. Server-side API calls to OPS-Web pass the Supabase `accessToken` as `Bearer` header
 
 ---
 
-## API Endpoints Catalog
+## Supabase Configuration
 
-### Project Endpoints
+**Source**: `OPS/Network/Supabase/SupabaseConfig.swift`
 
-#### Fetch Company Projects (Admin/Office Crew)
-
-**Endpoint**: `GET /api/1.1/obj/project`
-
-**Query Parameters**:
-```json
-{
-  "constraints": [
-    {
-      "key": "Company",
-      "constraint_type": "equals",
-      "value": "{companyId}"
-    },
-    {
-      "key": "Deleted Date",
-      "constraint_type": "is_empty"
-    }
-  ],
-  "limit": 100,
-  "cursor": 0
+```swift
+enum SupabaseConfig {
+    static let url = URL(string: "https://ijeekuhbatykdomumfjx.supabase.co")!
+    static let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
 
-**Returns**: Array of ProjectDTO
+- The anon key is safe to embed in the mobile client; data is protected by Row-Level Security policies
+- RLS policies enforce company-scoped isolation using the JWT `app_metadata.company_id`
+- The `private.get_user_company_id()` Postgres function extracts the company ID from the authenticated user's JWT
 
-**BubbleFields Mapping**:
-- `Company` → `BubbleFields.Project.company`
-- `Deleted Date` → `BubbleFields.Project.deletedDate`
+### SupabaseService
 
-#### Fetch User Projects (Field Crew)
+**Source**: `OPS/Network/Supabase/SupabaseService.swift`
 
-**Endpoint**: `GET /api/1.1/obj/project`
+Singleton `@MainActor` class that owns the `SupabaseClient` instance and manages auth state.
 
-**Query Parameters**:
-```json
-{
-  "constraints": [
-    {
-      "key": "Team Members",
-      "constraint_type": "contains",
-      "value": "{userId}"
-    },
-    {
-      "key": "Deleted Date",
-      "constraint_type": "is_empty"
-    }
-  ]
-}
-```
+**Published State**:
+- `isAuthenticated: Bool`
+- `currentUserId: String?`
 
-**Note**: Field crew ONLY see projects where they're assigned as team members. This is critical for permission filtering.
+**Key Methods**:
+| Method | Description |
+|--------|-------------|
+| `restoreSession()` | Restores a previous Supabase session from disk on init |
+| `signInWithGoogle(idToken:)` | Authenticates with Supabase using a Google ID token |
+| `signInWithApple(identityToken:)` | Authenticates with Supabase using an Apple identity token |
+| `signOut()` | Signs out of Supabase, clears auth state |
 
-#### Create Project
+**Error Types**:
+- `ServiceError.notAuthenticated` -- no active session
+- `ServiceError.networkError(Error)` -- wrapped network failure
 
-**Endpoint**: `POST /api/1.1/obj/project`
+### AppConfiguration
 
-**Request Body**:
-```json
-{
-  "Name": "Project Name",
-  "Company": "{companyId}",
-  "Client": "{clientId}",
-  "Status": "RFQ",
-  "Color": "#59779F",
-  "Street Address": "123 Main St",
-  "City": "Austin",
-  "State": "TX",
-  "Zip": "78701",
-  "Lat": 30.2672,
-  "Long": -97.7431,
-  "Team Members": ["{userId1}", "{userId2}"],
-  "Notes": "Project description"
-}
-```
+**Source**: `OPS/Utilities/AppConfiguration.swift`
 
-**Response**:
-```json
-{
-  "id": "{newProjectId}",
-  "status": "success"
-}
-```
+Central configuration for the app. Key values:
 
-**BubbleFields Mapping**:
-- `Name` → `BubbleFields.Project.name`
-- `Company` → `BubbleFields.Project.company`
-- `Client` → `BubbleFields.Project.client`
-- `Status` → `BubbleFields.Project.status`
-- `Color` → `BubbleFields.Project.color`
-- `Street Address` → `BubbleFields.Project.streetAddress`
-- `City` → `BubbleFields.Project.city`
-- `State` → `BubbleFields.Project.state`
-- `Zip` → `BubbleFields.Project.zip`
-- `Lat` → `BubbleFields.Project.latitude`
-- `Long` → `BubbleFields.Project.longitude`
-- `Team Members` → `BubbleFields.Project.teamMembers`
-- `Notes` → `BubbleFields.Project.notes`
-
-#### Update Project
-
-**Endpoint**: `PATCH /api/1.1/obj/project/{projectId}`
-
-**Request Body**: Same fields as create (only include fields to update)
-
-**Response**:
-```json
-{
-  "status": "success"
-}
-```
-
-**Note**: PATCH requests may return just `{"status": "success"}` without the full object. In this case, fetch the updated object with a GET request.
-
-#### Update Project Status
-
-**Endpoint**: `POST /api/1.1/wf/update_project_status`
-
-**Request Body**:
-```json
-{
-  "project_id": "{projectId}",
-  "status": "In Progress"
-}
-```
-
-**Status Values**:
-- `RFQ` (Request for Quote)
-- `Pending` (Quote sent, awaiting approval)
-- `Accepted` (Quote accepted)
-- `In Progress` (Active work)
-- `Completed` (Work finished)
-- `Cancelled` (Project cancelled)
-
-#### Soft Delete Project
-
-**Endpoint**: `POST /api/1.1/wf/delete_project`
-
-**Request Body**:
-```json
-{
-  "project_id": "{projectId}"
-}
-```
-
-**Action**: Sets `deletedAt` field to current timestamp. Does NOT hard delete the record.
-
-**Cascade Behavior**: Also soft-deletes all related tasks and calendar events.
+| Setting | Value |
+|---------|-------|
+| `apiBaseURL` | `https://app.opsapp.co` |
+| `Sync.syncOnLaunch` | `true` |
+| `Sync.backgroundSyncInterval` | 15 minutes |
+| `Sync.maxBatchSize` | 50 |
+| `Sync.minimumSyncInterval` | 5 minutes |
+| `Sync.jobHistoryDays` | 30 |
+| `Sync.jobFutureDays` | 60 |
 
 ---
 
-### Task Endpoints
+## Supabase Repositories
 
-#### Fetch Company Tasks
+**Source**: `OPS/Network/Supabase/Repositories/`
 
-**Endpoint**: `GET /api/1.1/obj/task`
+All 15 repository classes follow the same pattern: each takes a `companyId` on init (except `CompanyRepository` and `NotificationRepository`), holds a reference to `SupabaseService.shared.client`, and provides typed CRUD methods against specific Supabase tables.
 
-**Query Parameters**:
-```json
-{
-  "constraints": [
-    {
-      "key": "Project.Company",
-      "constraint_type": "equals",
-      "value": "{companyId}"
-    },
-    {
-      "key": "Deleted Date",
-      "constraint_type": "is_empty"
-    }
-  ]
-}
-```
+### 1. ProjectRepository
 
-**Note**: Uses nested relationship query `Project.Company` to fetch all tasks for a company.
+**Table**: `projects`
+**Init**: `ProjectRepository(companyId:)`
 
-#### Create Task
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchAll` | `(since: Date?) -> [SupabaseProjectDTO]` | Fetch all company projects, optionally since a date |
+| `fetchOne` | `(_ id: String) -> SupabaseProjectDTO` | Fetch single project by ID |
+| `create` | `(_ dto: SupabaseProjectDTO) -> SupabaseProjectDTO` | Insert, returns created record |
+| `upsert` | `(_ dto: SupabaseProjectDTO)` | Upsert (insert or update on conflict) |
+| `updateStatus` | `(_ projectId: String, status: String)` | Update status + updated_at |
+| `updateNotes` | `(_ projectId: String, notes: String)` | Update notes + updated_at |
+| `updateDates` | `(_ projectId: String, startDate: Date?, endDate: Date?)` | Update start/end dates |
+| `updateAddress` | `(_ projectId: String, address: String)` | Update address |
+| `updateTeamMembers` | `(_ projectId: String, memberIds: [String])` | Replace team_member_ids array |
+| `updateFields` | `(_ projectId: String, fields: [String: AnyJSON])` | Generic field update |
+| `softDelete` | `(_ projectId: String)` | Set deleted_at + updated_at |
 
-**Endpoint**: `POST /api/1.1/obj/task`
+### 2. TaskRepository
 
-**Request Body**:
-```json
-{
-  "Project": "{projectId}",
-  "Title": "Task title",
-  "Task Type": "{taskTypeId}",
-  "Status": "Booked",
-  "Task Index": 0,
-  "Team Members": ["{userId1}"],
-  "Calendar Event": "{calendarEventId}",
-  "Notes": "Task notes"
-}
-```
+**Table**: `project_tasks`
+**Init**: `TaskRepository(companyId:)`
+**Column Notes**: `task_notes` (not `notes`), `custom_title` (not `title`), `task_color` (not `color`). Scheduling dates (`start_date`, `end_date`, `duration`) are stored directly on `project_tasks`.
 
-**Critical**: Post-migration (Nov 2025), all tasks MUST have an associated CalendarEvent. The `Calendar Event` field is required, not optional.
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchAll` | `(since: Date?) -> [SupabaseProjectTaskDTO]` | All company tasks, ordered by display_order |
+| `fetchForProject` | `(_ projectId: String) -> [SupabaseProjectTaskDTO]` | Tasks for a specific project |
+| `fetchOne` | `(_ id: String) -> SupabaseProjectTaskDTO` | Single task by ID |
+| `create` | `(_ dto: SupabaseProjectTaskDTO) -> SupabaseProjectTaskDTO` | Insert, returns created record |
+| `upsert` | `(_ dto: SupabaseProjectTaskDTO)` | Upsert |
+| `updateStatus` | `(_ taskId: String, status: String)` | Update status |
+| `updateNotes` | `(_ taskId: String, notes: String)` | Updates `task_notes` column |
+| `updateFields` | `(_ taskId: String, fields: [String: AnyJSON])` | Generic field update |
+| `updateTeamMembers` | `(_ taskId: String, memberIds: [String])` | Replace team_member_ids array |
+| `softDelete` | `(_ taskId: String)` | Soft delete |
 
-**Status Values**:
-- `Booked` (Scheduled but not started) ← RENAMED from "Scheduled" in Nov 2025
-- `In Progress` (Active work)
-- `Completed` (Finished)
-- `Cancelled` (Cancelled)
+### 3. UserRepository
 
-**BubbleFields Mapping**:
-- `Project` → `BubbleFields.Task.project`
-- `Title` → `BubbleFields.Task.title`
-- `Task Type` → `BubbleFields.Task.taskType`
-- `Status` → `BubbleFields.Task.status`
-- `Task Index` → `BubbleFields.Task.taskIndex`
-- `Team Members` → `BubbleFields.Task.teamMembers`
-- `Calendar Event` → `BubbleFields.Task.calendarEvent`
-- `Notes` → `BubbleFields.Task.notes`
+**Table**: `users`
+**Init**: `UserRepository(companyId:)`
 
-#### Update Task
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchAll` | `(since: Date?) -> [SupabaseUserDTO]` | All company users |
+| `fetchOne` | `(_ id: String) -> SupabaseUserDTO` | Single user by ID |
+| `fetchByEmail` | `(_ email: String) -> SupabaseUserDTO?` | Lookup user by email (limit 1) |
+| `upsert` | `(_ dto: SupabaseUserDTO)` | Upsert |
+| `updateUser` | `(userId:, firstName:, lastName:, phone:)` | Update user profile fields |
+| `updateProfileImageUrl` | `(userId:, url: String)` | Update profile_image_url |
+| `updateFields` | `(userId:, fields: [String: AnyJSON])` | Generic field update |
+| `softDelete` | `(_ id: String)` | Soft delete |
 
-**Endpoint**: `PATCH /api/1.1/obj/task/{taskId}`
+### 4. ClientRepository
 
-**Request Body**: Fields to update
+**Tables**: `clients`, `sub_clients`
+**Init**: `ClientRepository(companyId:)`
+**Column Note**: Phone is stored as `phone_number` in both tables.
 
-#### Update Task Status
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchAll` | `(since: Date?) -> [SupabaseClientDTO]` | All company clients |
+| `fetchOne` | `(_ id: String) -> SupabaseClientDTO` | Single client by ID |
+| `create` | `(_ dto: SupabaseClientDTO) -> SupabaseClientDTO` | Insert, returns created |
+| `upsert` | `(_ dto: SupabaseClientDTO)` | Upsert |
+| `updateContact` | `(clientId:, name:, email:, phone:, address:)` | Update client contact info |
+| `softDelete` | `(_ id: String)` | Soft delete |
+| `fetchSubClients` | `(for clientId: String) -> [SupabaseSubClientDTO]` | Sub-clients for a client |
+| `createSubClient` | `(clientId:, name:, title:, email:, phone:, address:) -> SupabaseSubClientDTO` | Create sub-client |
+| `deleteSubClient` | `(_ id: String)` | Hard delete sub-client |
 
-**Endpoint**: `POST /api/1.1/wf/update_task_status`
+### 5. CompanyRepository
 
-**Request Body**:
-```json
-{
-  "task_id": "{taskId}",
-  "status": "In Progress"
-}
-```
+**Table**: `companies`
+**Init**: `CompanyRepository()` (no companyId -- the company IS the entity being fetched)
 
-#### Update Task Notes
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetch` | `(companyId: String) -> SupabaseCompanyDTO` | Fetch company by ID |
+| `fetchByCode` | `(_ code: String) -> SupabaseCompanyDTO?` | Lookup by company_code (case-insensitive, for join flow) |
+| `insert` | `(_ payload: NewCompanyPayload) -> SupabaseCompanyDTO` | Create new company |
+| `update` | `(companyId:, updates: [String: String])` | Freeform string field updates |
+| `updateSeatedEmployees` | `(companyId:, userIds: [String])` | Replace seated_employee_ids array |
 
-**Endpoint**: `POST /api/1.1/wf/update_task_notes`
+Also provides `NewCompanyPayload` struct and `generateCompanyCode()` helper (8-char alphanumeric, no ambiguous chars like 0/O/1/I).
 
-**Request Body**:
-```json
-{
-  "task_id": "{taskId}",
-  "notes": "Updated notes text"
-}
-```
+### 6. TaskTypeRepository
 
----
+**Table**: `task_types`
+**Init**: `TaskTypeRepository(companyId:)`
+**Column Note**: Display name column is `display` (not `name`).
 
-### CalendarEvent Endpoints
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchAll` | `(since: Date?) -> [SupabaseTaskTypeDTO]` | All task types, ordered by display_order |
+| `fetchOne` | `(_ id: String) -> SupabaseTaskTypeDTO` | Single task type |
+| `create` | `(_ dto: SupabaseTaskTypeDTO) -> SupabaseTaskTypeDTO` | Insert, returns created |
+| `upsert` | `(_ dto: SupabaseTaskTypeDTO)` | Upsert |
+| `softDelete` | `(_ id: String)` | Soft delete |
 
-#### Fetch Company Calendar Events
+### 7. InvoiceRepository
 
-**Endpoint**: `GET /api/1.1/obj/calendarevent`
+**Tables**: `invoices`, `invoice_line_items`, `payments`
+**Init**: `InvoiceRepository(companyId:)`
 
-**Query Parameters**:
-```json
-{
-  "constraints": [
-    {
-      "key": "Company",
-      "constraint_type": "equals",
-      "value": "{companyId}"
-    },
-    {
-      "key": "Deleted Date",
-      "constraint_type": "is_empty"
-    },
-    {
-      "key": "Start Date",
-      "constraint_type": "greater than",
-      "value": "2025-01-01T00:00:00Z"
-    }
-  ]
-}
-```
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchAll` | `() -> [InvoiceDTO]` | All invoices with nested line_items and payments |
+| `fetchOne` | `(_ invoiceId: String) -> InvoiceDTO` | Single invoice with children |
+| `recordPayment` | `(_ dto: CreatePaymentDTO) -> PaymentDTO` | Insert payment (DB trigger maintains balance) |
+| `updateStatus` | `(_ invoiceId: String, status: InvoiceStatus)` | Update invoice status |
+| `voidInvoice` | `(_ invoiceId: String)` | Set status to void |
 
-**Date Filter**: Typically fetch events starting from current year to avoid loading historical data.
+**Important**: Never update `invoice.amount_paid` or `invoice.balance_due` manually -- a DB trigger maintains these automatically when payments are inserted.
 
-#### Create Calendar Event
+### 8. EstimateRepository
 
-**Endpoint**: `POST /api/1.1/obj/calendarevent`
+**Tables**: `estimates`, `line_items`
+**Init**: `EstimateRepository(companyId:)`
 
-**Request Body**:
-```json
-{
-  "Company": "{companyId}",
-  "Project": "{projectId}",
-  "Task": "{taskId}",
-  "Title": "Event title",
-  "Start Date": "2025-11-18T09:00:00Z",
-  "End Date": "2025-11-18T17:00:00Z",
-  "Color": "#59779F"
-}
-```
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchAll` | `() -> [EstimateDTO]` | All estimates with nested line_items |
+| `fetchOne` | `(_ estimateId: String) -> EstimateDTO` | Single estimate with line_items |
+| `updateTitle` | `(_ estimateId: String, title: String)` | Update estimate title |
+| `create` | `(_ dto: CreateEstimateDTO) -> EstimateDTO` | Create estimate |
+| `addLineItem` | `(_ dto: CreateLineItemDTO) -> EstimateLineItemDTO` | Add line item |
+| `updateLineItem` | `(_ id: String, fields: UpdateLineItemDTO) -> EstimateLineItemDTO` | Update line item |
+| `deleteLineItem` | `(_ id: String)` | Hard delete line item |
+| `updateStatus` | `(_ estimateId: String, status: EstimateStatus) -> EstimateDTO` | Update status |
+| `convertToInvoice` | `(estimateId: String) -> InvoiceDTO` | Atomic RPC `convert_estimate_to_invoice` |
 
-**CRITICAL MIGRATION NOTE** (November 2025):
-- All calendar events MUST have a `Task` field (taskId)
-- The `eventType` field is REMOVED (no longer exists)
-- The `active` field is REMOVED (no longer exists)
-- The `type` field is REMOVED (no longer exists)
-- Project-level events were deleted during migration
+**Important**: Estimate-to-invoice conversion uses a Postgres RPC function -- never do this manually.
 
-**BubbleFields Mapping**:
-- `Company` → `BubbleFields.CalendarEvent.company`
-- `Project` → `BubbleFields.CalendarEvent.project`
-- `Task` → `BubbleFields.CalendarEvent.task`
-- `Title` → `BubbleFields.CalendarEvent.title`
-- `Start Date` → `BubbleFields.CalendarEvent.startDate`
-- `End Date` → `BubbleFields.CalendarEvent.endDate`
-- `Color` → `BubbleFields.CalendarEvent.color`
+### 9. OpportunityRepository
 
----
+**Tables**: `opportunities`, `activities`, `follow_ups`
+**Init**: `OpportunityRepository(companyId:)`
 
-### Client Endpoints
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchAll` | `() -> [OpportunityDTO]` | All pipeline opportunities |
+| `fetchOne` | `(_ opportunityId: String) -> OpportunityDTO` | Single opportunity |
+| `fetchActivities` | `(for opportunityId: String) -> [ActivityDTO]` | Activity log for an opportunity |
+| `fetchFollowUps` | `(for opportunityId: String) -> [FollowUpDTO]` | Follow-up reminders |
+| `create` | `(_ dto: CreateOpportunityDTO) -> OpportunityDTO` | Create opportunity |
+| `logActivity` | `(_ dto: CreateActivityDTO) -> ActivityDTO` | Log an activity (call, email, note) |
+| `createFollowUp` | `(_ dto: CreateFollowUpDTO) -> FollowUpDTO` | Create follow-up reminder |
+| `advanceStage` | `(opportunityId:, to stage:, lossReason:) -> OpportunityDTO` | Move deal to new stage |
+| `update` | `(_ opportunityId:, fields: UpdateOpportunityDTO) -> OpportunityDTO` | Update fields |
+| `delete` | `(_ opportunityId: String)` | Hard delete |
 
-#### Fetch Company Clients
+### 10. ProductRepository
 
-**Endpoint**: `GET /api/1.1/obj/client`
+**Table**: `products`
+**Init**: `ProductRepository(companyId:)`
 
-**Query Parameters**:
-```json
-{
-  "constraints": [
-    {
-      "key": "Company",
-      "constraint_type": "equals",
-      "value": "{companyId}"
-    },
-    {
-      "key": "Deleted Date",
-      "constraint_type": "is_empty"
-    }
-  ]
-}
-```
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchAll` | `() -> [ProductDTO]` | All active products, ordered by name |
+| `create` | `(_ dto: CreateProductDTO) -> ProductDTO` | Create product |
+| `update` | `(_ id: String, fields: UpdateProductDTO) -> ProductDTO` | Update product |
+| `deactivate` | `(_ id: String)` | Set is_active = false |
 
-**Response**: Array of ClientDTO (includes embedded `subClients` array)
+### 11. AccountingRepository
 
-#### Create Client
+**Table**: `invoices` (read-only queries)
+**Init**: `AccountingRepository(companyId:)`
 
-**Endpoint**: `POST /api/1.1/obj/client`
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchAllInvoices` | `() -> [InvoiceDTO]` | All invoices with line_items and payments for aging/status dashboard |
 
-**Request Body**:
-```json
-{
-  "Company": "{companyId}",
-  "Name": "Client Name",
-  "Email": "client@example.com",
-  "Phone Number": "512-555-1234",
-  "Street Address": "123 Main St",
-  "City": "Austin",
-  "State": "TX",
-  "Zip": "78701",
-  "avatar": "https://s3.amazonaws.com/..."
-}
-```
+### 12. InventoryRepository
 
-#### Update Client Contact Info
+**Tables**: `inventory_items`, `inventory_units`, `inventory_tags`, `inventory_item_tags`, `inventory_snapshots`, `inventory_snapshot_items`
+**Init**: `InventoryRepository(companyId:)`
 
-**Endpoint**: `POST /api/1.1/wf/update_client_contact`
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchAllItems` | `() -> [InventoryItemReadDTO]` | All non-deleted items |
+| `createItem` | `(_ dto: CreateInventoryItemDTO) -> InventoryItemReadDTO` | Create item |
+| `updateItem` | `(_ id:, fields: UpdateInventoryItemDTO) -> InventoryItemReadDTO` | Update item |
+| `softDeleteItem` | `(_ id: String)` | Soft delete item |
+| `fetchAllUnits` | `() -> [InventoryUnitReadDTO]` | All non-deleted units |
+| `createUnit` | `(_ dto: CreateInventoryUnitDTO) -> InventoryUnitReadDTO` | Create unit |
+| `softDeleteUnit` | `(_ id: String)` | Soft delete unit |
+| `createDefaultUnits` | `() -> [InventoryUnitReadDTO]` | Create 12 default units (ea, box, ft, m, kg, lb, gal, L, roll, sheet, bag, pallet) |
+| `fetchAllTags` | `() -> [InventoryTagReadDTO]` | All non-deleted tags |
+| `createTag` | `(_ dto: CreateInventoryTagDTO) -> InventoryTagReadDTO` | Create tag |
+| `updateTag` | `(_ id:, fields: UpdateInventoryTagDTO) -> InventoryTagReadDTO` | Update tag |
+| `softDeleteTag` | `(_ id: String)` | Soft delete tag |
+| `fetchAllItemTags` | `() -> [InventoryItemTagReadDTO]` | All item-tag junction rows |
+| `setItemTags` | `(itemId:, tagIds: [String])` | Replace item's tags (delete all, insert new) |
+| `fetchSnapshots` | `() -> [InventorySnapshotReadDTO]` | All snapshots |
+| `fetchSnapshotItems` | `(snapshotId:) -> [InventorySnapshotItemReadDTO]` | Items in a snapshot |
+| `createFullSnapshot` | `(userId:, isAutomatic:, items:, notes:) -> InventorySnapshotReadDTO` | Create snapshot header + all snapshot items |
 
-**Request Body**:
-```json
-{
-  "client_id": "{clientId}",
-  "email": "newemail@example.com",
-  "phone": "512-555-5678"
-}
-```
+### 13. ProjectNoteRepository
 
-#### Create Sub-Client
+**Table**: `project_notes`
+**Init**: `ProjectNoteRepository(companyId:)`
 
-**Endpoint**: `POST /api/1.1/wf/create_subclient`
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchForProject` | `(_ projectId: String) -> [ProjectNoteDTO]` | Notes for a project (non-deleted, newest first) |
+| `create` | `(_ dto: CreateProjectNoteDTO) -> ProjectNoteDTO` | Create note |
+| `softDelete` | `(_ noteId: String)` | Soft delete |
 
-**Request Body**:
-```json
-{
-  "client_id": "{clientId}",
-  "name": "Sub-client Name",
-  "email": "subcontact@example.com",
-  "phone": "512-555-9999",
-  "role": "Manager"
-}
-```
+### 14. PhotoAnnotationRepository
 
-**Returns**:
-```json
-{
-  "response": {
-    "subClient": { ... }
-  }
-}
-```
+**Table**: `project_photo_annotations`
+**Init**: `PhotoAnnotationRepository(companyId:)`
 
-#### Edit Sub-Client
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchForProject` | `(_ projectId: String) -> [PhotoAnnotationDTO]` | All annotations for a project |
+| `fetchForPhoto` | `(projectId:, photoURL:) -> PhotoAnnotationDTO?` | Single annotation for a specific photo |
+| `upsert` | `(_ dto: UpsertPhotoAnnotationDTO) -> PhotoAnnotationDTO` | Upsert annotation |
+| `create` | `(_ dto: UpsertPhotoAnnotationDTO) -> PhotoAnnotationDTO` | Insert annotation |
+| `updateAnnotation` | `(_ annotationId:, annotationUrl:, note:)` | Update annotation URL and note |
+| `softDelete` | `(_ annotationId: String)` | Soft delete |
 
-**Endpoint**: `POST /api/1.1/wf/edit_sub_client`
+### 15. NotificationRepository
 
-**Request Body**:
-```json
-{
-  "subClient": "{subClientId}",
-  "name": "Updated Name",
-  "email": "updated@example.com",
-  "phone": "512-555-8888",
-  "title": "Senior Manager",
-  "address": "New address"
-}
-```
+**Table**: `notifications`
+**Init**: `NotificationRepository()` (no companyId -- queries filter by userId)
 
-#### Delete Sub-Client
-
-**Endpoint**: `POST /api/1.1/wf/delete_sub_client`
-
-**Request Body**:
-```json
-{
-  "subClient": "{subClientId}"
-}
-```
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `fetchUnreadCount` | `(userId: String) -> Int` | Server-side count (no row transfer, uses `head: true, count: .exact`) |
+| `fetchRecent` | `(userId:, limit: Int) -> [NotificationDTO]` | Recent notifications (default 50) |
+| `markAsRead` | `(_ notificationId: String)` | Mark single notification as read |
+| `markAllAsRead` | `(userId: String)` | Mark all unread notifications as read for a user |
 
 ---
 
-### User Endpoints
-
-#### Fetch Company Users
-
-**Endpoint**: `GET /api/1.1/obj/user`
-
-**Query Parameters**:
-```json
-{
-  "constraints": [
-    {
-      "key": "Company",
-      "constraint_type": "equals",
-      "value": "{companyId}"
-    },
-    {
-      "key": "Deleted Date",
-      "constraint_type": "is_empty"
-    }
-  ]
-}
-```
-
-#### Update User
-
-**Endpoint**: `PATCH /api/1.1/obj/user/{userId}`
-
-**Request Body**: Fields to update (e.g., `{"Employee Type": "Office Crew"}`)
-
-#### Delete User
-
-**Endpoint**: `POST /api/1.1/wf/delete_user`
-
-**Request Body**:
-```json
-{
-  "user": "{userId}"
-}
-```
-
-#### Terminate Employee
-
-**Endpoint**: `POST /api/1.1/wf/terminate_employee`
-
-**Request Body**:
-```json
-{
-  "user": "{userId}"
-}
-```
-
-**Action**: Removes user from company, revokes access, soft deletes user record.
-
-#### Role Assignment Logic (CRITICAL - Fixed Nov 3, 2025)
-
-**Three-Tier Role Detection**:
-
-1. **Check `company.adminIds` array** (highest priority)
-   - If userId exists in company's `Admin Ids` array → role = `.admin`
-
-2. **Check `employeeType` field** (medium priority)
-   - Map Bubble value to app role:
-     - `"Office Crew"` → `.officeCrew`
-     - `"Field Crew"` → `.fieldCrew`
-     - `"Admin"` → `.admin`
-
-3. **Default to `.fieldCrew`** (lowest priority)
-   - If no match found, default to field crew role
-
-**BugFix Context**: Original implementation checked wrong values ("Office" instead of "Office Crew") and didn't check adminIds first, causing admin users to be downgraded to field crew, which then filtered their project access and caused data loss during sync.
-
-**BubbleFields Mapping**:
-- `Employee Type` → `BubbleFields.User.employeeType`
-- Admin IDs checked via `company.adminIds` array
-
----
-
-### Company Endpoints
-
-#### Fetch Company
-
-**Endpoint**: `GET /api/1.1/obj/company/{companyId}`
-
-**Response**: CompanyDTO with all company fields
-
-#### Update Company
-
-**Endpoint**: `PATCH /api/1.1/obj/company/{companyId}`
-
-**Request Body**:
-```json
-{
-  "Company Name": "Updated Name",
-  "Default Project Color": "#59779F",
-  "logo": "https://s3.amazonaws.com/...",
-  "seatedEmployees": ["{userId1}", "{userId2}"]
-}
-```
-
-**Subscription Fields** (from Stripe plugin):
-- `billingPeriodEnd` - Unix timestamp OR ISO8601 string
-- `subscriptionEnd` - Unix timestamp OR ISO8601 string
-- `trialStartDate` - Unix timestamp OR ISO8601 string
-- `trialEndDate` - Unix timestamp OR ISO8601 string
-- `seatGraceStartDate` - Unix timestamp OR ISO8601 string
-- `seatGraceEndDate` - Unix timestamp OR ISO8601 string
-
-**Date Parsing Note**: Bubble returns dates in MIXED formats:
-- Stripe-synced fields: Unix timestamps (milliseconds)
-- Bubble native fields: ISO8601 strings
-
-Both formats MUST be supported in DTOs.
-
-#### Update Company Seated Employees
-
-**Endpoint**: `PATCH /api/1.1/obj/company/{companyId}`
-
-**Request Body**:
-```json
-{
-  "seatedEmployees": ["{userId1}", "{userId2}", "{userId3}"]
-}
-```
-
-**Use Case**: Subscription seat management. Only seated employees count toward subscription limits.
-
----
-
-### TaskType Endpoints
-
-#### Fetch Company Task Types
-
-**Endpoint**: `GET /api/1.1/obj/tasktype`
-
-**Query Parameters**:
-```json
-{
-  "constraints": [
-    {
-      "key": "Company",
-      "constraint_type": "equals",
-      "value": "{companyId}"
-    },
-    {
-      "key": "Deleted Date",
-      "constraint_type": "is_empty"
-    }
-  ]
-}
-```
-
-#### Create Task Type
-
-**Endpoint**: `POST /api/1.1/obj/tasktype`
-
-**Request Body**:
-```json
-{
-  "Company": "{companyId}",
-  "Display": "Custom Task",
-  "Color": "#FF5733",
-  "Icon": "hammer.fill",
-  "Is Default": false,
-  "Display Order": 10
-}
-```
-
----
-
-### Image Endpoints
-
-#### Upload Project Images
-
-**Endpoint**: `POST /api/1.1/wf/upload_project_images`
-
-**Request Body**:
-```json
-{
-  "project_id": "{projectId}",
-  "images": [
-    "https://s3.amazonaws.com/ops-app-files-prod/company-123/project-456/photos/image1.jpg",
-    "https://s3.amazonaws.com/ops-app-files-prod/company-123/project-456/photos/image2.jpg"
-  ]
-}
-```
-
-**Process**:
-1. Upload images to S3 first (using direct S3 API)
-2. Register S3 URLs with Bubble using this endpoint
-3. Bubble associates URLs with project
-
-**Critical**: If S3 upload succeeds but Bubble fails, MUST clean up S3 (delete uploaded files) to avoid orphaned data.
-
----
-
-## Sync Architecture
-
-### Triple-Layer Sync Strategy
-
-OPS uses a sophisticated three-tiered sync approach to balance responsiveness with reliability in field conditions.
-
-#### Layer 1: Immediate Sync (User Actions)
-
-**Trigger**: User makes a change (status update, notes edit, create/delete)
-
-**Strategy**: Immediate API call if online
-
-**Fallback**: Mark `needsSync = true` if offline
-
-**Implementation Pattern**:
-```swift
-func updateProjectStatus(project: Project, newStatus: Status) async {
-    // 1. Optimistic update (immediate UI feedback)
-    project.status = newStatus
-    try? modelContext.save()
-
-    // 2. Immediate sync if online
-    if isConnected {
-        do {
-            try await apiService.updateProjectStatus(
-                projectId: project.id,
-                status: newStatus.rawValue
-            )
-            project.needsSync = false
-            project.lastSyncedAt = Date()
-        } catch {
-            print("[SYNC_ERROR] Failed to sync status: \(error)")
-            project.needsSync = true  // Retry later in Layer 3
-        }
-    } else {
-        project.needsSync = true  // Queue for sync when online
-    }
-
-    try? modelContext.save()
-}
-```
-
-**User Experience**: Instant UI response regardless of network state. Changes appear immediately, sync happens in background.
-
-#### Layer 2: Event-Driven Sync
-
-**Triggers**:
-- App launches (after successful authentication)
-- Network connectivity restored (WiFi/Cellular comes online)
-- App returns to foreground (from background state)
-- Subscription status changes (subscription activated/cancelled)
-
-**Strategy**: Sync critical data immediately
-
-**Implementation**:
-```swift
-// In DataController.swift
-func setupConnectivityMonitoring() {
-    connectivityMonitor.onConnectionTypeChanged = { [weak self] connectionType in
-        guard connectionType != .none else { return }
-
-        // Ignore first callback (initialization - bugfix Nov 15, 2025)
-        guard self?.hasHandledInitialConnection == true else {
-            self?.hasHandledInitialConnection = true
-            return
-        }
-
-        // Connection restored - trigger sync
-        print("[CONNECTIVITY] Connection restored: \(connectionType)")
-        Task { @MainActor in
-            await self?.syncManager?.triggerBackgroundSync()
-        }
-    }
-}
-```
-
-**App Launch Sync**:
-```swift
-func performAppLaunchSync() async {
-    guard isAuthenticated, isConnected else { return }
-
-    do {
-        try await syncManager.syncAppLaunch()
-        print("[SYNC_LAUNCH] ✅ App launch sync complete")
-    } catch {
-        print("[SYNC_LAUNCH] ❌ Sync failed: \(error)")
-    }
-}
-```
-
-#### Layer 3: Periodic Retry Sync
-
-**Trigger**: Timer-based check every 3 minutes (180 seconds)
-
-**Condition**: Only runs if pending syncs exist (`needsSync = true`)
-
-**Strategy**: Sync items that failed in Layers 1 & 2
-
-**Implementation**:
-```swift
-// Periodic timer in DataController
-func startPeriodicSyncTimer() {
-    syncTimer = Timer.scheduledTimer(
-        withTimeInterval: 180,  // 3 minutes
-        repeats: true
-    ) { [weak self] _ in
-        Task { @MainActor in
-            await self?.checkPendingSyncs()
-        }
-    }
-}
-
-func checkPendingSyncs() async {
-    guard isConnected else {
-        print("[PERIODIC_SYNC] Skipping - offline")
-        return
-    }
-
-    // Check for unsynced items across all entities
-    let hasPendingProjects = try? modelContext.fetch(
-        FetchDescriptor<Project>(
-            predicate: #Predicate { $0.needsSync == true }
-        )
-    ).count ?? 0 > 0
-
-    let hasPendingTasks = try? modelContext.fetch(
-        FetchDescriptor<Task>(
-            predicate: #Predicate { $0.needsSync == true }
-        )
-    ).count ?? 0 > 0
-
-    if hasPendingProjects || hasPendingTasks {
-        print("[PERIODIC_SYNC] Found pending syncs - triggering background sync")
-        await syncManager?.triggerBackgroundSync()
-    } else {
-        print("[PERIODIC_SYNC] No pending syncs")
-    }
-}
-```
-
-### Conflict Resolution Strategy
-
-**Philosophy**: "Server wins" - Remote data always takes precedence over local changes in conflicts.
-
-**Process**:
-1. **Push local changes first** (all `needsSync = true` items)
-2. **Then fetch remote data** (pull from server)
-3. **Server overwrites local** if conflicts exist
-4. **Clear `needsSync` flag** on successful push
-
-**Rationale**: Multi-user collaboration requires a single source of truth. Local changes are pushed, but if server data differs (e.g., another user updated), server version is authoritative.
-
-**Implementation**:
-```swift
-func syncProjects() async throws {
-    // STEP 1: Push local changes
-    let unsyncedProjects = try modelContext.fetch(
-        FetchDescriptor<Project>(
-            predicate: #Predicate { $0.needsSync == true }
-        )
-    )
-
-    for project in unsyncedProjects {
-        do {
-            try await pushProjectToServer(project)
-            project.needsSync = false
-            project.lastSyncedAt = Date()
-        } catch {
-            print("[SYNC] Failed to push project \(project.id): \(error)")
-            // Keep needsSync = true for retry
-        }
-    }
-
-    // STEP 2: Fetch remote data
-    let remoteDTOs = try await apiService.fetchProjects(companyId: companyId)
-
-    // STEP 3: Upsert (server wins)
-    for dto in remoteDTOs {
-        let project = getOrCreateProject(id: dto.id)
-        // Overwrite ALL fields from server (server wins)
-        project.name = dto.name
-        project.status = dto.status
-        project.lastSyncedAt = Date()
-        project.needsSync = false  // In sync with server
-    }
-
-    try modelContext.save()
-}
-```
-
-### Soft Delete Handling
-
-**30-Day Window**: Items deleted within last 30 days are soft-deleted locally. Older items are preserved as historical data.
-
-**Deletion Detection**: If item exists locally but NOT in remote response, it was likely deleted on server.
-
-**Implementation**:
-```swift
-private func handleProjectDeletions(keepingIds: Set<String>) async throws {
-    let allProjects = try? modelContext.fetch(FetchDescriptor<Project>())
-
-    let now = Date()
-    let thirtyDaysAgo = Calendar.current.date(byAdding: .day, value: -30, to: now)!
-
-    for project in allProjects ?? [] {
-        if !keepingIds.contains(project.id) {
-            // Only soft delete if:
-            // 1. Not already deleted
-            // 2. Synced within last 30 days (recently active)
-            // 3. Not a historical project (> 1 year old)
-
-            if project.deletedAt == nil &&
-               (project.lastSyncedAt ?? .distantPast) > thirtyDaysAgo {
-
-                print("[DELETION] 🗑️ Soft deleting: \(project.name)")
-                project.deletedAt = now
-
-                // Cascade to related entities
-                for task in project.tasks {
-                    task.deletedAt = now
-                }
-                for event in project.calendarEvents {
-                    event.deletedAt = now
-                }
-            }
-        }
-    }
-}
-```
-
-**Cascade Behavior**:
-- Deleting Project → deletes Tasks → deletes CalendarEvents
-- Deleting Client → does NOT delete Projects (projects remain orphaned)
-- Deleting User → does NOT delete assignments (user ID remains in arrays)
-
----
-
-## CentralizedSyncManager
-
-**Location**: `OPS/Network/Sync/CentralizedSyncManager.swift` (iOS)
-**Size**: ~1,801 lines of code
-**Purpose**: Single source of truth for ALL sync operations
-
-### Master Sync Functions
-
-#### 1. syncAll() - Manual Complete Sync
-
-Called when user taps "Sync" button or performs pull-to-refresh.
-
-**Syncs**: EVERYTHING in dependency order
-
-**Implementation**:
-```swift
-@MainActor
-func syncAll() async throws {
-    guard !syncInProgress, isConnected else {
-        throw SyncError.alreadySyncing
-    }
-
-    syncInProgress = true
-    defer { syncInProgress = false }
-
-    print("[SYNC_ALL] 🔄 Starting complete sync...")
-
-    // Sync in dependency order (parents before children)
-    try await syncCompany()         // 1. Company & subscription
-    try await syncUsers()           // 2. Team members
-    try await syncClients()         // 3. Clients
-    try await syncTaskTypes()       // 4. Task type templates
-    try await syncProjects()        // 5. Projects
-    try await syncTasks()           // 6. Tasks (requires projects)
-    try await syncCalendarEvents()  // 7. Calendar events (requires projects/tasks)
-
-    lastSyncDate = Date()
-    print("[SYNC_ALL] ✅ Complete sync finished")
-}
-```
-
-**Dependency Order Critical**: Must sync parents before children to avoid foreign key errors.
-
-#### 2. syncAppLaunch() - App Startup Sync
-
-Called after successful authentication during app launch.
-
-**Prioritization**:
-- **Blocking**: Critical data (company, users, projects, calendar)
-- **Background**: Less critical data (clients, task types, tasks)
-
-**Implementation**:
-```swift
-@MainActor
-func syncAppLaunch() async throws {
-    guard !syncInProgress, isConnected else { return }
-
-    syncInProgress = true
-    defer { syncInProgress = false }
-
-    print("[SYNC_LAUNCH] 🚀 Starting app launch sync...")
-
-    // Critical data first (blocking UI)
-    try await syncCompany()
-    try await syncUsers()
-    try await syncProjects()
-    try await syncCalendarEvents()
-
-    // Less critical data in background (non-blocking)
-    Task.detached(priority: .background) {
-        try? await self.syncClients()
-        try? await self.syncTaskTypes()
-        try? await self.syncTasks()
-    }
-
-    lastSyncDate = Date()
-    print("[SYNC_LAUNCH] ✅ App launch sync finished")
-}
-```
-
-**User Experience**: App becomes usable faster by deferring non-critical data to background.
-
-#### 3. syncBackgroundRefresh() - Periodic Refresh
-
-Called by timer or connectivity restoration.
-
-**Optimization**: Only syncs data likely to have changed (with date filters)
-
-**Implementation**:
-```swift
-@MainActor
-func syncBackgroundRefresh() async throws {
-    guard !syncInProgress, isConnected else { return }
-
-    syncInProgress = true
-    defer { syncInProgress = false }
-
-    print("[SYNC_BG] 🔄 Background refresh...")
-
-    // Only sync data likely to have changed (with date filter)
-    try await syncProjects(sinceDate: lastSyncDate)
-    try await syncTasks(sinceDate: lastSyncDate)
-    try await syncCalendarEvents(sinceDate: lastSyncDate)
-
-    lastSyncDate = Date()
-    print("[SYNC_BG] ✅ Background refresh complete")
-}
-```
-
-**Date Filtering**: Passes `Modified Date > lastSyncDate` constraint to Bubble API to only fetch changed records.
-
-#### 4. triggerBackgroundSync() - Debounced Trigger
-
-Public method with debouncing to prevent duplicate syncs.
-
-**Critical**: 2-second minimum interval between syncs
-
-**Implementation**:
-```swift
-func triggerBackgroundSync(forceProjectSync: Bool = false) {
-    // Debounce: Don't trigger if sync occurred < 2 seconds ago
-    if let lastTrigger = lastSyncTriggerTime,
-       Date().timeIntervalSince(lastTrigger) < minimumSyncInterval {
-        print("[TRIGGER_BG_SYNC] ⏭️ Skipping - sync triggered recently")
-        return
-    }
-
-    lastSyncTriggerTime = Date()
-    guard !syncInProgress, isConnected else { return }
-
-    Task { @MainActor in
-        if forceProjectSync {
-            try? await syncAll()
-        } else {
-            try? await syncBackgroundRefresh()
-        }
-    }
-}
-```
-
-**Debouncing** (Added Nov 15, 2025):
-- Minimum 2-second interval between sync triggers
-- Prevents duplicate syncs during app launch
-- Fixes issue where connectivity monitor and app launch both triggered sync simultaneously
-
-**Bug Context**: Before debouncing, app launch could trigger 2-4 concurrent syncs:
-1. App launch → syncAppLaunch()
-2. Connectivity monitor initialization → triggerBackgroundSync()
-3. Connectivity state change → triggerBackgroundSync()
-4. Foreground event → triggerBackgroundSync()
-
-This caused 900+ records to sync instead of 296, wasting bandwidth and battery.
-
-### Individual Entity Sync Functions
-
-All entity sync functions follow this pattern:
-
-```swift
-@MainActor
-func syncProjects() async throws {
-    print("[SYNC_PROJECTS] Starting...")
-
-    // 1. Fetch from Bubble API
-    let projectDTOs = try await apiService.fetchProjects(companyId: companyId)
-    print("[SYNC_PROJECTS] Fetched \(projectDTOs.count) projects")
-
-    // 2. Handle soft deletions
-    let remoteIds = Set(projectDTOs.map { $0.id })
-    try await handleProjectDeletions(keepingIds: remoteIds)
-
-    // 3. Upsert each project (update or insert)
-    for dto in projectDTOs {
-        let project = getOrCreateProject(id: dto.id)
-
-        // Update all properties from DTO
-        project.name = dto.name
-        project.status = dto.status
-        project.color = dto.color
-        project.address = dto.streetAddress
-        project.city = dto.city
-        project.state = dto.state
-        project.zip = dto.zip
-        project.latitude = dto.latitude
-        project.longitude = dto.longitude
-        project.notes = dto.notes
-        project.clientId = dto.clientId
-
-        // Parse and set deleted date
-        if let deletedDateStr = dto.deletedAt {
-            project.deletedAt = parseDate(deletedDateStr)
-        }
-
-        // Mark as synced
-        project.needsSync = false
-        project.lastSyncedAt = Date()
-    }
-
-    // 4. Save to local database
-    try modelContext.save()
-
-    print("[SYNC_PROJECTS] ✅ Synced \(projectDTOs.count) projects")
-}
-```
-
-**getOrCreateProject() Pattern**:
-```swift
-private func getOrCreateProject(id: String) -> Project {
-    // Try to fetch existing
-    let descriptor = FetchDescriptor<Project>(
-        predicate: #Predicate { $0.id == id }
-    )
-
-    if let existing = try? modelContext.fetch(descriptor).first {
-        return existing
-    }
-
-    // Create new if not found
-    let newProject = Project(id: id)
-    modelContext.insert(newProject)
-    return newProject
-}
-```
-
-### Sync State Management
-
-**Properties**:
-```swift
-private(set) var syncInProgress = false
-private var lastSyncDate: Date?
-private var lastSyncTriggerTime: Date?
-private let minimumSyncInterval: TimeInterval = 2.0  // 2 seconds
-
-// Published for UI observation
-let syncStateSubject = PassthroughSubject<Bool, Never>()
-```
-
-**State Publishing**:
-```swift
-private(set) var syncInProgress = false {
-    didSet {
-        syncStateSubject.send(syncInProgress)
-    }
-}
-```
-
-**UI Observation**:
-```swift
-// In SwiftUI view
-.onReceive(syncManager.syncStateSubject) { isSyncing in
-    if isSyncing {
-        // Show loading indicator
-    } else {
-        // Hide loading indicator
-    }
-}
-```
-
-### Debug Logging System
-
-**Master Killswitch**:
-```swift
-static var debugLoggingEnabled: Bool = true
-```
-
-**Per-Function Flags**:
-```swift
-struct DebugFlags {
-    static var syncAll: Bool = true
-    static var syncCompany: Bool = true
-    static var syncUsers: Bool = true
-    static var syncClients: Bool = true
-    static var syncTaskTypes: Bool = true
-    static var syncProjects: Bool = true
-    static var syncTasks: Bool = true
-    static var syncCalendarEvents: Bool = true
-    static var updateOperations: Bool = true
-    static var deleteOperations: Bool = true
-    static var modelConversion: Bool = true
-}
-```
-
-**Debug Helper**:
-```swift
-private func debugLog(_ message: String, function: String = #function, enabled: Bool = true) {
-    guard CentralizedSyncManager.debugLoggingEnabled && enabled else { return }
-    print("[SYNC_DEBUG] [\(function)] \(message)")
-}
-```
-
-**Usage**:
-```swift
-debugLog("Fetched \(dtos.count) projects", enabled: DebugFlags.syncProjects)
-```
-
----
-
-## Image Upload & S3 Integration
-
-### Multi-Tier Image Architecture
-
-**Storage Tiers**:
-1. **AWS S3** - Primary remote storage (permanent)
-2. **Local File System** - Offline cache and pending uploads
-3. **Memory Cache** - Fast re-display during session
-4. **UserDefaults** - Legacy (migrated to file system)
-
-### S3 Configuration
-
-**Bucket**: `ops-app-files-prod`
-**Region**: `us-west-2`
-**Path Pattern**: `company-{companyId}/{projectId}/photos/{filename}`
-
-**Credentials**: Stored in `Secrets.xcconfig` (NOT committed to Git)
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_S3_BUCKET`
-- `AWS_REGION`
-
-**Authentication**: AWS Signature Version 4 (SigV4)
-
-### Image Flow
-
-#### 1. Capture/Select Images
-
-```swift
-// User selects up to 10 images
-ImagePicker(selectedImages: $selectedImages, limit: 10)
-
-// Process and compress
-for (index, image) in selectedImages.enumerated() {
-    let resizedImage = resizeImageIfNeeded(image)
-    let quality = getAdaptiveCompressionQuality(for: resizedImage)
-    let imageData = resizedImage.jpegData(compressionQuality: quality)
-    // ... upload or save locally
-}
-```
-
-**Image Constraints**:
-- Maximum 10 images per upload
-- Maximum dimension: 2048px (resized if larger)
-- Format: JPEG only
-- Adaptive compression: 0.5 - 0.8 quality based on resolution
-
-#### 2. Filename Generation
-
-**Pattern**: `{StreetAddress}_IMG_{timestamp}_{index}.jpg`
-
-**Example**: `123MainSt_IMG_20251118_143022_0.jpg`
-
-**Implementation**:
-```swift
-func generateFilename(project: Project, timestamp: Date, index: Int) -> String {
-    let streetPrefix = extractStreetAddress(from: project.address ?? "")
-
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyyMMdd_HHmmss"
-    let dateStr = formatter.string(from: timestamp)
-
-    return "\(streetPrefix)_IMG_\(dateStr)_\(index).jpg"
-}
-
-private func extractStreetAddress(from address: String) -> String {
-    // Remove commas and get first part
-    let streetPart = address.components(separatedBy: ",").first ?? ""
-
-    // Remove spaces, periods, special chars
-    var cleaned = streetPart
-        .replacingOccurrences(of: " ", with: "")
-        .replacingOccurrences(of: ".", with: "")
-        .replacingOccurrences(of: ",", with: "")
-
-    // Default if empty
-    if cleaned.isEmpty {
-        cleaned = "NoAddress"
-    }
-
-    return cleaned
-}
-```
-
-#### 3. Upload Decision
-
-**Online**: Upload to S3 → Register with Bubble
-**Offline**: Save locally → Queue for later sync
-
-```swift
-func saveImages(project: Project, images: [UIImage]) async {
-    if isConnected {
-        // Online: Upload to S3
-        await uploadToS3(project: project, images: images)
-    } else {
-        // Offline: Save locally with local:// prefix
-        await saveLocally(project: project, images: images)
-    }
-}
-```
-
-#### 4A. Online Upload to S3
-
-**Process**:
-1. Compress image to JPEG (adaptive quality)
-2. Generate unique filename
-3. Generate AWS v4 signature
-4. PUT request to S3
-5. Register S3 URL with Bubble
-6. Update project in local database
-
-**Implementation**:
-```swift
-func uploadToS3(project: Project, images: [UIImage]) async {
-    for (index, image) in images.enumerated() {
-        // 1. Compress image
-        let resizedImage = resizeImageIfNeeded(image)
-        let quality = getAdaptiveCompressionQuality(for: resizedImage)
-        guard let imageData = resizedImage.jpegData(compressionQuality: quality) else {
-            continue
-        }
-
-        // 2. Generate filename
-        let filename = generateFilename(project: project, index: index)
-
-        // 3. Upload to S3
-        let objectKey = "company-\(companyId)/\(project.id)/photos/\(filename)"
-        let s3URL = try await uploadImageToS3(
-            imageData: imageData,
-            objectKey: objectKey
-        )
-
-        // 4. Register with Bubble
-        try await apiService.addProjectImage(
-            projectId: project.id,
-            imageURL: s3URL
-        )
-
-        // 5. Update project
-        project.addImage(s3URL)
-        project.needsSync = false
-    }
-
-    try? modelContext.save()
-}
-
-private func uploadImageToS3(imageData: Data, objectKey: String) async throws -> String {
-    let endpoint = "https://\(bucketName).s3.\(region).amazonaws.com/\(objectKey)"
-
-    var request = URLRequest(url: URL(string: endpoint)!)
-    request.httpMethod = "PUT"
-    request.httpBody = imageData
-    request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
-
-    // Add AWS authentication headers (SigV4)
-    addAWSAuthHeaders(to: &request, method: "PUT", path: "/\(objectKey)", payload: imageData)
-
-    let (_, response) = try await URLSession.shared.data(for: request)
-
-    guard let httpResponse = response as? HTTPURLResponse,
-          (200...299).contains(httpResponse.statusCode) else {
-        throw S3Error.uploadFailed
-    }
-
-    return endpoint
-}
-```
-
-**AWS Signature v4**:
-```swift
-private func addAWSAuthHeaders(to request: inout URLRequest, method: String, path: String, payload: Data? = nil) {
-    let dateFormatter = DateFormatter()
-    dateFormatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
-    dateFormatter.timeZone = TimeZone(identifier: "UTC")
-    let dateTime = dateFormatter.string(from: Date())
-    let dateStamp = String(dateTime.prefix(8))
-
-    // Canonical request
-    let canonicalHeaders = "host:\(bucketName).s3.\(region).amazonaws.com\nx-amz-date:\(dateTime)\n"
-    let signedHeaders = "host;x-amz-date"
-    let payloadHash = payload?.sha256Hash() ?? "UNSIGNED-PAYLOAD"
-
-    let canonicalRequest = """
-    \(method)
-    \(path)
-
-    \(canonicalHeaders)
-    \(signedHeaders)
-    \(payloadHash)
-    """
-
-    // String to sign
-    let algorithm = "AWS4-HMAC-SHA256"
-    let credentialScope = "\(dateStamp)/\(region)/s3/aws4_request"
-    let canonicalRequestHash = canonicalRequest.sha256Hash()
-
-    let stringToSign = """
-    \(algorithm)
-    \(dateTime)
-    \(credentialScope)
-    \(canonicalRequestHash)
-    """
-
-    // Calculate signature
-    let signature = calculateSignature(
-        stringToSign: stringToSign,
-        dateStamp: dateStamp,
-        region: region,
-        service: "s3"
-    )
-
-    // Authorization header
-    let authorization = "\(algorithm) Credential=\(accessKeyId)/\(credentialScope), SignedHeaders=\(signedHeaders), Signature=\(signature)"
-
-    request.setValue(authorization, forHTTPHeaderField: "Authorization")
-    request.setValue(dateTime, forHTTPHeaderField: "X-Amz-Date")
-    request.setValue(payloadHash, forHTTPHeaderField: "X-Amz-Content-SHA256")
-}
-```
-
-#### 4B. Offline Save Locally
-
-**Process**:
-1. Compress image to JPEG
-2. Generate unique filename
-3. Save to `Documents/ProjectImages/` directory
-4. Create local URL with `local://` prefix
-5. Add to pending uploads queue
-6. Update project with local URL
-
-**Implementation**:
-```swift
-private func saveImageLocally(_ image: UIImage, for project: Project, index: Int) async -> String? {
-    let resizedImage = resizeImageIfNeeded(image)
-    let quality = getAdaptiveCompressionQuality(for: resizedImage)
-
-    guard let imageData = resizedImage.jpegData(compressionQuality: quality) else {
-        return nil
-    }
-
-    let timestamp = Date().timeIntervalSince1970
-    let filename = "local_project_\(project.id)_\(timestamp)_\(index).jpg"
-    let localURL = "local://project_images/\(filename)"
-
-    // Store in file system
-    let success = ImageFileManager.shared.saveImage(data: imageData, localID: localURL)
-
-    if success {
-        // Create pending upload
-        let pendingUpload = PendingImageUpload(
-            localURL: localURL,
-            projectId: project.id,
-            companyId: project.companyId,
-            timestamp: Date()
-        )
-
-        pendingUploads.append(pendingUpload)
-        savePendingUploads()
-
-        // Mark as unsynced
-        project.addUnsyncedImage(localURL)
-
-        return localURL
-    }
-
-    return nil
-}
-```
-
-**File Manager**:
-```swift
-class ImageFileManager {
-    static let shared = ImageFileManager()
-
-    private let documentsDirectory = FileManager.default.urls(
-        for: .documentDirectory,
-        in: .userDomainMask
-    ).first!
-
-    func saveImage(data: Data, localID: String) -> Bool {
-        let filename = extractFilename(from: localID)
-        let imageDir = documentsDirectory.appendingPathComponent("ProjectImages")
-
-        // Create directory if needed
-        try? FileManager.default.createDirectory(at: imageDir, withIntermediateDirectories: true)
-
-        let fileURL = imageDir.appendingPathComponent(filename)
-
-        do {
-            try data.write(to: fileURL)
-            return true
-        } catch {
-            print("[FILE_MANAGER] Failed to save image: \(error)")
-            return false
-        }
-    }
-
-    func getImageData(localID: String) -> Data? {
-        let filename = extractFilename(from: localID)
-        let fileURL = documentsDirectory
-            .appendingPathComponent("ProjectImages")
-            .appendingPathComponent(filename)
-
-        return try? Data(contentsOf: fileURL)
-    }
-}
-```
-
-#### 5. Background Sync (Offline → Online)
-
-**Trigger**: Connectivity restored or periodic timer
-
-**Process**:
-1. Load pending uploads from UserDefaults
-2. Group by project ID
-3. Upload each image to S3
-4. Register batch with Bubble
-5. Replace local URLs with S3 URLs in project
-6. Remove from pending queue
-
-**Implementation**:
-```swift
-func syncPendingImages() async {
-    guard !isSyncing, connectivityMonitor.isConnected else { return }
-
-    isSyncing = true
-    defer { isSyncing = false }
-
-    let pending = loadPendingUploads()
-    let grouped = Dictionary(grouping: pending, by: { $0.projectId })
-
-    for (projectId, uploads) in grouped {
-        await syncImagesForProject(projectId: projectId, uploads: uploads)
-    }
-}
-
-private func syncImagesForProject(projectId: String, uploads: [PendingImageUpload]) async {
-    guard let project = getProject(by: projectId) else { return }
-
-    var uploadedURLs: [String] = []
-
-    // Upload each image to S3
-    for upload in uploads {
-        if let imageData = ImageFileManager.shared.getImageData(localID: upload.localURL) {
-            do {
-                let s3URL = try await uploadImageToS3(
-                    imageData: imageData,
-                    objectKey: generateObjectKey(upload)
-                )
-                uploadedURLs.append(s3URL)
-            } catch {
-                print("[IMAGE_SYNC] Failed to upload: \(error)")
-            }
-        }
-    }
-
-    // Register all with Bubble
-    if !uploadedURLs.isEmpty {
-        do {
-            try await apiService.addProjectImages(
-                projectId: projectId,
-                imageURLs: uploadedURLs
-            )
-
-            // Update project: replace local URLs with S3 URLs
-            var currentImages = project.getProjectImages()
-            for (local, s3) in zip(uploads.map { $0.localURL }, uploadedURLs) {
-                if let index = currentImages.firstIndex(of: local) {
-                    currentImages[index] = s3
-                }
-                project.markImageAsSynced(local)
-            }
-            project.setProjectImageURLs(currentImages)
-            project.needsSync = false
-
-            // Remove from pending queue
-            pendingUploads.removeAll { upload in
-                uploads.contains { $0.localURL == upload.localURL }
-            }
-            savePendingUploads()
-
-            try? modelContext.save()
-        } catch {
-            print("[IMAGE_SYNC] Failed to register with Bubble: \(error)")
-        }
-    }
-}
-```
-
-### Image Fetching (Display)
-
-**Multi-tier cache check**:
-
-```swift
-func loadImage(url: String) async -> UIImage? {
-    // 1. Check memory cache (fastest)
-    if let cached = imageCache.get(url) {
-        return cached
-    }
-
-    // 2. Check file system (local:// URLs)
-    if url.hasPrefix("local://") {
-        if let image = loadFromFileSystem(url) {
-            imageCache.set(url, image)
-            return image
-        }
-    }
-
-    // 3. Check file system (cached remote URLs)
-    if let image = loadCachedRemoteImage(url) {
-        imageCache.set(url, image)
-        return image
-    }
-
-    // 4. Download from network
-    if let image = try? await downloadImage(url) {
-        saveToFileSystem(url, image)
-        imageCache.set(url, image)
-        return image
-    }
-
-    return nil
-}
-```
-
-### Image Deletion
-
-**Process**:
-1. Delete from S3 (if S3 URL)
-2. Delete from Bubble (via API)
-3. Delete from local cache
-4. Remove from project
-
-**Implementation**:
-```swift
-func deleteImage(_ urlString: String, from project: Project) async -> Bool {
-    // Check if local URL
-    if urlString.starts(with: "local://") {
-        _ = ImageFileManager.shared.deleteImage(localID: urlString)
-        pendingUploads.removeAll { $0.localURL == urlString }
-        savePendingUploads()
-        return true
-    }
-
-    // Delete from S3
-    if urlString.contains("s3") && urlString.contains("amazonaws.com") {
-        do {
-            try await s3Service.deleteImageFromS3(
-                url: urlString,
-                companyId: project.companyId,
-                projectId: project.id
-            )
-            _ = ImageFileManager.shared.deleteImage(localID: urlString)
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    return false
-}
-
-// In S3UploadService
-func deleteImageFromS3(url: String, companyId: String, projectId: String) async throws {
-    guard let urlComponents = URL(string: url) else {
-        throw S3Error.invalidURL
-    }
-
-    // Extract object key from URL
-    let objectKey = String(urlComponents.path.dropFirst())
-
-    let endpoint = "https://\(bucketName).s3.\(region).amazonaws.com/\(objectKey)"
-
-    var request = URLRequest(url: URL(string: endpoint)!)
-    request.httpMethod = "DELETE"
-
-    // Add AWS auth headers
-    addAWSAuthHeaders(to: &request, method: "DELETE", path: "/\(objectKey)")
-
-    let (_, response) = try await URLSession.shared.data(for: request)
-
-    guard let httpResponse = response as? HTTPURLResponse,
-          (200...299).contains(httpResponse.statusCode) else {
-        throw S3Error.deleteFailed
-    }
-}
-```
-
-### Image Processing Utilities
-
-#### Resize Image If Needed
-```swift
-private func resizeImageIfNeeded(_ image: UIImage) -> UIImage {
-    let maxDimension: CGFloat = 2048
-
-    guard image.size.width > maxDimension || image.size.height > maxDimension else {
-        return image
-    }
-
-    let aspectRatio = image.size.width / image.size.height
-    let newSize: CGSize
-
-    if image.size.width > image.size.height {
-        newSize = CGSize(width: maxDimension, height: maxDimension / aspectRatio)
-    } else {
-        newSize = CGSize(width: maxDimension * aspectRatio, height: maxDimension)
-    }
-
-    UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
-    image.draw(in: CGRect(origin: .zero, size: newSize))
-    let resizedImage = UIGraphicsGetImageFromCurrentImageContext() ?? image
-    UIGraphicsEndImageContext()
-
-    return resizedImage
-}
-```
-
-#### Adaptive Compression Quality
-```swift
-private func getAdaptiveCompressionQuality(for image: UIImage) -> CGFloat {
-    let pixelCount = image.size.width * image.size.height
-
-    if pixelCount > 4_000_000 { // > 4MP
-        return 0.5
-    } else if pixelCount > 2_000_000 { // > 2MP
-        return 0.6
-    } else if pixelCount > 1_000_000 { // > 1MP
-        return 0.7
-    } else {
-        return 0.8
-    }
-}
-```
-
----
-
-## Stripe Subscription Integration
+## SyncEngine (Offline-First Orchestrator)
+
+**Source**: `OPS/Network/Sync/SyncEngine.swift`
+**Added**: March 8, 2026
+**Purpose**: Central coordinator for the offline-first sync system. Replaces the monolithic SupabaseSyncManager as the primary sync orchestrator.
 
 ### Architecture
 
-OPS uses Bubble's Stripe plugin to handle subscriptions. All subscription data is managed by Bubble, and the app reads subscription status via the Company entity.
+`SyncEngine` is a `@MainActor @Observable` class that delegates work to four specialized processors:
 
-**Stripe Integration**: Server-side via Bubble Stripe plugin
-**App Role**: Read-only subscription status consumer
+```
+SyncEngine (coordinator)
+    |-- OutboundProcessor   (push local changes to server)
+    |-- InboundProcessor    (pull server changes to local)
+    |-- RealtimeProcessor   (WebSocket subscriptions)
+    |-- PhotoProcessor      (image upload queue)
+```
 
-### Subscription Fields (in CompanyDTO)
+All mutations flow through `SyncEngine.recordOperation()`, which creates a `SyncOperation` SwiftData model. The processors handle the actual network I/O. ConnectivityManager gates all network attempts.
 
-**Date Fields** (MIXED FORMAT WARNING):
-- `billingPeriodEnd` - Unix timestamp OR ISO8601 string
-- `subscriptionEnd` - Unix timestamp OR ISO8601 string
-- `trialStartDate` - Unix timestamp OR ISO8601 string
-- `trialEndDate` - Unix timestamp OR ISO8601 string
-- `seatGraceStartDate` - Unix timestamp OR ISO8601 string
-- `seatGraceEndDate` - Unix timestamp OR ISO8601 string
+### Published State
 
-**String Fields**:
-- `subscriptionStatus` - "active", "trialing", "past_due", "cancelled", etc.
-- `stripePlanId` - Stripe plan identifier
+| Property | Type | Description |
+|----------|------|-------------|
+| `syncInProgress` | `Bool` | Guard against concurrent syncs |
+| `lastSyncDate` | `Date?` | Timestamp of last completed sync |
+| `pendingOperationCount` | `Int` | Number of unsynced local changes |
+| `isConnected` | `Bool` | Delegates to ConnectivityManager |
 
-**Array Fields**:
-- `seatedEmployees` - Array of user IDs who have active seats
+### Recording Operations
 
-**Integer Fields**:
-- `maxSeats` - Maximum seats allowed by plan
-
-### Date Parsing (CRITICAL)
-
-Bubble returns dates in TWO formats:
-1. **Stripe-synced fields**: Unix timestamps (milliseconds since epoch)
-2. **Bubble native fields**: ISO8601 strings
-
-**Both formats MUST be supported**:
+Every local mutation (create, update, delete) calls:
 
 ```swift
-struct CompanyDTO: Codable {
-    let billingPeriodEnd: FlexibleDate?
-    let trialEndDate: FlexibleDate?
+func recordOperation(
+    entityType: String,
+    entityId: String,
+    operationType: String,       // "create", "update", "delete"
+    changedFields: [String],
+    previousValues: [String: Any]?,
+    priority: Int = 5,
+    dependsOnId: String? = nil
+)
+```
 
-    // FlexibleDate handles both formats
-    enum FlexibleDate: Codable {
-        case timestamp(Double)  // Unix timestamp (milliseconds)
-        case string(String)     // ISO8601 string
+This creates a `SyncOperation` SwiftData model with:
+- `entityType` / `entityId` -- what entity
+- `operationType` -- "create", "update", "delete"
+- `payload` (JSON `Data`) -- serialized entity data
+- `changedFields` -- list of changed field names
+- `previousValues` -- snapshot of previous values (for conflict detection)
+- `status` -- "pending", "inProgress", "completed", "failed"
+- `retryCount` -- number of failed attempts
+- `lastError` -- error message from last failure
+- `priority` -- processing priority (lower = higher priority)
+- `dependsOnId` -- ID of another SyncOperation that must complete first
 
-        init(from decoder: Decoder) throws {
-            let container = try decoder.singleValueContainer()
+After recording, if the device is connected, `OutboundProcessor.processPendingOperations()` is triggered immediately.
 
-            if let timestamp = try? container.decode(Double.self) {
-                self = .timestamp(timestamp)
-            } else if let string = try? container.decode(String.self) {
-                self = .string(string)
-            } else {
-                throw DecodingError.typeMismatch(
-                    FlexibleDate.self,
-                    DecodingError.Context(
-                        codingPath: decoder.codingPath,
-                        debugDescription: "Expected Double or String"
-                    )
-                )
-            }
-        }
+### Sync Triggers
 
-        func toDate() -> Date? {
-            switch self {
-            case .timestamp(let value):
-                return Date(timeIntervalSince1970: value / 1000.0)  // Convert ms to seconds
-            case .string(let value):
-                let formatter = ISO8601DateFormatter()
-                return formatter.date(from: value)
-            }
-        }
+| Trigger | Method | Behavior |
+|---------|--------|----------|
+| App launch | `triggerSync()` | Full inbound pull + push pending |
+| Network restored | `triggerSync()` | Full inbound pull + push pending |
+| User mutation | `recordOperation()` | Enqueue + immediate push attempt |
+| Realtime reconnect | `deltaSyncSince(disconnectedAt:)` | Incremental pull since disconnect |
+| Background refresh | `pushPending()` | Push only, no pull |
+| Background processing | `triggerSync()` + photo uploads + cleanup | Full cycle |
+
+---
+
+## SupabaseSyncManager (Legacy Adapter)
+
+**Source**: `OPS/Network/Sync/SupabaseSyncManager.swift`
+**Status**: Legacy adapter -- retained for entity-specific fetch methods not yet migrated to the SyncEngine processor pattern.
+
+### Retained Methods
+
+The following methods are still called by views and other managers that have not yet been migrated:
+
+- `fetchUser(userId:)` -- fetches a single user from Supabase
+- `fetchCompany(companyId:)` -- fetches a single company from Supabase
+- `syncAll()` -- full 7-step sync (company, users, clients, task types, projects, tasks, link relationships)
+- `syncAppLaunch()` -- launch-time sync (critical data foreground, rest deferred)
+- `syncCompanyTeamMembers(companyId:)` -- fetches users, applies admin roles
+- `linkAllRelationships()` -- wires SwiftData relationships after sync
+
+### Relationship to SyncEngine
+
+- SyncEngine is the **primary orchestrator** for all new sync flows
+- SupabaseSyncManager's write methods (e.g., `updateProjectStatus`, `createProject`) are being migrated to use `syncEngine.recordOperation()` internally
+- Entity-specific fetch/sync methods remain on SupabaseSyncManager until fully migrated to InboundProcessor
+
+### Repositories
+
+The sync manager still holds 6 repository instances initialized from `UserDefaults.companyId`:
+
+```swift
+private var projectRepo: ProjectRepository?
+private var taskRepo: TaskRepository?
+private var clientRepo: ClientRepository?
+private var userRepo: UserRepository?
+private var companyRepo: CompanyRepository?
+private var taskTypeRepo: TaskTypeRepository?
+```
+
+---
+
+## OutboundProcessor (Push Queue)
+
+**Source**: `OPS/Network/Sync/OutboundProcessor.swift`
+**Added**: March 8, 2026
+**Purpose**: Processes pending SyncOperations by pushing local changes to the server via the repository layer
+
+### Processing Pipeline
+
+`processPendingOperations()` executes the following steps:
+
+1. **Fetch**: Queries SwiftData for all SyncOperations with `status == "pending"`, ordered by priority then creation date
+2. **Coalesce**: Multiple update operations targeting the same `(entityType, entityId)` are merged -- changed fields are unioned, payload is replaced with the latest
+3. **Dependency ordering**: Operations with `dependsOnId` are deferred until their dependency completes
+4. **Push**: Each operation is dispatched to the appropriate repository method based on `entityType` and `operationType`
+5. **Status update**: On success, status is set to "completed". On failure, status remains "pending", `retryCount` is incremented, and `lastError` is recorded
+
+### Exponential Backoff
+
+Failed operations use exponential backoff before the next retry attempt:
+
+```swift
+let delay = min(pow(2.0, Double(retryCount)), 60.0)  // caps at 60 seconds
+```
+
+**Max retries**: 20 attempts. After 20 failures, the operation is marked as "failed" and will not be retried automatically.
+
+### Auth Error Detection
+
+`classifySyncError()` inspects the error to determine if it is an authentication failure (expired token, 401 response, etc.). When an auth error is detected:
+
+```swift
+NotificationCenter.default.post(name: .syncAuthExpired)
+```
+
+This notification triggers the app to re-authenticate before further sync attempts.
+
+### Cleanup
+
+`cleanupCompletedOperations()` deletes SyncOperations with `status == "completed"` that are older than a configurable threshold.
+
+---
+
+## InboundProcessor & Conflict Resolution (Field-Level Merge)
+
+**Source**: `OPS/Network/Sync/InboundProcessor.swift`
+**Added**: March 8, 2026
+**Purpose**: Pulls server data into local SwiftData with field-level conflict protection that never overwrites pending local changes
+
+### Field-Level Merge Strategy
+
+When InboundProcessor receives server data for an entity, it does NOT blindly overwrite local fields. Instead, it checks the SyncOperation table for pending outbound changes:
+
+```swift
+func acceptableFields(entityType: String, entityId: String) -> Set<String>?
+```
+
+**Logic**:
+1. Query SyncOperation table for records matching `(entityType, entityId, status == "pending")`
+2. Collect all `changedFields` from those pending operations into a `pendingSet`
+3. Return only fields that are **NOT** in the `pendingSet`
+4. If no pending operations exist, return `nil` (meaning all fields are acceptable for overwrite)
+
+**Result**: Local changes are never overwritten by server data until they have been successfully pushed. This replaces the previous `needsSync` boolean guard with precise field-level protection.
+
+### Inbound Sync Flow
+
+1. `pullChanges(since: Date?)` fetches updated records from Supabase via repository `fetchAll(since:)` methods
+2. For each record, `acceptableFields()` is called to determine which fields can be overwritten
+3. Only acceptable fields are applied to the local SwiftData model
+4. `lastSyncedAt` is updated on the local model
+5. After all entities are processed, `linkAllRelationships()` wires SwiftData relationships
+
+### Legacy ConflictResolver
+
+The previous `ConflictResolver.merge()` static method (timestamp-based, whole-record comparison) is superseded by the field-level merge in InboundProcessor. The `ConflictResolver.swift` file may still exist in the codebase but is no longer called in the active sync path.
+
+---
+
+## RealtimeProcessor (WebSocket)
+
+**Source**: `OPS/Network/Sync/RealtimeProcessor.swift`
+**Added**: March 8, 2026 (replaces RealtimeManager)
+**Purpose**: Push-based data updates via Supabase Realtime WebSocket subscriptions with field-level merge protection
+
+### Architecture
+
+RealtimeProcessor subscribes to Postgres changes on 9 entity tables filtered by `company_id`. When an INSERT, UPDATE, or DELETE event arrives, it decodes the payload into the appropriate DTO, converts to a SwiftData model, and performs a field-by-field upsert with merge protection.
+
+### Configuration
+
+```swift
+func configure(modelContext: ModelContext, companyId: String)
+func startListening() async
+func stopListening() async
+```
+
+### Subscribed Tables (9 entity tables)
+
+All subscriptions are scoped to a single Supabase channel named `"company-{companyId}"`, with each table filtered by `company_id=eq.{companyId}` (except `companies` which filters on `id=eq.{companyId}`).
+
+- `projects`
+- `project_tasks`
+- `users`
+- `clients`
+- `companies`
+- `task_types`
+- `sub_clients`
+- `project_notes`
+- `project_photo_annotations`
+
+### Field-Level Merge Protection
+
+Every upsert triggered by a realtime event uses the same field-level merge pattern as InboundProcessor:
+
+```swift
+func pendingFieldsForEntity(entityType: String, entityId: String) -> Set<String>
+```
+
+This queries the SyncOperation table for pending operations on the entity and returns the set of fields with local pending changes. Those fields are skipped during the realtime upsert, preventing server data from overwriting unsynced local edits.
+
+### Disconnect Tracking & Catch-Up
+
+When the WebSocket connection drops:
+
+1. `handleDisconnect()` records the disconnection timestamp
+2. When the connection is re-established, a `.realtimeNeedsCatchUp` notification is posted
+3. SyncEngine observes this notification and calls `deltaSyncSince(disconnectedAt:)` to pull all changes that occurred during the disconnect window
+
+This replaces the previous no-op `catchUpSync()` placeholder with an active catch-up mechanism.
+
+### Change Handling
+
+Each change event routes through the same pattern:
+
+```
+INSERT/UPDATE -> upsertRecord with field-level merge protection
+  - Decodes record payload into the appropriate DTO
+  - Converts DTO to SwiftData model via dto.toModel()
+  - Checks pendingFieldsForEntity() to determine which fields to skip
+  - Applies only non-pending fields to the local model
+  - Sets lastSyncedAt = Date()
+
+DELETE -> softDeleteRecord
+  - Decodes old_record for the ID
+  - Fetches existing SwiftData model
+  - Sets deletedAt = Date()
+```
+
+For `project_notes`, a `NotificationCenter.default.post(name: .projectNoteReceived)` notification is fired after upsert to trigger UI updates.
+
+For `sub_clients`, the parent client relationship is linked during upsert by looking up the `parentClientId` in the model context.
+
+---
+
+## BackgroundSyncScheduler
+
+**Source**: `OPS/Network/Sync/BackgroundSyncScheduler.swift`
+**Added**: March 8, 2026 (replaces BackgroundTaskManager)
+**Purpose**: BGTaskScheduler-based background sync with two task types for periodic sync and heavy processing
+
+### Task Types
+
+| Task Type | Identifier | Interval | Work Performed |
+|-----------|-----------|----------|----------------|
+| **Refresh** | `com.ops.sync.refresh` | 15 minutes | `pushPending()` only -- pushes queued SyncOperations |
+| **Processing** | `com.ops.sync.processing` | 30 minutes | `triggerSync()` + `processPhotoUploads()` + `cleanupCompletedOperations()` |
+
+### Info.plist Registration
+
+Both task identifiers must be registered in `Info.plist` under `BGTaskSchedulerPermittedIdentifiers`:
+
+```xml
+<key>BGTaskSchedulerPermittedIdentifiers</key>
+<array>
+    <string>com.ops.sync.refresh</string>
+    <string>com.ops.sync.processing</string>
+</array>
+```
+
+### Scheduling
+
+- **Refresh task**: Registered as a `BGAppRefreshTaskRequest` with `earliestBeginDate` set to 15 minutes from now
+- **Processing task**: Registered as a `BGProcessingTaskRequest` with `earliestBeginDate` set to 30 minutes from now, `requiresNetworkConnectivity = true`
+- Both tasks re-schedule themselves upon completion to maintain the periodic cycle
+
+### Legacy BackgroundTaskManager
+
+The previous `BackgroundTaskManager` (UIKit `beginBackgroundTask` approach, 25-second timeout) is superseded by `BackgroundSyncScheduler`. The BGTaskScheduler approach provides longer execution windows and system-managed scheduling.
+
+---
+
+## PhotoProcessor & Image Upload
+
+**Source**: `OPS/Network/Sync/PhotoProcessor.swift`
+**Added**: March 8, 2026 (replaces ImageSyncManager)
+**Purpose**: Offline-first photo save, resize, upload queue with quality-aware concurrency
+
+### savePhoto()
+
+When a user takes or selects a photo:
+
+1. **Resize**: Image is resized to a maximum of 2048px on the longest edge
+2. **Adaptive JPEG compression**: Quality varies by megapixel count:
+   - `> 4MP` -- 0.5 quality
+   - `> 2MP` -- 0.6 quality
+   - `> 1MP` -- 0.7 quality
+   - `<= 1MP` -- 0.8 quality
+3. **Local save**: Full-size JPEG is saved to the app's local file system
+4. **Thumbnail generation**: A smaller thumbnail is generated and saved alongside
+
+### processUploadQueue()
+
+Processes the queue of locally-saved photos awaiting upload:
+
+- **Concurrency**: Quality-aware based on network type:
+  - WiFi: up to 3 concurrent uploads
+  - Cellular: 1 concurrent upload (to conserve bandwidth)
+- **Upload mechanism**: Each photo is uploaded via `PresignedURLUploadService` (presigned URL from OPS-Web, then PUT to S3)
+- **Post-upload**: The local `project_images` array URL is replaced with the S3 public URL, and Supabase is updated
+
+### cleanupSyncedPhotos()
+
+After a photo has been successfully uploaded to S3:
+
+- The **full-size local file** is deleted to reclaim storage
+- The **thumbnail** is kept for offline display
+
+### PresignedURLUploadService (Unchanged)
+
+**Source**: `OPS/Network/PresignedURLUploadService.swift`
+Singleton `@MainActor` class. Upload flow is unchanged:
+
+```
+1. POST https://app.opsapp.co/api/uploads/presign
+   Headers: Authorization: Bearer {supabase_access_token}
+   Body: { filename, contentType: "image/jpeg", folder: "projects/{companyId}/{projectId}" }
+
+2. Response: { uploadUrl: "https://s3...presigned", publicUrl: "https://s3...public" }
+
+3. PUT {uploadUrl} with raw JPEG data
+
+4. Store publicUrl in project's project_images array
+
+5. Update Supabase: UPDATE projects SET project_images = [...] WHERE id = {projectId}
+```
+
+**Public Methods**:
+
+| Method | Description |
+|--------|-------------|
+| `uploadProjectImages(_ images:, for project:, companyId:)` | Upload multiple images, returns array of `(url, filename)` |
+| `uploadProfileImage(_ image:, userId:, companyId:)` | Upload user profile image (800x800 max), returns URL |
+| `uploadCompanyLogo(_ image:, companyId:)` | Upload company logo (1000x1000 max), returns URL |
+
+**Presign Folder Patterns**:
+- Project images: `projects/{companyId}/{projectId}`
+- Profile images: `profiles/{companyId}`
+- Company logos: `logos/{companyId}`
+
+### Filename Generation
+
+**Pattern**: `{StreetAddress}_IMG_{unixTimestamp}_{index}.jpg`
+
+Duplicate checking: filenames are validated against existing project image URLs. If a collision is detected, a `_{attemptCount}` suffix is appended.
+
+---
+
+## ConnectivityManager
+
+**Source**: `OPS/Network/ConnectivityManager.swift`
+**Added**: March 8, 2026 (replaces ConnectivityMonitor)
+**Purpose**: Network quality monitoring with lying WiFi detection and quality scoring
+
+### Architecture
+
+ConnectivityManager wraps `NWPathMonitor` with additional performance tracking and quality assessment.
+
+### Key Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `isConnected` | `Bool` | Whether network is reachable |
+| `connectionType` | `ConnectionType` | `.none`, `.wifi`, `.cellular`, `.wiredEthernet` |
+| `connectionQuality` | `ConnectionQuality` | `.excellent`, `.good`, `.poor`, `.unusable` |
+| `shouldAttemptSync` | `Bool` (computed) | `true` when quality is `.good` or better |
+| `shouldUploadPhotos` | `Bool` (computed) | `true` when quality is `.good` or better AND connection is WiFi or wired |
+
+### Lying WiFi Detection
+
+ConnectivityManager detects "lying WiFi" -- situations where the device reports a WiFi connection but cannot actually reach the server (common with captive portals, congested networks, etc.):
+
+1. When WiFi is detected, a lightweight health check is performed against the Supabase endpoint
+2. If the health check fails, `connectionQuality` is set to `.unusable` despite the WiFi status
+3. This prevents the sync engine from wasting cycles on requests that will fail
+
+### Quality Scoring
+
+Connection quality is assessed based on response times and success rates:
+
+| Quality | Criteria |
+|---------|----------|
+| `.excellent` | Consistent sub-200ms responses, no failures |
+| `.good` | Responses under 1s, occasional failures acceptable |
+| `.poor` | Responses over 1s or intermittent failures |
+| `.unusable` | Cannot reach server or consistent timeouts |
+
+### Integration with SyncEngine
+
+SyncEngine and its processors check `ConnectivityManager.shouldAttemptSync` before initiating any network I/O. PhotoProcessor additionally checks `shouldUploadPhotos` before starting uploads to avoid consuming metered data.
+
+### Notifications
+
+- Posts connectivity change notifications via NotificationCenter when connection type or quality changes
+- DataController observes these changes and triggers sync when connection is restored
+
+---
+
+## OneSignal Push Notifications
+
+**Source**: `OPS/Services/OneSignalService.swift`
+**App ID**: `0fc0a8e0-9727-49b6-9e37-5d6d919d741f`
+
+### Architecture
+
+Push notifications use a server-side routing pattern:
+1. iOS calls OPS-Web API route: `POST https://app.opsapp.co/api/notifications/send`
+2. OPS-Web forwards the request to OneSignal REST API (server-side, where the OneSignal API key is stored)
+3. OneSignal delivers the push to the target device(s)
+
+The iOS app receives pushes via the `OneSignalFramework` SDK, configured in `AppDelegate`.
+
+### Request Format
+
+```swift
+POST /api/notifications/send
+Authorization: Bearer {supabase_access_token}
+Content-Type: application/json
+
+{
+    "recipientUserIds": ["userId1", "userId2"],
+    "title": "Notification Title",
+    "body": "Notification body text",
+    "data": {
+        "type": "taskAssignment",
+        "taskId": "...",
+        "projectId": "...",
+        "screen": "taskDetails"
     }
 }
 ```
 
-### Subscription Status Logic
+### 6 Notification Event Types
 
-**Trial Check**:
-```swift
-var isInTrial: Bool {
-    guard let trialEnd = company.trialEndDate?.toDate() else {
-        return false
-    }
-    return Date() < trialEnd
-}
-```
+| Method | Type | Title | Self-Skip |
+|--------|------|-------|-----------|
+| `notifyTaskAssignment(userId:, taskName:, projectName:, taskId:, projectId:)` | `taskAssignment` | "New Task Assignment" | Yes |
+| `notifyScheduleChange(userIds:, taskName:, projectName:, taskId:, projectId:)` | `scheduleChange` | "Schedule Update" | Yes |
+| `notifyTaskCompletion(userIds:, taskName:, projectName:, taskId:, projectId:, completedByName:)` | `taskCompletion` | "Task Completed" | Yes |
+| `notifyProjectCompletion(userIds:, projectName:, projectId:)` | `projectCompletion` | "Project Completed" | Yes |
+| `notifyProjectAssignment(userId:, projectName:, projectId:)` | `projectAssignment` | "Added to Project" | Yes |
+| `notifyProjectNoteMention(userId:, authorName:, notePreview:, projectName:, projectId:, noteId:)` | `projectNoteMention` | "{authorName} mentioned you" | Yes |
 
-**Active Subscription Check**:
-```swift
-var hasActiveSubscription: Bool {
-    // Check trial first
-    if isInTrial {
-        return true
-    }
+**Self-Skip**: All notification methods filter out `currentUserId` to prevent self-notifications.
 
-    // Check subscription status
-    if company.subscriptionStatus == "active" ||
-       company.subscriptionStatus == "trialing" {
-        return true
-    }
+### OneSignal User Linking
 
-    // Check billing period end
-    if let billingEnd = company.billingPeriodEnd?.toDate(),
-       Date() < billingEnd {
-        return true
-    }
-
-    return false
-}
-```
-
-**Seat Management**:
-```swift
-var availableSeats: Int {
-    let maxSeats = company.maxSeats ?? 0
-    let seatedCount = company.seatedEmployees?.count ?? 0
-    return max(0, maxSeats - seatedCount)
-}
-
-var isOverSeatedLimit: Bool {
-    let maxSeats = company.maxSeats ?? 0
-    let seatedCount = company.seatedEmployees?.count ?? 0
-    return seatedCount > maxSeats
-}
-```
-
-### Updating Seated Employees
-
-**Endpoint**: `PATCH /api/1.1/obj/company/{companyId}`
-
-**Process**:
-```swift
-func updateSeatedEmployees(userIds: [String]) async throws {
-    let fields: [String: Any] = [
-        "seatedEmployees": userIds
-    ]
-
-    try await apiService.updateCompanyFields(
-        companyId: companyId,
-        fields: fields
-    )
-
-    // Fetch updated company
-    let updatedCompany = try await apiService.fetchCompany(id: companyId)
-
-    // Update local company
-    company.seatedEmployees = updatedCompany.seatedEmployees
-    try? modelContext.save()
-}
-```
+In `NotificationManager.swift`:
+- `linkUserToOneSignal()` -- called after login, calls `OneSignal.login(userId)` and adds `role` and `companyId` tags for segmentation
+- `unlinkUserFromOneSignal()` -- called on logout, calls `OneSignal.logout()`
 
 ---
 
 ## Firebase Analytics
 
-OPS uses Firebase Analytics to track user behavior and conversion events for Google Ads.
+Firebase is used **only for analytics** (Google Ads conversion tracking). It is NOT used for authentication or database.
 
-**SDK Version**: 12.6.0+
-**Project ID**: `ops-ios-app`
-**Bundle ID**: `co.opsapp.ops.OPS`
+**SDK**: `FirebaseCore` + `FirebaseAnalytics`
 **Config File**: `GoogleService-Info.plist`
+**Initialization**: `FirebaseApp.configure()` in `AppDelegate.didFinishLaunchingWithOptions` (must be first)
+
+### AnalyticsManager
+
+**Source**: `OPS/Utilities/AnalyticsManager.swift`
+Singleton for tracking conversion events via Firebase Analytics. Events flow to Google Ads via the Firebase Analytics integration.
 
 ### Event Categories
 
@@ -2003,12 +912,6 @@ OPS uses Firebase Analytics to track user behavior and conversion events for Goo
 | `screen_view` | `screen_name`, `screen_class` | Screen viewed |
 | `tab_selected` | `tab_name`, `tab_index` | Tab navigation |
 
-**Screen Names**:
-- Main tabs: `home`, `job_board`, `schedule`, `settings`
-- Job Board: `job_board_dashboard`, `job_board_projects`, `job_board_tasks`, `job_board_clients`
-- Details: `project_details`, `task_details`, `client_details`
-- Forms: `project_form`, `task_form`, `client_form`
-
 #### Engagement Events
 
 | Event | Parameters | Description |
@@ -2016,59 +919,6 @@ OPS uses Firebase Analytics to track user behavior and conversion events for Goo
 | `navigation_started` | `project_id` | User starts navigation |
 | `search_performed` | `section`, `results_count` | Search executed |
 | `image_uploaded` | `image_count`, `context` | Photo uploaded |
-
-### Implementation
-
-**AnalyticsManager** (Singleton):
-```swift
-class AnalyticsManager {
-    static let shared = AnalyticsManager()
-
-    func trackScreenView(screenName: ScreenName, screenClass: String) {
-        let parameters: [String: Any] = [
-            "screen_name": screenName.rawValue,
-            "screen_class": screenClass
-        ]
-        Analytics.logEvent(AnalyticsEventScreenView, parameters: parameters)
-        print("[ANALYTICS] Tracked screen_view - screen: \(screenName.rawValue)")
-    }
-
-    func trackProjectCreated(projectCount: Int, userType: String) {
-        let parameters: [String: Any] = [
-            "project_count": projectCount,
-            "user_type": userType
-        ]
-        Analytics.logEvent("create_project", parameters: parameters)
-
-        // Track first project separately (high-value conversion)
-        if projectCount == 1 {
-            Analytics.logEvent("create_first_project", parameters: ["user_type": userType])
-        }
-    }
-}
-```
-
-**Usage**:
-```swift
-// In view
-.onAppear {
-    AnalyticsManager.shared.trackScreenView(
-        screenName: .projectDetails,
-        screenClass: "ProjectDetailsView"
-    )
-}
-
-// In action
-func createProject() {
-    // ... create project logic
-
-    let projectCount = projects.count
-    AnalyticsManager.shared.trackProjectCreated(
-        projectCount: projectCount,
-        userType: currentUser.type.rawValue
-    )
-}
-```
 
 ### Google Ads Conversion Events
 
@@ -2078,6 +928,84 @@ These events are automatically sent to Google Ads:
 3. `create_first_project` - High-intent engagement
 4. `complete_onboarding` - Onboarding completion
 5. `task_completed` - Productivity signal
+
+---
+
+## Stripe Subscription Integration
+
+### Architecture
+
+Stripe subscription management is handled server-side via OPS-Web. The iOS app reads subscription status from the `Company` entity synced via Supabase.
+
+**Key Company Fields** (from `SupabaseCompanyDTO`):
+- `subscriptionStatus` -- "active", "trialing", "past_due", "cancelled", etc.
+- `subscriptionPlan` -- plan identifier
+- `subscriptionEnd` -- subscription end date
+- `subscriptionPeriod` -- billing period
+- `trialStartDate` / `trialEndDate` -- trial window
+- `maxSeats` -- maximum seats allowed by plan
+- `seatedEmployeeIds` -- array of user IDs with active seats
+- `stripeCustomerId` -- Stripe customer ID
+- `hasPrioritySupport` -- boolean flag
+
+### Subscription Status Logic
+
+**Trial Check**:
+```swift
+var isInTrial: Bool {
+    guard let trialEnd = company.trialEndDate else { return false }
+    return Date() < trialEnd
+}
+```
+
+**Active Subscription Check**:
+```swift
+var hasActiveSubscription: Bool {
+    if isInTrial { return true }
+    if company.subscriptionStatus == "active" || company.subscriptionStatus == "trialing" {
+        return true
+    }
+    return false
+}
+```
+
+**Seat Management**:
+- `CompanyRepository.updateSeatedEmployees(companyId:, userIds:)` replaces the `seated_employee_ids` array
+
+---
+
+## Accounting Edge Functions
+
+Three Supabase Edge Functions handle accounting integrations. All deployed via `deploy_edge_function`, using shared `_shared/supabase-client.ts` and `_shared/cors.ts` modules.
+
+### accounting-oauth
+
+OAuth flow for QuickBooks and Sage. Actions: `authorize`, `callback`, `refresh`, `disconnect`.
+
+- **authorize**: Returns provider-specific OAuth redirect URL with `companyId` in state param
+- **callback**: Exchanges authorization code for tokens, upserts `accounting_connections`
+- **refresh**: Refreshes expired access tokens using refresh token (called internally by sync)
+- **disconnect**: Clears tokens, sets `is_connected = false`
+
+**Env vars**: `QB_CLIENT_ID`, `QB_CLIENT_SECRET`, `QB_REDIRECT_URI`, `SAGE_CLIENT_ID`, `SAGE_CLIENT_SECRET`, `SAGE_REDIRECT_URI`
+
+### accounting-sync-expense
+
+Syncs an approved expense to connected accounting system(s). Called by iOS app after expense approval.
+
+**Flow**: Fetch connection → refresh token if expired → map to provider format → POST to API → update sync status → log result.
+
+- **QB mapping**: OPS expense → QBO `Purchase` with vendor lookup/create, category → `AccountRef`, project → `CustomerRef`
+- **Sage mapping**: OPS expense → Sage `OtherPayment` with contact lookup/create, category → `LedgerAccountId`
+- **Retry**: 3x exponential backoff on 429/5xx
+
+### accounting-batch-create
+
+Cron-triggered (daily at 00:00 UTC). Creates expense batches based on each company's `review_frequency`.
+
+**Flow**: Query `expense_settings` → check if batch due → collect unbatched `submitted` expenses → create `expense_batch` → assign `batch_id` → calculate total → log.
+
+**Optional env var**: `CRON_SECRET` for authenticated cron invocations.
 
 ---
 
@@ -2096,514 +1024,163 @@ enum SyncError: Error {
     case unauthorized
 }
 
-enum APIError: Error {
-    case invalidURL
+enum UploadError: LocalizedError {
     case invalidResponse
-    case httpError(statusCode: Int)
-    case rateLimited
-    case unauthorized
-    case serverError
-    case networkError
-    case decodingFailed
-}
-
-enum S3Error: LocalizedError {
-    case uploadFailed
-    case deleteFailed
     case invalidURL
-    case bubbleAPIFailed
-    case imageConversionFailed
+    case presignError(statusCode: Int)
+    case s3Error(statusCode: Int)
+}
+
+enum OneSignalError: Error {
+    case notAuthenticated
+    case invalidEndpoint
+    case invalidResponse
+    case apiError(statusCode: Int, message: String)
 }
 ```
 
-### Retry with Exponential Backoff
+### Retry Pattern
+
+The OutboundProcessor uses exponential backoff: `delay = min(pow(2.0, Double(retryCount)), 60.0)` (caps at 60 seconds, max 20 retries).
+
+Auth errors are classified by `classifySyncError()` and trigger a `.syncAuthExpired` notification instead of retrying -- the user must re-authenticate.
+
+### Error Handling Pattern (SyncEngine)
 
 ```swift
-func syncWithRetry<T>(
-    operation: () async throws -> T,
-    maxRetries: Int = 3
-) async throws -> T {
-    var lastError: Error?
+// 1. Optimistic local update (immediate UI feedback)
+project.status = newStatus
+try modelContext.save()
 
-    for attempt in 1...maxRetries {
-        do {
-            return try await operation()
-        } catch {
-            lastError = error
-            print("[SYNC] ⚠️ Attempt \(attempt) failed: \(error)")
-
-            if attempt < maxRetries {
-                // Exponential backoff: 2^attempt seconds
-                let delay = UInt64(pow(2.0, Double(attempt)) * 1_000_000_000)
-                try await Task.sleep(nanoseconds: delay)
-            }
-        }
-    }
-
-    throw lastError ?? SyncError.apiError(NSError(domain: "Unknown", code: -1))
-}
-```
-
-**Retry Schedule**:
-- Attempt 1: Immediate
-- Attempt 2: 2 seconds delay
-- Attempt 3: 4 seconds delay
-- Give up: Throw error, mark `needsSync = true`
-
-### Error Handling Pattern
-
-```swift
-func updateProject(_ project: Project) async {
-    do {
-        try await syncWithRetry {
-            try await apiService.updateProject(
-                projectId: project.id,
-                fields: [
-                    "Name": project.name,
-                    "Status": project.status
-                ]
-            )
-        }
-
-        // Success
-        project.needsSync = false
-        project.lastSyncedAt = Date()
-
-    } catch {
-        // Failure - mark for retry
-        print("[ERROR] Failed to update project: \(error)")
-        project.needsSync = true
-
-        // Show user-friendly error
-        if let apiError = error as? APIError {
-            switch apiError {
-            case .unauthorized:
-                showError("Your session has expired. Please log in again.")
-            case .networkError:
-                showError("No internet connection. Changes will sync when online.")
-            case .serverError:
-                showError("Server error. We'll try again automatically.")
-            default:
-                showError("Update failed. Changes will sync automatically.")
-            }
-        }
-    }
-
-    try? modelContext.save()
-}
+// 2. Record the operation for outbound processing
+syncEngine.recordOperation(
+    entityType: "project",
+    entityId: project.id,
+    operationType: "update",
+    changedFields: ["status"],
+    previousValues: ["status": oldStatus.rawValue],
+    priority: 3
+)
+// OutboundProcessor will push when connected, retry on failure
 ```
 
 ---
 
 ## Connectivity Monitoring
 
-**Location**: `OPS/Network/ConnectivityMonitor.swift`
-
-**Purpose**: Track network availability for offline-first operations
-
-### Implementation
-
-```swift
-class ConnectivityMonitor {
-    private let monitor = NWPathMonitor()
-    private let queue = DispatchQueue(label: "NetworkMonitor")
-
-    static let connectivityChangedNotification = Notification.Name("ConnectivityMonitorDidChangeConnectivity")
-
-    private(set) var isConnected = false
-    private(set) var connectionType: ConnectionType = .none
-
-    var onConnectionTypeChanged: ((ConnectionType) -> Void)?
-
-    enum ConnectionType {
-        case none
-        case wifi
-        case cellular
-        case wiredEthernet
-    }
-
-    init() {
-        setupMonitor()
-    }
-
-    private func setupMonitor() {
-        monitor.pathUpdateHandler = { [weak self] path in
-            guard let self = self else { return }
-
-            self.isConnected = path.status == .satisfied
-
-            let newConnectionType: ConnectionType
-            if path.usesInterfaceType(.wifi) {
-                newConnectionType = .wifi
-            } else if path.usesInterfaceType(.cellular) {
-                newConnectionType = .cellular
-            } else if path.usesInterfaceType(.wiredEthernet) {
-                newConnectionType = .wiredEthernet
-            } else {
-                newConnectionType = .none
-            }
-
-            // Only notify if connection type changed
-            if self.connectionType != newConnectionType {
-                self.connectionType = newConnectionType
-
-                DispatchQueue.main.async {
-                    self.onConnectionTypeChanged?(newConnectionType)
-
-                    NotificationCenter.default.post(
-                        name: ConnectivityMonitor.connectivityChangedNotification,
-                        object: self,
-                        userInfo: ["connectionType": newConnectionType]
-                    )
-                }
-            }
-        }
-
-        monitor.start(queue: queue)
-    }
-}
-```
-
-### Usage
-
-```swift
-// In DataController
-func setupConnectivityMonitoring() {
-    connectivityMonitor.onConnectionTypeChanged = { [weak self] connectionType in
-        print("[CONNECTIVITY] Type changed: \(connectionType)")
-
-        guard connectionType != .none else { return }
-
-        // Ignore first callback (initialization)
-        guard self?.hasHandledInitialConnection == true else {
-            self?.hasHandledInitialConnection = true
-            return
-        }
-
-        // Connection restored - trigger sync
-        Task { @MainActor in
-            await self?.syncManager?.triggerBackgroundSync()
-        }
-    }
-}
-```
+See [ConnectivityManager](#connectivitymanager) above for the current implementation. The previous `ConnectivityMonitor` (basic `NWPathMonitor` wrapper without quality scoring or lying WiFi detection) has been replaced.
 
 ---
 
 ## Rate Limiting & Debouncing
 
-### API Rate Limiting
-
-**Minimum Request Interval**: 0.5 seconds
-
-**Implementation**:
-```swift
-class APIService {
-    private var lastRequestTime: Date?
-    private let minRequestInterval: TimeInterval = 0.5
-
-    func executeRequest<T: Decodable>(...) async throws -> T {
-        // Rate limiting
-        if let lastRequest = lastRequestTime {
-            let elapsed = Date().timeIntervalSince(lastRequest)
-            if elapsed < minRequestInterval {
-                let delayTime = UInt64((minRequestInterval - elapsed) * 1_000_000_000)
-                try await Task.sleep(nanoseconds: delayTime)
-            }
-        }
-        lastRequestTime = Date()
-
-        // ... execute request
-    }
-}
-```
-
 ### Sync Debouncing
 
-**Minimum Sync Interval**: 2 seconds
+SyncEngine guards against concurrent syncs via the `syncInProgress` boolean. All sync triggers check this flag and `ConnectivityManager.shouldAttemptSync` before initiating work.
 
-**Purpose**: Prevent duplicate syncs during app launch
+### Sync Timing Summary
 
-**Implementation**:
-```swift
-class CentralizedSyncManager {
-    private var lastSyncTriggerTime: Date?
-    private let minimumSyncInterval: TimeInterval = 2.0
+| Trigger | Function | When | Data Synced |
+|---------|----------|------|-------------|
+| **Manual Sync** | `syncAll()` (via SupabaseSyncManager) | User taps sync button | Everything (7 steps + relationship linking) |
+| **App Launch** | `syncEngine.triggerSync()` | After authentication | Full inbound pull + push pending |
+| **Network Restored** | `syncEngine.triggerSync()` | Connection detected (quality >= good) | Full inbound pull + push pending |
+| **User Mutation** | `syncEngine.recordOperation()` | Immediate on change | Single entity enqueued + immediate push attempt |
+| **Realtime** | RealtimeProcessor WebSocket event | Push from server | Single record upsert with field-level merge |
+| **Realtime Reconnect** | `syncEngine.deltaSyncSince(disconnectedAt:)` | After WebSocket reconnect | Incremental pull since disconnect timestamp |
+| **Background Refresh** | BackgroundSyncScheduler (15min) | BGTaskScheduler | Push pending operations only |
+| **Background Processing** | BackgroundSyncScheduler (30min) | BGTaskScheduler | Full sync + photo uploads + cleanup |
 
-    func triggerBackgroundSync(forceProjectSync: Bool = false) {
-        // Debounce check
-        if let lastTrigger = lastSyncTriggerTime,
-           Date().timeIntervalSince(lastTrigger) < minimumSyncInterval {
-            print("[TRIGGER_BG_SYNC] ⏭️ Skipping - sync triggered recently")
-            return
-        }
+### Configuration Reference
 
-        lastSyncTriggerTime = Date()
-        guard !syncInProgress, isConnected else { return }
-
-        Task { @MainActor in
-            if forceProjectSync {
-                try? await syncAll()
-            } else {
-                try? await syncBackgroundRefresh()
-            }
-        }
-    }
-}
-```
-
-**Bug Context**: Before debouncing (Nov 15, 2025), app launch could trigger 2-4 concurrent syncs:
-1. App launch → syncAppLaunch()
-2. Connectivity monitor init → triggerBackgroundSync()
-3. Connectivity state change → triggerBackgroundSync()
-4. Foreground event → triggerBackgroundSync()
-
-Result: 900+ records synced instead of 296 (3x unnecessary bandwidth).
+| Setting | Value | Source |
+|---------|-------|--------|
+| Background refresh interval | 15 minutes | `BackgroundSyncScheduler` / `com.ops.sync.refresh` |
+| Background processing interval | 30 minutes | `BackgroundSyncScheduler` / `com.ops.sync.processing` |
+| Minimum sync interval | 5 minutes | `AppConfiguration.Sync.minimumSyncInterval` |
+| Max batch size | 50 | `AppConfiguration.Sync.maxBatchSize` |
+| Job history | 30 days | `AppConfiguration.Sync.jobHistoryDays` |
+| Job future | 60 days | `AppConfiguration.Sync.jobFutureDays` |
+| Status update cooldown | 2 seconds | `AppConfiguration.UX.statusUpdateCooldown` |
+| Outbound backoff | `min(2^retryCount, 60)` seconds | `OutboundProcessor` |
+| Outbound max retries | 20 | `OutboundProcessor` |
+| Photo concurrency (WiFi) | 3 concurrent uploads | `PhotoProcessor` |
+| Photo concurrency (cellular) | 1 concurrent upload | `PhotoProcessor` |
 
 ---
 
-## Sync Timing Summary
+## Supabase Table Reference
 
-| Trigger | Function | When | Data Synced | Debounced |
-|---------|----------|------|-------------|-----------|
-| **Manual Sync** | `syncAll()` | User taps sync button | Everything | No |
-| **App Launch** | `syncAppLaunch()` | After authentication | Critical data first, rest in background | No |
-| **Network Restored** | `triggerBackgroundSync()` | Connection detected | Changed data only | Yes (2s) |
-| **Periodic Retry** | Timer + `checkPendingSyncs()` | Every 3 min if pending | Items with `needsSync=true` | No |
-| **User Action** | Individual update API | Immediate on change | Single item | No |
+### Core Entity Tables
 
----
+| Table | Purpose |
+|-------|---------|
+| `companies` | Organizations/tenants |
+| `users` | All app users (admins, office crew, field crew) |
+| `clients` | Customers that companies serve |
+| `sub_clients` | Additional contacts under a client |
+| `task_types` | Work categories (Framing, Painting, etc.) |
+| `projects` | Jobs/projects for clients |
+| `project_tasks` | Individual tasks within projects |
+| `project_notes` | Threaded notes on projects |
+| `project_photo_annotations` | Photo markup annotations |
+| `notifications` | In-app notification records |
 
-## Critical Implementation Notes
+### Pipeline & Financial Tables
 
-### BubbleFields Constants
-**Byte-Identical Requirement**: Field names MUST match Bubble exactly (case-sensitive, spacing, etc.)
+| Table | Purpose |
+|-------|---------|
+| `pipeline_stage_configs` | Kanban stages per company |
+| `opportunities` | Sales pipeline deals |
+| `stage_transitions` | History of deal stage changes |
+| `estimates` | Quotes/proposals for clients |
+| `invoices` | Client billing |
+| `invoice_line_items` | Individual items on invoices |
+| `line_items` | Individual items on estimates |
+| `products` | Reusable catalog of services/materials |
+| `tax_rates` | Per-company tax configurations |
+| `payments` | Payment records against invoices |
+| `payment_milestones` | Deposit/milestone schedules |
+| `activities` | Activity log (calls, emails, notes) |
+| `follow_ups` | Scheduled follow-up reminders |
+| `document_sequences` | Gapless numbering for EST-/INV- |
+| `accounting_connections` | QuickBooks/Sage OAuth tokens |
+| `accounting_sync_log` | Sync event log (success/error) |
+| `accounting_category_mappings` | OPS category → external account mapping |
+| `expenses` | Expense records with receipt images, OCR data |
+| `expense_project_allocations` | Multi-project expense attribution |
+| `expense_categories` | Company-configurable expense categories |
+| `expense_settings` | Per-company expense policy configuration |
+| `expense_batches` | Grouped expenses for batch review |
 
-**Example**:
-```swift
-struct BubbleFields {
-    struct Project {
-        static let teamMembers = "Team Members"  // NOT "team_members" or "teamMembers"
-        static let streetAddress = "Street Address"  // NOT "street_address"
-        static let deletedDate = "Deleted Date"  // NOT "deletedAt"
-    }
-}
-```
+### Inventory Tables
 
-### Status Migration (November 2025)
-- **Old**: "Scheduled"
-- **New**: "Booked"
-- **DTOs**: Must handle both for backward compatibility
-- **TODO**: Update Bubble to use "Booked" consistently
+| Table | Purpose |
+|-------|---------|
+| `inventory_items` | Physical inventory items |
+| `inventory_units` | Measurement units (ea, box, ft, etc.) |
+| `inventory_tags` | Categorization tags |
+| `inventory_item_tags` | Item-tag junction (many-to-many) |
+| `inventory_snapshots` | Point-in-time inventory records |
+| `inventory_snapshot_items` | Items captured in a snapshot |
 
-### CalendarEvent Migration (November 2025)
-- All events MUST have `taskId`
-- No more `eventType`, `active`, or `type` fields
-- Project-level events were deleted
+### Calendar Tables
 
-### Project Team Members
-**Computed from Task Assignments**: NOT from Bubble's legacy `Team Members` field
+| Table | Purpose |
+|-------|---------|
+| `calendar_user_events` | User-owned personal events and time-off requests |
 
-**Correct Logic**:
-```swift
-var projectTeamMembers: [String] {
-    let taskMembers = tasks.flatMap { $0.teamMemberIds }
-    return Array(Set(taskMembers))  // Unique IDs
-}
-```
+**Added**: 2026-03-02 (Schedule Tab Redesign)
 
-### AWS Credentials
-**Never Commit**: S3 credentials in `Secrets.xcconfig` MUST NOT be committed to Git
+`calendar_user_events` columns: `id`, `user_id` (text), `company_id`, `type` (`personal` / `time_off`), `title`, `start_date`, `end_date`, `all_day`, `notes`, `status` (`confirmed` / `pending` / `approved` / `rejected`), `reviewed_by`, `reviewed_at`, `created_at`, `updated_at`, `deleted_at`, `last_synced_at`, `needs_sync`.
 
-**Template**:
-```
-// Secrets.xcconfig.template
-AWS_ACCESS_KEY_ID = your_access_key_here
-AWS_SECRET_ACCESS_KEY = your_secret_key_here
-AWS_S3_BUCKET = ops-app-files-prod
-AWS_REGION = us-west-2
-```
-
----
-
-## Android Implementation Considerations
-
-### Kotlin Equivalents
-
-**Swift Async/Await** → **Kotlin Coroutines**:
-```kotlin
-// Swift
-func syncAll() async throws { ... }
-
-// Kotlin
-suspend fun syncAll() { ... }
-```
-
-**Swift Combine** → **Kotlin Flow**:
-```kotlin
-// Swift
-let syncStateSubject = PassthroughSubject<Bool, Never>()
-
-// Kotlin
-private val _syncInProgress = MutableStateFlow(false)
-val syncInProgress: StateFlow<Bool> = _syncInProgress.asStateFlow()
-```
-
-**SwiftData** → **Room**:
-```kotlin
-// Swift
-@Model class Project { ... }
-
-// Kotlin
-@Entity(tableName = "projects")
-data class Project( ... )
-```
-
-### Retrofit for API Service
-
-**BubbleApiService.kt**:
-```kotlin
-interface BubbleApiService {
-    @GET("api/1.1/obj/project")
-    suspend fun fetchProjects(
-        @Query("constraints") constraints: String,
-        @Query("limit") limit: Int = 100
-    ): BubbleListResponse<ProjectDTO>
-
-    @POST("api/1.1/obj/project")
-    suspend fun createProject(@Body project: ProjectDTO): BubbleObjectResponse<ProjectDTO>
-
-    @PATCH("api/1.1/obj/project/{id}")
-    suspend fun updateProject(
-        @Path("id") id: String,
-        @Body fields: Map<String, Any>
-    ): BubbleObjectResponse<ProjectDTO>
-}
-```
-
-### OkHttp Interceptors
-
-**AuthInterceptor** (for API token):
-```kotlin
-class AuthInterceptor : Interceptor {
-    override fun intercept(chain: Interceptor.Chain): Response {
-        val request = chain.request().newBuilder()
-            .addHeader("Authorization", "Bearer ${AppConfiguration.BUBBLE_API_TOKEN}")
-            .build()
-        return chain.proceed(request)
-    }
-}
-```
-
-**RateLimitInterceptor** (0.5s minimum):
-```kotlin
-class RateLimitInterceptor : Interceptor {
-    private var lastRequestTime: Long = 0
-    private val minInterval = 500L // milliseconds
-
-    override fun intercept(chain: Interceptor.Chain): Response {
-        val now = System.currentTimeMillis()
-        val elapsed = now - lastRequestTime
-
-        if (elapsed < minInterval) {
-            Thread.sleep(minInterval - elapsed)
-        }
-
-        lastRequestTime = System.currentTimeMillis()
-        return chain.proceed(chain.request())
-    }
-}
-```
-
-### WorkManager for Background Sync
-
-**SyncWorker.kt**:
-```kotlin
-class SyncWorker(
-    context: Context,
-    params: WorkerParameters
-) : CoroutineWorker(context, params) {
-
-    override suspend fun doWork(): Result {
-        return try {
-            val syncManager = CentralizedSyncManager.getInstance(applicationContext)
-            syncManager.syncBackgroundRefresh()
-            Result.success()
-        } catch (e: Exception) {
-            if (runAttemptCount < 3) {
-                Result.retry()
-            } else {
-                Result.failure()
-            }
-        }
-    }
-}
-```
-
-**Periodic Sync Setup**:
-```kotlin
-val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(
-    repeatInterval = 3,
-    repeatIntervalTimeUnit = TimeUnit.MINUTES
-).setConstraints(
-    Constraints.Builder()
-        .setRequiredNetworkType(NetworkType.CONNECTED)
-        .build()
-).build()
-
-WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-    "periodic_sync",
-    ExistingPeriodicWorkPolicy.KEEP,
-    syncRequest
-)
-```
-
----
-
-## Supabase Backend (Web App)
-
-### Dual-Backend Architecture
-
-As of February 2026, OPS operates a **dual-backend architecture**:
-
-- **Bubble.io** remains the backend for the iOS and Android mobile apps (all CRUD, sync, authentication)
-- **Supabase (PostgreSQL)** is the backend for the OPS Web app, hosting both the financial/pipeline data (since the web launch) and now core entity data (companies, users, clients, projects, tasks, etc.) migrated from Bubble
-
-```
-┌─────────────────────┐     ┌──────────────────────────────────────────┐
-│  iOS App / Android   │     │              OPS Web (Next.js)            │
-│                      │     │                                          │
-│  SwiftData / Room    │     │  TanStack Query ─► Supabase Client       │
-│       ↓   ↑         │     │                                          │
-│  Bubble.io REST API  │     │  ┌───────────────┐  ┌─────────────────┐ │
-│  (source of truth    │     │  │  Pipeline /    │  │  Core Entities  │ │
-│   for mobile)        │     │  │  Financials    │  │  (migration 004)│ │
-│                      │     │  │  (001-003)     │  │                 │ │
-└─────────────────────┘     │  └───────────────┘  └─────────────────┘ │
-                             │          Supabase (PostgreSQL)           │
-                             └──────────────────────────────────────────┘
-```
-
-### Supabase Access Pattern
-
-The web app accesses Supabase via two client types:
-
-**1. Browser Client (anon key + RLS)**
-- Used for all standard CRUD from the frontend
-- RLS policies enforce company isolation using JWT `app_metadata.company_id`
-- The `private.get_user_company_id()` function extracts the company ID from the authenticated user's JWT
-
-**2. Service Role Client (bypasses RLS)**
-- Used only in server-side API routes (e.g., the migration endpoint)
-- Required for bulk operations that span multiple companies
-- Never exposed to the browser
+**RLS Special Case**: The `user_id` column is text, while `auth.uid()` returns a UUID. RLS policies on this table use `CAST(auth.uid() AS TEXT) = user_id` to avoid type mismatch failures. This is intentional and must be preserved on any schema changes.
 
 ### Row-Level Security (RLS)
 
 All core entity tables enforce company-scoped isolation:
 
 ```sql
--- Pattern used on every core entity table
 ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "company_isolation" ON {table}
   FOR ALL USING (company_id = (SELECT private.get_user_company_id()));
@@ -2614,53 +1191,98 @@ This means:
 - No application-level filtering is needed; the database enforces isolation
 - The `private` schema helper function reads `auth.jwt() -> 'app_metadata' ->> 'company_id'`
 
-### Supabase Table Summary
+### Permission-Based RLS (Migration 016)
 
-The Supabase database contains two categories of tables:
+Financial and sensitive tables have an additional **permission-based RLS layer** on top of company isolation. Both layers must pass for access. This applies to:
 
-**Pipeline & Financial Tables (Migrations 001-003):**
-Created for the web app's CRM, estimating, and invoicing features.
+**Tables with permission-based RLS:**
+- `invoices` — requires `invoices.view` / `invoices.create` / `invoices.edit` / `invoices.delete`
+- `estimates` — requires `estimates.view` / `estimates.create` / `estimates.edit` / `estimates.delete`
+- `payments` — requires `invoices.view` (read) / `invoices.record_payment` (write)
+- `line_items` — requires `invoices.view OR estimates.view` (read), corresponding create/edit/delete
+- `accounting_connections` — requires `accounting.view` (read) / `accounting.manage_connections` (write)
+- `expenses` — requires `expenses.view` / `expenses.create` / `expenses.edit`
+- `expense_project_allocations` — tied to parent expense visibility
+- `expense_categories` — requires `expenses.view` (read) / `expenses.approve` (write)
+- `expense_settings` — requires `expenses.view` (read) / `expenses.approve` (write)
+- `expense_batches` — requires `expenses.view` (read) / `expenses.approve` (write)
 
-| Table | Purpose |
-|-------|---------|
-| `pipeline_stage_configs` | Kanban stages per company |
-| `opportunities` | Sales pipeline deals |
-| `stage_transitions` | History of deal stage changes |
-| `estimates` | Quotes/proposals for clients |
-| `invoices` | Client billing |
-| `line_items` | Individual items on estimates/invoices |
-| `products` | Reusable catalog of services/materials |
-| `tax_rates` | Per-company tax configurations |
-| `payments` | Payment records against invoices |
-| `payment_milestones` | Deposit/milestone schedules |
-| `activities` | Activity log (calls, emails, notes) |
-| `follow_ups` | Scheduled follow-up reminders |
-| `document_sequences` | Gapless numbering for EST-/INV- |
-| `audit_log` | Change tracking |
-| `task_templates` | Pre-built sub-tasks per task type |
-| `site_visits` | Scheduled job-site visits |
-| `project_photos` | Photo attachments for projects |
-| `project_notes` | Threaded notes on projects |
-| `company_settings` | Per-company configuration |
-| `gmail_connections` | OAuth tokens for email integration |
+**Core operational tables** (projects, tasks, clients, calendar_events) do NOT have permission-based RLS — they rely on company isolation + client-side gating. Over-restricting these at the DB level causes poor UX (empty pages instead of access-denied redirects).
 
-**Core Entity Tables (Migration 004):**
-Mirrors the Bubble.io data model for the web app.
+**Permission check helper** (cached per transaction for performance):
 
-| Table | Purpose |
-|-------|---------|
-| `companies` | Organizations/tenants |
-| `users` | All app users (admins, office crew, field crew) |
-| `clients` | Customers that companies serve |
-| `sub_clients` | Additional contacts under a client |
-| `task_types_v2` | Work categories (Framing, Painting, etc.) |
-| `projects` | Jobs/projects for clients |
-| `calendar_events` | Scheduled calendar blocks |
-| `project_tasks` | Individual tasks within projects |
-| `ops_contacts` | OPS support team contacts (not company-scoped) |
+```sql
+CREATE OR REPLACE FUNCTION private.current_user_has_permission(
+  p_permission app_permission
+) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = '' AS $$
+DECLARE
+  v_user_id uuid;
+BEGIN
+  -- Try cached user ID from session variable
+  v_user_id := current_setting('app.current_user_id', true)::uuid;
 
-**Pipeline Reference Columns (Migration 005):**
-Adds UUID foreign key columns (`_ref` suffix) to pipeline tables that previously only had Bubble TEXT IDs, linking them to the new core entity tables.
+  -- If not cached, resolve and cache for this transaction
+  IF v_user_id IS NULL THEN
+    v_user_id := (SELECT private.get_current_user_id());
+    IF v_user_id IS NULL THEN
+      RETURN false;
+    END IF;
+    PERFORM set_config('app.current_user_id', v_user_id::text, true);
+  END IF;
+
+  RETURN public.has_permission(v_user_id, p_permission);
+END;
+$$;
+```
+
+**Example policy pattern** (invoices):
+```sql
+CREATE POLICY "invoices_select" ON invoices FOR SELECT USING (
+  company_id = (SELECT private.get_user_company_id())
+  AND private.current_user_has_permission('invoices.view')
+);
+
+CREATE POLICY "invoices_insert" ON invoices FOR INSERT WITH CHECK (
+  company_id = (SELECT private.get_user_company_id())
+  AND private.current_user_has_permission('invoices.create')
+);
+```
+
+### Permission Tables RLS
+
+The permission system tables (`roles`, `role_permissions`, `user_roles`) have their own RLS:
+- **Read**: Anyone can read preset roles; company members can read their custom roles
+- **Write**: Only users with `team.assign_roles` permission can modify roles and assignments
+- **Preset protection**: `NOT is_preset` check prevents modification of preset roles
+
+---
+
+## Bubble.io (Legacy)
+
+### Status
+
+Bubble.io was the original backend for OPS. As of February 2026, the iOS app has been migrated to Supabase as the primary backend. Bubble references remain in the codebase in the following areas:
+
+**Still referenced** (but being phased out):
+- `BubbleFields.swift` -- field name constants used in some DTO mappings and onboarding code
+- Some onboarding workflows still reference Bubble field names (visible in `OnboardingManager.swift`, `OnboardingViewModel.swift`)
+- Inventory-related DTOs and views still contain `bubble_id` references for backwards compatibility
+- `CoreEntityDTOs.swift` contains `bubble_id` fields on Supabase DTOs for migration mapping
+
+**No longer used**:
+- The `CentralizedSyncManager` (Bubble-backed sync) has been replaced by `SupabaseSyncManager`
+- Direct Bubble REST API calls for CRUD operations have been replaced by Supabase repository methods
+- Image registration with Bubble has been replaced by presigned URL uploads to S3 + direct Supabase updates
+
+### Legacy API Details
+
+For historical reference, Bubble used:
+
+**Base URL**: `https://opsapp.co/version-test/api/1.1/`
+**Authentication**: Static API token (Bearer token, not user-specific)
+**Data API Pattern**: `GET/POST/PATCH /api/1.1/obj/{dataType}`
+**Workflow API Pattern**: `POST /api/1.1/wf/{workflowName}`
 
 ---
 
@@ -2668,200 +1290,52 @@ Adds UUID foreign key columns (`_ref` suffix) to pipeline tables that previously
 
 ### Overview
 
-The migration API is a **one-shot bulk data transfer** endpoint that copies all entity data from Bubble.io into the corresponding Supabase core entity tables. It is designed for the transition period while both backends coexist.
+The migration API is a **one-shot bulk data transfer** endpoint that copies all entity data from Bubble.io into the corresponding Supabase core entity tables. It was used during the transition period while both backends coexisted.
 
 **Endpoint**: `POST /api/admin/migrate-bubble`
 **Source File**: `ops-web/src/app/api/admin/migrate-bubble/route.ts` (~1,134 lines)
 **Authentication**: Requires `devPermission === true` on the requesting user's Bubble record
 **Trigger**: Developer Settings tab in the web app (only visible when `devPermission` is true)
 
-### Request Format
-
-```json
-POST /api/admin/migrate-bubble
-Content-Type: application/json
-
-{
-  "userId": "1234567890x999888"
-}
-```
-
-The `userId` is the Bubble user ID of the person initiating the migration. The endpoint fetches the user from Bubble and verifies their `devPermission` field is `true`.
-
-### Response Format
-
-```json
-{
-  "success": true,
-  "stats": {
-    "companies": 3,
-    "users": 15,
-    "clients": 42,
-    "subClients": 8,
-    "taskTypes": 12,
-    "projects": 87,
-    "calendarEvents": 204,
-    "projectTasks": 156,
-    "opsContacts": 4,
-    "pipelineRefsUpdated": 38,
-    "errors": []
-  }
-}
-```
-
-On failure (e.g., permission denied or unexpected exception):
-
-```json
-{
-  "error": "Error message string",
-  "stats": { ... }  // partial stats if migration started before failure
-}
-```
-
-### Authentication Flow
-
-```
-1. Client sends { userId: "..." }
-2. Server fetches user from Bubble:
-   GET /api/1.1/obj/user/{userId}
-3. Server checks: dto.devPermission === true
-4. If false → 403 Forbidden
-5. If true → proceed with migration
-```
-
-**Why Bubble auth, not Supabase auth?** During the transition period, the migration is initiated from the web app but must verify against Bubble (the current source of truth for user permissions). The `devPermission` field is a Bubble-only boolean that marks internal OPS developers.
-
 ### Migration Process (10 Phases)
 
 The migration executes in **strict dependency order** (parents before children) so that foreign key references can be resolved:
 
 ```
-Phase 1:  Companies        → builds companyIdMap
-Phase 2:  Users            → builds userIdMap (uses companyIdMap)
-Phase 3:  Clients          → builds clientIdMap (uses companyIdMap)
-Phase 4:  Sub-Clients      → uses clientIdMap + companyIdMap
-Phase 5:  Task Types       → builds taskTypeIdMap (uses companyIdMap)
-Phase 6:  Projects         → builds projectIdMap (uses companyIdMap + clientIdMap)
-Phase 7:  Calendar Events  → builds calendarEventIdMap (uses companyIdMap + projectIdMap)
-Phase 8:  Project Tasks    → uses projectIdMap + taskTypeIdMap + calendarEventIdMap + companyIdMap
-Phase 9:  OPS Contacts     → standalone (no company scope)
-Phase 10: Pipeline Refs    → updates _ref columns using all IdMaps
+Phase 1:  Companies        -> builds companyIdMap
+Phase 2:  Users            -> builds userIdMap (uses companyIdMap)
+Phase 3:  Clients          -> builds clientIdMap (uses companyIdMap)
+Phase 4:  Sub-Clients      -> uses clientIdMap + companyIdMap
+Phase 5:  Task Types       -> builds taskTypeIdMap (uses companyIdMap)
+Phase 6:  Projects         -> builds projectIdMap (uses companyIdMap + clientIdMap)
+Phase 7:  Calendar Events  -> builds calendarEventIdMap (uses companyIdMap + projectIdMap)
+Phase 8:  Project Tasks    -> uses projectIdMap + taskTypeIdMap + calendarEventIdMap + companyIdMap
+Phase 9:  OPS Contacts     -> standalone (no company scope)
+Phase 10: Pipeline Refs    -> updates _ref columns using all IdMaps
 ```
-
-Each phase:
-1. Fetches ALL records from the Bubble Data API (paginated, 100 per page)
-2. Transforms Bubble DTO fields into Supabase column values
-3. Upserts into Supabase using `onConflict: "bubble_id"` (idempotent)
-4. Builds an `IdMap` (Map<bubbleId, supabaseUuid>) for downstream phases to resolve FKs
 
 ### IdMap Pattern (bubble_id to UUID)
 
-The core technique for linking Bubble references to Supabase records:
-
-```typescript
-type IdMap = Map<string, string>; // bubbleId → supabaseUuid
-
-// Building the map after upsert:
-const { data } = await supabase
-  .from("companies")
-  .upsert({ bubble_id: dto._id, name: dto.companyName, ... }, { onConflict: "bubble_id" })
-  .select("id, bubble_id");
-
-if (data) {
-  for (const row of data) {
-    companyIdMap.set(row.bubble_id, row.id);
-  }
-}
-
-// Using the map in a downstream phase:
-const supabaseCompanyId = companyIdMap.get(dto.company);  // Bubble company ID → UUID
-const supabaseClientId = clientIdMap.get(dto.client);     // Bubble client ID → UUID
-```
-
-### Idempotent Upsert
-
 Every entity uses **upsert on `bubble_id` conflict**, making the migration safe to re-run:
-
-```typescript
-const { data, error } = await supabase
-  .from("clients")
-  .upsert(
-    {
-      bubble_id: dto._id,
-      company_id: companyIdMap.get(dto.company),
-      name: dto.name ?? "Unknown",
-      email: dto.email ?? null,
-      // ... all fields
-    },
-    { onConflict: "bubble_id" }
-  )
-  .select("id, bubble_id");
-```
-
 - First run: INSERT new rows
 - Subsequent runs: UPDATE existing rows (matched by `bubble_id`)
 - No duplicates, no data loss
 
-### Data Transformation Details
-
-The migration performs several data normalizations:
-
-**Date Handling:**
-- Company subscription dates may be UNIX timestamps (from Stripe) or ISO8601 strings (from Bubble)
-- The `parseFlexibleDate()` helper handles both formats
-- Standard dates use `parseBubbleDate()` and convert to ISO8601 for PostgreSQL
-
-**Phone Normalization:**
-- SubClient phone fields can be `string` or `number` type in Bubble
-- `normalizePhone()` converts numeric phones to strings
-
-**Status Normalization:**
-- Task statuses go through `normalizeTaskStatus()` to handle the "Scheduled" to "Booked" migration
-- Subscription status/plan values are lowercased and validated against PostgreSQL CHECK constraints
-
-**Reference Resolution:**
-- Bubble stores references as either bare IDs (`"1234567890x999888"`) or sometimes as full objects
-- `resolveBubbleReference()` and `resolveBubbleReferences()` handle both formats
-
 ### Post-Migration Steps
 
-After all 9 entity types are migrated, two additional passes run:
-
-**1. User Admin Flag Update:**
-After companies and users are both migrated, the migration loops through companies and sets `is_company_admin = true` for any user whose `bubble_id` appears in the company's `admin_ids` array.
-
-**2. Project Team Member Computation:**
-After tasks are migrated, for each project, the migration collects all unique `team_member_ids` from the project's tasks and writes them to `projects.team_member_ids`. This matches the iOS behavior where project team members are computed from task assignments.
-
-**3. Pipeline Reference Updates (Phase 10):**
-Updates `_ref` UUID columns on pipeline tables (opportunities, estimates, invoices, line_items, task_templates, products, site_visits) by matching existing Bubble TEXT IDs to the newly created UUID records.
+1. **User Admin Flag Update**: Sets `is_company_admin = true` for users in company admin_ids
+2. **Project Team Member Computation**: Collects unique team_member_ids from tasks and writes to projects
+3. **Pipeline Reference Updates (Phase 10)**: Updates `_ref` UUID columns on pipeline tables
 
 ### Error Handling
 
 - Each entity migration is wrapped in a try/catch
 - Individual record failures are logged but do not abort the entire migration
-- The `stats.errors` array accumulates error messages (capped to prevent huge responses)
-- The migration returns partial stats even on failure so the developer can see progress
-
-### Developer Settings UI
-
-The migration is triggered from the **Developer Settings** tab in the web app's settings page:
-
-- **Visibility**: Only shown when the logged-in user has `devPermission === true`
-- **Action**: "Migrate Bubble Data" button that calls `POST /api/admin/migrate-bubble`
-- **Feedback**: Shows real-time progress and final stats (counts per entity, errors)
-
-### Future Direction
-
-The migration API is a stepping stone in the broader Bubble-to-Supabase transition:
-
-1. **Current**: Web app reads/writes core entities from Supabase; mobile apps still use Bubble
-2. **Next**: Implement Supabase Auth to replace Firebase + Bubble auth (JWT with `app_metadata.company_id`)
-3. **Then**: Mobile apps switch from Bubble API to Supabase PostgREST/realtime
-4. **Eventually**: Bubble.io is decommissioned entirely; Supabase + direct S3 + direct Stripe become the sole backend
+- The `stats.errors` array accumulates error messages
+- The migration returns partial stats even on failure
 
 ---
 
 **End of Document**
 
-This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire sync system, API integration, image handling, error management, and the Bubble-to-Supabase migration pathway with full fidelity to the current implementation.
+This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, and error management with full fidelity to the current implementation.

@@ -4,8 +4,8 @@
 
 **Purpose**: Complete documentation of the OPS financial system — pipeline/CRM, estimates, invoices, payments, products catalog, and accounting integrations. All financial data lives in **Supabase** (PostgreSQL), separate from operational data in Bubble.io.
 
-**Last Updated**: February 17, 2026
-**Source Reference**: `C:\OPS\ops-web\src\lib\types\pipeline.ts`, `src\lib\api\services\`
+**Last Updated**: February 28, 2026
+**Source Reference**: `C:\OPS\ops-web\src\lib\types\pipeline.ts`, `src\lib\api\services\`, iOS source at `OPS/OPS/`
 
 ---
 
@@ -17,27 +17,30 @@
 4. [Invoices System](#invoices-system)
 5. [Products & Services Catalog](#products--services-catalog)
 6. [Payments](#payments)
-7. [Accounting Integrations](#accounting-integrations)
-8. [Activity Timeline & Follow-Ups](#activity-timeline--follow-ups)
-9. [Supabase Schema Reference](#supabase-schema-reference)
-10. [Service Layer Patterns](#service-layer-patterns)
-11. [Business Rules & Constraints](#business-rules--constraints)
+7. [Expense Tracking System](#expense-tracking-system)
+8. [Accounting Integrations](#accounting-integrations)
+9. [Activity Timeline & Follow-Ups](#activity-timeline--follow-ups)
+10. [Supabase Schema Reference](#supabase-schema-reference)
+11. [Service Layer Patterns](#service-layer-patterns)
+12. [Business Rules & Constraints](#business-rules--constraints)
+13. [iOS Implementation](#ios-implementation)
 
 ---
 
 ## Dual-Database Architecture
 
-OPS Web uses two separate backends for different data domains:
+OPS Web uses Supabase as its primary backend, with Bubble.io retained as legacy for some core entities during migration:
 
 | Data Domain | Backend | Rationale |
 |---|---|---|
-| Projects, Tasks, Clients | Bubble.io REST API | Shared with iOS/Android apps |
-| Calendar Events, Company, Users | Bubble.io REST API | Shared with iOS/Android apps |
+| Projects, Tasks, Clients | Supabase (PostgreSQL) — iOS primary; Bubble legacy on web | Migrating to Supabase |
+| Company, Users | Supabase (PostgreSQL) — iOS primary; Bubble legacy on web | Migrating to Supabase |
 | Pipeline Opportunities | Supabase (PostgreSQL) | Relational, real-time, complex queries |
 | Estimates, Invoices, Line Items | Supabase (PostgreSQL) | Financial data, needs DB triggers |
 | Products Catalog | Supabase (PostgreSQL) | Per-company catalog |
 | Payments | Supabase (PostgreSQL) | Insert-only, trigger-maintained balances |
 | Accounting Connections | Supabase (PostgreSQL) | OAuth token storage |
+| Expenses & Receipts | Supabase (PostgreSQL) | Expense tracking, OCR, batch approval |
 | Tax Rates | Supabase (PostgreSQL) | Per-company tax config |
 | Pipeline Stage Config | Supabase (PostgreSQL) | Per-company customization |
 
@@ -524,6 +527,94 @@ Line items can reference a product via `productId`. When a product is selected f
 
 ---
 
+## Expense Tracking System
+
+### Overview
+
+Full expense submission, receipt OCR scanning, batch approval workflow, and accounting sync system. All roles can submit expenses; office/admin approve field crew submissions. Expenses live in the Pipeline tab under a dedicated "EXPENSES" segment.
+
+### Expense Lifecycle
+
+```
+draft → submitted → approved → reimbursed
+                  ↘ rejected
+```
+
+- **Draft**: Created by user, not yet submitted for review
+- **Submitted**: Sent for approval (auto-approve if under threshold)
+- **Approved**: Approved by office/admin, triggers accounting sync if connected
+- **Rejected**: Rejected with reason, can be edited and resubmitted
+- **Reimbursed**: Payment confirmed (terminal state)
+
+### Threshold-Based Approval
+
+Company-configurable via `expense_settings`:
+
+1. **Auto-approve threshold**: Expenses under this amount auto-approve on submission
+2. **Admin approval threshold**: Expenses above this amount require admin (not just office crew)
+3. Expenses between the two thresholds require office crew or admin approval
+
+### Batch Review Workflow
+
+Expenses accumulate and are grouped into batches at a company-configured frequency:
+- **Per Job**: Batched on submission (project-scoped)
+- **Weekly**: Batched every Monday
+- **Biweekly**: Batched on 1st and 15th of month
+- **Monthly**: Batched on 1st of month
+- **Quarterly**: Batched on 1st of Jan/Apr/Jul/Oct
+
+The `accounting-batch-create` Edge Function runs daily and creates batches based on each company's `review_frequency` setting.
+
+### Receipt OCR (Apple Vision)
+
+On-device OCR using Apple's Vision framework (`VNRecognizeTextRequest` with `.accurate` recognition level). No external vendor dependency.
+
+**Extracted fields**: merchant name, date, total, subtotal, tax amount, payment method (cash/card detection), raw text.
+
+**Architecture**: Protocol-based (`ExpenseOCRServiceProtocol`) for future swappability (e.g., Veryfi integration).
+
+### Multi-Project Expense Splitting
+
+Expenses can be attributed to zero or more projects via `expense_project_allocations`:
+- Each allocation has an `expense_id`, `project_id`, and `percentage` (0-100)
+- Percentages must sum to 100% if any allocations exist
+- Project assignment is optional (company-configurable via `require_project_assignment`)
+
+### Supabase Tables (6)
+
+| Table | Purpose |
+|---|---|
+| `expenses` | Core expense records (amount, merchant, status, receipt URL, OCR data) |
+| `expense_project_allocations` | Many-to-many linking expenses to projects with percentage split |
+| `expense_categories` | Company-configurable categories with icons (9 defaults seeded) |
+| `expense_settings` | Per-company settings (review frequency, thresholds, policy toggles) |
+| `expense_batches` | Groups of expenses for batch review by office/admin |
+| `accounting_category_mappings` | Maps OPS categories to external chart of accounts (QB/Sage) |
+
+### Default Expense Categories (9)
+
+Seeded on first load via `ExpenseRepository.seedDefaultCategories()`:
+
+| Category | Icon |
+|---|---|
+| Materials & Supplies | shippingbox.fill |
+| Equipment Rental | wrench.and.screwdriver.fill |
+| Fuel & Mileage | fuelpump.fill |
+| Subcontractor | person.2.fill |
+| Permits & Fees | doc.text.fill |
+| Tools | hammer.fill |
+| Safety Equipment | shield.checkered |
+| Office Supplies | paperclip |
+| Other | ellipsis.circle |
+
+### Entry Points
+
+1. **Pipeline tab → Expenses → + FAB** — General submission, no project pre-selected
+2. **Project Details → Expenses section** — Pre-fills project allocation
+3. **Project Action Bar → Receipt button** — Opens camera, pre-fills project on capture
+
+---
+
 ## Accounting Integrations
 
 ### AccountingConnection Entity
@@ -546,7 +637,87 @@ interface AccountingConnection {
 }
 ```
 
-Located at `src/lib/api/services/accounting-service.ts`. Currently stores OAuth connections for QuickBooks and Sage — sync implementation is planned but not yet complete.
+Located at `src/lib/api/services/accounting-service.ts`. Stores OAuth connections for QuickBooks and Sage. Full sync implemented via Supabase Edge Functions.
+
+### Edge Functions (3)
+
+All deployed to Supabase, invoked via `SUPABASE_URL/functions/v1/<function-name>`. All use `verify_jwt: false` with manual auth header validation internally.
+
+#### `accounting-oauth`
+
+Handles OAuth flows for QuickBooks and Sage.
+
+**Actions** (via `action` field in JSON body):
+- `authorize` — Returns OAuth redirect URL for the provider
+- `callback` — Exchanges authorization code for tokens, upserts `accounting_connections`
+- `refresh` — Refreshes expired access token using refresh token
+- `disconnect` — Clears tokens, sets `is_connected = false`
+
+**Token management**:
+- QuickBooks: Access tokens expire every 60 minutes, refresh tokens every 100 days
+- Sage: Access tokens expire every 60 minutes
+- Token refresh called automatically by `accounting-sync-expense` before sync operations
+
+**Required env vars**: `QB_CLIENT_ID`, `QB_CLIENT_SECRET`, `QB_REDIRECT_URI`, `SAGE_CLIENT_ID`, `SAGE_CLIENT_SECRET`, `SAGE_REDIRECT_URI`
+
+#### `accounting-sync-expense`
+
+Syncs an approved expense to the company's connected accounting system.
+
+**Trigger**: Called from iOS via `client.functions.invoke("accounting-sync-expense")` in `ExpenseRepository.triggerAccountingSync()`. Fires automatically from two paths in `ExpenseViewModel`:
+- `approveExpense()` — after office/admin manually approves an expense
+- `submitExpense()` — after auto-approve (expense amount < `expense_settings.auto_approve_threshold`)
+
+Both paths are fire-and-forget (`Task { await ... }`), so the approval UX is never blocked by accounting sync.
+
+**Flow**:
+1. Fetch `accounting_connections` for the company
+2. If no active connection → exit silently (no side effects for non-integrated companies)
+3. Refresh token if expired (calls `accounting-oauth` refresh endpoint)
+4. Map expense fields to provider format using `accounting_category_mappings`
+5. POST to provider API
+6. Update `accounting_sync_status` and `accounting_sync_id` on expense
+7. Log to `accounting_sync_log`
+
+**QuickBooks mapping**: OPS expense → QBO `Purchase` object
+- `merchant_name` → `EntityRef` (vendor lookup/create)
+- `amount` → `TotalAmt`
+- `expense_date` → `TxnDate`
+- Category → `AccountRef` via `accounting_category_mappings`
+- Project allocation → `CustomerRef` for job costing
+
+**Sage mapping**: OPS expense → Sage `OtherPayment` object
+- `merchant_name` → `ContactId` (contact lookup/create)
+- Category → `LedgerAccountId` via `accounting_category_mappings`
+
+**Retry logic**: On transient failures (429, 5xx), retry up to 3 times with exponential backoff.
+
+#### `accounting-batch-create`
+
+Cron-triggered function that creates expense batches. Runs daily at 00:00 UTC.
+
+**Flow**:
+1. Query all companies with `expense_settings`
+2. For each company, check if a batch is due based on `review_frequency`
+3. Collect `submitted` expenses not yet in a batch
+4. Create `expense_batch`, assign `batch_id` on expenses, calculate total
+5. Log to `accounting_sync_log`
+
+**Optional env var**: `CRON_SECRET` — shared secret for cron invocations via `X-Cron-Secret` header.
+
+### accounting_category_mappings
+
+When a company connects QB or Sage, they map each OPS expense category to an external chart of accounts entry. The mapping is stored in `accounting_category_mappings` and used on every sync to route expenses to the correct account.
+
+| Column | Purpose |
+|---|---|
+| `company_id` | Company owning the mapping |
+| `expense_category_id` | OPS expense category ID |
+| `provider` | "quickbooks" or "sage" |
+| `external_account_id` | Account ID in external system |
+| `external_account_name` | Human-readable account name |
+
+If no mapping exists for a category, the sync uses a fallback "Uncategorized Expenses" account.
 
 ---
 
@@ -620,7 +791,7 @@ isFollowUpToday(followUp)     // true if Pending and due today
 
 ## Supabase Schema Reference
 
-### Tables (16 total)
+### Tables (22 total)
 
 | Table | Purpose |
 |---|---|
@@ -635,6 +806,13 @@ isFollowUpToday(followUp)     // true if Pending and due today
 | `products` | Products/services catalog |
 | `tax_rates` | Per-company tax rate configurations |
 | `accounting_connections` | QuickBooks/Sage OAuth connections |
+| `accounting_sync_log` | Sync event log (success/error tracking) |
+| `accounting_category_mappings` | OPS category → external chart of accounts mapping |
+| `expenses` | Core expense records with receipt images and OCR data |
+| `expense_project_allocations` | Multi-project expense attribution with percentage split |
+| `expense_categories` | Company-configurable expense categories with icons |
+| `expense_settings` | Per-company expense policy (thresholds, frequency, toggles) |
+| `expense_batches` | Grouped expenses for batch review by office/admin |
 | `activities` | Communication and event log |
 | `follow_ups` | Scheduled follow-up reminders |
 | `project_notes` | Project-level notes with @mentions and attachments (Feb 2026) |
@@ -660,6 +838,10 @@ get_next_document_number(p_company_id UUID, p_document_type TEXT)
 convert_estimate_to_invoice(p_estimate_id UUID, p_due_date TIMESTAMPTZ)
 -- Atomically: validates estimate=approved, creates invoice, copies line items,
 -- marks estimate as converted. Returns invoice UUID.
+
+get_next_expense_batch_number(p_company_id UUID)
+-- Returns next sequential batch number for the company.
+-- Counts existing batches + 1. Used by accounting-batch-create Edge Function.
 ```
 
 ---
@@ -734,14 +916,361 @@ Hooks are in `src/lib/hooks/`:
 3. Deleting a product does NOT cascade to line items (line items retain snapshot data)
 4. `unitCost` is optional, used for margin calculation only
 
+### Expense Rules
+
+1. All roles can create and submit expenses (requires `expenses.create` permission — all preset roles have it)
+2. Only users with `expenses.approve` permission can approve/reject expenses (Admin, Owner, Office by default). Enforced at app layer + Supabase RLS (migration 016)
+3. Auto-approve logic: if amount < `auto_approve_threshold`, status goes directly to `approved` on submission
+4. Expenses above `admin_approval_threshold` require admin approval specifically (user must have `expenses.approve` permission)
+5. `batch_id` is null until the expense is collected into a batch by the cron Edge Function
+6. `accounting_sync_status`: `pending` (no connection), `synced` (pushed to QB/Sage), `error` (sync failed)
+7. Receipt images uploaded to S3 via `S3UploadService.shared.uploadExpenseReceipt()` — full-size (max 2048px) at `company-{companyId}/expenses/receipt_{expenseId}_{timestamp}.jpg` plus 512px thumbnail variant
+8. OCR data (raw text, extracted fields, confidence) stored in `ocr_raw_data` (JSONB) and `ocr_confidence` (0-1) for audit trail — captured from `AppleVisionOCRService` via `OCRResult.rawDataDict`
+9. Expense allocations (project splits) use delete-and-reinsert pattern when updated
+10. Default categories seeded automatically on first load per company
+
 ### Accounting Integration Rules
 
 1. QuickBooks and Sage are the supported providers
-2. OAuth tokens stored in `accounting_connections` — refresh token rotation handled server-side
-3. Payment voiding uses `voided_at` not `deleted_at`
+2. OAuth tokens stored in `accounting_connections` — refresh token rotation handled server-side via `accounting-oauth` Edge Function
+3. Approved expenses auto-sync to connected accounting when `sync_enabled = true`
+4. Category mapping via `accounting_category_mappings` — each OPS category maps to an external account
+5. Vendor/contact lookup-or-create pattern used for `merchant_name` in both QB and Sage
+6. Sync retries up to 3x with exponential backoff on transient failures (429, 5xx)
+7. All sync operations logged in `accounting_sync_log` for audit trail
+8. Payment voiding uses `voided_at` not `deleted_at`
 
 ---
 
-**Last Updated**: February 18, 2026
-**Document Version**: 1.1
-**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`
+## iOS Implementation
+
+The full Pipeline, Estimates, Invoices, and Accounting system is implemented natively on iOS using SwiftUI, with Supabase as the backend via dedicated Repository classes and DTOs.
+
+### iOS View Layer
+
+**Location**: `OPS/OPS/Views/Estimates/`, `OPS/OPS/Views/Invoices/`, `OPS/OPS/Views/Accounting/`
+
+#### Estimates Views (6 files)
+
+| File | Purpose |
+|---|---|
+| `EstimatesListView.swift` | List of all company estimates with search, filter chips (ALL/DRAFT/SENT/APPROVED), pull-to-refresh, and a FAB for creating new estimates. Swipe-right on draft to send, swipe-right on approved to convert to invoice. |
+| `EstimateDetailView.swift` | Full detail for a single estimate showing header (estimate number, title, total, status badge, age), line items section, totals section (subtotal/tax/total), and a context-dependent sticky footer (EDIT/SEND for draft, RESEND/MARK APPROVED for sent, CONVERT TO INVOICE for approved). Overflow menu provides additional actions. |
+| `EstimateFormSheet.swift` | Create or edit an estimate with collapsible sections (Client & Project, Line Items, Payment & Terms, Notes & Attachments). Line items always expanded. Sticky footer shows running subtotal/tax/total and a SEND EST button. Auto-creates estimate on first open in create mode. |
+| `EstimateCard.swift` | Card component for estimate list showing estimate number, title, total, status badge with color, and age. Supports swipe-right (SEND for draft, CONVERT for approved) and swipe-left (VOID). |
+| `LineItemEditSheet.swift` | Bottom sheet for creating or editing a line item. Fields: description, type picker (LABOR/MATERIAL/OTHER), quantity, unit, unit price, optional toggle, taxable toggle. Shows computed line total. Delete button in edit mode. |
+| `ProductPickerSheet.swift` | Bottom sheet to select a product from the catalog. Search field filters products by name. Tapping a product adds it as a line item (pre-fills name, type, default price, productId). Loads products via `ProductRepository.fetchAll()`. |
+
+#### Invoice Views (4 files)
+
+| File | Purpose |
+|---|---|
+| `InvoicesListView.swift` | List of all invoices with filter chips (ALL/UNPAID/OVERDUE/PAID), search, pull-to-refresh. Swipe-right to record payment, swipe-left to void. No FAB (invoices are created via estimate conversion). |
+| `InvoiceDetailView.swift` | Full detail for a single invoice showing header (invoice number, title, total, status badge, due/overdue date), line items section, totals section (subtotal/tax/total/paid/balance due), payments section. Sticky footer is context-dependent: SEND INVOICE for draft, BALANCE DUE + RECORD PAYMENT for unpaid, PAID IN FULL for paid, VOIDED for void. Toolbar menu provides Send/Record Payment/Void actions. |
+| `InvoiceCard.swift` | Card component showing invoice number, title, total, status badge with color, and due/overdue date. Overdue invoices get a red border. Swipe-right reveals PAYMENT action, swipe-left reveals VOID. |
+| `PaymentRecordSheet.swift` | Bottom sheet to record a payment. Shows invoice context (number + balance). Fields: amount (pre-filled with balance due), payment method picker (all `PaymentMethod` cases with checkmark selection), optional notes. Calls `InvoiceViewModel.recordPayment()`. |
+
+#### Expense Views (7 files)
+
+**Location**: `OPS/OPS/Views/Expenses/`
+
+| File | Purpose |
+|---|---|
+| `ExpensesListView.swift` | List of all company expenses with search, filter chips (ALL/PENDING/APPROVED/REJECTED), pull-to-refresh, and FAB for creating new. Swipe-right on draft to submit, swipe-left to delete. |
+| `ExpenseDetailView.swift` | Full detail for a single expense: receipt image (tappable for full-screen), OCR-extracted fields, project allocations with percentages, approval status/history. Context-dependent action footer (EDIT/SUBMIT for draft, APPROVE/REJECT for office/admin). |
+| `ExpenseFormSheet.swift` | Create/edit sheet with camera capture button, OCR auto-fill, detail fields (merchant, amount, tax, date, category, payment method), project allocation section with percentage sliders, notes. Accepts optional `prefilledProjectId`. Sticky footer with submit. |
+| `ExpenseCard.swift` | Card for list: merchant name + amount, category icon + name, date, status badge. Swipe-right = SUBMIT (drafts), swipe-left = DELETE. |
+| `ExpenseBatchReviewView.swift` | Office/admin batch review. Header with batch info (period, count, total). Expandable expense cards with receipt thumbnail + details. Approve/reject per item. "Approve All" toolbar button. |
+| `ExpenseCategorySettingsView.swift` | Category management: icon + name list, active toggle, add custom category sheet. |
+| `ExpenseSettingsView.swift` | Company expense settings: review frequency picker, threshold amount fields, policy toggles (require receipt, require project), save button. |
+
+#### Accounting Views (1 file)
+
+| File | Purpose |
+|---|---|
+| `AccountingDashboard.swift` | Read-only financial health overview. Three sections: (1) **AR Aging** horizontal bar chart (0-30d, 31-60d, 61-90d, 90d+) using Swift Charts, (2) **Invoice Status** 2x2 grid tiles (Awaiting count, Overdue count, Paid count, Outstanding amount), (3) **Top Outstanding** list of top 5 clients by outstanding balance. Loads all invoices via `AccountingRepository.fetchAllInvoices()` and computes aging/status locally. Pull-to-refresh supported. |
+
+### iOS ViewModels
+
+**Location**: `OPS/OPS/ViewModels/`
+
+All ViewModels are `@MainActor` `ObservableObject` classes. Each exposes `@Published` state, sets up a repository via `setup(companyId:)`, and provides async methods for data operations.
+
+#### PipelineViewModel
+
+Manages the pipeline CRM opportunity list.
+
+- **Published state**: `opportunities`, `selectedStage` (filter, nil = ALL), `searchText`, `isLoading`, `error`
+- **Computed properties**: `filteredOpportunities` (by stage + search on contactName/jobDescription/source), `totalPipelineValue`, `weightedPipelineValue`, `activeDealsCount`, `stagesWithCounts`
+- **Operations**: `loadOpportunities()`, `advanceStage(opportunity:)` (optimistic update), `markLost(opportunity:reason:)`, `markWon(opportunity:)`, `createOpportunity(...)`, `updateOpportunity(...)`, `deleteOpportunity(...)`
+- **Repository**: `OpportunityRepository`
+
+#### EstimateViewModel
+
+Manages the estimate list, line items, filtering, and status actions.
+
+- **Published state**: `estimates`, `selectedFilter` (ALL/DRAFT/SENT/APPROVED enum), `searchText`, `isLoading`, `error`
+- **Internal state**: `lineItemDTOs` dictionary keyed by estimate ID
+- **Computed**: `filteredEstimates` (by filter + search on title/estimateNumber)
+- **Operations**: `loadEstimates()`, `lineItems(for:)`, `createEstimate(title:companyId:opportunityId?:clientId?:)`, `addLineItem(estimateId:description:type:quantity:unitPrice:isOptional:productId?:)`, `updateLineItem(id:estimateId:description?:quantity?:unitPrice?:isOptional?:)`, `deleteLineItem(id:estimateId:)`, `updateTitle(estimateId:title:)`, `sendEstimate(_:)`, `markApproved(_:)`, `convertToInvoice(_:)`
+- **Repository**: `EstimateRepository`
+
+#### InvoiceViewModel
+
+Manages the invoice list, line items, payments, filtering, and status actions.
+
+- **Published state**: `invoices`, `selectedFilter` (ALL/UNPAID/OVERDUE/PAID enum), `searchText`, `isLoading`, `error`
+- **Internal state**: `lineItemDTOs` and `paymentDTOs` dictionaries keyed by invoice ID
+- **Computed**: `filteredInvoices` (by filter + search on title/invoiceNumber)
+- **Operations**: `loadInvoices()`, `lineItems(for:)`, `payments(for:)`, `recordPayment(invoiceId:companyId:amount:method:notes?:)`, `voidInvoice(_:)`, `sendInvoice(_:)`
+- **Critical pattern**: After `recordPayment`, the ViewModel re-fetches the invoice from Supabase to get DB-trigger-updated `amountPaid`, `balanceDue`, and `status`. Never manually updates these fields.
+- **Repository**: `InvoiceRepository`
+
+#### ExpenseViewModel
+
+Manages expense list, categories, batches, OCR scanning, and approval actions.
+
+- **Published state**: `expenses`, `categories`, `batches`, `selectedFilter` (ALL/PENDING/APPROVED/REJECTED enum), `searchText`, `isLoading`, `error`, `settings`
+- **Computed**: `filteredExpenses` (by filter + search on merchantName/description)
+- **Operations**: `loadAll()` (parallel: expenses + categories + settings + batches), `loadExpenses()`, `createExpense(...)`, `updateExpense(...)`, `deleteExpense(_:)`, `submitExpense(_:)` (with auto-approve threshold check), `approveExpense(_:)`, `rejectExpense(_:reason:)`, `setAllocations(_:allocations:)`, `loadCategories()`, `loadBatches()`, `toggleCategory(_:isActive:)`, `scanReceipt(image:)` (OCR via AppleVisionOCRService), `loadSettings()`, `saveSettings(_:)`, `createCategory(companyId:name:icon:)`
+- **Project-scoped**: `loadExpensesForProject(projectId:)` — loads expenses allocated to a specific project
+- **Repository**: `ExpenseRepository`
+
+#### OpportunityDetailViewModel
+
+Manages activities and follow-ups for a single opportunity detail screen.
+
+- **Published state**: `activities`, `followUps`, `isLoading`, `error`
+- **Operations**: `loadDetails(for:)` (parallel fetch of activities + follow-ups via `async let`), `logActivity(opportunityId:companyId:type:body?:)`, `createFollowUp(opportunityId:companyId:type:dueAt:notes?:)`
+- **Repository**: `OpportunityRepository`
+
+### iOS Supabase Repositories
+
+**Location**: `OPS/OPS/Network/Supabase/Repositories/`
+
+All repositories take `companyId` in their initializer and use `SupabaseService.shared.client` for the Supabase connection.
+
+#### EstimateRepository
+
+- `fetchAll()` -- selects `*, line_items(*)` filtered by `company_id`, ordered by `created_at` desc
+- `fetchOne(estimateId)` -- selects `*, line_items(*)` for single estimate
+- `create(CreateEstimateDTO)` -- inserts estimate, returns with line items
+- `updateTitle(estimateId, title)` -- updates title field only
+- `updateStatus(estimateId, status)` -- updates status, returns full estimate with line items
+- `addLineItem(CreateLineItemDTO)` -- inserts into `line_items` table
+- `updateLineItem(id, UpdateLineItemDTO)` -- updates line item fields
+- `deleteLineItem(id)` -- hard deletes from `line_items` table
+- `convertToInvoice(estimateId)` -- calls Supabase RPC `convert_estimate_to_invoice`, returns `InvoiceDTO`
+
+#### InvoiceRepository
+
+- `fetchAll()` -- selects `*, invoice_line_items(*), payments(*)` filtered by `company_id`, ordered by `created_at` desc
+- `fetchOne(invoiceId)` -- selects `*, invoice_line_items(*), payments(*)` for single invoice
+- `recordPayment(CreatePaymentDTO)` -- inserts into `payments` table (DB trigger maintains invoice balance/status)
+- `updateStatus(invoiceId, status)` -- updates status field
+- `voidInvoice(invoiceId)` -- sets status to void (calls `updateStatus` internally)
+
+#### AccountingRepository
+
+- `fetchAllInvoices()` -- selects `*, invoice_line_items(*), payments(*)` filtered by `company_id`, ordered by `created_at` desc. Used exclusively by `AccountingDashboard` for read-only financial health computations (AR aging, status counts, top outstanding).
+
+#### ExpenseRepository
+
+- `fetchAll()` -- selects `*, expense_project_allocations(*), expense_categories(*)` filtered by `company_id`, ordered by `created_at` desc
+- `fetchOne(expenseId)` -- single expense with allocations and category
+- `create(CreateExpenseDTO)` -- inserts expense
+- `update(expenseId, UpdateExpenseDTO)` -- updates draft expense fields
+- `updateStatus(expenseId, status)` -- updates status field
+- `approve(expenseId, approvedBy)` -- sets status=approved, approved_by, approved_at
+- `reject(expenseId, rejectedBy, reason)` -- sets status=rejected, rejection_reason
+- `softDelete(expenseId)` -- sets `deleted_at` timestamp
+- `setAllocations(expenseId, [CreateExpenseAllocationDTO])` -- delete existing + insert new (transactional)
+- `fetchByProject(projectId)` -- expenses allocated to a project (via allocation join)
+- `fetchCategories()` -- active categories for the company
+- `createCategory(CreateExpenseCategoryDTO)` -- add custom category
+- `updateCategory(id, name, icon, isActive)` -- modify category
+- `seedDefaultCategories()` -- seeds 9 default categories if none exist for company
+- `fetchBatches()` -- all batches for the company
+- `fetchBatchExpenses(batchId)` -- expenses in a specific batch
+- `fetchSettings()` -- company expense settings
+- `upsertSettings(ExpenseSettingsDTO)` -- save/update settings
+- `triggerAccountingSync(expenseId)` -- fire-and-forget call to `accounting-sync-expense` Edge Function via `client.functions.invoke()`; logs errors but does not throw
+- `fetchCategoryMappings(provider)` -- accounting category mappings for a provider (quickbooks/sage)
+- `upsertCategoryMapping(CreateAccountingCategoryMappingDTO)` -- upsert mapping (unique on company_id + category_id + provider)
+- `deleteCategoryMapping(id)` -- remove a mapping
+
+#### OpportunityRepository
+
+- `fetchAll()` -- selects all opportunities filtered by `company_id`, ordered by `created_at` desc
+- `fetchOne(opportunityId)` -- single opportunity
+- `fetchActivities(for opportunityId)` -- selects activities for an opportunity, ordered by `created_at` desc
+- `fetchFollowUps(for opportunityId)` -- selects follow-ups for an opportunity, ordered by `due_at` asc
+- `create(CreateOpportunityDTO)` -- inserts new opportunity
+- `logActivity(CreateActivityDTO)` -- inserts into `activities` table
+- `createFollowUp(CreateFollowUpDTO)` -- inserts into `follow_ups` table
+- `advanceStage(opportunityId, to stage, lossReason?)` -- updates `stage` (and optionally `loss_reason`) on the opportunity
+- `update(opportunityId, UpdateOpportunityDTO)` -- updates opportunity fields
+- `delete(opportunityId)` -- hard deletes opportunity
+
+#### ProductRepository
+
+- `fetchAll()` -- selects active products (`is_active = true`) filtered by `company_id`, ordered by `name` asc
+- `create(CreateProductDTO)` -- inserts new product
+- `update(id, UpdateProductDTO)` -- updates product fields
+- `deactivate(id)` -- sets `is_active` to false (soft deactivation)
+
+### iOS Financial DTOs
+
+**Location**: `OPS/OPS/Network/Supabase/DTOs/`
+
+7 DTO files cover the financial system. All use `Codable` with `CodingKeys` for `snake_case` <-> `camelCase` mapping. Each read-DTO has a `toModel()` method to convert to the local domain model.
+
+#### ExpenseDTOs.swift
+
+| DTO | Purpose |
+|---|---|
+| `ExpenseDTO` | Read DTO for expenses table. Fields: id, companyId, submittedBy, status, categoryId, merchantName, description, amount, taxAmount, currency, expenseDate, paymentMethod, receiptImageUrl, receiptThumbnailUrl, ocrRawData, ocrConfidence, batchId, approvedBy, approvedAt, rejectedBy, rejectionReason, accountingSyncStatus, accountingSyncId, deletedAt, createdAt, updatedAt. Nested: `allocations: [ExpenseAllocationDTO]?`, `category: ExpenseCategoryDTO?`. |
+| `CreateExpenseDTO` | Write DTO. Fields: companyId, submittedBy, categoryId, merchantName, description, amount, taxAmount, expenseDate, paymentMethod, receiptImageUrl. |
+| `UpdateExpenseDTO` | Partial update DTO. Optional fields: categoryId, merchantName, description, amount, taxAmount, expenseDate, paymentMethod, receiptImageUrl. |
+| `ExpenseAllocationDTO` | Read DTO for expense_project_allocations. Fields: id, expenseId, projectId, percentage, createdAt. |
+| `CreateExpenseAllocationDTO` | Write DTO. Fields: expenseId, projectId, percentage. |
+| `ExpenseCategoryDTO` | Read DTO for expense_categories. Fields: id, companyId, name, icon, isActive, isDefault, sortOrder, createdAt. |
+| `CreateExpenseCategoryDTO` | Write DTO. Fields: companyId, name, icon. |
+| `ExpenseBatchDTO` | Read DTO for expense_batches. Fields: id, companyId, batchNumber, periodStart, periodEnd, status, totalAmount, expenseCount, reviewedBy, reviewedAt, createdAt. |
+| `ExpenseSettingsDTO` | Read/Write DTO. Fields: id, companyId, reviewFrequency, autoApproveThreshold, adminApprovalThreshold, requireReceiptPhoto, requireProjectAssignment, createdAt, updatedAt. |
+
+#### EstimateDTOs.swift
+
+| DTO | Purpose |
+|---|---|
+| `EstimateDTO` | Read DTO for estimates table. Fields: id, companyId, estimateNumber, opportunityId, projectId, clientId, title, status, subtotal, taxRate, taxAmount, discountPercent, discountAmount, total, notes, validUntil, version, createdAt, updatedAt. Nested: `lineItems: [EstimateLineItemDTO]?`. |
+| `EstimateLineItemDTO` | Read DTO for line_items table. Fields: id, estimateId, productId, description, quantity, unitPrice, unit, total, sortOrder, isOptional, taskTypeId, type. |
+| `CreateEstimateDTO` | Write DTO. Fields: companyId, opportunityId, clientId, title. |
+| `CreateLineItemDTO` | Write DTO. Fields: estimateId, productId, description, quantity, unitPrice, sortOrder, isOptional, taskTypeId, type. |
+| `UpdateLineItemDTO` | Partial update DTO. Optional fields: description, quantity, unitPrice, sortOrder, isOptional. |
+
+#### InvoiceDTOs.swift
+
+| DTO | Purpose |
+|---|---|
+| `InvoiceDTO` | Read DTO for invoices table. Fields: id, companyId, estimateId, opportunityId, projectId, clientId, invoiceNumber, title, status, subtotal, taxRate, taxAmount, total, amountPaid, balanceDue, dueDate, sentAt, paidAt, notes, createdAt, updatedAt. Nested: `lineItems: [InvoiceLineItemDTO]?`, `payments: [PaymentDTO]?`. Note: `lineItems` CodingKey maps to `invoice_line_items`. |
+| `InvoiceLineItemDTO` | Read DTO for invoice_line_items table. Fields: id, invoiceId, productId, description, quantity, unitPrice, unit, type, total, sortOrder. |
+| `PaymentDTO` | Read DTO for payments table. Fields: id, invoiceId, companyId, amount, method, reference, notes, isVoid, paidAt, createdAt. |
+| `CreatePaymentDTO` | Write DTO. Fields: invoiceId, companyId, amount, method, reference, notes. |
+
+#### ProductDTOs.swift
+
+| DTO | Purpose |
+|---|---|
+| `ProductDTO` | Read DTO for products table. Fields: id, companyId, name, description, unitPrice, costPrice, unit, type, taxable, taskTypeId, isActive, createdAt, updatedAt. |
+| `CreateProductDTO` | Write DTO. Fields: companyId, name, description, unitPrice, costPrice, unit, type, taxable. |
+| `UpdateProductDTO` | Partial update DTO. Optional fields: name, description, unitPrice, costPrice, unit, type, taxable. |
+
+#### OpportunityDTOs.swift
+
+| DTO | Purpose |
+|---|---|
+| `OpportunityDTO` | Read DTO for opportunities table. Fields: id, companyId, contactName, contactEmail, contactPhone, jobDescription, estimatedValue, stage, source, projectId, clientId, lossReason, createdAt, updatedAt, lastActivityAt. |
+| `CreateOpportunityDTO` | Write DTO. Fields: companyId, contactName, contactEmail, contactPhone, jobDescription, estimatedValue, source. |
+| `UpdateOpportunityDTO` | Partial update DTO. Optional fields: contactName, contactEmail, contactPhone, jobDescription, estimatedValue, source, clientId, projectId. |
+| `ActivityDTO` | Read DTO for activities table. Fields: id, opportunityId, companyId, type, body, createdBy, createdAt. |
+| `CreateActivityDTO` | Write DTO. Fields: opportunityId, companyId, type, body. |
+| `FollowUpDTO` | Read DTO for follow_ups table. Fields: id, opportunityId, companyId, type, status, dueAt, assignedTo, notes, createdAt. |
+| `CreateFollowUpDTO` | Write DTO. Fields: opportunityId, companyId, type, dueAt, notes. |
+
+### iOS Financial Enums
+
+**Location**: `OPS/OPS/DataModels/Enums/FinancialEnums.swift`
+
+All enums are `String`-backed, `Codable`, and match Supabase column values.
+
+#### EstimateStatus
+
+Cases: `draft`, `sent`, `viewed`, `approved`, `converted`, `declined`, `expired`
+
+Computed helpers:
+- `displayName` -- uppercased raw value
+- `canSend` -- true for `.draft`
+- `canApprove` -- true for `.sent` or `.viewed`
+- `canConvert` -- true for `.approved`
+
+#### InvoiceStatus
+
+Cases: `draft`, `sent`, `awaitingPayment` ("awaiting_payment"), `partiallyPaid` ("partially_paid"), `paid`, `pastDue` ("past_due"), `void`
+
+Computed helpers:
+- `displayName` -- custom: "AWAITING" for awaitingPayment, "PARTIAL" for partiallyPaid, uppercased raw value otherwise
+- `isPaid` -- true for `.paid`
+- `needsPayment` -- true for `.awaitingPayment`, `.partiallyPaid`, or `.pastDue`
+
+#### PaymentMethod
+
+Cases: `cash`, `check`, `creditCard` ("credit_card"), `ach`, `bankTransfer` ("bank_transfer"), `stripe`, `other`
+
+Computed helper: `displayName` -- custom formatting for multi-word names (CREDIT CARD, ACH, BANK TRANSFER), uppercased raw value otherwise.
+
+#### LineItemType
+
+Cases: `labor` ("LABOR"), `material` ("MATERIAL"), `other` ("OTHER")
+
+Note: Raw values are uppercase (matches Supabase column values).
+
+#### FollowUpType
+
+Cases: `call`, `email`, `meeting`, `quoteFollowUp` ("quote_follow_up"), `invoiceFollowUp` ("invoice_follow_up"), `custom`
+
+Computed helper: `icon` -- returns SF Symbol name for each type (phone.fill, envelope.fill, person.2.fill, doc.text.fill, receipt, bell.fill).
+
+#### FollowUpStatus
+
+Cases: `pending`, `completed`, `skipped`
+
+#### SiteVisitStatus
+
+Cases: `scheduled`, `completed`, `cancelled`
+
+#### ExpenseStatus
+
+Cases: `draft`, `submitted`, `approved`, `rejected`, `reimbursed`
+
+Computed helpers:
+- `displayName` -- uppercased raw value
+- `color` -- status-appropriate color (tertiaryText for draft, warning for submitted, success for approved, error for rejected, primaryAccent for reimbursed)
+
+#### ExpensePaymentMethod
+
+Cases: `cash`, `personalCard` ("personal_card"), `companyCard` ("company_card")
+
+Computed helper: `displayName` -- "CASH", "PERSONAL CARD", "COMPANY CARD"
+
+#### ReviewFrequency
+
+Cases: `perJob` ("per_job"), `weekly`, `biweekly`, `monthly`, `quarterly`
+
+Computed helper: `displayName` -- "PER JOB", "WEEKLY", "BIWEEKLY", "MONTHLY", "QUARTERLY"
+
+#### AccountingSyncStatus
+
+Cases: `pending`, `synced`, `error`
+
+### iOS OCR Service
+
+**Location**: `OPS/OPS/Services/ExpenseOCRService.swift`
+
+Protocol-based architecture for receipt OCR:
+
+```swift
+protocol ExpenseOCRServiceProtocol {
+    func extractReceiptData(from image: UIImage) async throws -> OCRResult
+}
+```
+
+**OCRResult** struct: `merchantName`, `date`, `total`, `subtotal`, `taxAmount`, `paymentMethod`, `rawText`, `confidenceScores` (per-field confidence 0-1).
+
+**AppleVisionOCRService**: Uses `VNRecognizeTextRequest` with `.accurate` recognition level. Processes all recognized text through `ReceiptParser` which uses regex patterns and heuristics to extract structured fields from raw OCR text.
+
+---
+
+**Last Updated**: February 28, 2026
+**Document Version**: 1.3
+**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `OPS/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`

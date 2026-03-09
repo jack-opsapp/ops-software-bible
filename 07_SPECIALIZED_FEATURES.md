@@ -1,8 +1,8 @@
 # 07 - Specialized Features
 
-**Last Updated:** February 18, 2026
-**OPS Version:** iOS v1.6, Android Planning Phase
-**Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, project notes system, and advanced UI patterns.
+**Last Updated:** March 2, 2026
+**OPS Version:** iOS v1.7, Android Planning Phase
+**Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
 ---
 
@@ -19,6 +19,11 @@
 9. [Floating Action Menu](#9-floating-action-menu)
 10. [Advanced UI Patterns](#10-advanced-ui-patterns)
 11. [Project Notes System (OPS Web)](#11-project-notes-system-ops-web)
+12. [Photo Annotations](#12-photo-annotations)
+13. [Inventory Management](#13-inventory-management)
+14. [Notification System](#14-notification-system)
+15. [Crew Location Tracking](#15-crew-location-tracking)
+16. [Schedule Tab Redesign](#16-schedule-tab-redesign)
 
 ---
 
@@ -30,7 +35,7 @@ OPS provides field-ready turn-by-turn navigation with GPS smoothing using a Kalm
 ### Architecture Components
 
 #### NavigationEngine (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Map\Core\NavigationEngine.swift` (451 lines)
+**Location:** `OPS/OPS/Map/Core/NavigationEngine.swift` (451 lines)
 
 **Responsibilities:**
 - Route calculation using Apple Maps (MKDirections)
@@ -142,7 +147,7 @@ private func distanceFromRoute(location: CLLocation, route: MKRoute) -> CLLocati
 ```
 
 #### KalmanHeadingFilter (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Map\Core\KalmanHeadingFilter.swift` (125 lines)
+**Location:** `OPS/OPS/Map/Core/KalmanHeadingFilter.swift` (125 lines)
 
 **Purpose:** Sensor fusion for smooth heading estimation, combining compass (magnetometer) and gyroscope data to eliminate jitter and improve accuracy.
 
@@ -214,7 +219,7 @@ class KalmanHeadingFilter {
 - Adaptive confidence metric for UI feedback
 
 #### MapCoordinator (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Map\Core\MapCoordinator.swift` (885 lines)
+**Location:** `OPS/OPS/Map/Core/MapCoordinator.swift` (885 lines)
 
 **Responsibilities:**
 - Map display state (region, camera, orientation)
@@ -334,12 +339,12 @@ private func updateMapForNavigation() {
 ## 2. Tutorial & Demo Mode
 
 ### Overview
-Interactive 25-phase tutorial system with two flows: Company Creator (~30 seconds) and Employee (~20 seconds). Features demo data, overlay tooltips, and progressive task guidance.
+Interactive tutorial system with 30 phase definitions (excluding `notStarted` and `completed`) across two flows plus a pipeline extension: Company Creator (~30 seconds), Employee (~20 seconds), and Pipeline phases (admin/office crew only). Features demo data, overlay tooltips, and progressive task guidance.
 
 ### Architecture Components
 
 #### TutorialPhase Enum (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Tutorial\State\TutorialPhase.swift` (520 lines)
+**Location:** `OPS/OPS/Tutorial/State/TutorialPhase.swift` (637 lines)
 
 **Flow Types:**
 ```swift
@@ -389,6 +394,18 @@ case tutorialSummary         // Summary
 case completed               // Finished
 ```
 
+**Pipeline Phases (3 phases, admin/office crew only):**
+```swift
+case pipelineOverview           // "YOUR PIPELINE" — introduces the Pipeline tab
+case estimatesOverview          // "BUILD ESTIMATES ON-SITE" — building quotes
+case invoicesOverview           // "ESTIMATES TO INVOICES" — converting to invoices
+```
+
+Pipeline phases show a Continue button immediately (`showsContinueButtonImmediately = true`) and do not require user action. They provide informational overviews of the Pipeline, Estimates, and Invoices features. Tooltip descriptions:
+- `pipelineOverview`: "Here's where you manage leads from first contact to closed deal. Drag cards between stages as deals progress."
+- `estimatesOverview`: "Build a quote on-site and send it to your client in minutes. Add line items from your product catalog or create custom ones."
+- `invoicesOverview`: "Convert approved estimates to invoices with one tap -- no re-entry. Record payments and track what's outstanding."
+
 **Phase Properties:**
 ```swift
 var tooltipText: String {
@@ -433,7 +450,7 @@ var autoAdvanceDelay: TimeInterval {
 ```
 
 #### TutorialStateManager (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Tutorial\State\TutorialStateManager.swift` (309 lines)
+**Location:** `OPS/OPS/Tutorial/State/TutorialStateManager.swift` (309 lines)
 
 ```swift
 @MainActor
@@ -519,7 +536,7 @@ struct TutorialHaptics {
 ```
 
 #### TutorialDemoDataManager (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Tutorial\Data\TutorialDemoDataManager.swift`
+**Location:** `OPS/OPS/Tutorial/Data/TutorialDemoDataManager.swift`
 
 **Responsibilities:**
 - Creates realistic demo data (clients, projects, tasks, team members)
@@ -594,8 +611,10 @@ struct TutorialHaptics {
 ### Overview
 Task-only scheduling architecture (as of November 2025 migration). All calendar events are linked to tasks, project dates are computed from task ranges.
 
+> **Note (2026-03-02):** The Schedule Tab view layer was redesigned. `CalendarSchedulerSheet` (documented below) remains the tool used for *setting* task dates from within TaskFormSheet/ProjectFormSheet. The Schedule Tab itself — how tasks are *displayed* across days — was rebuilt with `DayCanvasView` and `CalendarDaySelector`. See [Section 16: Schedule Tab](#16-schedule-tab-redesign) for the full view architecture.
+
 ### CalendarSchedulerSheet (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Views\Components\Scheduling\CalendarSchedulerSheet.swift` (968 lines)
+**Location:** `OPS/OPS/Views/Components/Scheduling/CalendarSchedulerSheet.swift` (968 lines)
 
 **Features:**
 - Visual calendar grid with event dots
@@ -617,7 +636,7 @@ struct CalendarSchedulerSheet: View {
     @State private var selectedStartDate: Date
     @State private var selectedEndDate: Date
     @State private var viewMode: ViewMode = .selecting
-    @State private var conflictingEvents: [CalendarEvent] = []
+    @State private var conflictingEvents: [ProjectTask] = []
     @State private var showOnlyTeamEvents = true
     @State private var showOnlyProjectTasks = true
 
@@ -668,16 +687,16 @@ private func handleDateSelection(_ date: Date) {
 **Conflict Detection:**
 ```swift
 private func checkForConflicts() {
-    let eventsToCheck = (showOnlyTeamEvents || showOnlyProjectTasks)
-        ? filteredCalendarEvents
-        : allCalendarEvents
+    let tasksToCheck = (showOnlyTeamEvents || showOnlyProjectTasks)
+        ? filteredScheduledTasks
+        : allScheduledTasks
 
-    conflictingEvents = eventsToCheck.filter { event in
+    conflictingEvents = tasksToCheck.filter { scheduledTask in
         // Don't count current item as conflict
         let isSameItem: Bool
         switch itemType {
         case .task(let task):
-            isSameItem = event.taskId == task.id
+            isSameItem = scheduledTask.id == task.id
         case .draftTask:
             isSameItem = false
         case .project:
@@ -685,10 +704,10 @@ private func checkForConflicts() {
         }
 
         // Check date overlap
-        if !isSameItem, let eventStart = event.startDate, let eventEnd = event.endDate {
-            let eventRange = eventStart...eventEnd
+        if !isSameItem, let taskStart = scheduledTask.startDate, let taskEnd = scheduledTask.endDate {
+            let taskRange = taskStart...taskEnd
             let selectedRange = selectedStartDate...selectedEndDate
-            return eventRange.overlaps(selectedRange)
+            return taskRange.overlaps(selectedRange)
         }
         return false
     }.sorted { ($0.startDate ?? Date.distantPast) < ($1.startDate ?? Date.distantPast) }
@@ -697,18 +716,18 @@ private func checkForConflicts() {
 
 **Team Filtering:**
 ```swift
-private func filterCalendarEvents() {
+private func filterScheduledTasks() {
     if showOnlyProjectTasks {
         if let projectId = itemType.projectId {
-            filteredCalendarEvents = allCalendarEvents.filter { event in
-                event.projectId == projectId && event.taskId != currentTaskId
+            filteredScheduledTasks = allScheduledTasks.filter { task in
+                task.projectId == projectId && task.id != currentTaskId
             }
             return
         }
     }
 
     guard showOnlyTeamEvents else {
-        filteredCalendarEvents = allCalendarEvents
+        filteredScheduledTasks = allScheduledTasks
         return
     }
 
@@ -722,14 +741,9 @@ private func filterCalendarEvents() {
         currentTeamMembers = Set(teamMemberIds)
     }
 
-    filteredCalendarEvents = allCalendarEvents.filter { event in
-        let eventTeamMembers: Set<String>
-        if let task = event.task {
-            eventTeamMembers = Set(task.getTeamMemberIds())
-        } else {
-            eventTeamMembers = Set(event.getTeamMemberIds())
-        }
-        return !currentTeamMembers.isDisjoint(with: eventTeamMembers)
+    filteredScheduledTasks = allScheduledTasks.filter { task in
+        let taskTeamMembers = Set(task.getTeamMemberIds())
+        return !currentTeamMembers.isDisjoint(with: taskTeamMembers)
     }
 }
 ```
@@ -739,7 +753,7 @@ private func filterCalendarEvents() {
 private struct SchedulerDayCell: View {
     let date: Date
     let isInCurrentMonth: Bool
-    let events: [CalendarEvent]
+    let events: [ProjectTask]
     let isSelected: Bool
     let isInRange: Bool
     let isStartDate: Bool
@@ -829,7 +843,7 @@ private struct SchedulerDayCell: View {
 Two-tier image storage: local file system for offline, S3 for cloud sync. Automatic queue-based upload when connectivity available.
 
 ### ImageSyncManager (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Network\ImageSyncManager.swift` (570 lines)
+**Location:** `OPS/OPS/Network/ImageSyncManager.swift` (570 lines)
 
 **Architecture:**
 ```swift
@@ -1118,7 +1132,7 @@ private func syncImagesForProject(projectId: String, uploads: [PendingImageUploa
 Simple 4-digit PIN for app entry barrier. Stored in Keychain (iOS) / EncryptedSharedPreferences (Android).
 
 ### SimplePINManager (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Network\Auth\SimplePINManager.swift` (56 lines)
+**Location:** `OPS/OPS/Network/Auth/SimplePINManager.swift` (56 lines)
 
 **Implementation:**
 ```swift
@@ -1202,7 +1216,7 @@ class PinManager @Inject constructor(
 Central hub for projects, tasks, clients, and dashboard. Section-based navigation with filtering, sorting, and bulk operations.
 
 ### JobBoardView (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Views\JobBoard\JobBoardView.swift` (1,211 lines)
+**Location:** `OPS/OPS/Views/JobBoard/JobBoardView.swift` (1,211 lines)
 
 **Sections:**
 ```swift
@@ -1332,7 +1346,7 @@ if !isFieldCrew {
 ```
 
 ### UniversalJobBoardCard (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Views\JobBoard\UniversalJobBoardCard.swift` (1,826 lines)
+**Location:** `OPS/OPS/Views/JobBoard/UniversalJobBoardCard.swift` (1,826 lines)
 
 **Card Types:**
 ```swift
@@ -1819,20 +1833,37 @@ struct CollapsibleSection<Content: View>: View {
 ## 9. Floating Action Menu
 
 ### Overview
-Role-restricted FAB (admin + office crew only) with expandable menu for creating projects, tasks, clients, and task types.
+Expandable FAB with role-based and context-based item visibility. Admin and office crew see full create menus. Field crew see only schedule-specific items when on the Schedule tab.
+
+**Updated:** 2026-03-02 — Added `isScheduleTab` parameter; field crew now see the FAB on the Schedule tab.
 
 ### FloatingActionMenu (iOS)
-**Location:** `C:\OPS\opsapp-ios\OPS\Views\Components\FloatingActionMenu.swift` (187 lines)
+**Location:** `OPS/OPS/Views/Components/FloatingActionMenu.swift`
 
-**Implementation:**
+**Key Behavior Changes (2026-03-02):**
+- Added `isScheduleTab: Bool = false` parameter
+- `canShowFAB` now returns `true` for **all roles** when `isScheduleTab == true`
+- When `isScheduleTab == true`, the menu shows only: "Request Time Off" and "Personal Event"
+- `ScheduleView` passes `isScheduleTab: true` to `FloatingActionMenu`
+
+**Permission System Update (March 2026):**
+- FAB visibility and menu items are being migrated from `role == .admin || role == .officeCrew` checks to the granular RBAC permission system
+- Each menu item should be individually gated by permission (e.g., "Create Project" → `projects.create`, "New Estimate" → `estimates.create`)
+- The `canShowFAB` logic should check if the user has ANY create permission for the current tab context
+- See `03_DATA_ARCHITECTURE.md` > Permissions System Tables for the complete permission schema
+
+**Current Implementation (being migrated to permissions):**
 ```swift
 struct FloatingActionMenu: View {
+    var isScheduleTab: Bool = false                       // Added 2026-03-02
     @EnvironmentObject private var dataController: DataController
     @Environment(\.tutorialMode) private var tutorialMode
     @State private var showCreateMenu = false
 
+    // LEGACY: Being replaced by permissionStore.can() checks
     private var canShowFAB: Bool {
         guard let user = dataController.currentUser else { return false }
+        if isScheduleTab { return true }                 // All roles can use schedule FAB
         return user.role == .admin || user.role == .officeCrew
     }
 
@@ -2268,23 +2299,752 @@ The following features are planned but not yet implemented:
 
 ---
 
+## 12. Photo Annotations
+
+### Overview
+PencilKit-based photo annotation feature that allows crew members to draw on project photos and attach text notes. Annotations render as transparent PNG overlays stored in S3, with the drawing data kept locally in SwiftData for offline editing. Backed by the `project_photo_annotations` Supabase table.
+
+### Architecture Components
+
+#### PhotoAnnotation Model (iOS)
+**Location:** `OPS/OPS/DataModels/Supabase/PhotoAnnotation.swift`
+
+SwiftData model with the following fields:
+```swift
+@Model
+class PhotoAnnotation: Identifiable {
+    @Attribute(.unique) var id: String
+    var projectId: String
+    var companyId: String
+    var photoURL: String           // The original photo being annotated
+    var annotationURL: String?      // S3 URL of the rendered PNG overlay
+    var note: String                // Free-text note attached to the annotation
+    var authorId: String
+    var createdAt: Date
+    var updatedAt: Date?
+    var deletedAt: Date?            // Soft delete
+
+    // Sync tracking
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+
+    // Local-only: PKDrawing data for offline editing
+    var localDrawingData: Data?
+}
+```
+
+#### PhotoAnnotationView (iOS)
+**Location:** `OPS/OPS/Views/Components/Images/PhotoAnnotationView.swift`
+
+Full-screen annotation view with three layers:
+1. **Original photo** -- AsyncImage loaded from the photo URL
+2. **Existing annotation overlay** -- rendered PNG from S3, shown when not editing
+3. **PencilKit canvas** -- active drawing surface, shown in editing mode
+
+**UI elements:**
+- **Toolbar:** Close button, Undo stroke, Clear all, Cancel editing, Done (save)
+- **Bottom bar:** Text field for adding a note to the annotation
+- **Drawing tool:** Default tool is a thin white pen (`PKInkingTool(.pen, color: .white, width: 3)`)
+- **Input mode:** `drawingPolicy = .anyInput` -- works with both finger and Apple Pencil
+- **Tool picker:** System `PKToolPicker` shown via `UIViewRepresentable` wrapper
+
+**PencilKitCanvas:** UIViewRepresentable wrapper around `PKCanvasView` with:
+- Transparent background (`.clear`, `.isOpaque = false`)
+- Coordinator that syncs `canvasViewDrawingDidChange` back to the SwiftUI `@Binding`
+- Tool picker visibility managed via `showToolPicker` binding
+
+#### PhotoAnnotationSyncManager (iOS)
+**Location:** `OPS/OPS/Network/PhotoAnnotationSyncManager.swift`
+
+Singleton (`PhotoAnnotationSyncManager.shared`) that handles:
+1. **Rendering** -- `renderDrawingToPNG(drawing:size:)` uses `UIGraphicsImageRenderer` to render `PKDrawing` strokes onto a transparent PNG at the image's native size
+2. **S3 upload** -- Requests a presigned URL from `AppConfiguration.apiBaseURL/api/uploads/presign`, then PUTs the PNG to S3 with content type `image/png`. Files stored at `annotations/{companyId}/{projectId}/annotation_{timestamp}.png`
+3. **Supabase record** -- Creates or updates a row in `project_photo_annotations` via `PhotoAnnotationRepository`
+4. **Offline fallback** -- If S3 upload fails, the `PKDrawing` data is stored locally in `localDrawingData`, and `needsSync` is set to `true`
+5. **Pending sync** -- `syncPendingAnnotations(modelContext:)` fetches all annotations where `needsSync == true`, re-renders and uploads them
+
+#### PhotoAnnotationRepository (iOS)
+**Location:** `OPS/OPS/Network/Supabase/Repositories/PhotoAnnotationRepository.swift`
+
+**Table:** `project_photo_annotations`
+
+**Methods:**
+- `fetchForProject(projectId)` -- all non-deleted annotations for a project, ordered by `created_at` descending
+- `fetchForPhoto(projectId, photoURL)` -- single annotation for a specific photo
+- `create(dto)` / `upsert(dto)` -- insert or upsert annotation
+- `updateAnnotation(id, annotationUrl, note)` -- partial update with `updated_at` timestamp
+- `softDelete(id)` -- sets `deleted_at` and `updated_at`
+
+#### PhotoAnnotationDTOs (iOS)
+**Location:** `OPS/OPS/Network/Supabase/DTOs/PhotoAnnotationDTOs.swift`
+
+```swift
+struct PhotoAnnotationDTO: Codable, Identifiable {
+    let id: String
+    let projectId: String       // project_id
+    let companyId: String       // company_id
+    let photoUrl: String        // photo_url
+    let annotationUrl: String?  // annotation_url (S3 PNG)
+    let note: String?
+    let authorId: String        // author_id
+    let createdAt: String
+    let updatedAt: String?
+    let deletedAt: String?
+}
+
+struct UpsertPhotoAnnotationDTO: Codable {
+    let projectId: String
+    let companyId: String
+    let photoUrl: String
+    let annotationUrl: String?
+    let note: String
+    let authorId: String
+}
+```
+
+---
+
+## 13. Inventory Management
+
+### Overview
+Materials and supplies tracking system with items, tags, units, quantity thresholds, snapshots, bulk operations, and spreadsheet import. Uses a tactical minimalist design with pinch-to-zoom card scaling.
+
+### Architecture Components
+
+#### InventoryView (iOS)
+**Location:** `OPS/OPS/Views/Inventory/InventoryView.swift`
+
+Main inventory view with:
+- **Search** -- text-based item search
+- **Tag filtering** -- filter by selected tags
+- **Sort modes** -- TAG, NAME, QUANTITY, THRESHOLD
+- **Selection mode** -- multi-select for bulk operations
+- **Pinch-to-zoom** -- `@AppStorage("inventoryCardScale")` with range 0.8 to 1.5, persisted
+- **Import** -- spreadsheet import button
+- **Manage tags** -- global tag rename/delete
+
+**Bulk operations (selection mode):**
+- **Bulk quantity adjustment** -- apply +/- amount to all selected items
+- **Bulk tag editing** -- add/remove tags from all selected items
+- **Bulk delete** -- soft delete multiple items with confirmation
+
+#### InventoryListView (iOS)
+**Location:** `OPS/OPS/Views/Inventory/InventoryListView.swift`
+
+LazyVStack of `InventoryItemCard` components with:
+- **Progressive disclosure via scale:**
+  - Scale >= 0.9: show tag badges (up to 4 visible, "+N" for overflow)
+  - Scale >= 1.0: show metadata (SKU) and full threshold badge with unit display
+- **Quantity display** -- large Mohave font, colored by threshold status
+- **Threshold badges** -- "LOW", "CRITICAL" labels with colored pill background
+- **Long press** -- confirmation dialog with Edit, Select, Delete options
+- **Item count footer** -- "[ N ITEMS ]"
+
+#### InventoryFormSheet (iOS)
+**Location:** `OPS/OPS/Views/Inventory/InventoryFormSheet.swift`
+
+Form for creating and editing inventory items with:
+- **Item Details section** (always expanded): Name, Quantity + Unit picker, Tags (with inline add, predictive suggestions, and existing tag pills)
+- **Additional Details section** (collapsible): Description, SKU/Part Number, Notes, Quantity Thresholds (warning + critical levels with colored indicators)
+- **Tag creation:** Tags are created in Supabase first to obtain server IDs, then linked locally. `findOrCreateTag()` handles both sync and local creation.
+- **Tag junction sync:** `repo.setItemTags(itemId:tagIds:)` syncs the item-to-tag relationship
+
+#### QuantityAdjustmentSheet (iOS)
+**Location:** `OPS/OPS/Views/Inventory/QuantityAdjustmentSheet.swift`
+
+Quick quantity adjustment with:
+- Large Mohave-Bold (56pt) quantity display, tappable for direct text entry
+- Horizontal scroll of quick-adjust pills: [-100, -50, -10, -1, +1, +10, +50, +100] (configurable via `AdjustmentSettings`)
+- Change indicator showing `current -> new` with color coding (green for increase, red for decrease)
+- Auto-scroll to center pill on appear
+- Haptic feedback on each adjustment
+
+#### BulkQuantityAdjustmentSheet (iOS)
+**Location:** `OPS/OPS/Views/Inventory/BulkQuantityAdjustmentSheet.swift`
+
+Applies the same +/- adjustment to all selected items:
+- Same quick-adjust pills as single-item sheet
+- Preview toggle to show/hide affected items with current-to-new quantities
+- Syncs each item individually to Supabase, reports failures
+
+#### BulkTagsSheet (iOS)
+**Location:** `OPS/OPS/Views/Inventory/BulkTagsSheet.swift`
+
+Add/remove tags from multiple selected items:
+- **Pending changes section** -- shows tags to add ("+") and tags to remove ("-") as badges
+- **Create new tag** -- inline text field to create and add a new tag
+- **Add existing tags** -- pills for all available company tags not yet on all items
+- **Remove tags** -- pills for tags currently on any selected items, with item count
+- Creates new tags in Supabase, syncs junction table for each item
+
+#### InventoryManageTagsSheet (iOS)
+**Location:** `OPS/OPS/Views/Inventory/InventoryManageTagsSheet.swift`
+
+Global tag management:
+- Search/filter tags
+- Status bar showing total tags and total items tagged
+- Per-tag row with rename (alert dialog) and delete (confirmation) actions
+- Rename applies across all items; delete removes from all items
+
+#### SnapshotListView (iOS)
+**Location:** `OPS/OPS/Views/Inventory/SnapshotListView.swift`
+
+Point-in-time inventory snapshots:
+- List of snapshots with date, item count, and type (Automatic/Manual)
+- Detail view with summary card and itemized list (quantity, unit, name, SKU)
+- Fetched from Supabase via `repo.fetchSnapshots()` and `repo.fetchSnapshotItems(snapshotId:)`
+
+#### Spreadsheet Import (iOS)
+**Location:** `OPS/OPS/Views/Inventory/Import/SpreadsheetImportSheet.swift`
+
+Multi-step import wizard:
+1. **Select File** -- file picker for CSV or XLSX via `fileImporter`
+2. **Configure** -- orientation (rows-are-items or columns-are-items), import mode (multiple items, single item, or variations)
+3. **Map Fields** -- interactive column-to-field mapping (`ColumnMappingView`)
+4. **Preview** -- parsed items with validation, duplicate detection, selection, inline editing (`ImportPreviewView`)
+5. **Importing** -- progress bar, syncs each item to Supabase with tags
+6. **Complete** -- results summary (created, skipped, failed)
+
+Supporting files:
+- `OPS/OPS/Views/Inventory/Import/ImportConfigView.swift` -- orientation and mode selection
+- `OPS/OPS/Views/Inventory/Import/ColumnMappingView.swift` -- column-to-field mapping
+- `OPS/OPS/Views/Inventory/Import/ImportPreviewView.swift` -- preview with editing and filtering
+
+---
+
+## 14. Notification System
+
+### Overview
+Multi-layer notification system combining local (UNUserNotificationCenter), push (OneSignal), and in-app (Supabase `notifications` table) notifications. Features batching during sync, deep linking to projects, unread tracking, quiet hours, and per-type preference controls.
+
+### Architecture Components
+
+#### NotificationManager (iOS)
+**Location:** `OPS/OPS/Utilities/NotificationManager.swift`
+
+Singleton (`NotificationManager.shared`) managing all notification operations.
+
+**Notification Categories:**
+```swift
+enum NotificationCategory: String {
+    case project = "PROJECT_NOTIFICATION"
+    case schedule = "SCHEDULE_NOTIFICATION"
+    case team = "TEAM_NOTIFICATION"
+    case general = "GENERAL_NOTIFICATION"
+    case projectAssignment = "PROJECT_ASSIGNMENT_NOTIFICATION"
+    case projectUpdate = "PROJECT_UPDATE_NOTIFICATION"
+    case projectCompletion = "PROJECT_COMPLETION_NOTIFICATION"
+    case projectAdvance = "PROJECT_ADVANCE_NOTIFICATION"
+}
+```
+
+**Notification Actions:**
+```swift
+enum NotificationAction: String {
+    case view = "VIEW_ACTION"
+    case accept = "ACCEPT_ACTION"
+    case decline = "DECLINE_ACTION"
+    case dismiss = "DISMISS_ACTION"
+}
+```
+
+**Priority Levels:**
+```swift
+enum NotificationPriorityLevel: String {
+    case normal = "normal"
+    case important = "important"
+    case critical = "critical"
+}
+```
+
+**Key Responsibilities:**
+- Permission request and authorization status tracking
+- OneSignal integration (`OneSignalFramework`) for push notifications
+- Local notification scheduling: project assignment, schedule update, project completion, advance notice
+- `shouldSendNotification(priority:)` -- filters based on user settings (quiet hours, mute, priority level)
+- Significant location change listener for geofence-based notifications
+- Combines `UNUserNotificationCenter.delegate` for foreground notification handling
+
+#### NotificationBatcher (iOS)
+**Location:** `OPS/OPS/Utilities/NotificationBatcher.swift`
+
+Singleton that collects notifications during sync and sends grouped summaries to avoid notification spam.
+
+**Batch Types:**
+```swift
+enum NotificationType: String, CaseIterable {
+    case assignment = "assignment"
+    case scheduleChange = "scheduleChange"
+    case completion = "completion"
+    case taskAssignment = "taskAssignment"
+    case taskUpdate = "taskUpdate"
+}
+```
+
+**Batch Lifecycle:**
+1. `startBatch()` -- begins collecting (called at sync start)
+2. `add(type:projectId:projectName:taskId:details:)` -- queues a notification; if not in batch mode, sends immediately via NotificationManager
+3. `flushBatch()` -- groups by type, generates one summary notification per type (single items get specific detail, multiple get count summary)
+4. `cancelBatch()` -- discards all pending without sending
+
+#### NotificationRepository (iOS)
+**Location:** `OPS/OPS/Network/Supabase/Repositories/NotificationRepository.swift`
+
+**Table:** `notifications`
+
+**Methods:**
+- `fetchUnreadCount(userId:)` -- server-side count via `head: true, count: .exact` (no row transfer)
+- `fetchRecent(userId:, limit: 50)` -- last 50 notifications ordered by `created_at` descending
+- `markAsRead(notificationId)` -- sets `is_read = true` for a single notification
+- `markAllAsRead(userId:)` -- sets `is_read = true` for all unread notifications for a user
+
+#### NotificationDTO (iOS)
+**Location:** `OPS/OPS/Network/Supabase/DTOs/NotificationDTO.swift`
+
+```swift
+struct NotificationDTO: Codable, Identifiable {
+    let id: String
+    let userId: String        // user_id
+    let companyId: String     // company_id
+    let type: String          // "mention", "assignment", "update"
+    let title: String
+    let body: String
+    let projectId: String?    // project_id (for deep linking)
+    let noteId: String?       // note_id (for @mention notifications)
+    var isRead: Bool          // is_read
+    let createdAt: String     // created_at
+}
+```
+
+#### NotificationListView (iOS)
+**Location:** `OPS/OPS/Views/Notifications/NotificationListView.swift`
+
+In-app notification list:
+- Fetches from `NotificationRepository.fetchRecent(userId:)`
+- Each row shows: unread dot indicator, type-specific icon (mention = primaryAccent, assignment = successStatus, update = secondaryText), title (bold if unread), body (2 lines), relative time
+- Tap action: marks as read locally and on server, deep links to project if `projectId` is set via `appState.viewProjectDetailsById()`
+- "Mark All Read" toolbar button
+- Empty state with bell.slash icon
+
+#### NotificationSettingsView (iOS)
+**Location:** `OPS/OPS/Views/Settings/NotificationSettingsView.swift`
+
+User notification preferences stored in `@AppStorage`:
+- **Per-type toggles:** Project Assignment, Schedule Changes, Project Completion
+- **Advance notice:** configurable days (1st required, 2nd/3rd optional), time of day
+- **Quiet hours:** enabled/disabled, start hour (default 22:00), end hour (default 07:00)
+- **Priority filter:** "all", "important", "critical"
+- **Temporary mute:** mute for N hours
+
+---
+
+## 15. Crew Location Tracking
+
+### Overview
+Real-time crew location broadcasting and subscribing system for the map view. Active crew members broadcast their GPS position to the `crew_locations` Supabase table. Admins and office crew subscribe to see all org members on the map. Includes throttling, noise filtering, battery level reporting, and background state tracking.
+
+### Architecture Components
+
+#### CrewLocationUpdate Model
+**Location:** `OPS/OPS/Map/Models/CrewLocationUpdate.swift`
+
+```swift
+struct CrewLocationUpdate: Codable {
+    let userId: String
+    let orgId: String
+    let firstName: String
+    var lastName: String?
+    let lat: Double
+    let lng: Double
+    let heading: Double
+    let speed: Double
+    let accuracy: Double
+    let timestamp: Date
+    let batteryLevel: Float
+    let isBackground: Bool
+    var currentTaskName: String?
+    var currentProjectName: String?
+    var currentProjectId: String?
+    var currentProjectAddress: String?
+    var phoneNumber: String?
+}
+```
+
+#### CrewLocationBroadcaster (iOS)
+**Location:** `OPS/OPS/Map/Services/CrewLocationBroadcaster.swift`
+
+`@MainActor` singleton that publishes the current user's location.
+
+**Broadcast behavior:**
+- Subscribes to `LocationManager.$currentLocation` via Combine
+- **Throttling:** broadcast every 5 seconds when moving (speed > 1 m/s), every 30 seconds when stationary
+- **Persist throttling:** writes to Supabase every 10 seconds when moving, every 60 seconds when stationary
+- **Noise filtering:** rejects readings older than 10 seconds, accuracy worse than 50m, and identical coordinates
+- Reports battery level and background/foreground state
+
+**Local broadcast:** Posts `crewLocationDidUpdate` NotificationCenter notification for same-device subscribers (e.g., the map view)
+
+**Supabase persistence:** Upserts to `crew_locations` table via `CrewLocationUpsertDTO` with fields: `user_id`, `org_id`, `first_name`, `last_name`, `lat`, `lng`, `heading`, `speed`, `accuracy`, `battery_level`, `is_background`, `phone_number`, `updated_at`
+
+#### CrewLocationSubscriber (iOS)
+**Location:** `OPS/OPS/Map/Services/CrewLocationSubscriber.swift`
+
+`@MainActor` observable that maintains a dictionary of `[userId: CrewLocationUpdate]` for all org members.
+
+**Subscription behavior:**
+1. `subscribe(orgId:)` -- loads initial state from `crew_locations` table, then:
+   - Listens for local `crewLocationDidUpdate` notifications (from the broadcaster on the same device)
+   - Polls the DB every 15 seconds via `Timer` for updates from other devices
+2. `unsubscribe()` -- clears all data, cancels subscriptions and timer
+
+**DB row mapping:**
+```swift
+struct CrewLocationRow: Codable {
+    let user_id: String
+    let org_id: String
+    let first_name: String
+    let last_name: String?
+    let lat: Double
+    let lng: Double
+    let heading: Double?
+    let speed: Double?
+    let accuracy: Double?
+    let battery_level: Float?
+    let is_background: Bool?
+    let current_task_name: String?
+    let current_project_name: String?
+    let current_project_id: String?
+    let current_project_address: String?
+    let phone_number: String?
+    let updated_at: Date
+}
+```
+
+#### LocationManager (iOS)
+**Location:** `OPS/OPS/Utilities/LocationManager.swift`
+
+Core location wrapper providing:
+- Authorization status tracking with `@Published var authorizationStatus`
+- User coordinate, full CLLocation (with course), device heading, and GPS course
+- Configured with `kCLLocationAccuracyNearestTenMeters`, 10m distance filter, automotive activity type
+- Heading updates with 5-degree filter
+- `requestPermissionIfNeeded(requestAlways:)` with session-level deduplication
+
+---
+
+## 16. Schedule Tab Redesign
+
+**Added:** 2026-03-02
+**Scope:** Complete replacement of the Schedule Tab view layer.
+
+### Overview
+
+The Schedule Tab was redesigned to replace the old week/month toggle pattern with a continuous day-based pager and personal event support. The `CalendarSchedulerSheet` (used for setting task dates) was not changed.
+
+### Deleted Components
+
+| File | Replaced By |
+|------|-------------|
+| `CalendarToggleView.swift` | `CalendarDaySelector` (week strip + month grid toggle) |
+| `ProjectListView.swift` | `DayCanvasView` (horizontal day pager) |
+
+### New Components
+
+#### DayCanvasView
+**File:** `Views/Calendar Tab/DayCanvasView.swift`
+
+Horizontal 3-page `TabView` pager using the infinite-scroll trick:
+- Pages are always `[selectedDate - 1 day, selectedDate, selectedDate + 1 day]`
+- On page change, `selectedDate` is updated and `pageIndex` snaps back to 1 after a 50ms `DispatchQueue` delay
+- An `isSnappingBack` boolean guards against re-triggering the page change handler during the snap-back
+- Each page renders a `DayPageView` containing:
+  - Day header (day-of-week string, date string, task count badge)
+  - "New" tasks section — tasks whose `startDate` is on this day, with staggered card entry animation
+  - "Ongoing" tasks section — tasks started before this day, separated by a labeled divider
+  - `CalendarUserEventCard` rows for personal events and time-off requests
+  - Empty state when no tasks or events exist
+
+#### CalendarDaySelector
+**File:** `Views/Calendar Tab/Components/CalendarDaySelector.swift`
+
+Combined week strip and month grid:
+- Default state: horizontal `WeekDayCell` row (7 days visible, centered on `selectedDate`)
+- `isMonthExpanded == true`: expands to `MonthGridView` via `matchedGeometryEffect` hero animation
+- Pinch gesture on the month grid collapses it back to the week strip
+
+#### WeekDayCell
+**File:** `Views/Calendar Tab/Components/WeekDayCell.swift`
+
+Day cell in the week strip:
+- Shows day abbreviation and day number
+- Up to 4 colored density bars — one per distinct task color for tasks on that day
+- If >4 tasks exist, the fourth slot shows `···` overflow indicator instead of a bar
+- Today is highlighted with a distinct background
+
+#### CalendarEventCard
+**File:** `Views/Calendar Tab/Components/CalendarEventCard.swift`
+
+Task card in `DayPageView`. Has a `DayPosition` enum: `.single`, `.start`, `.middle`, `.end` — used to visually connect multi-day tasks with open leading/trailing edges.
+
+#### CalendarUserEventCard
+**File:** `Views/Calendar Tab/Components/CalendarUserEventCard.swift`
+
+Card for personal events and time-off requests:
+- Shows event title, type badge ("Personal" / "Time Off"), date range
+- Time-off cards show status badge ("Pending" / "Approved" / "Rejected")
+- Supports swipe-to-delete
+
+#### PersonalEventSheet
+**File:** `Views/Calendar Tab/Components/PersonalEventSheet.swift`
+
+Bottom sheet for creating a personal calendar event:
+- Fields: title, start date, end date, all-day toggle, notes
+- Creates `CalendarUserEvent` with `type: .personal`, `status: .confirmed`
+- Syncs to `calendar_user_events` Supabase table immediately
+
+#### TimeOffRequestSheet
+**File:** `Views/Calendar Tab/Components/TimeOffRequestSheet.swift`
+
+Bottom sheet for submitting a time-off request:
+- Fields: title, start date, end date, notes
+- Uses amber color scheme (distinct from blue personal event sheet)
+- Wrapped in `ScrollView` so the submit button remains visible above keyboard
+- Creates `CalendarUserEvent` with `type: .timeOff`, `status: .pending`
+- Syncs to `calendar_user_events` Supabase table immediately
+
+#### MonthGridView
+**File:** `Views/Calendar Tab/MonthGridView.swift`
+
+Full month calendar grid:
+- Accessible by tapping the month icon in `AppHeader`
+- Supports pinch-to-collapse gesture that restores week strip
+- Animates open/close via `matchedGeometryEffect` tied to `CalendarDaySelector`
+
+### ScheduleView Orchestration
+
+**File:** `Views/ScheduleView.swift`
+
+- Renders `CalendarDaySelector` above `DayCanvasView` (no more view-mode switch)
+- Passes `onMonthTapped: { viewModel.toggleMonthExpanded() }` to `AppHeader`
+- Listens for `ShowPersonalEventSheet` notification → sets `showPersonalEventSheet = true`
+- Listens for `ShowTimeOffRequestSheet` notification → sets `showTimeOffRequestSheet = true`
+- Passes `isScheduleTab: true` to `FloatingActionMenu`
+
+### CalendarViewModel Changes
+
+| Change | Detail |
+|--------|--------|
+| Added `isMonthExpanded: Bool` | Drives week strip ↔ month grid toggle |
+| Added `toggleMonthExpanded()` | Called by AppHeader month icon tap; uses spring animation |
+| Added `userEvents(for:) -> [CalendarUserEvent]` | Returns personal events/time-off for a given date |
+| Added `loadUserEvents() async` | Fetches `CalendarUserEvent` records from Supabase |
+| Removed `shouldShowDaySheet` | No longer needed (DayEventsSheet pattern eliminated) |
+| Removed `resetDaySheetState()` | Removed with the above |
+
+### Data Layer
+
+- **SwiftData model:** `CalendarUserEvent` — see `03_DATA_ARCHITECTURE.md` section 25
+- **Supabase table:** `calendar_user_events`
+- **Repository:** `CalendarUserEventRepository.swift`
+- **DTOs:** `CalendarUserEventDTOs.swift`
+- **RLS note:** Uses `CAST(auth.uid() AS TEXT) = user_id` due to UUID/text type mismatch
+
+---
+
+## 17. Web Calendar Overhaul (OPS-Web)
+
+**Added:** 2026-03-02
+**Scope:** Complete rebuild of the OPS-Web calendar from a 1119-line monolith into a modular 18-component interactive scheduling system.
+
+### Overview
+
+The web calendar was rebuilt across 4 phases to match best-in-class scheduling UX from Jobber, ServiceTitan, and Google Calendar. Key capabilities: drag-and-drop scheduling, event resize, 5 view modes, multi-filter sidebar, team Gantt timeline, conflict detection, and full keyboard navigation.
+
+### Architecture
+
+```
+calendar-store.ts  →  page.tsx (orchestrator)  →  Grid components
+     (Zustand)         ↕                           ↕
+                    TanStack Query hooks         event-block.tsx
+                    (useCalendarEventsForRange)   (draggable via @dnd-kit)
+                       ↕
+                    Supabase CRUD
+```
+
+**State management:** Zustand store (`calendar-store.ts`) with `persist` middleware. Persisted to localStorage `"ops-calendar"`: view preference, filter selections. Ephemeral: selected event, panel states, quick-create anchor, drag state.
+
+### File Structure
+
+```
+src/app/(dashboard)/calendar/
+  page.tsx                          — Orchestrator (~420 lines)
+  _components/
+    calendar-header.tsx             — Nav, view switcher, filter toggle
+    calendar-toolbar.tsx            — Stats bar + filter chips
+    calendar-grid-month.tsx         — Month grid view
+    calendar-grid-week.tsx          — Week time grid (7 cols)
+    calendar-grid-day.tsx           — Day time grid (1 col)
+    calendar-grid-team.tsx          — Team Gantt timeline
+    calendar-agenda.tsx             — Agenda list view
+    time-grid-column.tsx            — Shared column for week/day
+    current-time-indicator.tsx      — Red line for current time
+    event-block.tsx                 — Draggable + resizable event
+    event-block-month.tsx           — Compact event for month cells
+    event-tooltip.tsx               — Hover tooltip
+    event-detail-panel.tsx          — Right Sheet for editing
+    event-context-menu.tsx          — Right-click menu
+    event-quick-create.tsx          — Click-to-create popover
+    filter-sidebar.tsx              — Left filter panel
+    unscheduled-panel.tsx           — Drag source for unscheduled tasks
+    calendar-dnd-context.tsx        — @dnd-kit provider + overlay
+
+src/stores/calendar-store.ts        — Zustand store
+src/lib/hooks/use-calendar-dnd.ts   — DnD handlers + snap logic
+src/lib/utils/calendar-utils.ts     — Positioning, snapping, overlap, conflict detection
+src/lib/utils/calendar-constants.ts — HOURS, HOUR_HEIGHT (60px), FIRST_HOUR (6), task type colors
+```
+
+### Constants
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `HOUR_HEIGHT` | 60px | Pixels per hour in time grids |
+| `FIRST_HOUR` | 6 | Grid starts at 6 AM |
+| `HOURS` | 6–23 | Array of rendered hours |
+| `TEAM_HOUR_COLUMN_WIDTH` | 80px | Pixels per hour in team timeline |
+| Snap interval | 15 min | All DnD and resize operations snap to 15 minutes |
+| `ROW_HEIGHT` (team) | 56px | Height per team member row |
+| `MEMBER_GUTTER_WIDTH` | 180px | Team member name column width |
+
+### Drag-and-Drop System
+
+**Provider:** `CalendarDndContext` wraps all grid content.
+
+**Sensor:** `PointerSensor` from `@dnd-kit/core` with `activationConstraint: { distance: 8 }`.
+
+**Flow:**
+1. `handleDragStart` — sets `draggedEventId` in store, finds event data
+2. `handleDragMove` — computes pixel→time delta (view-aware axis), updates `dragPreview` in store for real-time time labels on `DragOverlay`
+3. `handleDragEnd` — snaps to 15-min grid, calls `useUpdateCalendarEvent()` mutation, clears drag state
+
+**Axis awareness:**
+- Week/Day views: `deltaMinutes = (delta.y / HOUR_HEIGHT) * 60`
+- Team view: `deltaMinutes = (delta.x / TEAM_HOUR_COLUMN_WIDTH) * 60`
+
+**Unscheduled task drop:** When a task from the UnscheduledPanel is dropped onto the grid, a new calendar event is created and linked to the task via `useCreateCalendarEvent()`.
+
+### Event Resize
+
+Bottom-edge resize uses native mouse events (not @dnd-kit, which doesn't support resize):
+- 6px hit area at bottom of `EventBlock` with `cursor-ns-resize`
+- `mousedown` → captures start Y position
+- `mousemove` on document → computes delta, snaps to `HOUR_HEIGHT / 4` (15 min)
+- `mouseup` → calls `onResize(event, newEndDate)` → `useUpdateCalendarEvent()`
+- Minimum height enforced at 15 minutes (one snap unit)
+- DnD listeners disabled during resize via `{...(isResizing ? {} : listeners)}`
+
+### Click-and-Drag Range Selection
+
+In `TimeGridColumn`:
+- `DRAG_THRESHOLD = 8` pixels before triggering range mode
+- `mousedown` starts tracking, `mousemove` shows blue highlight (`bg-ops-accent/15 border border-ops-accent/40`) with time labels
+- `mouseup` fires `onRangeSelect(startDate, endDate, clientX, clientY)` → opens quick-create popover
+- `data-event-block` attribute on events prevents range drag from triggering on event elements
+- `isDraggingRef` prevents click handler from firing after a drag
+
+### Conflict Detection
+
+`detectConflicts()` in `calendar-utils.ts`:
+- Groups events by team member ID
+- For each member, sorts events by start time
+- Checks if any event's start time falls before the previous event's end time
+- Returns `Set<string>` of conflicting event IDs
+- `conflictIds` passed to grid components → `EventBlock` shows red ring + glow: `ring-1 ring-red-500/60 shadow-[0_0_8px_rgba(239,68,68,0.3)]`
+
+### Team Timeline (Gantt View)
+
+`CalendarGridTeam`:
+- Y-axis: one row per team member (56px height) with avatar + name in left gutter (180px)
+- X-axis: hours of the day (80px per hour)
+- Events rendered as horizontal bars positioned by `(startHour - FIRST_HOUR) * 80` with width `durationHours * 80`
+- `TeamEventBar` component uses `useDraggable` with horizontal-only transform: `translate3d(${transform.x}px, 0px, 0)`
+- Availability heatmap: each row has a background div with opacity `= Math.min(totalScheduledMinutes / 480, 1) * 0.12` — 8 hours (480 min) = fully loaded
+- Unassigned row for events with no team member assignment
+
+### Animations
+
+Defined in `src/lib/utils/motion.ts`:
+
+| Variant | Behavior | Duration |
+|---------|----------|----------|
+| `calendarViewVariants` | Horizontal slide ±40px + fade | 300ms ease |
+| `calendarViewVariantsReduced` | Opacity-only fade | 150ms |
+| `calendarEventVariants` | Scale 0.95→1 + fade | 150ms ease |
+| `calendarEventVariantsReduced` | Opacity-only | 100ms |
+| `SPRING_CALENDAR_DRAG` | Spring stiffness: 400, damping: 30 | N/A |
+
+All animations use `useReducedMotion()` from framer-motion to select reduced variants when the user has `prefers-reduced-motion` enabled.
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| D / W / M / T / A | Switch view (day/week/month/team/agenda) |
+| ArrowLeft / ArrowRight | Navigate prev/next (period-aware) |
+| Y | Go to today |
+| C | Create event (opens quick-create at viewport center) |
+| E | Edit selected event (opens detail panel) |
+| Tab / Shift+Tab | Cycle through events |
+| Enter | Open detail panel for selected event |
+| Delete / Backspace | Delete selected event |
+| Escape | Close panels, deselect, dismiss menus |
+
+Shortcuts are disabled when focus is in an `<input>` or `<textarea>`.
+
+### Responsive Breakpoints
+
+| Breakpoint | Layout | Behavior |
+|------------|--------|----------|
+| Desktop ≥1200px | Three-panel | Filter sidebar + calendar grid + detail panel |
+| Tablet 768–1199px | Two-panel | All views available, sidebar toggleable |
+| Mobile <768px | Single panel | Agenda view forced, filter sidebar hidden, view switcher hidden |
+
+### Dependencies
+
+| Package | Version | Usage |
+|---------|---------|-------|
+| `@dnd-kit/core` | 6.3.0 | DnD provider, sensors, draggable, overlay |
+| `framer-motion` | — | View transitions, event animations, reduced motion |
+| `@radix-ui/react-popover` | — | Quick-create popover |
+| `date-fns` | — | All date math (addMinutes, differenceInMinutes, format, etc.) |
+| Zustand | — | Client-side state with persist middleware |
+| TanStack Query | — | Server state, optimistic updates |
+
+---
+
 ## Android Implementation Priority
 
 **CRITICAL (must implement):**
 1. FloatingActionMenu (completely missing)
 2. PIN Manager (must change to 4-digit)
 3. SwipeToChangeStatus gesture system
-4. Tutorial system (25 phases)
+4. Tutorial system (30 phase definitions + pipeline phases)
 5. CalendarSchedulerSheet with conflict detection
+6. Schedule Tab redesign: DayCanvasView, CalendarDaySelector, WeekDayCell density bars
 
 **HIGH (feature parity):**
-6. ImageSyncManager with S3 integration
-7. NavigationEngine with Kalman filter
-8. Job Board filtering and sorting
-9. Form sheets with progressive disclosure
+7. ImageSyncManager with S3 integration
+8. NavigationEngine with Kalman filter
+9. Job Board filtering and sorting
+10. Form sheets with progressive disclosure
+11. Inventory management system
+12. Notification system with OneSignal
+13. Crew location tracking
+14. CalendarUserEvent (personal events + time-off)
 
 **MEDIUM (polish):**
-10. Advanced UI patterns (custom alerts, etc.)
+15. Advanced UI patterns (custom alerts, etc.)
+16. Photo annotation with PencilKit equivalent
 
 ---
 
