@@ -2636,6 +2636,48 @@ User notification preferences stored in `@AppStorage`:
 - **Priority filter:** "all", "important", "critical"
 - **Temporary mute:** mute for N hours
 
+#### Web Notification Rail (OPS Web)
+
+The web app surfaces notifications via a horizontal rail in the TopBar header, replacing the old page action buttons (now handled by the FAB).
+
+**Components:**
+- `src/components/layouts/notification-rail.tsx` — Container with collapsed/expanded toggle
+- `src/components/layouts/notification-pill.tsx` — Collapsed indicator (6×14px rounded pill, color-coded)
+- `src/components/layouts/notification-mini-card.tsx` — Expanded inline card (180px, frosted glass, 36px tall)
+- `src/components/layouts/notification-card-full.tsx` — Full card for modal view (title, body, timestamp, action button)
+- `src/components/layouts/notification-modal.tsx` — Centered dialog with grouped notifications (Today/Yesterday/Earlier)
+
+**States:**
+- **Collapsed (default):** Row of small pills stacking left-to-right (oldest first). Gray = standard, accent (#597794) = persistent. Count label after pills. Click to expand.
+- **Expanded:** Pills animate into mini cards with horizontal scroll. Each card shows title, optional action button, optional dismiss X. "View all" button at end.
+- **Modal:** Triggered by bell icon or "View all". Full notification cards grouped by date. "Dismiss all" for non-persistent.
+
+**Data Model Extensions (Web):**
+```typescript
+interface AppNotification {
+  // ... base fields (id, userId, companyId, type, title, body, projectId, noteId, isRead, createdAt) ...
+  persistent: boolean;       // true = cannot be dismissed by user
+  actionUrl: string | null;  // deep-link (e.g. "/projects/abc")
+  actionLabel: string | null; // button label (e.g. "View Results")
+}
+```
+
+Supabase columns: `persistent` (BOOLEAN DEFAULT false), `action_url` (TEXT), `action_label` (TEXT).
+
+**State Management:**
+- `src/stores/notification-rail-store.ts` — Zustand store for collapsed/expanded/modal UI state
+- `src/lib/hooks/use-notifications.ts` — TanStack Query hook with 30s stale time, optimistic dismiss mutations (`useDismissNotification`, `useDismissAllNotifications`)
+
+**Service Methods (Web):**
+- `NotificationService.fetchUnread(userId, companyId)` — ascending order, limit 50
+- `NotificationService.markAsRead(notificationId)` — single dismiss
+- `NotificationService.markAllAsRead(userId, companyId)` — mark all read
+- `NotificationService.dismissAllDismissible(userId, companyId)` — dismiss only non-persistent
+
+**Animation:** All variants in `src/lib/utils/motion.ts` with `EASE_SMOOTH` easing and reduced-motion fallbacks. No spring/bounce.
+
+**Integration Pattern:** Any feature that produces a user-facing event should insert a row into the `notifications` table. The rail picks it up automatically via the polling hook.
+
 ---
 
 ## 15. Crew Location Tracking
