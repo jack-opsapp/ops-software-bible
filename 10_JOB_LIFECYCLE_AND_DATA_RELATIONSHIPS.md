@@ -1265,7 +1265,7 @@ The `Project.projectImages` field (comma-separated string) is deprecated. Migrat
 
 ## Gmail Integration
 
-> **Platform status**: Gmail integration API routes exist on OPS-Web (`/api/integrations/gmail/`, `gmail-service.ts`, `use-gmail-connections.ts`). No Gmail integration exists on iOS — there are no Gmail-related Swift files in the iOS codebase.
+> **Platform status**: Gmail integration is fully implemented on OPS-Web. 14 API routes under `/api/integrations/gmail/`, plus 4 services, 3 hooks, and a 6-step setup wizard. No Gmail integration exists on iOS.
 
 ### Connection Architecture
 
@@ -1285,18 +1285,155 @@ Settings → Integrations → Gmail
   └─ My Gmail: [Connect My Gmail] → OAuth → GmailConnection (type: individual, userId: me)
 ```
 
+**API routes:**
+- `GET /api/integrations/gmail` — builds Google consent URL, redirects to OAuth
+- `GET /api/integrations/gmail/callback` — exchanges auth code for tokens, stores in `gmail_connections`
+
+### Email Setup Wizard
+
+A 6-step wizard guides new users through connecting Gmail and importing leads. Located in `src/components/settings/email-setup-wizard.tsx`.
+
+**Steps:**
+1. **Connect** — OAuth flow (button triggers `/api/integrations/gmail?companyId=...`)
+2. **How It Works** — explains scan → filter → import → review flow
+3. **Scan** — scans up to 500 emails, pre-filters via blocklist, sends to GPT-4o-mini for AI classification
+4. **Filters** — `<EmailFilterBuilder>` for manual filter editing + AI-suggested filters
+5. **Import** — date range picker (7d / 30d / 90d / 6mo / custom)
+6. **Review** — previews contacts/clients/leads to be created with inline editing
+
+**Wizard state is persisted** on the `GmailConnection.syncFilters` object (`wizardCompleted`, `wizardStep`, `lastScanJobId`, `lastScanSummary`).
+
+### Email Scanning & AI Classification
+
+The scan flow discovers what's in a user's inbox and recommends filters automatically.
+
+**Scan API routes:**
+- `POST /api/integrations/gmail/scan-start` — creates async scan job, returns `jobId`
+- `GET /api/integrations/gmail/scan-status` — polls scan progress (stages: pending → listing → fetching → pre_filtering → classifying → complete)
+- `GET /api/integrations/gmail/scan-preview` — one-shot scan of up to 500 emails
+
+**AI Classifier** (`src/lib/api/services/email-classifier.ts`):
+- Model: GPT-4o-mini via OpenAI SDK
+- Input: up to 500 sanitized emails (~40K tokens)
+- Output: recommended `GmailSyncFilters` — domains, addresses, keywords to block
+- Cost: < 1¢ per customer (single call)
+- Safety: protected domains (gmail.com, yahoo.com, etc.) stripped server-side even if AI returns them
+
+### Email Filter System
+
+**Service:** `src/lib/api/services/email-filter-service.ts`
+
+Three layers of filtering:
+
+1. **Preset blocklist** — seeded in `email_filter_presets` table. Categories: newsletters, notifications, retailers, payment providers, social media, etc. Toggled via `syncFilters.usePresetBlocklist`.
+2. **Domain/address/keyword exclusions** — `excludeDomains[]`, `excludeAddresses[]`, `excludeSubjectKeywords[]` on `GmailSyncFilters`.
+3. **Structured filter rules** — `EmailFilterRule[]` with field/operator/value pattern:
+
+```typescript
+interface EmailFilterRule {
+  id: string;
+  field: "subject" | "from_email" | "from_domain" | "label" | "body";
+  operator: "contains" | "not_contains" | "equals" | "not_equals" | "starts_with" | "ends_with";
+  value: string;
+}
+```
+
+Rules combine via `ruleLogic: "all" | "any"` (AND vs OR).
+
+### 3-Tier Client Matching
+
+**Service:** `src/lib/api/services/email-matching-service.ts`
+
+When emails are imported, each is matched against existing clients:
+
+| Tier | Strategy | Confidence | Auto-link? |
+|------|----------|------------|------------|
+| 1 | Exact email match (client or sub-client email) | `exact` | Yes |
+| 2 | Domain match (non-public domain, 1 client) | `domain` | Yes |
+| 2b | Domain match (multiple clients share domain) | `domain` | No — `needsReview: true` |
+| 3 | Phone signature match (phone in email body) | `phone` | No — `needsReview: true` |
+| — | Thread inheritance (threadId already linked) | `exact` | Yes |
+
+**Public domains** (gmail.com, yahoo.com, outlook.com, etc.) are excluded from domain matching. Defined in `PUBLIC_EMAIL_DOMAINS` in `src/lib/types/pipeline.ts`.
+
+### Historical Import
+
+Imports historical emails in bulk with client/lead creation.
+
+**API routes:**
+- `POST /api/integrations/gmail/historical-import` — starts import job
+- `GET /api/integrations/gmail/import-status?jobId=...` — polls progress
+
+**Import flow:**
+```
+1. Wizard sends approved contacts + date range + connection ID
+2. Server creates job in gmail_import_jobs table
+3. Background (Next.js after()):
+   a. Fetch all emails in date range from Gmail API (batched)
+   b. Deduplicate via emailMessageId
+   c. Apply user's filter rules
+   d. 3-tier match each email to existing clients
+   e. Create Activity records for matched emails
+   f. Create clients and leads from approved contacts
+4. Client polls import-status every 3s via useGmailImport hook
+5. Completion shows Action Prompt with results
+```
+
+**Approved contacts** — the wizard's Review step produces an `ApprovedContact[]` sent to the import endpoint:
+
+```typescript
+interface ApprovedContact {
+  fromEmail: string;
+  name: string;
+  createLead: boolean;
+  isCompanyGroup?: boolean;  // true for domain-grouped companies
+  subContacts?: Array<{ fromEmail: string; name: string }>;
+}
+```
+
+### Company Grouping from Email Domains
+
+When the Review step detects 2+ distinct people from the same non-public domain (e.g., `john@acme.com` + `jane@acme.com`), it auto-groups them as a company:
+
+- **Company name** auto-derived from domain (e.g., "Acme"), editable inline
+- **Sub-contacts** listed under the company card with individual email counts
+- **Server-side creation:** Creates one `Client` for the company + `SubClient` for each person
+- **Key:** `domain:acme.com` (prefixed to distinguish from individual email keys)
+
+### Existing Client Detection
+
+The Review step fetches all existing clients via `useClients()` and builds two lookup maps:
+- `emailToClient: Map<string, Client>` — exact email → existing client
+- `domainToClients: Map<string, Client[]>` — domain → existing clients (non-public domains only)
+
+Matches are displayed with:
+- Orange "Exists" badge on the contact card
+- Orange left border highlight
+- "Matches existing: [name]" label
+- Sorted to top of contact list for visibility
+
+Existing clients are not re-created — the import endpoint checks by email before creating.
+
+### Review & Match Management
+
+**API routes for post-import review:**
+- `GET /api/integrations/gmail/review-items` — activities needing manual review (unmatched / low-confidence)
+- `POST /api/integrations/gmail/confirm-match` — promotes `suggested_client_id` to `client_id`
+- `POST /api/integrations/gmail/reject-match` — clears client references, marks unmatched
+- `POST /api/integrations/gmail/ignore` — dismisses activity (marks as read)
+- `POST /api/integrations/gmail/block-domain` — adds domain to `excludeDomains`, marks all from that domain as read
+
 ### Incremental Sync Logic
 
-Gmail API `history.list` is used for incremental sync (not full mailbox scan):
+Gmail API `history.list` is used for ongoing incremental sync (not full mailbox scan):
 
 ```
 1. Initial sync: fetch last 90 days of messages matching known client emails
 2. Subsequent syncs: fetch history since GmailConnection.historyId
 3. For each new message:
    a. Extract sender + recipient email addresses
-   b. Match against Client.email in database
+   b. 3-tier match against clients (exact email → domain → phone)
    c. If match found:
-      → Find open Opportunity for that Client
       → Check: does Activity with emailMessageId already exist? (dedup)
       → If no: create Activity {
            type: 'email',
@@ -1306,22 +1443,91 @@ Gmail API `history.list` is used for incremental sync (not full mailbox scan):
            emailThreadId: Gmail threadId,
            emailMessageId: Gmail messageId,
            isRead: false (inbound) | true (outbound),
-           opportunityId: found opportunity
+           clientId: matched client
          }
-   d. If no match (unknown sender):
-      → Check if email looks like an inquiry (heuristic)
-      → If yes: surface in "Inbox Leads" queue
+   d. If no match (unknown sender): create Activity with needsReview flag
 4. Update GmailConnection.historyId = latest historyId
 5. Update GmailConnection.lastSyncedAt = now
 ```
 
-### Inbox Leads Queue
+**API routes:**
+- `POST /api/integrations/gmail/manual-sync` — manually triggers sync
+- `GET /api/integrations/gmail/labels` — returns user's Gmail labels for filter builder UI
 
-When Gmail detects an email from an unknown sender that may be an inquiry:
-- Appears in Pipeline board as a notification badge or a "Review inbox leads" panel
-- Staff sees: sender name, email, subject, body preview
-- Actions: "Create Lead" (creates Opportunity from email data) | "Ignore"
-- "Create Lead" sets `opportunity.source = 'email'` and `opportunity.sourceEmailId = gmail messageId`
+### Lead Auto-Creation Logic
+
+In the Review step, leads are auto-flagged for contacts whose first inquiry was within the last 14 days. Users can toggle lead creation per contact via the Lead/Client badge.
+
+When a lead is created:
+- `opportunity.source = 'email'`
+- `opportunity.stage = 'new_lead'`
+- `opportunity.winProbability = 20`
+- `opportunity.tags = ['email-import']`
+- Existing open opportunities are checked first — no duplicates created.
+
+### Data Types
+
+**GmailConnection:**
+```typescript
+interface GmailConnection {
+  id: string;
+  companyId: string;
+  type: 'company' | 'individual';
+  userId: string | null;
+  email: string;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: Date;
+  historyId: string | null;
+  syncEnabled: boolean;
+  lastSyncedAt: Date | null;
+  syncIntervalMinutes: number;
+  syncFilters: GmailSyncFilters;
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+**GmailSyncFilters:**
+```typescript
+interface GmailSyncFilters {
+  labelIds: string[];
+  excludeDomains: string[];
+  excludeAddresses: string[];
+  excludeSubjectKeywords: string[];
+  includeSentMail: boolean;
+  usePresetBlocklist: boolean;
+  rules?: EmailFilterRule[];
+  ruleLogic?: 'all' | 'any';
+  wizardCompleted?: boolean;
+  wizardStep?: string;
+  lastScanJobId?: string;
+  lastScanSummary?: string;
+  lastScanTotal?: number;
+  lastScanImportCount?: number;
+}
+```
+
+**GmailImportJob:**
+```typescript
+interface GmailImportJob {
+  id: string;
+  companyId: string;
+  connectionId: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  importAfter: Date;
+  totalEmails: number;
+  processed: number;
+  matched: number;
+  unmatched: number;
+  needsReview: number;
+  clientsCreated: number;
+  leadsCreated: number;
+  errorMessage: string | null;
+  createdAt: Date;
+  completedAt: Date | null;
+}
+```
 
 ### Thread Grouping
 
@@ -1335,6 +1541,30 @@ Emails with the same `emailThreadId` are grouped visually in the Activity timeli
    └─ You: "Happy to clarify — the membrane..."       2 days ago
    └─ John: "Perfect, let's proceed"                  Yesterday
 ```
+
+### Service & Hook Inventory
+
+**Services** (`src/lib/api/services/`):
+| Service | File | Purpose |
+|---------|------|---------|
+| GmailService | `gmail-service.ts` | OAuth tokens, connection CRUD, message fetch |
+| EmailFilterService | `email-filter-service.ts` | Presets, blocklist, structured rules |
+| EmailMatchingService | `email-matching-service.ts` | 3-tier client matching |
+| EmailClassifier | `email-classifier.ts` | GPT-4o-mini email classification |
+
+**Hooks** (`src/lib/hooks/`):
+| Hook | File | Purpose |
+|------|------|---------|
+| useGmailConnections | `use-gmail-connections.ts` | TanStack Query: fetch, update, delete connections |
+| useGmailImport | `use-gmail-import.ts` | Start import, poll progress, Action Prompt UX |
+| useGmailSyncNotifications | `use-gmail-sync-notifications.ts` | Real-time sync event notifications |
+
+**Components:**
+| Component | File | Purpose |
+|-----------|------|---------|
+| EmailSetupWizard | `settings/email-setup-wizard.tsx` | 6-step wizard (Connect → Review) |
+| EmailFilterBuilder | `settings/email-filter-builder.tsx` | Filter rule editor UI |
+| FilterFunnelCanvas | `settings/filter-funnel-canvas.tsx` | Visual funnel showing filter stats |
 
 ---
 

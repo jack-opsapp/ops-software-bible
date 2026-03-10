@@ -61,6 +61,8 @@ iOS App (SwiftData)                   OPS Web (Next.js)
     |-- HTTPS --------> app.opsapp.co ----+--- /api/uploads/presign --> AWS S3
     |                                      +--- /api/notifications/send --> OneSignal
     |                                      +--- /api/stripe/* --> Stripe
+    |                                      +--- /api/integrations/gmail/* --> Gmail API (14 routes)
+    |                                      +--- /api/admin/migrate-bubble --> Bubble migration
     |
     |-- OneSignalFramework (receive push)
     |-- FirebaseAnalytics (event tracking)

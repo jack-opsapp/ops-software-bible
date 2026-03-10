@@ -186,7 +186,7 @@ Start with the Executive Summary to understand the business context, then procee
 - Automation rules: client auto-creation, project auto-creation, task generation, status cascades, auto follow-ups
 - Communication logging: manual (call/email/meeting/note) + Gmail auto-logging + activity comments
 - Site visits: schedulable, on-site photo/note capture, lifecycle status, photo continuity to project
-- Gmail integration: company inbox + per-user, incremental sync, inbox leads queue
+- Gmail integration: company inbox + per-user, incremental sync, inbox leads queue, 6-step setup wizard, AI email classification (GPT-4o-mini), 3-tier client matching, historical import with approved contacts, domain-based company grouping, existing client detection, structured email filter rules
 - Complete Supabase ALTER TABLE statements and new table SQL
 - 4-phase implementation priority order
 

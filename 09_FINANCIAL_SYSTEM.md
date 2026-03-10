@@ -123,7 +123,7 @@ interface Opportunity {
   // Denormalized
   lastActivityAt: Date | null;
   nextFollowUpAt: Date | null;
-  tags: string[];
+  tags: string[];                      // e.g., ['email-import'] for Gmail-created leads
 
   createdAt: Date;
   updatedAt: Date;

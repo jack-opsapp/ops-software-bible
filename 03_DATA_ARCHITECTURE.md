@@ -1833,4 +1833,93 @@ This data architecture provides:
 6. User uses `firstName`/`lastName` (not `nameFirst`/`nameLast`)
 7. TaskStatus has 3 states: `.active`, `.completed`, `.cancelled`
 
+---
+
+## Gmail Integration Tables (Web Only)
+
+These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` for full integration documentation.
+
+### gmail_connections
+
+```sql
+CREATE TABLE gmail_connections (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id            UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  user_id               UUID REFERENCES users(id),
+  type                  TEXT NOT NULL DEFAULT 'company',  -- 'company' | 'individual'
+  email                 TEXT NOT NULL,
+  access_token          TEXT NOT NULL,
+  refresh_token         TEXT NOT NULL,
+  expires_at            TIMESTAMPTZ NOT NULL,
+  history_id            TEXT,                             -- Gmail incremental sync cursor
+  sync_enabled          BOOLEAN DEFAULT true,
+  last_synced_at        TIMESTAMPTZ,
+  sync_interval_minutes INTEGER DEFAULT 15,
+  sync_filters          JSONB DEFAULT '{}',               -- GmailSyncFilters object
+  created_at            TIMESTAMPTZ DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at            TIMESTAMPTZ
+);
+```
+
+`sync_filters` stores a `GmailSyncFilters` JSON object containing label IDs, exclude lists, structured filter rules, wizard state, and scan results.
+
+### gmail_import_jobs
+
+```sql
+CREATE TABLE gmail_import_jobs (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        UUID NOT NULL REFERENCES companies(id),
+  connection_id     UUID NOT NULL REFERENCES gmail_connections(id),
+  status            TEXT NOT NULL DEFAULT 'pending',  -- pending | running | completed | failed
+  import_after      DATE NOT NULL,
+  total_emails      INTEGER DEFAULT 0,
+  processed         INTEGER DEFAULT 0,
+  matched           INTEGER DEFAULT 0,
+  unmatched         INTEGER DEFAULT 0,
+  needs_review      INTEGER DEFAULT 0,
+  clients_created   INTEGER DEFAULT 0,
+  leads_created     INTEGER DEFAULT 0,
+  error_message     TEXT,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  completed_at      TIMESTAMPTZ
+);
+```
+
+### gmail_scan_jobs
+
+```sql
+CREATE TABLE gmail_scan_jobs (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        UUID NOT NULL REFERENCES companies(id),
+  connection_id     UUID NOT NULL REFERENCES gmail_connections(id),
+  status            TEXT NOT NULL DEFAULT 'pending',  -- pending | running | completed | failed
+  stage             TEXT DEFAULT 'pending',           -- pending | listing | fetching | pre_filtering | classifying | complete | error
+  current           INTEGER DEFAULT 0,
+  total             INTEGER DEFAULT 0,
+  message           TEXT,
+  results           JSONB,                            -- ScannedEmail[] when complete
+  ai_filters        JSONB,                            -- AI-recommended GmailSyncFilters
+  summary           TEXT,                             -- AI analysis summary
+  error_message     TEXT,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  completed_at      TIMESTAMPTZ
+);
+```
+
+### email_filter_presets
+
+```sql
+CREATE TABLE email_filter_presets (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category    TEXT NOT NULL,          -- e.g., 'newsletters', 'notifications', 'retailers'
+  type        TEXT NOT NULL,          -- 'domain' | 'keyword'
+  value       TEXT NOT NULL,          -- e.g., 'noreply.github.com' or 'unsubscribe'
+  is_active   BOOLEAN DEFAULT true,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+Seeded with ~100+ common noise sources across categories. Used by `EmailFilterService.buildBlocklist()` when `usePresetBlocklist` is true.
+
 **End of Data Architecture Documentation**
