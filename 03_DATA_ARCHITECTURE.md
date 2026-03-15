@@ -340,7 +340,7 @@ final class User {
     var phone: String?
     var profileImageURL: String?
     var profileImageData: Data?
-    var role: UserRole                       // .admin, .officeCrew, .fieldCrew
+    var role: UserRole                       // .admin, .owner, .office, .operator, .crew, .unassigned
     var companyId: String?
     var userType: UserType?                  // .employee, .company
     var latitude: Double?
@@ -986,7 +986,7 @@ enum CalendarUserEventStatus: String, Codable {
 ## Permissions System Tables
 
 **Added**: March 2026 (Migration 015 + 016)
-**Purpose**: RBAC+ABAC permission system replacing the legacy 3-role enum (`UserRole`) and ad-hoc boolean flags.
+**Purpose**: RBAC+ABAC permission system augmenting the 6-role enum (`UserRole`: admin, owner, office, operator, crew, unassigned) with granular per-permission control, replacing ad-hoc boolean flags.
 
 ### Architecture Overview
 
@@ -1038,7 +1038,7 @@ CREATE TABLE roles (
 ```sql
 CREATE TABLE role_permissions (
   role_id     uuid REFERENCES roles(id) ON DELETE CASCADE,
-  permission  app_permission NOT NULL,  -- enum of ~55 dot-notation permissions
+  permission  app_permission NOT NULL,  -- enum of ~59 dot-notation permissions
   scope       permission_scope DEFAULT 'all',  -- enum: 'all', 'assigned', 'own'
 
   PRIMARY KEY (role_id, permission)
@@ -1070,13 +1070,13 @@ CREATE TYPE app_permission AS ENUM (
   'clients.view', 'clients.create', 'clients.edit', 'clients.delete',
   'calendar.view', 'calendar.create', 'calendar.edit', 'calendar.delete',
   'job_board.view', 'job_board.manage_sections',
-  -- Financial (18)
-  'estimates.view', 'estimates.create', 'estimates.edit', 'estimates.delete', 'estimates.send',
+  -- Financial (22)
+  'estimates.view', 'estimates.create', 'estimates.edit', 'estimates.delete', 'estimates.send', 'estimates.convert',
   'invoices.view', 'invoices.create', 'invoices.edit', 'invoices.delete',
-  'invoices.send', 'invoices.record_payment',
+  'invoices.send', 'invoices.record_payment', 'invoices.void',
   'pipeline.view', 'pipeline.manage', 'pipeline.configure_stages',
   'products.view', 'products.manage',
-  'expenses.view', 'expenses.create', 'expenses.edit', 'expenses.approve',
+  'expenses.view', 'expenses.create', 'expenses.edit', 'expenses.delete', 'expenses.approve', 'expenses.configure',
   'accounting.view', 'accounting.manage_connections',
   -- Resources (8)
   'inventory.view', 'inventory.manage', 'inventory.import',
@@ -1121,9 +1121,13 @@ Having scope `all` automatically satisfies checks for `assigned` and `own`. Havi
 | clients.create | all | all | all | all | — |
 | pipeline.view | all | all | all | — | — |
 | estimates.view | all | all | all | all | — |
+| estimates.convert | all | all | all | — | — |
 | invoices.view | all | all | all | all | — |
+| invoices.void | all | all | all | — | — |
 | expenses.view | all | all | all | **own** | **own** |
+| expenses.delete | all | all | all | **own** | **own** |
 | expenses.approve | all | all | all | — | — |
+| expenses.configure | all | all | all | — | — |
 | inventory.view | all | all | all | — | — |
 | team.assign_roles | all | — | — | — | — |
 | settings.company | all | all | — | — | — |
@@ -1131,6 +1135,10 @@ Having scope `all` automatically satisfies checks for `assigned` and `own`. Havi
 | map.view_crew_locations | all | all | all | — | — |
 
 *This is a subset — see migration 015 for the complete permission grants per role.*
+
+**Scope expansions (added March 2026):**
+- `expenses.approve`: now supports `assigned` scope (approve expenses on assigned projects)
+- `pipeline.manage`: now supports `own` scope (manage own pipeline deals)
 
 ### has_permission() RPC Function
 
@@ -1193,6 +1201,64 @@ The web app (OPS-Web) implements the permission system with:
 - **Sidebar** — Nav items filtered by permission (e.g., `permission: "invoices.view"`)
 - **Route guard** — Dashboard layout blocks render of gated routes until permissions load
 - **Settings** — Roles sub-tab gated behind `team.assign_roles`
+
+### Permission Enforcement Matrix
+
+Every page, tab, and action button in OPS-Web must be gated. This matrix is the source of truth.
+
+#### Route-Level Gates (layout.tsx → ROUTE_PERMISSIONS)
+
+| Route | Permission | Feature Flag |
+|-------|-----------|-------------|
+| /projects | projects.view | — |
+| /calendar | calendar.view | — |
+| /clients | clients.view | — |
+| /job-board | job_board.view | — |
+| /team | team.view | — |
+| /map | map.view | — |
+| /pipeline | pipeline.view | pipeline |
+| /estimates | estimates.view | estimates |
+| /invoices | invoices.view | invoices |
+| /products | products.view | products |
+| /inventory | inventory.view | inventory |
+| /accounting | accounting.view | accounting |
+| /portal-inbox | portal.view | portal |
+
+#### Settings Tab Gates (SUB_TAB_PERMISSIONS)
+
+| Tab ID | Permission Required |
+|--------|-------------------|
+| company-details | settings.company |
+| team | team.view |
+| roles | team.assign_roles |
+| task-types | settings.company |
+| inventory | inventory.manage |
+| expenses | expenses.configure |
+| subscription | settings.billing |
+| payment | settings.billing |
+| email | settings.integrations |
+| portal | portal.manage_branding |
+| templates | documents.manage_templates |
+| accounting | accounting.manage_connections |
+| setup-wizards | settings.company |
+
+Tabs without entries (profile, appearance, notifications, shortcuts, preferences-general, map, data-privacy) are personal settings accessible to all authenticated users.
+
+#### Action Button Gating Pattern
+
+When building any feature with user actions, gate with `<PermissionGate>` or `can()`:
+
+| Action Pattern | Permission Required |
+|---------------|-------------------|
+| Create [resource] | [module].create |
+| Edit [resource] | [module].edit |
+| Delete [resource] | [module].delete |
+| Send [document] | [module].send |
+| Void [document] | [module].void |
+| Convert [document] | [module].convert |
+| Approve [item] | [module].approve |
+| Configure [settings] | [module].configure or settings.* |
+| Manage [integration] | [module].manage_connections |
 
 ### Legacy Fields Being Replaced
 
@@ -1379,13 +1445,17 @@ Legacy mapping: "Scheduled"/"Booked"/"booked"/"In Progress"/"in_progress" all ma
 
 ```swift
 enum UserRole: String, Codable {
-    case fieldCrew = "field_crew"
-    case officeCrew = "office_crew"
     case admin = "admin"
+    case owner = "owner"
+    case office = "office"
+    case operator = "operator"
+    case crew = "crew"
+    case unassigned = "unassigned"
 }
 ```
 
-Legacy title-case ("Field Crew", "Office Crew", "Admin") handled by custom decoder.
+Default role for company creator: `.owner`. Default role for new users: `.unassigned`.
+Legacy title-case ("Field Crew", "Office Crew", "Admin") and legacy snake_case ("field_crew", "office_crew") handled by custom decoder.
 
 ### UserType
 
@@ -1744,7 +1814,7 @@ CalendarEvent is no longer a model in the codebase. Scheduling dates (`startDate
 
 - **Project Status**: Changed from title-case ("RFQ", "In Progress") to snake_case ("rfq", "in_progress"). Custom decoders handle both.
 - **TaskStatus**: Simplified to 3 states: `.active`, `.completed`, `.cancelled`. Legacy values ("Scheduled", "Booked", "In Progress") all map to `.active`.
-- **UserRole**: Changed from title-case ("Field Crew") to snake_case ("field_crew"). Custom decoder handles both.
+- **UserRole**: Expanded from 3 roles (admin, office_crew, field_crew) to 6 roles (admin, owner, office, operator, crew, unassigned). Legacy values ("Field Crew", "field_crew", "Office Crew", "office_crew") mapped to `.crew` and `.office` respectively by custom decoder.
 
 ---
 

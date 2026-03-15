@@ -2411,8 +2411,8 @@ The Job Board is the central operational hub of OPS. It was redesigned in March 
 ```swift
 // File: Views/JobBoard/JobBoardView.swift
 enum JobBoardSection: String, CaseIterable {
-    case myTasks    = "MY TASKS"      // Field crew: tasks explicitly assigned to user
-    case myProjects = "MY PROJECTS"   // Field crew: projects user is a team member of
+    case myTasks    = "MY TASKS"      // Crew: tasks explicitly assigned to user
+    case myProjects = "MY PROJECTS"   // Crew: projects user is a team member of
     case projects   = "PROJECTS"      // Office/Admin: all company projects with filters
     case tasks      = "TASKS"         // Office/Admin: all company tasks with filters
     case kanban     = "KANBAN"        // Office/Admin: project distribution by status
@@ -2432,9 +2432,9 @@ enum JobBoardSection: String, CaseIterable {
 func visibleSections(for user: User?) -> [JobBoardSection] {
     guard let user = user else { return [.projects] }
     switch user.role {
-    case .fieldCrew:
+    case .crew:
         return [.myTasks, .myProjects]
-    case .officeCrew:
+    case .office:
         return [.projects, .tasks, .kanban]
     case .admin:
         var sections: [JobBoardSection] = [.projects, .tasks, .kanban]
@@ -2448,15 +2448,15 @@ func visibleSections(for user: User?) -> [JobBoardSection] {
 // Default starting section per role
 func defaultSection(for user: User?) -> JobBoardSection {
     guard let user = user else { return .projects }
-    return user.role == .fieldCrew ? .myTasks : .projects
+    return user.role == .crew ? .myTasks : .projects
 }
 ```
 
 **Permission-based replacement**: With the new RBAC system, section visibility should use `can("job_board.manage_sections")` for the section picker and `can("pipeline.view")` for the Pipeline section. Users with `projects.view` scoped to `assigned` see only My Tasks / My Projects.
 
 **Key business rules:**
-- Field crew: Section picker is hidden. Always shows `.myTasks` (no toggle to other sections)
-- Office crew: Sees projects, tasks, kanban — no pipeline unless granted
+- Crew: Section picker is hidden. Always shows `.myTasks` (no toggle to other sections)
+- Office: Sees projects, tasks, kanban — no pipeline unless granted
 - Admin: Sees pipeline section only if `specialPermissions.contains("pipeline")`
 - Tutorial mode: Forces `.projects` section for tutorial phases that require it
 
@@ -2464,8 +2464,8 @@ func defaultSection(for user: User?) -> JobBoardSection {
 
 | Section | View | Purpose |
 |---------|------|---------|
-| `.myTasks` | `JobBoardMyTasksView` | Field crew personal task list, filtered by explicit assignment |
-| `.myProjects` | `JobBoardProjectListView` (filtered) | Field crew project list, filtered to assigned projects only |
+| `.myTasks` | `JobBoardMyTasksView` | Crew personal task list, filtered by explicit assignment |
+| `.myProjects` | `JobBoardProjectListView` (filtered) | Crew project list, filtered to assigned projects only |
 | `.projects` | `JobBoardProjectListView` | All company projects with status/team filters |
 | `.tasks` | `JobBoardTasksView` (inline in JobBoardView) | All company tasks with status/type filters |
 | `.kanban` | `JobBoardKanbanView` | Project distribution across statuses as proportional bars |

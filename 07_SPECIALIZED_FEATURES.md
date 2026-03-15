@@ -24,6 +24,7 @@
 14. [Notification System](#14-notification-system)
 15. [Crew Location Tracking](#15-crew-location-tracking)
 16. [Schedule Tab Redesign](#16-schedule-tab-redesign)
+17. [Feature Flags System](#17-feature-flags-system)
 
 ---
 
@@ -349,8 +350,8 @@ Interactive tutorial system with 30 phase definitions (excluding `notStarted` an
 **Flow Types:**
 ```swift
 enum TutorialFlowType: String, CaseIterable {
-    case companyCreator  // Admin/Office Crew flow
-    case employee        // Field Crew flow
+    case companyCreator  // Admin/Owner/Office flow
+    case employee        // Crew/Operator flow
 }
 ```
 
@@ -564,9 +565,9 @@ struct TutorialHaptics {
 - Scheduled across next 2 weeks
 
 // Demo team members (4 total)
-- "John Smith" (Field Crew, Electrician)
-- "Sarah Johnson" (Field Crew, Plumber)
-- "Mike Davis" (Office Crew)
+- "John Smith" (Crew, Electrician)
+- "Sarah Johnson" (Crew, Plumber)
+- "Mike Davis" (Office)
 - "Emily Brown" (Admin)
 ```
 
@@ -1329,18 +1330,18 @@ private var filteredTasks: [ProjectTask] {
 }
 ```
 
-**Field Crew Restrictions:**
+**Crew Restrictions:**
 ```swift
-private var isFieldCrew: Bool {
-    return dataController.currentUser?.role == .fieldCrew
+private var isCrew: Bool {
+    return dataController.currentUser?.role == .crew
 }
 
 // In body:
-if !isFieldCrew {
+if !isCrew {
     JobBoardSectionSelector(selectedSection: $selectedSection)
         .padding(.top, 70)
 } else {
-    // Field crew only sees dashboard
+    // Crew only sees dashboard
     Spacer().frame(height: 70)
 }
 ```
@@ -1833,9 +1834,9 @@ struct CollapsibleSection<Content: View>: View {
 ## 9. Floating Action Menu
 
 ### Overview
-Expandable FAB with role-based and context-based item visibility. Admin and office crew see full create menus. Field crew see only schedule-specific items when on the Schedule tab.
+Expandable FAB with role-based and context-based item visibility. Admin and office see full create menus. Crew see only schedule-specific items when on the Schedule tab.
 
-**Updated:** 2026-03-02 — Added `isScheduleTab` parameter; field crew now see the FAB on the Schedule tab.
+**Updated:** 2026-03-02 — Added `isScheduleTab` parameter; crew now see the FAB on the Schedule tab.
 
 ### FloatingActionMenu (iOS)
 **Location:** `OPS/OPS/Views/Components/FloatingActionMenu.swift`
@@ -1847,7 +1848,7 @@ Expandable FAB with role-based and context-based item visibility. Admin and offi
 - `ScheduleView` passes `isScheduleTab: true` to `FloatingActionMenu`
 
 **Permission System Update (March 2026):**
-- FAB visibility and menu items are being migrated from `role == .admin || role == .officeCrew` checks to the granular RBAC permission system
+- FAB visibility and menu items are being migrated from `role == .admin || role == .office` checks to the granular RBAC permission system
 - Each menu item should be individually gated by permission (e.g., "Create Project" → `projects.create`, "New Estimate" → `estimates.create`)
 - The `canShowFAB` logic should check if the user has ANY create permission for the current tab context
 - See `03_DATA_ARCHITECTURE.md` > Permissions System Tables for the complete permission schema
@@ -1864,7 +1865,7 @@ struct FloatingActionMenu: View {
     private var canShowFAB: Bool {
         guard let user = dataController.currentUser else { return false }
         if isScheduleTab { return true }                 // All roles can use schedule FAB
-        return user.role == .admin || user.role == .officeCrew
+        return user.role == .admin || user.role == .office
     }
 
     var body: some View {
@@ -1997,7 +1998,7 @@ fun FloatingActionMenu(
     modifier: Modifier = Modifier
 ) {
     val currentUser by dataController.currentUser.collectAsState()
-    val canShowFAB = currentUser?.role in listOf(UserRole.ADMIN, UserRole.OFFICE_CREW)
+    val canShowFAB = currentUser?.role in listOf(UserRole.ADMIN, UserRole.OFFICE)
 
     var showCreateMenu by remember { mutableStateOf(false) }
 
@@ -3087,6 +3088,102 @@ Shortcuts are disabled when focus is in an `<input>` or `<textarea>`.
 **MEDIUM (polish):**
 15. Advanced UI patterns (custom alerts, etc.)
 16. Photo annotation with PencilKit equivalent
+
+---
+
+## 17. Feature Flags System
+
+### Overview
+
+Feature flags provide a master on/off toggle for entire product modules, independent of RBAC permissions. An admin can disable a flag to hide an entire feature from all users, or grant individual user overrides for early access/beta testing.
+
+Feature flags and RBAC permissions work together:
+1. **Feature flag** must be enabled (or user must have an override) for the feature's routes and permissions to be accessible
+2. **RBAC permission** must be granted to the user's role for them to see/use specific actions within that feature
+
+If either check fails, the feature is inaccessible. Feature flags are the "master switch"; RBAC is the "granular control."
+
+### Database Schema
+
+#### `feature_flags` Table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `slug` | text (PK) | Unique identifier (e.g., "pipeline", "estimates") |
+| `label` | text | Human-readable name |
+| `description` | text | Feature description |
+| `enabled` | boolean | Master on/off switch |
+| `routes` | text[] | Route paths gated by this flag |
+| `permissions` | text[] | RBAC permissions gated by this flag |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
+
+#### `feature_flag_overrides` Table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `flag_slug` | text (FK) | References feature_flags.slug |
+| `user_id` | uuid (FK) | References users.id |
+| `created_at` | timestamptz | |
+
+Constraint: UNIQUE(flag_slug, user_id)
+
+### Current Feature Flags
+
+| Slug | Label | Routes | Permissions Gated | Default |
+|------|-------|--------|-------------------|---------|
+| `pipeline` | Pipeline CRM | /pipeline | pipeline.view, pipeline.manage, pipeline.configure_stages | Enabled |
+| `accounting` | Accounting | /accounting | accounting.view, accounting.manage_connections | Enabled |
+| `estimates` | Estimates | /estimates | estimates.view, estimates.create, estimates.edit, estimates.delete, estimates.send, estimates.convert | Enabled |
+| `invoices` | Invoices | /invoices | invoices.view, invoices.create, invoices.edit, invoices.delete, invoices.send, invoices.record_payment, invoices.void | Enabled |
+| `products` | Products & Services | /products | products.view, products.manage | Enabled |
+| `inventory` | Inventory | /inventory | inventory.view, inventory.manage, inventory.import | Enabled |
+| `portal` | Client Portal | /portal-inbox | portal.view, portal.manage_branding | Enabled |
+
+### Client-Side Implementation
+
+**Zustand Store** (`feature-flags-store.ts`):
+- `canAccessFeature(slug)` — true if flag enabled OR user has override
+- `isPermissionUnlocked(permission)` — true if permission's flag is enabled (or permission not gated)
+- `isRouteUnlocked(pathname)` — true if route's flag is enabled (or route not gated)
+- `fetchFlags(userId)` — fetches from `/api/feature-flags?userId=...`
+
+**Fail-Closed Behavior**: If API fails after 1 retry, all gated features default to DISABLED.
+
+**Static Fallback** (`feature-flag-definitions.ts`): Hardcoded route/permission maps used when API unreachable.
+
+### Enforcement Layers
+
+1. **Sidebar** (`sidebar.tsx`): Filters nav items by `isPermissionUnlocked(permission)` then `can(permission)`. Both must pass.
+2. **Route layout** (`layout.tsx`): Checks `isRouteUnlocked(pathname)` and `can(requiredPermission)`. Shows 404 if either fails.
+3. **Widget tray** (`widget-tray.tsx`): Filters available widgets by permission (indirectly gated by flags).
+
+### Admin Management
+
+Managed at `/admin/feature-releases`:
+- Toggle flag enabled/disabled
+- Edit routes and permissions a flag gates
+- Grant/revoke per-user overrides (early access)
+- Create new flags
+- Search users by name/email
+
+**API Endpoints:**
+- `GET /api/feature-flags?userId={uuid}` — Client: fetch flags
+- `GET /api/admin/feature-flags` — Admin: list all with override counts
+- `PATCH /api/admin/feature-flags` — Admin: update flag
+- `POST /api/admin/feature-flags` — Admin: create flag
+- `GET /api/admin/feature-flags/overrides?flagSlug={slug}` — Admin: list overrides
+- `POST /api/admin/feature-flags/overrides` — Admin: grant override
+- `DELETE /api/admin/feature-flags/overrides` — Admin: revoke override
+
+### Adding a New Feature Flag
+
+1. Insert row into `feature_flags` with slug, routes, permissions
+2. Update static fallback in `feature-flag-definitions.ts`
+3. Ensure sidebar nav item has `permission` field matching a gated permission
+4. Verify `ROUTE_PERMISSIONS` in `layout.tsx` maps the route correctly
+5. Test: disable flag → route returns 404, sidebar hides item, widgets filtered
 
 ---
 
