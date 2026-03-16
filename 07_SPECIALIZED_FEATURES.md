@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** March 2, 2026
+**Last Updated:** March 16, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -3140,6 +3140,8 @@ Constraint: UNIQUE(flag_slug, user_id)
 | `products` | Products & Services | /products | products.view, products.manage | Enabled |
 | `inventory` | Inventory | /inventory | inventory.view, inventory.manage, inventory.import | Enabled |
 | `portal` | Client Portal | /portal-inbox | portal.view, portal.manage_branding | Enabled |
+| `ai_email_review` | AI Email Review | /settings/integrations | email.configure_ai | Disabled |
+| `ai_email_memory` | AI Email Memory | /settings/integrations | email.configure_ai | Disabled |
 
 ### Client-Side Implementation
 
@@ -3184,6 +3186,87 @@ Managed at `/admin/feature-releases`:
 3. Ensure sidebar nav item has `permission` field matching a gated permission
 4. Verify `ROUTE_PERMISSIONS` in `layout.tsx` maps the route correctly
 5. Test: disable flag → route returns 404, sidebar hides item, widgets filtered
+
+### Admin Feature Overrides
+
+Some features require a **dual gate**: the product-level feature flag must be enabled AND an OPS admin must explicitly grant access to a specific company. This pattern is distinct from the existing user-level overrides (`feature_flag_overrides`) which grant individual users early access.
+
+**Why this pattern exists:** AI-powered features (email review, memory system) have ongoing per-company costs. The product-level flag controls whether the feature exists in the product at all, while the admin override controls which companies have been granted access by OPS admin. Both must be true for the feature to be active.
+
+**Database table:** `admin_feature_overrides` (see `03_DATA_ARCHITECTURE.md` for schema)
+
+```sql
+CREATE TABLE admin_feature_overrides (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id   UUID NOT NULL REFERENCES companies(id),
+  feature_key  TEXT NOT NULL,       -- 'ai_email_review', 'ai_email_memory'
+  enabled      BOOLEAN DEFAULT false,
+  enabled_by   UUID,                -- OPS admin user ID
+  enabled_at   TIMESTAMPTZ,
+  metadata     JSONB,               -- cost tracking, notes
+  UNIQUE(company_id, feature_key)
+);
+```
+
+**Code-level gate check:**
+
+```typescript
+async function isAIFeatureEnabled(
+  companyId: string,
+  feature: 'ai_email_review' | 'ai_email_memory'
+): Promise<boolean> {
+  const productEnabled = await canAccessFeature(feature)  // existing feature flag system
+  const adminEnabled = await checkAdminOverride(companyId, feature)  // admin_feature_overrides table
+  return productEnabled && adminEnabled
+}
+```
+
+**Current features using this pattern:**
+
+| Feature Key | Description | Admin Panel Location |
+|---|---|---|
+| `ai_email_review` | Ongoing AI classification, stage evaluation, win/loss detection, AI duplicate detection | Company detail → AI Email Review toggle |
+| `ai_email_memory` | Memory accumulation, draft suggestions, auto-draft | Company detail → AI Memory toggle |
+
+**Admin panel controls** (per-company, at `/admin/companies/{id}`):
+
+```
+Company: {name}
+├── AI Email Review:  [Enabled] / Disabled
+├── AI Memory:        [Enabled] / Disabled
+├── Memory Stats:
+│   ├── Emails analyzed: {N}
+│   ├── Confidence: {0.0-1.0}
+│   └── Last updated: {timestamp}
+├── Memory Actions:
+│   ├── [View Memory Document]
+│   ├── [Reset Memory]
+│   └── [Export Memory]
+└── Cost Tracking:
+    ├── AI tokens this month: {N}
+    ├── Estimated monthly cost: ${N}
+    └── [View Usage History]
+```
+
+### Email Integration Permissions
+
+New permission module for the email integration, registered in the existing permission system (`permissions.ts`):
+
+| Permission | Scopes | Description |
+|---|---|---|
+| `email.connect` | `["all"]` | Connect/disconnect email accounts (Gmail, Microsoft 365) |
+| `email.view` | `["all", "own"]` | View imported leads and email activities |
+| `email.manage` | `["all"]` | Run wizard, edit sync profile, trigger manual sync |
+| `email.configure_ai` | `["all"]` | Toggle AI features on connection (requires admin override to be enabled) |
+
+**Preset Role Grants:**
+
+| Permission | Admin | Owner | Office | Operator | Crew |
+|---|---|---|---|---|---|
+| email.connect | all | all | all | — | — |
+| email.view | all | all | all | all | — |
+| email.manage | all | all | all | — | — |
+| email.configure_ai | all | all | — | — | — |
 
 ---
 

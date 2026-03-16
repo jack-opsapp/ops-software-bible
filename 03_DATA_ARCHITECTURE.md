@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: March 2, 2026
+**Last Updated**: March 16, 2026
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -1086,6 +1086,8 @@ CREATE TYPE app_permission AS ENUM (
   'team.view', 'team.manage', 'team.assign_roles',
   'map.view', 'map.view_crew_locations',
   'notifications.view', 'notifications.manage_preferences',
+  -- Email Integration (4)
+  'email.connect', 'email.view', 'email.manage', 'email.configure_ai',
   -- Admin (7)
   'settings.company', 'settings.billing', 'settings.integrations', 'settings.preferences',
   'portal.view', 'portal.manage_branding',
@@ -1905,77 +1907,193 @@ This data architecture provides:
 
 ---
 
-## Gmail Integration Tables (Web Only)
+## Email Integration Tables (Web Only)
 
-These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` for full integration documentation.
+These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` for full integration documentation including the sync engine, pattern detection, AI classification, and provider abstraction layer.
 
-### gmail_connections
+### email_connections
+
+Renamed from `gmail_connections`. Supports Gmail and Microsoft 365 via provider abstraction. Existing Gmail connections backfilled with `provider = 'gmail'` — no re-auth required.
 
 ```sql
-CREATE TABLE gmail_connections (
-  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id            UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  user_id               UUID REFERENCES users(id),
-  type                  TEXT NOT NULL DEFAULT 'company',  -- 'company' | 'individual'
-  email                 TEXT NOT NULL,
-  access_token          TEXT NOT NULL,
-  refresh_token         TEXT NOT NULL,
-  expires_at            TIMESTAMPTZ NOT NULL,
-  history_id            TEXT,                             -- Gmail incremental sync cursor
-  sync_enabled          BOOLEAN DEFAULT true,
-  last_synced_at        TIMESTAMPTZ,
-  sync_interval_minutes INTEGER DEFAULT 15,
-  sync_filters          JSONB DEFAULT '{}',               -- GmailSyncFilters object
-  created_at            TIMESTAMPTZ DEFAULT NOW(),
-  updated_at            TIMESTAMPTZ DEFAULT NOW(),
-  deleted_at            TIMESTAMPTZ
+CREATE TABLE email_connections (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id              UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  provider                TEXT NOT NULL,                   -- 'gmail' | 'microsoft365'
+  access_token            TEXT NOT NULL,                   -- encrypted at rest
+  refresh_token           TEXT NOT NULL,                   -- encrypted at rest
+  token_expires_at        TIMESTAMPTZ NOT NULL,
+  user_email              TEXT NOT NULL,
+  user_name               TEXT,
+  sync_profile            JSONB DEFAULT '{}',              -- pattern detection rules (estimate patterns, company domains, platform senders, etc.)
+  sync_interval_minutes   INTEGER DEFAULT 60,
+  last_sync_history_id    TEXT,                            -- Gmail historyId or M365 deltaLink
+  last_sync_at            TIMESTAMPTZ,
+  ops_label_id            TEXT,                            -- Gmail label ID or M365 category ID for "OPS Pipeline" tag
+  webhook_subscription_id TEXT,                            -- Gmail Pub/Sub watch ID or M365 subscription ID
+  webhook_expires_at      TIMESTAMPTZ,
+  ai_review_enabled       BOOLEAN DEFAULT false,           -- ongoing AI classification (feature-gated)
+  ai_memory_enabled       BOOLEAN DEFAULT false,           -- memory accumulation (feature-gated)
+  status                  TEXT DEFAULT 'setup_incomplete',  -- 'active' | 'paused' | 'error' | 'setup_incomplete'
+  created_at              TIMESTAMPTZ DEFAULT NOW(),
+  updated_at              TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
-`sync_filters` stores a `GmailSyncFilters` JSON object containing label IDs, exclude lists, structured filter rules, wizard state, and scan results.
+`sync_profile` stores the pattern detection output as JSONB:
 
-### gmail_import_jobs
-
-```sql
-CREATE TABLE gmail_import_jobs (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id        UUID NOT NULL REFERENCES companies(id),
-  connection_id     UUID NOT NULL REFERENCES gmail_connections(id),
-  status            TEXT NOT NULL DEFAULT 'pending',  -- pending | running | completed | failed
-  import_after      DATE NOT NULL,
-  total_emails      INTEGER DEFAULT 0,
-  processed         INTEGER DEFAULT 0,
-  matched           INTEGER DEFAULT 0,
-  unmatched         INTEGER DEFAULT 0,
-  needs_review      INTEGER DEFAULT 0,
-  clients_created   INTEGER DEFAULT 0,
-  leads_created     INTEGER DEFAULT 0,
-  error_message     TEXT,
-  created_at        TIMESTAMPTZ DEFAULT NOW(),
-  completed_at      TIMESTAMPTZ
-);
+```json
+{
+  "estimateSubjectPatterns": ["Canpro Deck and Rail Estimate"],
+  "companyDomains": ["canprodeckandrail.com"],
+  "teamForwarders": ["jared@canprodeckandrail.com"],
+  "knownPlatformSenders": ["notifications@wix-forms.com"],
+  "formSubjectPatterns": ["got a new submission", "new form entry"],
+  "userEmailAddresses": ["canprojack@gmail.com"],
+  "aiClassificationThreshold": 0.7
+}
 ```
 
-### gmail_scan_jobs
+Token columns (`access_token`, `refresh_token`) are accessed via service role only in API routes — not exposed to client via RLS column-level restrictions.
+
+### email_scan_jobs
+
+Renamed from `gmail_scan_jobs`. Tracks async inbox analysis jobs during wizard Step 2.
 
 ```sql
-CREATE TABLE gmail_scan_jobs (
+CREATE TABLE email_scan_jobs (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id        UUID NOT NULL REFERENCES companies(id),
-  connection_id     UUID NOT NULL REFERENCES gmail_connections(id),
+  connection_id     UUID NOT NULL REFERENCES email_connections(id),
   status            TEXT NOT NULL DEFAULT 'pending',  -- pending | running | completed | failed
-  stage             TEXT DEFAULT 'pending',           -- pending | listing | fetching | pre_filtering | classifying | complete | error
+  stage             TEXT DEFAULT 'pending',           -- pending | sent_analysis | platform_detection | ai_classification | complete | error
   current           INTEGER DEFAULT 0,
   total             INTEGER DEFAULT 0,
   message           TEXT,
-  results           JSONB,                            -- ScannedEmail[] when complete
-  ai_filters        JSONB,                            -- AI-recommended GmailSyncFilters
-  summary           TEXT,                             -- AI analysis summary
+  results           JSONB,                            -- detected sources and candidates
+  summary           TEXT,                             -- analysis summary
   error_message     TEXT,
   created_at        TIMESTAMPTZ DEFAULT NOW(),
   completed_at      TIMESTAMPTZ
 );
 ```
+
+### opportunity_email_threads
+
+Junction table linking opportunities to email thread IDs. Enables fast O(1) sync lookup ("is this thread already linked to an opportunity?") via unique index on `thread_id`.
+
+```sql
+CREATE TABLE opportunity_email_threads (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  opportunity_id  UUID NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+  thread_id       TEXT NOT NULL,           -- Gmail threadId or M365 conversationId
+  connection_id   UUID REFERENCES email_connections(id),
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(thread_id, connection_id)
+);
+
+CREATE INDEX idx_oet_thread ON opportunity_email_threads(thread_id);
+CREATE INDEX idx_oet_opportunity ON opportunity_email_threads(opportunity_id);
+```
+
+### admin_feature_overrides
+
+Per-company OPS admin toggles for gated AI features. Separate from the product-level feature flags — both must be true for a feature to be active. Accessed via service role only (no user-facing RLS).
+
+```sql
+CREATE TABLE admin_feature_overrides (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id   UUID NOT NULL REFERENCES companies(id),
+  feature_key  TEXT NOT NULL,       -- 'ai_email_review', 'ai_email_memory'
+  enabled      BOOLEAN DEFAULT false,
+  enabled_by   UUID,                -- OPS admin user ID
+  enabled_at   TIMESTAMPTZ,
+  metadata     JSONB,               -- cost tracking, notes
+  UNIQUE(company_id, feature_key)
+);
+```
+
+### agent_memories
+
+Core memory entries with pgvector embeddings. Feature-gated behind `ai_email_memory`. Orchestrated via Mem0 on Supabase for dedup, consolidation, and retrieval ranking.
+
+```sql
+CREATE TABLE agent_memories (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id       UUID NOT NULL REFERENCES companies(id),
+  user_id          UUID REFERENCES users(id),
+  memory_type      TEXT,              -- 'fact', 'preference', 'trait', 'relationship', 'correction'
+  category         TEXT,              -- 'writing_style', 'pricing', 'client_preference', 'stage_signal', 'lead_source', etc.
+  content          TEXT,
+  embedding        halfvec(1536),     -- pgvector embedding for semantic search
+  confidence       FLOAT DEFAULT 1.0,
+  source           TEXT,              -- 'email', 'invoice', 'project', 'user_upload', 'draft_edit'
+  source_id        TEXT,
+  created_at       TIMESTAMPTZ DEFAULT NOW(),
+  last_accessed_at TIMESTAMPTZ,
+  access_count     INT DEFAULT 0,
+  decay_score      FLOAT DEFAULT 1.0
+);
+```
+
+### agent_knowledge_graph
+
+Entity relationship edges with temporal validity. Feature-gated behind `ai_email_memory`.
+
+```sql
+CREATE TABLE agent_knowledge_graph (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id    UUID NOT NULL REFERENCES companies(id),
+  subject_type  TEXT,              -- 'person', 'company', 'project', 'invoice'
+  subject_id    TEXT,
+  predicate     TEXT,              -- 'works_for', 'manages', 'invoiced', 'prefers', 'tone_with'
+  object_type   TEXT,
+  object_id     TEXT,
+  properties    JSONB,
+  valid_from    TIMESTAMPTZ,
+  valid_to      TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### agent_writing_profiles
+
+Per-user per-company communication style profiles. Feature-gated behind `ai_email_memory`. Updated on every AI-tier sync cycle from outbound email analysis.
+
+```sql
+CREATE TABLE agent_writing_profiles (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id              UUID NOT NULL REFERENCES companies(id),
+  user_id                 UUID NOT NULL REFERENCES users(id),
+  formality_score         FLOAT,
+  avg_sentence_length     FLOAT,
+  greeting_patterns       JSONB,
+  closing_patterns        JSONB,
+  vocabulary_preferences  JSONB,
+  tone_traits             JSONB,
+  emails_analyzed         INT DEFAULT 0,
+  updated_at              TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(company_id, user_id)
+);
+```
+
+### Modified Tables: opportunities
+
+New columns added to `opportunities` for email correspondence tracking:
+
+```sql
+ALTER TABLE opportunities ADD COLUMN correspondence_count INT DEFAULT 0;
+ALTER TABLE opportunities ADD COLUMN outbound_count INT DEFAULT 0;
+ALTER TABLE opportunities ADD COLUMN inbound_count INT DEFAULT 0;
+ALTER TABLE opportunities ADD COLUMN last_inbound_at TIMESTAMPTZ;
+ALTER TABLE opportunities ADD COLUMN last_outbound_at TIMESTAMPTZ;
+ALTER TABLE opportunities ADD COLUMN last_message_direction TEXT;    -- 'in' | 'out'
+ALTER TABLE opportunities ADD COLUMN ai_stage_confidence FLOAT;
+ALTER TABLE opportunities ADD COLUMN ai_stage_signals TEXT[];
+ALTER TABLE opportunities ADD COLUMN detected_value INT;
+```
+
+These columns are used by the sync engine's correspondence-count stage rules (free tier) and AI stage evaluation (gated tier).
 
 ### email_filter_presets
 
@@ -1990,6 +2108,42 @@ CREATE TABLE email_filter_presets (
 );
 ```
 
-Seeded with ~100+ common noise sources across categories. Used by `EmailFilterService.buildBlocklist()` when `usePresetBlocklist` is true.
+Seeded with ~100+ common noise sources across categories.
+
+### RLS Policies (Email Integration)
+
+All new tables require Row-Level Security:
+
+```sql
+-- email_connections: company-scoped
+ALTER TABLE email_connections ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can view own company connections"
+  ON email_connections FOR SELECT USING (company_id = auth.jwt()->>'company_id');
+CREATE POLICY "Users can manage own company connections"
+  ON email_connections FOR ALL USING (company_id = auth.jwt()->>'company_id');
+
+-- opportunity_email_threads: via opportunity's company
+ALTER TABLE opportunity_email_threads ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Company-scoped thread access"
+  ON opportunity_email_threads FOR ALL
+  USING (opportunity_id IN (SELECT id FROM opportunities WHERE company_id = auth.jwt()->>'company_id'));
+
+-- admin_feature_overrides: OPS admin only (service role)
+ALTER TABLE admin_feature_overrides ENABLE ROW LEVEL SECURITY;
+-- No user-facing RLS — accessed via service role in admin API routes only
+
+-- agent_memories, agent_knowledge_graph, agent_writing_profiles: company-scoped
+ALTER TABLE agent_memories ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Company-scoped memories"
+  ON agent_memories FOR ALL USING (company_id = auth.jwt()->>'company_id');
+
+ALTER TABLE agent_knowledge_graph ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Company-scoped knowledge graph"
+  ON agent_knowledge_graph FOR ALL USING (company_id = auth.jwt()->>'company_id');
+
+ALTER TABLE agent_writing_profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Company-scoped writing profiles"
+  ON agent_writing_profiles FOR ALL USING (company_id = auth.jwt()->>'company_id');
+```
 
 **End of Data Architecture Documentation**

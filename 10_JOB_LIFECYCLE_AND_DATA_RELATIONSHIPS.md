@@ -4,7 +4,7 @@
 
 **Purpose**: Defines the complete data flow for a trade job from first contact through to a paid invoice. Documents all entity relationships, automation triggers, new entities, and required changes to existing entities. This is the master reference for how leads, pipeline, clients, estimates, projects, tasks, and invoices inter-operate.
 
-**Last Updated**: February 28, 2026
+**Last Updated**: March 16, 2026
 **Designed With**: ops-web codebase + ops-software-bible review session
 
 ---
@@ -20,7 +20,7 @@
 7. [Communication Logging](#communication-logging)
 8. [Site Visits](#site-visits)
 9. [Project Photos](#project-photos)
-10. [Gmail Integration](#gmail-integration)
+10. [Email Pipeline Integration](#email-pipeline-integration)
 11. [Entity Relationship Map](#entity-relationship-map)
 12. [Status & Stage Reference](#status--stage-reference)
 13. [Implementation Notes](#implementation-notes)
@@ -937,31 +937,36 @@ Project Photos — Smith Deck Job
 
 ---
 
-### `GmailConnection` (Supabase) — NEW
+### `EmailConnection` (Supabase) — Renamed from `GmailConnection`
 
-OAuth connection for Gmail auto-logging. Supports both a company-level inbox and per-user individual accounts.
+Multi-provider email connection for pipeline import. Supports Gmail and Microsoft 365 via provider abstraction layer. Stores OAuth tokens, sync profile (pattern detection rules), webhook subscription, and AI feature flags.
 
 ```typescript
-type GmailConnectionType = 'company' | 'individual'
-
-interface GmailConnection {
+interface EmailConnection {
   id: string;
   companyId: string;
-  type: GmailConnectionType;
-  userId: string | null;            // null for company inbox connections
-  email: string;                    // the Gmail address connected
+  provider: 'gmail' | 'microsoft365';
   accessToken: string;              // encrypted at rest
   refreshToken: string;             // encrypted at rest
-  expiresAt: Date;
-  historyId: string | null;         // Gmail API: last synced history ID (incremental sync)
-  syncEnabled: boolean;
-  lastSyncedAt: Date | null;
+  tokenExpiresAt: Date;
+  userEmail: string;
+  userName: string;
+  syncProfile: SyncProfile;         // pattern detection rules (JSONB)
+  syncIntervalMinutes: number;
+  lastSyncHistoryId: string | null;  // Gmail historyId or M365 deltaLink
+  lastSyncAt: Date | null;
+  opsLabelId: string | null;        // Gmail label ID or M365 category ID
+  webhookSubscriptionId: string | null;
+  webhookExpiresAt: Date | null;
+  aiReviewEnabled: boolean;
+  aiMemoryEnabled: boolean;
+  status: 'active' | 'paused' | 'error' | 'setup_incomplete';
   createdAt: Date;
   updatedAt: Date;
 }
 ```
 
-**See [Gmail Integration](#gmail-integration) for full sync logic.**
+**See [Email Pipeline Integration](#email-pipeline-integration) for full sync logic, pattern detection, AI classification, and webhook architecture.**
 
 ---
 
@@ -1263,283 +1268,529 @@ The `Project.projectImages` field (comma-separated string) is deprecated. Migrat
 
 ---
 
-## Gmail Integration
+## Email Pipeline Integration
 
-> **Platform status**: Gmail integration is fully implemented on OPS-Web. 14 API routes under `/api/integrations/gmail/`, plus 4 services, 3 hooks, and a 6-step setup wizard. No Gmail integration exists on iOS.
+> **Platform status**: Email integration is implemented on OPS-Web with support for both Gmail and Microsoft 365. API routes under `/api/integrations/email/`, plus a provider abstraction layer, pattern detection engine, AI classification system, webhook-driven sync, and a 5-step "Import Your Pipeline" wizard. No email integration exists on iOS. The `email_connections` table (renamed from `gmail_connections`) stores per-connection provider, tokens, sync profile, webhook subscription, and AI feature flags.
 
-### Connection Architecture
+### Provider Support
 
-Two tiers of Gmail connection:
-1. **Company inbox** (`type: 'company'`) — one shared inbox (e.g., info@company.com)
-2. **Individual accounts** (`type: 'individual'`) — per-user Gmail (e.g., john@company.com)
+| Provider | Auth | Scopes | Incremental Sync | Push Notifications |
+|----------|------|--------|-------------------|--------------------|
+| Gmail | Google OAuth 2.0 | `gmail.readonly`, `gmail.modify`, `gmail.labels` | History API (`startHistoryId`) | Google Cloud Pub/Sub (`users.watch()`) |
+| Microsoft 365 | Microsoft Identity Platform (MSAL) | `Mail.Read`, `Mail.ReadWrite` | Delta queries (`/me/messages/delta`) | Graph Change Notifications (`POST /subscriptions`) |
 
-Both connection types use the same `GmailConnection` table and OAuth flow.
+A single company can connect both providers (e.g., owner uses Gmail, office manager uses M365). Each connection is a separate `email_connections` row with its own sync profile, webhook subscription, and sync token. Client matching and duplicate detection operate across all connections for a company.
 
 ### OAuth Flow
 
-Uses Google OAuth 2.0 with Gmail read scope (`gmail.readonly`) plus optionally send scope (`gmail.send`):
-
 ```
-Settings → Integrations → Gmail
-  ├─ Company Inbox: [Connect Gmail] → OAuth → GmailConnection (type: company)
-  └─ My Gmail: [Connect My Gmail] → OAuth → GmailConnection (type: individual, userId: me)
+Settings → Integrations → Email
+  ├─ Connect Gmail → Google OAuth → email_connections (provider: gmail)
+  └─ Connect Microsoft 365 → MSAL OAuth → email_connections (provider: microsoft365)
 ```
 
-**API routes:**
-- `GET /api/integrations/gmail` — builds Google consent URL, redirects to OAuth
-- `GET /api/integrations/gmail/callback` — exchanges auth code for tokens, stores in `gmail_connections`
+### Provider Abstraction Layer
 
-### Email Setup Wizard
-
-A 6-step wizard guides new users through connecting Gmail and importing leads. Located in `src/components/settings/email-setup-wizard.tsx`.
-
-**Steps:**
-1. **Connect** — OAuth flow (button triggers `/api/integrations/gmail?companyId=...`)
-2. **How It Works** — explains scan → filter → import → review flow
-3. **Scan** — scans up to 500 emails, pre-filters via blocklist, sends to GPT-4o-mini for AI classification
-4. **Filters** — `<EmailFilterBuilder>` for manual filter editing + AI-suggested filters
-5. **Import** — date range picker (7d / 30d / 90d / 6mo / custom)
-6. **Review** — previews contacts/clients/leads to be created with inline editing
-
-**Wizard state is persisted** on the `GmailConnection.syncFilters` object (`wizardCompleted`, `wizardStep`, `lastScanJobId`, `lastScanSummary`).
-
-### Email Scanning & AI Classification
-
-The scan flow discovers what's in a user's inbox and recommends filters automatically.
-
-**Scan API routes:**
-- `POST /api/integrations/gmail/scan-start` — creates async scan job, returns `jobId`
-- `GET /api/integrations/gmail/scan-status` — polls scan progress (stages: pending → listing → fetching → pre_filtering → classifying → complete)
-- `GET /api/integrations/gmail/scan-preview` — one-shot scan of up to 500 emails
-
-**AI Classifier** (`src/lib/api/services/email-classifier.ts`):
-- Model: GPT-4o-mini via OpenAI SDK
-- Input: up to 500 sanitized emails (~40K tokens)
-- Output: recommended `GmailSyncFilters` — domains, addresses, keywords to block
-- Cost: < 1¢ per customer (single call)
-- Safety: protected domains (gmail.com, yahoo.com, etc.) stripped server-side even if AI returns them
-
-### Email Filter System
-
-**Service:** `src/lib/api/services/email-filter-service.ts`
-
-Three layers of filtering:
-
-1. **Preset blocklist** — seeded in `email_filter_presets` table. Categories: newsletters, notifications, retailers, payment providers, social media, etc. Toggled via `syncFilters.usePresetBlocklist`.
-2. **Domain/address/keyword exclusions** — `excludeDomains[]`, `excludeAddresses[]`, `excludeSubjectKeywords[]` on `GmailSyncFilters`.
-3. **Structured filter rules** — `EmailFilterRule[]` with field/operator/value pattern:
+All email operations go through a shared `EmailProvider` interface. Each provider (Gmail, M365) implements the interface, translating to provider-specific APIs internally.
 
 ```typescript
-interface EmailFilterRule {
-  id: string;
-  field: "subject" | "from_email" | "from_domain" | "label" | "body";
-  operator: "contains" | "not_contains" | "equals" | "not_equals" | "starts_with" | "ends_with";
-  value: string;
+interface EmailProvider {
+  readonly providerType: 'gmail' | 'microsoft365'
+
+  // Auth
+  connect(companyId: string): Promise<AuthResult>
+  refreshToken(connectionId: string): Promise<void>
+
+  // Incremental sync (Gmail: historyId, M365: deltaLink)
+  fetchNewEmailsSince(syncToken: string): Promise<{ emails: Email[]; nextSyncToken: string }>
+  fetchSentEmailsSince(syncToken: string): Promise<{ emails: Email[]; nextSyncToken: string }>
+
+  // Search (for wizard Step 2 sent mail analysis)
+  searchEmails(query: string, options?: { maxResults?: number; after?: Date }): Promise<Email[]>
+
+  // Thread operations
+  fetchThread(threadId: string): Promise<Email[]>
+
+  // Labels/categories
+  createLabel(name: string): Promise<string>
+  applyLabel(threadId: string, labelId: string): Promise<void>
+  removeLabel(threadId: string, labelId: string): Promise<void>
+  listLabels(): Promise<Label[]>
+
+  // Drafts (for AI auto-draft)
+  createDraft(to: string, subject: string, body: string, threadId?: string): Promise<string>
+
+  // Push notifications
+  setupWebhook(webhookUrl: string): Promise<WebhookSubscription>
+  renewWebhook(subscriptionId: string): Promise<void>
+  validateWebhookRequest(request: Request): Promise<boolean>
+
+  // Profile
+  getProfile(): Promise<{ email: string; name: string }>
 }
 ```
 
-Rules combine via `ruleLogic: "all" | "any"` (AND vs OR).
+The `syncToken` parameter abstracts over Gmail's `historyId` and M365's `deltaLink` — each provider translates internally.
 
-### 3-Tier Client Matching
+**Key provider differences:**
+
+| Concept | Gmail | Microsoft 365 |
+|---------|-------|---------------|
+| Thread identifier | `threadId` | `conversationId` |
+| Tagging mechanism | Labels (multiple per email) | Categories (color-coded tags) |
+| Push notification renewal | Watch expires every 7 days, renew daily | Subscription expires every 3 days, renew every 2 days |
+| Email body format | base64-encoded parts | `body.content` directly as HTML/text |
+| "OPS Pipeline" tag | Gmail label | M365 category |
+
+### Import Your Pipeline Wizard
+
+A 5-step wizard replaces the previous 6-step filter-based wizard. Located in `src/components/settings/email-setup-wizard.tsx`.
+
+**Steps:**
+
+1. **Connect** — Two buttons: "Connect Gmail" / "Connect Microsoft 365". OAuth flow, auto-proceed on success.
+
+2. **Analyze Your Inbox** — Automatic analysis (~30-60 seconds) with live progress indicator. Three parallel operations:
+   - **Sent mail scan** — analyzes most common outbound subjects to non-company addresses to detect estimate/quote patterns
+   - **Platform detection** — identifies known form senders (Wix, WordPress, Squarespace, Jotform, HubSpot) and bid platforms (Procore, SmartBidNet, BuilderTrend) in inbox
+   - **AI classification** — classifies remaining personal emails not matching any pattern as lead/not-lead
+   - Only analyzes threads with activity within last 3 months
+   - Uses the `email_scan_jobs` table (renamed from `gmail_scan_jobs`) for async job tracking with progress
+   - Error handling: partial results accepted if one operation fails; hard timeout at 120 seconds; resume from saved progress if browser closed mid-scan
+
+3. **Confirm Your Sources** — Displays discovered sources grouped by type:
+   - Detected estimate subject pattern with thread count (toggle on/off, editable)
+   - Website form submissions with platform name and count (toggle on/off)
+   - Bid invitations with platform name and count (toggle on/off)
+   - Additional AI-identified inquiries (expandable for individual review)
+   - Manual add for additional patterns/sources
+
+4. **Review & Import** — All detected leads with AI-determined pipeline stage:
+   - Grouped by stage: New Lead, Qualifying, Quoting, Quoted, Follow-Up, Negotiation, Won, Lost
+   - Each lead shows: client name, email, last message date, correspondence count, detected stage
+   - Duplicates pre-grouped with merge prompt
+   - User can adjust stage, remove false positives, merge duplicates
+   - "Import All" button with count
+
+5. **Activate Sync** — Confirms "OPS Pipeline" label/category applied to imported leads:
+   - Sync frequency selector: 15 min / 1 hour / 2 hours / 24 hours / Manual only
+   - Note: real-time via push notifications, scheduled sync as safety net
+   - Summary card: leads imported, sync frequency, next sync time
+
+**Wizard state is persisted** on the `email_connections` record via the `sync_profile` JSONB column and `status` column (`setup_incomplete` during wizard).
+
+### Pattern Detection Engine
+
+Runs during wizard Step 2. Produces the **sync profile** — the ruleset used by every ongoing sync cycle. Stored as JSONB on the `email_connections.sync_profile` column.
+
+**2A: Sent Mail Analysis**
+1. Fetch sent messages (last 3 months, skip internal company domain addresses)
+2. Group by subject line (normalized — strip "Re:", "Fwd:", whitespace)
+3. Rank by frequency — the most common subject sent to unique external recipients is the estimate pattern
+4. Present to user for confirmation in Step 3
+5. User can edit the pattern or add additional patterns (some businesses have multiple — residential vs commercial)
+
+**2B: Known Platform Detection**
+
+Registry of known form notification senders and bid platforms:
+
+| Category | Detected By | Examples |
+|----------|-------------|---------|
+| Website forms | Sender domain | `notifications@wix-forms.com`, `*@wordpress.com`, `*@squarespace.com`, `*@jotform.com`, `*@typeform.com` |
+| Bid platforms | Sender domain | `*@smartbidnet.com`, `*@procore.com`, `*@buildertrend.com`, `*@plangrid.com`, `*@buildingconnected.com` |
+| CRM/lead gen | Sender domain | `*@hubspot.com`, `*@salesforce.com`, `*@thumbtack.com`, `*@homeadvisor.com`, `*@houzz.com` |
+| Google reviews | Sender address | `businessprofile-noreply@google.com` |
+| Forwarded forms | Pattern | Subject contains "got a new submission", "new form entry", "new contact form" + forwarded by known team member |
+
+**2C: Forwarded Lead Detection**
+
+Many trades businesses have an office manager or partner who forwards leads. Detected via: emails where sender is from user's own company domain, subject contains forwarding indicators ("Fwd:", "got a new submission"), body contains a nested forwarded message from a form platform.
+
+**2D: Business Domain Identification**
+
+From sent mail analysis, identify user's company domain(s): domains the user sends from, domains appearing frequently in CC/To on business threads. User confirms in Step 3. Used to exclude internal correspondence and identify the "forwarder" pattern.
+
+**2E: Sync Profile Output**
+
+```json
+{
+  "estimateSubjectPatterns": ["Canpro Deck and Rail Estimate"],
+  "companyDomains": ["canprodeckandrail.com"],
+  "teamForwarders": ["jared@canprodeckandrail.com", "victoria@canprodeckandrail.com"],
+  "knownPlatformSenders": ["notifications@wix-forms.com", "notifications@com2.smartbidnet.com"],
+  "formSubjectPatterns": ["got a new submission", "new form entry"],
+  "userEmailAddresses": ["canprojack@gmail.com"],
+  "aiClassificationThreshold": 0.7
+}
+```
+
+`syncIntervalMinutes`, `aiReviewEnabled`, `aiMemoryEnabled`, `lastSyncHistoryId` are stored as top-level columns on `email_connections`, not in the sync profile JSONB. The sync profile contains only pattern/source detection rules. The `aiClassificationThreshold` is configurable per connection (default 0.7).
+
+### AI Classification System
+
+Two modes: **Initial Scan** (during wizard) and **Ongoing Review** (feature-gated via `ai_email_review`).
+
+**3A: Initial Scan — Bulk Classification**
+
+After pattern detection, remaining unmatched emails in `CATEGORY_PERSONAL` go to AI. Skip `CATEGORY_PROMOTIONS`, `CATEGORY_UPDATES`, `CATEGORY_SOCIAL`, `CATEGORY_FORUMS` entirely.
+
+AI validates ALL candidates — even pattern-matched leads go through AI confirmation to:
+- Confirm it's actually a lead
+- Extract structured data: client name, phone, project description, estimated scope
+- Assign pipeline stage
+- Detect duplicates across threads
+
+**Output per lead (~50 tokens):**
+
+```json
+{
+  "id": "abc123",
+  "v": "lead",
+  "c": 0.95,
+  "stage": "quoted",
+  "val": 4500,
+  "client": {
+    "name": "John Knechtel",
+    "email": "knechtel.john@gmail.com",
+    "phone": null,
+    "desc": "Deck railing replacement, 2 decks, glass and picket options"
+  },
+  "dupes": ["def456", "ghi789"]
+}
+```
+
+- `v`: verdict — `"lead"`, `"biz"` (subtrade/vendor), `"skip"` (noise)
+- `c`: confidence 0-1
+- `dupes`: other email IDs AI believes belong to same client/project
+- Emails classified as `"lead"` with confidence >= 0.7 imported. Below 0.7 queued for user review in Step 4.
+
+**3B: Thread Analysis — Stage Placement**
+
+For every confirmed lead thread with activity within 3 months, full thread content sent to AI for accurate stage placement. Batching: 5-10 threads per API call to amortize system prompt cost.
+
+**3C: Ongoing AI Review (Feature-Gated)**
+
+When `ai_email_review` is enabled (requires both product-level feature flag AND admin override), every sync cycle includes:
+
+1. **New email classification** — unmatched emails go through AI classification
+2. **Stage re-evaluation** — for active leads with new emails, AI reviews thread context and determines stage advancement
+3. **Win/loss detection** — AI flags threads where client appears to have confirmed or declined
+
+**3D: Terminal Stage Detection Rules**
+
+AI never auto-advances to `won` or `lost`. Instead:
+
+- Win language detected ("let's go ahead", "we'd like to proceed") → notification: "{Client} may have accepted your estimate. [Review → Won?]"
+- Loss language detected ("went with another company", "too expensive") → notification: "{Client} may have declined. [Review → Lost?]"
+
+User clicks through to existing Won/Lost confirmation dialogs.
+
+### 5-Tier Client Matching
 
 **Service:** `src/lib/api/services/email-matching-service.ts`
 
-When emails are imported, each is matched against existing clients:
+When emails are imported or synced, each is matched against existing clients via a 5-tier cascade:
 
 | Tier | Strategy | Confidence | Auto-link? |
 |------|----------|------------|------------|
 | 1 | Exact email match (client or sub-client email) | `exact` | Yes |
-| 2 | Domain match (non-public domain, 1 client) | `domain` | Yes |
+| 2 | Domain match (non-public domain, single client) | `domain` | Yes — add as sub-contact |
 | 2b | Domain match (multiple clients share domain) | `domain` | No — `needsReview: true` |
-| 3 | Phone signature match (phone in email body) | `phone` | No — `needsReview: true` |
-| — | Thread inheritance (threadId already linked) | `exact` | Yes |
+| 3 | Name match (AI-extracted name matches existing client last name) | `name` | No — `needsReview: true` |
+| 4 | Thread CC association (email CC'd on thread linked to existing client) | `thread` | Yes — add as sub-contact |
+| 5 | AI duplicate detection (feature-gated: signatures, phone, addresses in body) | `ai` | No — `needsReview: true` |
 
-**Public domains** (gmail.com, yahoo.com, outlook.com, etc.) are excluded from domain matching. Defined in `PUBLIC_EMAIL_DOMAINS` in `src/lib/types/pipeline.ts`.
+**Resolution rules:**
+- Exact email match → log activity on existing client
+- Domain match (single) → create sub-contact, log activity
+- Domain match (multiple) → queue for user review
+- Name match → queue for user review
+- Thread CC association → create sub-contact, log activity
+- AI duplicate detection → queue for user review
+- No match at any tier → create new client + opportunity
 
-### Historical Import
+**Public domains** (gmail.com, yahoo.com, outlook.com, shaw.ca, telus.net, icloud.com, protonmail.com, live.com, comcast.net, att.net, verizon.net, msn.com, me.com, mac.com, ymail.com, mail.com, zoho.com, gmx.com, inbox.com, etc.) are excluded from domain matching. Defined in `PUBLIC_EMAIL_DOMAINS` in `src/lib/types/pipeline.ts`.
 
-Imports historical emails in bulk with client/lead creation.
+### Sync Engine
 
-**API routes:**
-- `POST /api/integrations/gmail/historical-import` — starts import job
-- `GET /api/integrations/gmail/import-status?jobId=...` — polls progress
+**4A: Sync Triggers (all four built day one)**
 
-**Import flow:**
+| Trigger | Implementation | Latency |
+|---------|---------------|---------|
+| **Scheduled** | Cron checks interval (15min/1hr/2hr/24hr) | Up to interval |
+| **Manual** | "Sync Now" button | Immediate |
+| **Gmail Push** | Google Cloud Pub/Sub → `users.watch()` → webhook endpoint | ~seconds |
+| **M365 Push** | Microsoft Graph Change Notifications → subscription on `/me/messages` → webhook endpoint | ~seconds |
+
+**4B: Webhook Architecture**
+
+**Gmail:**
+1. On connection setup, call `gmail.users.watch()` with Pub/Sub topic
+2. Google publishes to Pub/Sub topic on inbox/sent changes
+3. Pub/Sub pushes to: `POST /api/integrations/email/webhook/gmail`
+4. Validate, deduplicate, queue sync job, return 200 immediately
+5. Watch expires every 7 days — cron renews daily
+
+**Microsoft 365:**
+1. On connection setup, create subscription: `POST /subscriptions` on `me/messages`
+2. M365 sends change notifications to: `POST /api/integrations/email/webhook/microsoft365`
+3. Validate subscription (M365 requires validation handshake), queue sync job, return 200
+4. Subscription expires every 3 days — cron renews every 2 days
+
+**Shared webhook endpoint logic:**
+1. Validate request authenticity (Pub/Sub signature / M365 validation token)
+2. Extract connection ID
+3. Debounce — if sync ran for this connection in last 30 seconds, skip
+4. Queue sync job (don't run inline)
+5. Return 200 immediately
+
+**4C: Sync Cycle — Full Flow**
+
 ```
-1. Wizard sends approved contacts + date range + connection ID
-2. Server creates job in gmail_import_jobs table
-3. Background (Next.js after()):
-   a. Fetch all emails in date range from Gmail API (batched)
-   b. Deduplicate via emailMessageId
-   c. Apply user's filter rules
-   d. 3-tier match each email to existing clients
-   e. Create Activity records for matched emails
-   f. Create clients and leads from approved contacts
-4. Client polls import-status every 3s via useGmailImport hook
-5. Completion shows Action Prompt with results
+1. Fetch new emails since lastSyncHistoryId
+   ├── Inbox (inbound)
+   └── Sent (outbound)
+
+2. Pattern matching (fast, free)
+   ├── Sender matches known platform? → candidate
+   ├── Sender matches team forwarder? → candidate
+   ├── Subject matches form submission pattern? → candidate
+   ├── Reply in existing OPS lead thread? → auto-link
+   └── User sent to new external address with estimate pattern? → new lead
+
+3. Sent folder safety net
+   ├── User replied to address not in OPS? → new lead
+   ├── User replied in thread already in OPS? → update activity
+   └── User sent to known client? → log outbound activity
+
+4. Thread inheritance
+   └── Any email in thread linked to OPS client → auto-link, log activity
+
+5. AI classification (feature-gated — skip if disabled)
+   └── Remaining unmatched personal emails → AI classify
+
+6. Stage evaluation
+   ├── Free tier: correspondence count rules
+   │   ├── 0 outbound → new_lead
+   │   ├── 1 outbound → qualifying
+   │   ├── 2+ exchanges → quoting
+   │   └── Stale threshold exceeded → follow_up
+   └── AI tier (feature-gated): AI reviews thread context
+
+7. Client matching & sub-contact resolution (5-tier cascade)
+
+8. Apply labels
+   └── New lead/activity → apply "OPS Pipeline" label/category
+
+9. Create/update OPS records
+   ├── New lead → create Client + Opportunity + Activity
+   ├── Existing lead, new email → create Activity, update stage
+   └── Duplicate detection → flag for user review
+
+10. AI memory update (feature-gated — see AI Memory System)
+
+11. Notifications
+    ├── "3 new emails synced — 1 new lead from john@example.com"
+    ├── Win/loss flags
+    └── Duplicate flags
+
+12. Update lastSyncHistoryId
 ```
 
-**Approved contacts** — the wizard's Review step produces an `ApprovedContact[]` sent to the import endpoint:
+### Smart Pipeline Staging
 
-```typescript
-interface ApprovedContact {
-  fromEmail: string;
-  name: string;
-  createLead: boolean;
-  isCompanyGroup?: boolean;  // true for domain-grouped companies
-  subContacts?: Array<{ fromEmail: string; name: string }>;
+**5A: Free Tier — Correspondence Count Rules**
+
+| Thread State | Stage | Detection |
+|---|---|---|
+| Inbound only, 0 outbound | `new_lead` | outbound_count = 0 |
+| User sent 1 reply | `qualifying` | outbound_count = 1, total < 4 |
+| 2+ outbound, 4+ total messages | `quoting` | outbound_count >= 2, total >= 4 |
+| 3+ outbound, 6+ total messages | `quoted` | outbound_count >= 3, total >= 6 |
+| Last message outbound, no reply for X days | `follow_up` | last_message_direction = out, age > autoFollowUpDays (applies at any active stage) |
+| Client replied after quiet period | `negotiation` | previous stage was follow_up, new inbound arrived |
+
+**Limitation:** Correspondence-count rules cannot reliably distinguish "discussing scope" from "estimate was sent." They place leads in roughly the right area of the pipeline. Users can always drag to correct on the Kanban board. The AI tier handles this accurately by detecting actual pricing in outbound messages.
+
+**5B: AI Tier — Context-Aware Staging (Feature-Gated)**
+
+AI reads thread content and detects:
+
+| Signal | Stage |
+|---|---|
+| User asked for photos/measurements | `qualifying` |
+| User sent pricing/dollar amounts | `quoted` |
+| User mentioned promotion/discount | `quoted` |
+| Client comparing quotes | `negotiation` |
+| Client discussing scheduling/timing | `negotiation` |
+| Client accepted | Flag → `won` prompt |
+| Client declined | Flag → `lost` prompt |
+| Client silent > 30 days, last was outbound | Flag → possible `lost` |
+
+**AI output per thread (~20 tokens):**
+
+```json
+{
+  "stage": "quoted",
+  "c": 0.9,
+  "val": 4500,
+  "signals": ["pricing_sent", "promo_mentioned"],
+  "terminal_flag": null
 }
 ```
 
-### Company Grouping from Email Domains
+**5C: Correspondence Tracking on Opportunity**
 
-When the Review step detects 2+ distinct people from the same non-public domain (e.g., `john@acme.com` + `jane@acme.com`), it auto-groups them as a company:
+Email threads are linked to opportunities via the `opportunity_email_threads` junction table (not a column on opportunities). This enables fast O(1) sync lookup via a unique index on `thread_id`. See `03_DATA_ARCHITECTURE.md` for the full schema.
 
-- **Company name** auto-derived from domain (e.g., "Acme"), editable inline
-- **Sub-contacts** listed under the company card with individual email counts
-- **Server-side creation:** Creates one `Client` for the company + `SubClient` for each person
-- **Key:** `domain:acme.com` (prefixed to distinguish from individual email keys)
-
-### Existing Client Detection
-
-The Review step fetches all existing clients via `useClients()` and builds two lookup maps:
-- `emailToClient: Map<string, Client>` — exact email → existing client
-- `domainToClients: Map<string, Client[]>` — domain → existing clients (non-public domains only)
-
-Matches are displayed with:
-- Orange "Exists" badge on the contact card
-- Orange left border highlight
-- "Matches existing: [name]" label
-- Sorted to top of contact list for visibility
-
-Existing clients are not re-created — the import endpoint checks by email before creating.
-
-### Review & Match Management
-
-**API routes for post-import review:**
-- `GET /api/integrations/gmail/review-items` — activities needing manual review (unmatched / low-confidence)
-- `POST /api/integrations/gmail/confirm-match` — promotes `suggested_client_id` to `client_id`
-- `POST /api/integrations/gmail/reject-match` — clears client references, marks unmatched
-- `POST /api/integrations/gmail/ignore` — dismisses activity (marks as read)
-- `POST /api/integrations/gmail/block-domain` — adds domain to `excludeDomains`, marks all from that domain as read
-
-### Incremental Sync Logic
-
-Gmail API `history.list` is used for ongoing incremental sync (not full mailbox scan):
+Additional columns on `opportunities` for correspondence tracking:
 
 ```
-1. Initial sync: fetch last 90 days of messages matching known client emails
-2. Subsequent syncs: fetch history since GmailConnection.historyId
-3. For each new message:
-   a. Extract sender + recipient email addresses
-   b. 3-tier match against clients (exact email → domain → phone)
-   c. If match found:
-      → Check: does Activity with emailMessageId already exist? (dedup)
-      → If no: create Activity {
-           type: 'email',
-           direction: inbound | outbound,
-           subject: email subject,
-           content: email body (plain text),
-           emailThreadId: Gmail threadId,
-           emailMessageId: Gmail messageId,
-           isRead: false (inbound) | true (outbound),
-           clientId: matched client
-         }
-   d. If no match (unknown sender): create Activity with needsReview flag
-4. Update GmailConnection.historyId = latest historyId
-5. Update GmailConnection.lastSyncedAt = now
+correspondence_count: INT DEFAULT 0
+outbound_count: INT DEFAULT 0
+inbound_count: INT DEFAULT 0
+last_inbound_at: TIMESTAMPTZ
+last_outbound_at: TIMESTAMPTZ
+last_message_direction: TEXT ("in" | "out")
+ai_stage_confidence: FLOAT
+ai_stage_signals: TEXT[]
+detected_value: INT
 ```
 
-**API routes:**
-- `POST /api/integrations/gmail/manual-sync` — manually triggers sync
-- `GET /api/integrations/gmail/labels` — returns user's Gmail labels for filter builder UI
+### AI Memory System (Feature-Gated)
 
-### Lead Auto-Creation Logic
+Hybrid vector (pgvector) + knowledge graph (Postgres) + Mem0 orchestration. Builds a "company brain" that learns the user's business patterns over time. Gated behind the `ai_email_memory` feature flag (requires both product-level flag AND admin override).
 
-In the Review step, leads are auto-flagged for contacts whose first inquiry was within the last 14 days. Users can toggle lead creation per contact via the Lead/Client badge.
+**Three Storage Layers:**
 
-When a lead is created:
-- `opportunity.source = 'email'`
-- `opportunity.stage = 'new_lead'`
-- `opportunity.winProbability = 20`
-- `opportunity.tags = ['email-import']`
-- Existing open opportunities are checked first — no duplicates created.
+| Layer | Purpose | Storage |
+|---|---|---|
+| `agent_memories` | Facts, preferences, traits extracted from emails | Postgres + pgvector `halfvec(1536)` embeddings |
+| `agent_knowledge_graph` | Entity relationships with temporal validity | Postgres relational edges (subject → predicate → object) |
+| `agent_writing_profiles` | Communication style per user | Structured Postgres table |
 
-### Data Types
+**Memory Dimensions:**
 
-**GmailConnection:**
+| Dimension | What It Captures | Source |
+|---|---|---|
+| Communication Style | Tone, formality, greetings, sign-offs, response length | Sent emails |
+| Quoting Patterns | Pricing structure, estimate presentation, discount framing | Outbound estimate emails |
+| Sales Methodology | Response speed, info requested first, objection handling, follow-up cadence | Full thread analysis |
+| Business Knowledge | Services, service area, materials, limitations, promotions, subtrades | All outbound correspondence |
+| Client Handling | Price objection responses, lost deal handling, upselling, referrals | Thread outcomes mapped to correspondence |
+
+**Email Sync → Memory Pipeline:**
+
+On every AI-tier sync cycle, for each outbound email:
+
+```
+Extract entities → knowledge graph
+  ├── People (names, emails, phones)
+  ├── Companies
+  ├── Services discussed
+  ├── Pricing mentioned
+  └── Relationships
+
+Extract facts → agent_memories + pgvector
+  ├── "User charges $65-85/LF for aluminum picket railing"
+  ├── "User cannot do glass on stairs"
+  └── "User services Salt Spring Island frequently"
+
+Update writing profile → agent_writing_profiles
+  ├── Greeting patterns
+  ├── Sign-off patterns
+  ├── Tone markers
+  └── Response structure
+
+Embed email content → pgvector
+  └── Semantic embedding for future retrieval
+```
+
+Key principle: don't store emails verbatim. Extract knowledge, embed for semantic search, discard raw text. Memory consolidation runs periodically to merge redundant entries and prune stale facts.
+
+**Memory-Powered Draft Generation:**
+
+When user clicks "Draft Reply" or auto-draft triggers:
+
+1. Semantic search pgvector for past emails to similar clients about similar projects
+2. Graph traversal for client's history, related entities, outstanding quotes
+3. Retrieve writing profile — tone, greeting, sign-off, response length
+4. Retrieve relevant facts — current promotions, pricing, limitations
+5. LLM generates draft in user's exact voice with accurate business details
+
+**Confidence & Progressive Unlock:**
+
+| Emails Analyzed | Confidence | Capabilities |
+|---|---|---|
+| 0-25 | 0.0-0.2 | Learning only |
+| 25-100 | 0.2-0.5 | Analytics dashboard ("your avg response time: 2.3 hours") |
+| 100-250 | 0.5-0.75 | "Draft Reply" button available |
+| 250+ | 0.75-1.0 | Auto-draft to inbox (saved as draft, never sent without user action) |
+
+**Memory Feedback Loop:**
+
+Each correction creates a new `agent_memories` entry with `memory_type = 'correction'` and a reference to the original memory/action being corrected. Mem0's consolidation merges corrections into the base facts over time. User edits to drafts, stage overrides, rejected client matches, and manually created leads all feed back into the memory system.
+
+### Feature Gate Architecture
+
+**Free vs Gated:**
+
+| Feature | Free (All Users) | AI-Powered (Gated) |
+|---|---|---|
+| Pattern detection & sync profile | Yes | Yes |
+| Sent folder safety net | Yes | Yes |
+| Thread inheritance | Yes | Yes |
+| Label application (mandatory) | Yes | Yes |
+| Webhook push sync (Gmail + M365) | Yes | Yes |
+| Initial AI classification during wizard | Yes | Yes |
+| Initial AI stage placement (one-time) | Yes | Yes |
+| Correspondence-count stage rules | Yes | Yes |
+| Stale/follow-up time-based rules | Yes | Yes |
+| Ongoing AI classification per sync | No | `ai_email_review` |
+| Ongoing AI stage evaluation per sync | No | `ai_email_review` |
+| Win/loss detection notifications | No | `ai_email_review` |
+| AI duplicate detection | No | `ai_email_review` |
+| Memory accumulation | No | `ai_email_memory` |
+| Draft reply suggestions (confidence >= 0.5) | No | `ai_email_memory` |
+| Auto-draft to inbox (confidence >= 0.75) | No | `ai_email_memory` |
+
+The `ai_email_review` and `ai_email_memory` flags integrate into the existing feature flag system (`feature-flag-definitions.ts`, `feature-flags-store.ts`) but also require per-company OPS admin override via the `admin_feature_overrides` table. See `07_SPECIALIZED_FEATURES.md` §17 for full feature gate documentation.
+
+**Code-level gate check:**
+
 ```typescript
-interface GmailConnection {
-  id: string;
-  companyId: string;
-  type: 'company' | 'individual';
-  userId: string | null;
-  email: string;
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: Date;
-  historyId: string | null;
-  syncEnabled: boolean;
-  lastSyncedAt: Date | null;
-  syncIntervalMinutes: number;
-  syncFilters: GmailSyncFilters;
-  createdAt: Date;
-  updatedAt: Date;
+async function isAIFeatureEnabled(
+  companyId: string,
+  feature: 'ai_email_review' | 'ai_email_memory'
+): Promise<boolean> {
+  const productEnabled = await canAccessFeature(feature)  // existing feature flag system
+  const adminEnabled = await checkAdminOverride(companyId, feature)  // admin_feature_overrides table
+  return productEnabled && adminEnabled
 }
 ```
 
-**GmailSyncFilters:**
-```typescript
-interface GmailSyncFilters {
-  labelIds: string[];
-  excludeDomains: string[];
-  excludeAddresses: string[];
-  excludeSubjectKeywords: string[];
-  includeSentMail: boolean;
-  usePresetBlocklist: boolean;
-  rules?: EmailFilterRule[];
-  ruleLogic?: 'all' | 'any';
-  wizardCompleted?: boolean;
-  wizardStep?: string;
-  lastScanJobId?: string;
-  lastScanSummary?: string;
-  lastScanTotal?: number;
-  lastScanImportCount?: number;
-}
-```
+### Permissions
 
-**GmailImportJob:**
-```typescript
-interface GmailImportJob {
-  id: string;
-  companyId: string;
-  connectionId: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
-  importAfter: Date;
-  totalEmails: number;
-  processed: number;
-  matched: number;
-  unmatched: number;
-  needsReview: number;
-  clientsCreated: number;
-  leadsCreated: number;
-  errorMessage: string | null;
-  createdAt: Date;
-  completedAt: Date | null;
-}
-```
+New permission module for the email integration, registered in the existing permission system (`permissions.ts`):
+
+| Permission | Scopes | Description |
+|---|---|---|
+| `email.connect` | `["all"]` | Connect/disconnect email accounts |
+| `email.view` | `["all", "own"]` | View imported leads and email activities |
+| `email.manage` | `["all"]` | Run wizard, edit sync profile, manual sync |
+| `email.configure_ai` | `["all"]` | Toggle AI features (requires admin override to be enabled) |
 
 ### Thread Grouping
 
-Emails with the same `emailThreadId` are grouped visually in the Activity timeline:
+Emails with the same `emailThreadId` (Gmail `threadId` or M365 `conversationId`) are grouped visually in the Activity timeline:
 
 ```
-📧 Email thread with John Smith — Deck Estimate       ● 3 days ago
-   (4 messages)  [expand ▼]
-   └─ You: "Hi John, your estimate is attached"       3 days ago
-   └─ John: "Thanks, looks good. One question..."     2 days ago
-   └─ You: "Happy to clarify — the membrane..."       2 days ago
-   └─ John: "Perfect, let's proceed"                  Yesterday
+Email thread with John Smith — Deck Estimate          3 days ago
+   (4 messages)  [expand]
+   - You: "Hi John, your estimate is attached"        3 days ago
+   - John: "Thanks, looks good. One question..."      2 days ago
+   - You: "Happy to clarify — the membrane..."        2 days ago
+   - John: "Perfect, let's proceed"                   Yesterday
 ```
 
 ### Service & Hook Inventory
@@ -1547,31 +1798,82 @@ Emails with the same `emailThreadId` are grouped visually in the Activity timeli
 **Services** (`src/lib/api/services/`):
 | Service | File | Purpose |
 |---------|------|---------|
-| GmailService | `gmail-service.ts` | OAuth tokens, connection CRUD, message fetch |
-| EmailFilterService | `email-filter-service.ts` | Presets, blocklist, structured rules |
-| EmailMatchingService | `email-matching-service.ts` | 3-tier client matching |
-| EmailClassifier | `email-classifier.ts` | GPT-4o-mini email classification |
+| EmailService | `email-service.ts` | Provider abstraction, connection CRUD, OAuth tokens, message fetch |
+| EmailMatchingService | `email-matching-service.ts` | 5-tier client matching cascade |
+| EmailClassifier | `email-classifier.ts` | AI email classification and stage placement |
+| EmailSyncService | `email-sync-service.ts` | Sync cycle orchestration, pattern matching, webhook handling |
 
 **Hooks** (`src/lib/hooks/`):
 | Hook | File | Purpose |
 |------|------|---------|
-| useGmailConnections | `use-gmail-connections.ts` | TanStack Query: fetch, update, delete connections |
-| useGmailImport | `use-gmail-import.ts` | Start import, poll progress, Action Prompt UX |
-| useGmailSyncNotifications | `use-gmail-sync-notifications.ts` | Real-time sync event notifications |
+| useEmailConnections | `use-email-connections.ts` | TanStack Query: fetch, update, delete connections |
+| useEmailImport | `use-email-import.ts` | Start import, poll progress, Action Prompt UX |
+| useEmailSyncNotifications | `use-email-sync-notifications.ts` | Real-time sync event notifications |
 
 **Components:**
 | Component | File | Purpose |
 |-----------|------|---------|
-| EmailSetupWizard | `settings/email-setup-wizard.tsx` | 6-step wizard (Connect → Review) |
-| EmailFilterBuilder | `settings/email-filter-builder.tsx` | Filter rule editor UI |
-| FilterFunnelCanvas | `settings/filter-funnel-canvas.tsx` | Visual funnel showing filter stats |
+| EmailSetupWizard | `settings/email-setup-wizard.tsx` | 5-step wizard (Connect → Activate Sync) |
+| SourceConfirmPanel | `settings/source-confirm-panel.tsx` | Detected source review and toggle UI |
+| ImportReviewPanel | `settings/import-review-panel.tsx` | Lead review, stage assignment, duplicate merge UI |
+
+### Data Types
+
+**EmailConnection:**
+```typescript
+interface EmailConnection {
+  id: string;
+  companyId: string;
+  provider: 'gmail' | 'microsoft365';
+  accessToken: string;
+  refreshToken: string;
+  tokenExpiresAt: Date;
+  userEmail: string;
+  userName: string;
+  syncProfile: SyncProfile;
+  syncIntervalMinutes: number;
+  lastSyncHistoryId: string | null;
+  lastSyncAt: Date | null;
+  opsLabelId: string | null;
+  webhookSubscriptionId: string | null;
+  webhookExpiresAt: Date | null;
+  aiReviewEnabled: boolean;
+  aiMemoryEnabled: boolean;
+  status: 'active' | 'paused' | 'error' | 'setup_incomplete';
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+**SyncProfile:**
+```typescript
+interface SyncProfile {
+  estimateSubjectPatterns: string[];
+  companyDomains: string[];
+  teamForwarders: string[];
+  knownPlatformSenders: string[];
+  formSubjectPatterns: string[];
+  userEmailAddresses: string[];
+  aiClassificationThreshold: number;
+}
+```
+
+### Lead Auto-Creation Logic
+
+When a lead is created from email import:
+- `opportunity.source = 'email'`
+- `opportunity.stage` = AI-determined or correspondence-count-determined stage
+- `opportunity.winProbability` = based on stage
+- `opportunity.tags = ['email-import']`
+- Existing open opportunities are checked first — no duplicates created
+- Correspondence tracking columns populated: `correspondence_count`, `outbound_count`, `inbound_count`, `last_inbound_at`, `last_outbound_at`, `last_message_direction`
 
 ---
 
 ## Entity Relationship Map
 
 ```
-GmailConnection ────── Company ──── CompanySettings
+EmailConnection ────── Company ──── CompanySettings
                            │
           ┌────────────────┼────────────────┐
           │                │                │
@@ -1603,10 +1905,17 @@ GmailConnection ────── Company ──── CompanySettings
 
    FollowUp[] ─── Opportunity
    StageTransition[] ─── Opportunity
+   OpportunityEmailThread[] ─── Opportunity (junction: thread_id ↔ opportunity)
 
    Invoice ──── Project
       │    └─── Estimate (estimateId)
    Payment[]
+
+   AdminFeatureOverride ─── Company (per-company AI feature gates)
+
+   AgentMemory[] ─── Company (pgvector embeddings, feature-gated)
+   AgentKnowledgeGraph[] ─── Company (entity relationship edges)
+   AgentWritingProfile ─── Company + User (communication style)
 ```
 
 ---
@@ -1686,7 +1995,7 @@ GmailConnection ────── Company ──── CompanySettings
 | `ActivityComment` | Supabase | Joins to Activity via `activityId` |
 | `SiteVisit` | Supabase | Joins to Opportunity and Project |
 | `ProjectPhoto` | Supabase | Replaces Bubble `projectImages` string |
-| `GmailConnection` | Supabase | OAuth tokens — encrypt at rest |
+| `EmailConnection` | Supabase | OAuth tokens (encrypted at rest), sync profile, webhook subscription, AI flags. Renamed from `gmail_connections`. |
 | `CompanySettings` | Supabase | 1:1 with companyId |
 
 ### New Bubble API Endpoints Needed
@@ -1709,7 +2018,12 @@ PATCH /obj/calendarevent/:id     (add eventType, opportunityId, siteVisitId fiel
 -- activity_comments
 -- site_visits
 -- project_photos
--- gmail_connections
+-- email_connections (renamed from gmail_connections)
+-- opportunity_email_threads
+-- admin_feature_overrides
+-- agent_memories (feature-gated)
+-- agent_knowledge_graph (feature-gated)
+-- agent_writing_profiles (feature-gated)
 -- company_settings (or alter existing if table exists)
 
 -- Alter existing tables:
@@ -1741,7 +2055,7 @@ ALTER TABLE activities ADD COLUMN project_id text;
 1. Add new Bubble fields: `TaskType.defaultTeamMemberIds`, `Project.opportunityId`, `ProjectTask` source fields (CalendarEvent has been removed — scheduling dates are on ProjectTask directly)
 2. Create Bubble `TaskTemplate` data type
 3. Supabase: alter `line_items`, `estimates`, `invoices`, `products`, `opportunities`, `activities`
-4. Supabase: create `activity_comments`, `site_visits`, `project_photos`, `gmail_connections`, `company_settings`
+4. Supabase: create `activity_comments`, `site_visits`, `project_photos`, `email_connections`, `opportunity_email_threads`, `admin_feature_overrides`, `agent_memories`, `agent_knowledge_graph`, `agent_writing_profiles`, `company_settings`
 
 **Phase 2 — Automation (backend services):**
 5. Estimate send flow: client creation + project creation inline prompts
@@ -1756,11 +2070,13 @@ ALTER TABLE activities ADD COLUMN project_id text;
 12. Project photo gallery (grouped by source)
 13. TaskType settings: default crew + task templates
 
-**Phase 4 — Gmail:**
-14. Gmail OAuth connection flow (Settings → Integrations)
-15. Incremental sync worker
-16. Inbox Leads queue UI
-17. Email thread grouping in Activity timeline
+**Phase 4 — Email Pipeline Integration:**
+14. Email OAuth connection flow (Gmail + M365, Settings → Integrations)
+15. Pattern detection engine + "Import Your Pipeline" wizard
+16. Webhook-driven sync engine with provider abstraction
+17. 5-tier client matching + correspondence tracking
+18. AI classification and stage placement (feature-gated)
+19. AI memory system (feature-gated)
 
 ### Implementation Status by Platform (as of February 2026)
 
@@ -1811,16 +2127,18 @@ Invoices are fully implemented on iOS with the following views in `OPS/OPS/Views
 
 The `SiteVisit` data model exists at `OPS/OPS/DataModels/Supabase/SiteVisit.swift` (SwiftData `@Model` with fields: `id`, `opportunityId`, `companyId`, `status`, `scheduledAt`, `completedAt`, `notes`, `address`, `assignedTo`, `createdAt`). However, no dedicated iOS views exist for site visits yet. Site visit UI (create, on-site capture, complete) is not yet built on iOS.
 
-#### Gmail Integration — Web Only (No iOS Implementation)
+#### Email Pipeline Integration — Web Only (No iOS Implementation)
 
-Gmail integration API routes exist on the web backend (`OPS-Web/src/app/api/integrations/gmail/`):
-- `route.ts` — main Gmail integration endpoint
-- `callback/route.ts` — OAuth callback handler
-- `manual-sync/route.ts` — manual sync trigger
+Email integration API routes exist on the web backend (`OPS-Web/src/app/api/integrations/email/`):
+- `route.ts` — main email integration endpoint
+- `callback/route.ts` — OAuth callback handler (Gmail + M365)
+- `sync/route.ts` — sync trigger
+- `webhook/gmail/route.ts` — Gmail Pub/Sub webhook receiver
+- `webhook/microsoft365/route.ts` — M365 Change Notifications webhook receiver
 
-Supporting web services: `gmail-service.ts`, `use-gmail-connections.ts`, `integration-service.ts`, `integrations-tab.tsx`, `inbox-leads-queue.tsx`.
+Supporting web services: `email-service.ts`, `email-sync-service.ts`, `email-matching-service.ts`, `email-classifier.ts`, `use-email-connections.ts`, `email-setup-wizard.tsx`.
 
-No Gmail integration exists on iOS. There are no Gmail-related Swift files in the iOS codebase.
+No email integration exists on iOS. The iOS app reads from the same `opportunities` table (which gains new correspondence tracking columns) but does not connect to or sync email accounts.
 
 ---
 
