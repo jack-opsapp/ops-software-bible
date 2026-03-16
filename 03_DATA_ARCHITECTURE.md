@@ -1911,6 +1911,14 @@ This data architecture provides:
 
 These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` for full integration documentation including the sync engine, pattern detection, AI classification, and provider abstraction layer.
 
+### Migration Notes
+
+- **`gmail_connections` → `email_connections`** (migration 034): Table renamed. New columns added: `provider` (TEXT, default `'gmail'`), `webhook_subscription_id`, `webhook_expires_at`, `ops_label_id`, `ai_review_enabled`, `ai_memory_enabled`, `status`. All existing rows backfilled with `provider = 'gmail'`. No re-auth required for existing Gmail connections.
+- **`gmail_scan_jobs` was NOT renamed.** The table retains its original name `gmail_scan_jobs` in both the database and all code references. Only `gmail_connections` was renamed.
+- **`sync_filters` column was NOT renamed.** Migration 034 contains a comment noting the intent to rename `sync_filters` to `sync_profile`, but the rename was deferred. The DB column remains `sync_filters`. The TypeScript type `SyncProfile` maps to this column via the `syncFilters` field on `EmailConnection`.
+- **Migration 035** added: `opportunity_email_threads`, `admin_feature_overrides`, and correspondence tracking columns on `opportunities`.
+- **Migration 036** added: `agent_memories` (with pgvector), `agent_knowledge_graph`, `agent_writing_profiles`.
+
 ### email_connections
 
 Renamed from `gmail_connections`. Supports Gmail and Microsoft 365 via provider abstraction. Existing Gmail connections backfilled with `provider = 'gmail'` — no re-auth required.
@@ -1925,7 +1933,7 @@ CREATE TABLE email_connections (
   token_expires_at        TIMESTAMPTZ NOT NULL,
   user_email              TEXT NOT NULL,
   user_name               TEXT,
-  sync_profile            JSONB DEFAULT '{}',              -- pattern detection rules (estimate patterns, company domains, platform senders, etc.)
+  sync_filters            JSONB DEFAULT '{}',              -- pattern detection rules (estimate patterns, company domains, platform senders, etc.)
   sync_interval_minutes   INTEGER DEFAULT 60,
   last_sync_history_id    TEXT,                            -- Gmail historyId or M365 deltaLink
   last_sync_at            TIMESTAMPTZ,
@@ -1940,7 +1948,7 @@ CREATE TABLE email_connections (
 );
 ```
 
-`sync_profile` stores the pattern detection output as JSONB:
+`sync_filters` stores the pattern detection output as JSONB. **Note:** The DB column retains the name `sync_filters` for backward compatibility (migration 034 commented out the rename). The TypeScript type `SyncProfile` maps to this column via the `syncFilters` field on `EmailConnection`.
 
 ```json
 {
@@ -1956,27 +1964,74 @@ CREATE TABLE email_connections (
 
 Token columns (`access_token`, `refresh_token`) are accessed via service role only in API routes — not exposed to client via RLS column-level restrictions.
 
-### email_scan_jobs
+### gmail_scan_jobs
 
-Renamed from `gmail_scan_jobs`. Tracks async inbox analysis jobs during wizard Step 2.
+Tracks async inbox analysis jobs during wizard Step 2. **Note:** This table was NOT renamed during the gmail → email migration (only `gmail_connections` was renamed to `email_connections`). The table name `gmail_scan_jobs` persists in the DB and all code references.
 
 ```sql
-CREATE TABLE email_scan_jobs (
+CREATE TABLE gmail_scan_jobs (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id        UUID NOT NULL REFERENCES companies(id),
-  connection_id     UUID NOT NULL REFERENCES email_connections(id),
-  status            TEXT NOT NULL DEFAULT 'pending',  -- pending | running | completed | failed
-  stage             TEXT DEFAULT 'pending',           -- pending | sent_analysis | platform_detection | ai_classification | complete | error
-  current           INTEGER DEFAULT 0,
-  total             INTEGER DEFAULT 0,
-  message           TEXT,
-  results           JSONB,                            -- detected sources and candidates
-  summary           TEXT,                             -- analysis summary
+  connection_id     UUID NOT NULL,
+  company_id        TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'pending',
+  progress          JSONB DEFAULT '{"stage": "pending", "current": 0, "total": 0, "message": "Starting scan..."}',
+  result            JSONB,
   error_message     TEXT,
-  created_at        TIMESTAMPTZ DEFAULT NOW(),
-  completed_at      TIMESTAMPTZ
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  updated_at        TIMESTAMPTZ DEFAULT now()
 );
 ```
+
+**Status values** (set by the analyze route during background processing):
+- `pending` — Job created, analysis not yet started
+- `analyzing_sent` — Phase 1: scanning sent emails for estimate patterns and company domains
+- `detecting_platforms` — Phase 1 complete, known platform senders identified
+- `classifying_ai` — Phase 2: OpenAI classifying unmatched personal emails as leads vs noise
+- `analyzing_threads` — Phase 3: fetching full threads for AI-detected leads, analyzing stage placement
+- `complete` — All phases done, results written
+- `error` — Analysis failed (see `error_message`)
+
+**`progress` JSONB structure** (updated at each phase transition):
+```json
+{
+  "stage": "classifying_ai",
+  "message": "Classifying 47 emails with AI...",
+  "percent": 50
+}
+```
+
+**`result` JSONB structure** (written on completion):
+```json
+{
+  "estimatePattern": "Canpro Deck and Rail Estimate",
+  "estimatePatternConfidence": 0.95,
+  "estimateThreadCount": 23,
+  "detectedSources": [
+    { "type": "form_platform", "sender": "notifications@wix-forms.com", "count": 12 }
+  ],
+  "companyDomains": ["canprodeckandrail.com"],
+  "teamForwarders": ["jared@canprodeckandrail.com"],
+  "leads": [
+    {
+      "id": "lead-threadId123",
+      "threadId": "threadId123",
+      "client": { "name": "John Smith", "email": "john@example.com", "phone": null, "description": "Deck quote" },
+      "stage": "qualifying",
+      "stageConfidence": 0.85,
+      "estimatedValue": 15000,
+      "correspondenceCount": 3,
+      "outboundCount": 1,
+      "source": "ai",
+      "sourceLabel": "AI detected",
+      "enabled": true,
+      "matchResult": { "existingClientId": null, "existingClientName": null, "action": "create", "confidence": 0.0 }
+    }
+  ],
+  "totalScanned": 450
+}
+```
+
+**RLS:** None — queried via service-role client only.
 
 ### opportunity_email_threads
 
@@ -2094,6 +2149,10 @@ ALTER TABLE opportunities ADD COLUMN detected_value INT;
 ```
 
 These columns are used by the sync engine's correspondence-count stage rules (free tier) and AI stage evaluation (gated tier).
+
+### Note: companies.industry Column
+
+The `companies` table has an `industries` column (TEXT array, from migration 004) but does **not** have an `industry` (singular) column. The email pipeline code does `.select("name, industry")` on companies, but PostgREST returns `null` for the nonexistent column. The code falls back to `"trades"` via `(company?.industry as string) || "trades"`. No migration was created to add this column. If per-company industry classification is needed in the future, either use the existing `industries` array or add an `industry TEXT` column via a new migration.
 
 ### email_filter_presets
 

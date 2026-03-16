@@ -1377,11 +1377,11 @@ A 5-step wizard replaces the previous 6-step filter-based wizard. Located in `sr
    - Note: real-time via push notifications, scheduled sync as safety net
    - Summary card: leads imported, sync frequency, next sync time
 
-**Wizard state is persisted** on the `email_connections` record via the `sync_profile` JSONB column and `status` column (`setup_incomplete` during wizard).
+**Wizard state is persisted** on the `email_connections` record via the `sync_filters` JSONB column (mapped as `syncFilters` in TypeScript) and `status` column (`setup_incomplete` during wizard). Note: The DB column retains the name `sync_filters` for backward compatibility — the TypeScript type is `SyncProfile`.
 
 ### Pattern Detection Engine
 
-Runs during wizard Step 2. Produces the **sync profile** — the ruleset used by every ongoing sync cycle. Stored as JSONB on the `email_connections.sync_profile` column.
+Runs during wizard Step 2. Produces the **sync profile** — the ruleset used by every ongoing sync cycle. Stored as JSONB on the `email_connections.sync_filters` column (TypeScript field: `syncFilters: SyncProfile`).
 
 **2A: Sent Mail Analysis**
 1. Fetch sent messages (last 3 months, skip internal company domain addresses)

@@ -8,9 +8,11 @@ This executive summary provides a high-level overview of OPS (Operational Projec
 
 ## Elevator Pitch (Founder's Voice)
 
-OPS is job management software built by a railings contractor for specialized trades—electricians, plumbers, landscapers, deck builders. Not for general contractors.
+OPS is job management software built by a subtrade (deck & railing) for service-based businesses and specialized trades—electricians, plumbers, landscapers, deck builders, cleaners. Not for general contractors.
 
-I spent 10 years in commercial railings and got sick of apps like Jobber that cost $300+ a month, crash when you're underground with no signal, and are so complicated your crew won't use them.
+**Important terminology:** Jack is a subtrade, not a contractor. Subtrades DO the work. Contractors sub out work to others. OPS is for the people who do the work. Never refer to the founder or OPS users as "contractors" or "tradesperson" (sounds forced). Use: tradesmen, trades, owner-operator, operator, crew, team lead, founder, owner, business owner.
+
+I scaled a deck and railing business from $0 to $1.6M in 4 years. In my last year, I tried Jobber, ServiceTitan, Housecall Pro—my crew wouldn't touch any of them. Too complex, too unintuitive. So I built OPS and used it to break the million-dollar mark.
 
 OPS does everything you need—schedule jobs, assign crew, track status, navigate to sites, document with photos—and it works offline when signal cuts out.
 
@@ -245,6 +247,7 @@ Every design decision reflects real-world field experience:
 
 **OPS Web (ops-web — Next.js, Feb 2026):**
 - Full web command center mirroring iOS features
+- **Email Pipeline Import:** AI-powered inbox scanning that detects leads from Gmail and Microsoft 365, classifies them with OpenAI, matches to existing clients, and imports into the pipeline CRM. Includes a 5-step wizard for initial setup, ongoing scheduled sync (every 15 min), real-time webhook push, and feature-gated AI draft replies with memory/writing-profile support. See `04_API_AND_INTEGRATION.md` §20 and `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` §10 for full architecture.
 - **Pipeline/CRM system:** 8-stage Kanban board (New Lead → Qualifying → Quoting → Quoted → Follow-Up → Negotiation → Won → Lost) with drag-and-drop, activity timeline, follow-up tracking
 - **Estimates system:** Full quote builder with line items, optional items, deposit schedules, payment milestones, PDF storage, version control, atomic estimate→invoice conversion
 - **Invoices system:** Full billing with line items, payment recording, DB-trigger-maintained balances, payment voiding, partial payments
@@ -333,8 +336,8 @@ This Software Bible is considered complete when:
 
 ---
 
-**Last Updated:** March 2, 2026
-**Document Version:** 1.5
+**Last Updated:** March 16, 2026
+**Document Version:** 1.6
 **iOS App Version:** 437 Swift files, 25 SwiftData models, iOS 17+, Supabase primary backend
 **Web App Version:** Next.js, Supabase (33 tables, 16 migrations), Pipeline/Estimates/Invoices/Project Notes/Inventory/Notifications/Permissions/Calendar live
 **Ecosystem:** ops-site (marketing), ops-learn (learning platform), try-ops (interactive tutorial)

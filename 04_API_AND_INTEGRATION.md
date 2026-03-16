@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: March 8, 2026
+**Last Updated**: March 16, 2026
 **iOS Reference**: `OPS/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -31,6 +31,7 @@
 17. [Supabase Table Reference](#supabase-table-reference)
 18. [Bubble.io (Legacy)](#bubbleio-legacy)
 19. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
+20. [Email Pipeline Integration Routes (15 Routes)](#email-pipeline-integration-routes-15-routes)
 
 ---
 
@@ -61,7 +62,11 @@ iOS App (SwiftData)                   OPS Web (Next.js)
     |-- HTTPS --------> app.opsapp.co ----+--- /api/uploads/presign --> AWS S3
     |                                      +--- /api/notifications/send --> OneSignal
     |                                      +--- /api/stripe/* --> Stripe
-    |                                      +--- /api/integrations/gmail/* --> Gmail API (14 routes)
+    |                                      +--- /api/integrations/email/* --> Email Pipeline (8 routes)
+    |                                      +--- /api/integrations/microsoft365/* --> M365 OAuth (2 routes)
+    |                                      +--- /api/admin/ai-features/* --> AI Feature Admin (3 routes)
+    |                                      +--- /api/cron/email-sync --> Scheduled email sync
+    |                                      +--- /api/cron/webhook-renewal --> Webhook renewal
     |                                      +--- /api/admin/migrate-bubble --> Bubble migration
     |
     |-- OneSignalFramework (receive push)
@@ -1338,6 +1343,221 @@ Every entity uses **upsert on `bubble_id` conflict**, making the migration safe 
 
 ---
 
+## Email Pipeline Integration Routes (15 Routes)
+
+The Email Pipeline system adds 15 API routes across 4 route groups. All routes live in `OPS-Web/src/app/api/`. Unless noted, all routes use `getServiceRoleClient()` with `setSupabaseOverride()` for Supabase access (bypassing RLS). All long-running routes set `maxDuration = 300` (5 min, Vercel Pro limit).
+
+### 1. POST /api/integrations/email/analyze
+
+**Purpose:** Starts wizard Step 2 inbox analysis — pattern detection + AI classification.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role (no user auth check — connectionId ownership implied) |
+| Request body | `{ connectionId: string, companyId: string }` |
+| Response | `{ jobId: string }` |
+| Service calls | `EmailService.getConnection()`, `PatternDetectionService.detect()`, `EmailAIClassifier.classifyBatch()`, `EmailAIClassifier.analyzeThreads()`, `EmailMatchingServiceV2.match()` |
+
+**Behavior:** Creates a `gmail_scan_jobs` row with status `pending`, then runs analysis in the background via `after()` (Next.js background task). Phases: analyzing_sent → detecting_platforms → classifying_ai → analyzing_threads → complete. On error, sets status to `error` with `error_message`. On success, writes `result` JSONB with `{ estimatePattern, estimatePatternConfidence, estimateThreadCount, detectedSources, companyDomains, teamForwarders, leads: AnalyzedLead[], totalScanned }`.
+
+### 2. GET /api/integrations/email/analyze-status
+
+**Purpose:** Polls analysis job progress for the wizard Step 2 UI.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role (no user auth check) |
+| Query params | `jobId` (required) |
+| Response | `{ jobId, status, progress: { stage, message, percent }, result?: object, error?: string }` |
+| Service calls | Direct Supabase query on `gmail_scan_jobs` |
+
+**Behavior:** Returns the current state of the analysis job. `result` is only included when `status === "complete"`. `error` is only included when `status === "error"`.
+
+### 3. POST /api/integrations/email/import
+
+**Purpose:** Imports confirmed leads from wizard Step 4. Creates clients, opportunities, activity records, and thread links.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Request body | `ImportPayload: { connectionId, companyId, leads: ImportLead[] }` |
+| Response | `ImportResult: { clientsCreated, leadsCreated, activitiesLogged, labelsApplied, errors: string[] }` |
+| Service calls | `EmailService.getConnection()`, `ClientService.createClient()`, `OpportunityService.createOpportunity()`, `OpportunityService.createActivity()`, `EmailMatchingServiceV2.match()`, provider `applyLabel()` |
+
+Each `ImportLead` has: `id, threadId, clientName, clientEmail, clientPhone?, stage, description?, estimatedValue?, action ("create" | "link" | "create_subclient"), existingClientId?, mergeWithLeadId?`.
+
+**Behavior:** For each lead: resolves or creates client (with merge/link/subclient logic), creates opportunity with AI-detected stage, inserts `opportunity_email_threads` junction row, creates email activity record, applies "OPS Pipeline" label to the Gmail/M365 thread.
+
+### 4. POST /api/integrations/email/activate
+
+**Purpose:** Saves sync profile, creates "OPS Pipeline" label, sets up webhook, activates ongoing sync. Called by wizard Step 5.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Request body | `ActivationPayload: { connectionId, companyId, syncIntervalMinutes, syncProfile: SyncProfile }` |
+| Response | `{ ok: true, labelId, webhookActive: boolean, syncIntervalMinutes }` |
+| Service calls | `EmailService.getConnection()`, `EmailService.updateConnection()`, provider `listLabels()`, `createLabel()`, `setupWebhook()` |
+
+**Behavior:** Creates/finds "OPS Pipeline" label in user's inbox, sets up Gmail Pub/Sub watch or M365 subscription for push notifications, saves sync profile to `sync_filters` column (with `wizardCompleted: true`), sets connection status to `active`.
+
+### 5. POST /api/integrations/email/manual-sync
+
+**Purpose:** Triggers a manual sync cycle. Called by user button, webhook push, or internal API.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Request body | `{ connectionId?: string, companyId?: string, source?: string }` |
+| Response | `{ ok: true, source, connectionsProcessed, results: SyncResult[] }` |
+| Service calls | `SyncEngine.runSync()` |
+
+**Behavior:** If `connectionId` is provided, syncs that single connection. If `companyId`, syncs all active connections for that company. Each `SyncResult` contains `{ connectionId, activitiesCreated, newLeads }`.
+
+### 6. POST /api/integrations/email/draft
+
+**Purpose:** Generates an AI draft reply for a pipeline lead using memory + writing profile. Feature-gated behind `ai_email_memory`.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Request body | `{ companyId, userId, opportunityId, checkOnly?: boolean }` |
+| Response (checkOnly) | `{ available: boolean, confidence: number, draft: "", sources: [], reason?: string }` |
+| Response (generate) | `DraftGeneratorResult: { draft, confidence, sources }` |
+| Service calls | `AdminFeatureOverrideService.isAIFeatureEnabled()`, `WritingProfileService.getProfile()`, `DraftGenerator.generateDraft()` |
+
+**Behavior:** When `checkOnly: true`, returns availability without calling the LLM — checks feature gate and writing profile confidence (requires ≥50%, ~100+ emails). When generating, fetches opportunity + client + last inbound email, calls `DraftGenerator` which uses the writing profile + memory facts + knowledge graph to produce a contextual reply draft.
+
+### 7. POST /api/integrations/email/webhook/gmail
+
+**Purpose:** Receives Gmail Pub/Sub push notifications and triggers sync.
+
+| Field | Value |
+|-------|-------|
+| Auth | None (Gmail Pub/Sub sends unauthenticated; always returns 200) |
+| Request body | Gmail Pub/Sub notification: `{ message: { data: base64({ emailAddress }) } }` |
+| Response | `{ ok: true }` |
+| Service calls | Internal fetch to `/api/integrations/email/manual-sync` (fire-and-forget) |
+
+**Behavior:** Decodes the Pub/Sub payload to get the email address, looks up active connections for that email, debounces (skips if synced within last 30 seconds), then triggers manual-sync for each matching connection. Always returns 200 to avoid Pub/Sub retries.
+
+### 8. POST /api/integrations/email/webhook/microsoft365
+
+**Purpose:** Receives M365 Graph API change notifications and triggers sync. Also handles subscription validation handshake.
+
+| Field | Value |
+|-------|-------|
+| Auth | None (M365 sends unauthenticated; always returns 200) |
+| Request body | M365 change notification: `{ value: [{ clientState: connectionId }] }` |
+| Query params | `validationToken` (present during subscription creation) |
+| Response | 200 OK (text/plain with validationToken during handshake, JSON otherwise) |
+| Service calls | Internal fetch to `/api/integrations/email/manual-sync` (fire-and-forget) |
+
+**Behavior:** During M365 subscription creation, responds with `validationToken` in plain text. For change notifications, reads `clientState` (set to connectionId during subscription setup), debounces (30s), triggers manual-sync.
+
+### 9. GET /api/integrations/microsoft365
+
+**Purpose:** Initiates M365 OAuth flow by redirecting to Microsoft login.
+
+| Field | Value |
+|-------|-------|
+| Auth | None (redirect-based; state param carries companyId/userId) |
+| Query params | `companyId` (required), `userId`, `type` (default `"individual"`) |
+| Response | 302 redirect to `login.microsoftonline.com` |
+| Env vars | `MICROSOFT_CLIENT_ID` |
+
+**Behavior:** Encodes `{ companyId, userId, type }` as base64 state param, builds Microsoft OAuth URL with `Mail.Read Mail.ReadWrite offline_access` scopes, redirects user.
+
+### 10. GET /api/integrations/microsoft365/callback
+
+**Purpose:** M365 OAuth callback — exchanges auth code for tokens, stores connection.
+
+| Field | Value |
+|-------|-------|
+| Auth | None (OAuth callback) |
+| Query params | `code`, `state` (base64-encoded), `error` |
+| Response | 302 redirect to `/settings?tab=integrations&status=...` |
+| Env vars | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` |
+
+**Behavior:** Decodes state to get companyId/userId/type, exchanges code for tokens via Microsoft token endpoint, fetches user profile for email, inserts into `email_connections` with `provider: "microsoft365"` and `status: "setup_incomplete"`, redirects to settings with success/error status.
+
+### 11. GET /api/admin/ai-features
+
+**Purpose:** Lists all companies with their AI feature override status.
+
+| Field | Value |
+|-------|-------|
+| Auth | Admin (Firebase token + admin email whitelist via `withAdmin()` wrapper) |
+| Response | `Array<{ id, name, aiEmailReview: { enabled, enabledAt }, aiEmailMemory: { enabled, enabledAt } }>` |
+| Service calls | Direct queries on `companies` and `admin_feature_overrides` |
+
+### 12. GET + PATCH /api/admin/ai-features/[companyId]
+
+**Purpose:** View or toggle AI features for a specific company.
+
+**GET:**
+
+| Field | Value |
+|-------|-------|
+| Auth | Admin (Firebase token + admin email whitelist) |
+| Response | `{ company: { id, name }, features: { ai_email_review, ai_email_memory }, memory: { facts, graphEdges, profiles, writingProfiles } }` |
+| Service calls | `MemoryService.getStats()`, direct queries on `admin_feature_overrides`, `agent_writing_profiles` |
+
+**PATCH:**
+
+| Field | Value |
+|-------|-------|
+| Auth | Admin |
+| Request body | `{ ai_email_review?: boolean, ai_email_memory?: boolean }` |
+| Response | `{ ok: true, updated: [{ feature, enabled }] }` |
+| Service calls | `admin_feature_overrides` upsert (on conflict: `company_id, feature_key`) |
+
+### 13. GET + DELETE /api/admin/ai-features/[companyId]/memory
+
+**Purpose:** View or reset AI memory for a company.
+
+**GET:**
+
+| Field | Value |
+|-------|-------|
+| Auth | Admin |
+| Response | `{ facts: AgentMemory[], edges: KnowledgeGraphEdge[] }` (max 100 each, newest first) |
+| Service calls | Direct queries on `agent_memories` and `agent_knowledge_graph` |
+
+**DELETE:**
+
+| Field | Value |
+|-------|-------|
+| Auth | Admin |
+| Response | `{ ok: true, message: "Memory reset complete" }` |
+| Service calls | `MemoryService.resetMemory()` |
+
+### 14. POST /api/cron/email-sync
+
+**Purpose:** Scheduled email sync cron job. Runs every 15 minutes via Vercel Cron.
+
+| Field | Value |
+|-------|-------|
+| Auth | Cron secret (`Authorization: Bearer $CRON_SECRET`) |
+| Response | `{ ok: true, synced: number, staleSweepChanges: number, results: SyncResult[] }` |
+| Service calls | `SyncEngine.runSync()`, `SyncEngine.sweepStaleLeads()` |
+
+**Behavior:** Queries all active email connections, checks each against its `sync_interval_minutes` + `last_synced_at` to determine if sync is due, runs `SyncEngine.runSync()` for each. Also runs `SyncEngine.sweepStaleLeads()` to detect follow-up-needed opportunities based on correspondence age (independent of new email arrival). Each `SyncResult`: `{ connectionId, email, provider, activitiesCreated, newLeads, error? }`.
+
+### 15. POST /api/cron/webhook-renewal
+
+**Purpose:** Renews expiring Gmail Pub/Sub watches and M365 subscriptions. Runs daily via Vercel Cron.
+
+| Field | Value |
+|-------|-------|
+| Auth | Cron secret (`Authorization: Bearer $CRON_SECRET`) |
+| Response | `{ ok: true, renewed: number, results: [{ id, provider, renewed, error? }] }` |
+| Service calls | `EmailService.getConnection()`, provider `renewWebhook()`, `EmailService.updateConnection()` |
+
+**Behavior:** Finds active connections with webhooks expiring within 2 days, renews each via the provider abstraction (Gmail: re-register Pub/Sub watch with 7-day expiry; M365: renew subscription with 3-day expiry), updates `webhook_subscription_id` and `webhook_expires_at`.
+
+---
+
 **End of Document**
 
-This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, and error management with full fidelity to the current implementation.
+This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, email pipeline integration, and error management with full fidelity to the current implementation.
