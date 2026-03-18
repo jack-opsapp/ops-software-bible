@@ -25,6 +25,7 @@
 15. [Crew Location Tracking](#15-crew-location-tracking)
 16. [Schedule Tab Redesign](#16-schedule-tab-redesign)
 17. [Feature Flags System](#17-feature-flags-system)
+18. [Intel Galaxy Visualization (Web)](#18-intel-galaxy-visualization-web)
 
 ---
 
@@ -3267,6 +3268,94 @@ New permission module for the email integration, registered in the existing perm
 | email.view | all | all | all | all | — |
 | email.manage | all | all | all | — | — |
 | email.configure_ai | all | all | — | — | — |
+
+---
+
+## 18. Intel Galaxy Visualization (Web)
+
+### Overview
+
+Full-bleed 3D galaxy visualization at `/intel` — the visual manifestation of Phase C (OPS AI intelligence layer). Renders every entity in the user's business network as an interactive orbital constellation.
+
+**Route:** `/intel` (sidebar: "Intel" with Radar icon, visible to all users)
+**Feature gate:** `phase_c` (renamed from `ai_email_memory`)
+**Tech:** React Three Fiber (lazy loaded, ~150KB gzip not in critical path)
+
+### Data Sources
+
+The galaxy merges Phase C entities with live OPS data:
+
+| Source | Gate | Entities |
+|--------|------|----------|
+| `graph_entities` | Phase C | People, companies, services, materials from email |
+| `agent_knowledge_graph` | Phase C | Relationship edges between entities |
+| `agent_writing_profiles` | Phase C | Voice/tone profile nodes |
+| `projects` | Always | Active projects |
+| `clients` | Always | Client records |
+| `invoices` | Always | Financial documents |
+| `estimates` | Always | Financial documents |
+
+### API Endpoints
+
+**`GET /api/intel/graph?companyId=X`** — unified graph (Phase C + live OPS data). Returns `{ entities, edges, voiceProfiles, stats, phaseCEnabled }`.
+
+**`GET /api/intel/entity/[entityId]?type=X&companyId=X`** — entity detail for drill-down. Returns `{ entity, facts, edges, details }`.
+
+### Cluster Architecture
+
+| Cluster | Color | Orbital Radius | Contents |
+|---------|-------|---------------|----------|
+| Voice | `#597794` (accent) | 3 | Writing profile nodes per relationship type |
+| Internal | `#8E8E93` | 5 | Team members, employees |
+| Clients | `#8195B5` | 8 | Client records + email contacts |
+| Projects | `#B58289` | 8 | Active projects |
+| Vendors | `#C4A868` | 11 | Vendor entities from email |
+| Subtrades | `#9DB582` | 11 | Subtrade entities from email |
+| Financials | `#BCBCBC` | Orbits parent projects | Invoices, estimates |
+
+### 3D Gating
+
+Without Phase C: galaxy renders in 2D only. OrbitControls rotation disabled. Attempted rotation triggers snap-back + frosted-glass prompt: "Unlock the ██████ dimension. [ Request Early Access ]"
+
+With Phase C: full 3D orbit unlocked. Nodes gain z-depth positioning on first rotation.
+
+### Interaction Model
+
+- **Tier 1 (hover):** Borderless label near node — name + type. Dark-halo legibility treatment.
+- **Tier 2 (click):** Borderless inline info — entity-type-specific summary. `[ MORE ]` button.
+- **Tier 3 (expand):** Frosted-glass card with full detail from drill-down API (facts, edges, timeline).
+- **Edges:** Proximity-revealed — invisible by default, fade in near camera or selected node.
+
+### Activation Animation
+
+New entities (created since `intel_last_viewed_at` in localStorage) trigger a 3-beat ignition sequence:
+1. Existing nodes dim to 30%, new nodes brighten by cluster (staggered)
+2. Edges between new nodes draw in
+3. Existing nodes restore, galaxy settles
+
+Phase C toast: "New intel available" → "View Intel" CTA → navigates to `/intel`.
+
+### Redacted Copy
+
+~50% of Phase C-related copy is redacted with `████` bars. Bars are `#1a1a1a` background with `box-shadow: 0 0 8px rgba(89,119,148,0.3)` accent glow. Redacted words are the capability words — structure stays readable. Builds intrigue for ungated users.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/app/(dashboard)/intel/page.tsx` | Page route |
+| `src/components/intel/galaxy-scene.tsx` | Main R3F Canvas + scene assembly |
+| `src/components/intel/galaxy-layout.ts` | Orbital position calculator |
+| `src/components/intel/galaxy-nodes.tsx` | Instanced point-sprite nodes |
+| `src/components/intel/galaxy-edges.tsx` | Proximity-revealed edges |
+| `src/components/intel/galaxy-center.tsx` | Self/company center node |
+| `src/components/intel/galaxy-starfield.tsx` | Ambient background stars |
+| `src/components/intel/hud/*.tsx` | Floating HUD overlays |
+| `src/components/intel/node-info.tsx` | Tier 2/3 drill-down panel |
+| `src/stores/intel-store.ts` | Zustand state |
+| `src/lib/hooks/use-intel-graph.ts` | TanStack Query hook |
+| `src/app/api/intel/graph/route.ts` | Graph API |
+| `src/app/api/intel/entity/[entityId]/route.ts` | Entity detail API |
 
 ---
 
