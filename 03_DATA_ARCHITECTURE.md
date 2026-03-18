@@ -1918,6 +1918,7 @@ These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AN
 - **`sync_filters` column was NOT renamed.** Migration 034 contains a comment noting the intent to rename `sync_filters` to `sync_profile`, but the rename was deferred. The DB column remains `sync_filters`. The TypeScript type `SyncProfile` maps to this column via the `syncFilters` field on `EmailConnection`.
 - **Migration 035** added: `opportunity_email_threads`, `admin_feature_overrides`, and correspondence tracking columns on `opportunities`.
 - **Migration 036** added: `agent_memories` (with pgvector), `agent_knowledge_graph`, `agent_writing_profiles`.
+- **Migration 037-040** (Phase C Memory Bank): `graph_entities` table, entity FK columns on `agent_knowledge_graph` (source_entity_id, target_entity_id, link_type), `profile_type` on `agent_writing_profiles` (new unique constraint), `entity_id`/`valid_from`/`valid_to` on `agent_memories`.
 
 ### email_connections
 
@@ -2068,9 +2069,35 @@ CREATE TABLE admin_feature_overrides (
 );
 ```
 
+### graph_entities
+
+First-class entity nodes for the knowledge graph. Every person, company, project, service, and material discovered in emails becomes a UUID-keyed entity. Added in Phase C (memory bank).
+
+```sql
+CREATE TABLE graph_entities (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id       UUID NOT NULL REFERENCES companies(id),
+  entity_type      TEXT NOT NULL,       -- 'person', 'company', 'project', 'service', 'material', 'document'
+  name             TEXT NOT NULL,       -- Display name: "John Henderson", "Vitrum Glass"
+  normalized_name  TEXT NOT NULL,       -- Lowercase trimmed for dedup: "john henderson", "vitrum glass"
+  email            TEXT,                -- Primary email (nullable — companies/services may not have one)
+  properties       JSONB DEFAULT '{}',  -- Flexible: phone, role, address, domain, industry, etc.
+  confidence       REAL DEFAULT 1.0,    -- How confident this entity is real/accurate (0.0-1.0)
+  source           TEXT DEFAULT 'email_import',
+  embedding        vector(1536),        -- For semantic entity matching (future fuzzy dedup)
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  updated_at       TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (company_id, entity_type, normalized_name)
+);
+```
+
+**Entity types:** person (keyed by email), company (keyed by domain), project (name + client), service (normalized name), material (normalized name), document (reference number).
+
+**Entity resolution:** Deterministic — people by email address, companies by email domain. Longer/more-complete name wins on conflict. Confidence threshold 0.7 minimum.
+
 ### agent_memories
 
-Core memory entries with pgvector embeddings. Feature-gated behind `ai_email_memory`. Orchestrated via Mem0 on Supabase for dedup, consolidation, and retrieval ranking.
+Core memory entries with pgvector embeddings. Feature-gated behind `ai_email_memory`. Uses ADD/UPDATE/NOOP conflict resolution inspired by Mem0.
 
 ```sql
 CREATE TABLE agent_memories (
@@ -2078,12 +2105,15 @@ CREATE TABLE agent_memories (
   company_id       UUID NOT NULL REFERENCES companies(id),
   user_id          UUID REFERENCES users(id),
   memory_type      TEXT,              -- 'fact', 'preference', 'trait', 'relationship', 'correction'
-  category         TEXT,              -- 'writing_style', 'pricing', 'client_preference', 'stage_signal', 'lead_source', etc.
+  category         TEXT,              -- 16 categories: pricing, commitment, client_preference, client_behavior, budget_signal, material_usage, supplier_pricing, supplier_relationship, employee_pattern, project_event, seasonal_pattern, service_capability, service_area, process, relationship_health, promotion
   content          TEXT,
   embedding        halfvec(1536),     -- pgvector embedding for semantic search
   confidence       FLOAT DEFAULT 1.0,
   source           TEXT,              -- 'email', 'invoice', 'project', 'user_upload', 'draft_edit'
   source_id        TEXT,
+  entity_id        UUID REFERENCES graph_entities(id),  -- Phase C: links fact to entity it's about
+  valid_from       TIMESTAMPTZ,       -- Phase C: temporal validity start
+  valid_to         TIMESTAMPTZ,       -- Phase C: temporal validity end (null = still valid)
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   last_accessed_at TIMESTAMPTZ,
   access_count     INT DEFAULT 0,
@@ -2091,46 +2121,62 @@ CREATE TABLE agent_memories (
 );
 ```
 
+**Conflict resolution:** Similar fact exists (first-50-chars ilike match) → NOOP (reinforce confidence +0.05, bump access_count). New fact → ADD. Contradictory facts → keep both with valid_from/valid_to timestamps.
+
 ### agent_knowledge_graph
 
-Entity relationship edges with temporal validity. Feature-gated behind `ai_email_memory`.
+Entity relationship edges with temporal validity. Feature-gated behind `ai_email_memory`. Supports both legacy string-based edges and Phase C entity-ID-based edges.
 
 ```sql
 CREATE TABLE agent_knowledge_graph (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id    UUID NOT NULL REFERENCES companies(id),
-  subject_type  TEXT,              -- 'person', 'company', 'project', 'invoice'
-  subject_id    TEXT,
-  predicate     TEXT,              -- 'works_for', 'manages', 'invoiced', 'prefers', 'tone_with'
-  object_type   TEXT,
-  object_id     TEXT,
-  properties    JSONB,
-  valid_from    TIMESTAMPTZ,
-  valid_to      TIMESTAMPTZ,
-  created_at    TIMESTAMPTZ DEFAULT NOW()
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        UUID NOT NULL REFERENCES companies(id),
+  -- Legacy string-based columns (deprecated, preserved for backward compat)
+  subject_type      TEXT,              -- 'person', 'company', 'project', 'invoice'
+  subject_id        TEXT,
+  predicate         TEXT,              -- 'works_for', 'client_of', 'vendor_of', 'subtrade_of', 'quoted_for', 'uses_material', 'supplied_by', 'worked_on', 'communicates_with', 'contact_for'
+  object_type       TEXT,
+  object_id         TEXT,
+  properties        JSONB,
+  -- Phase C entity-ID-based columns
+  source_entity_id  UUID REFERENCES graph_entities(id),  -- Source node
+  target_entity_id  UUID REFERENCES graph_entities(id),  -- Target node
+  link_type         TEXT DEFAULT 'extracted',             -- 'extracted', 'manual', 'inferred'
+  -- Temporal
+  confidence        NUMERIC,
+  valid_from        TIMESTAMPTZ,
+  valid_to          TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ DEFAULT NOW()
 );
+-- Constraints: (company_id, subject_type, subject_id, predicate, object_type, object_id) for legacy
+-- Constraint: akg_entity_edge_unique (company_id, source_entity_id, predicate, target_entity_id) for Phase C
 ```
+
+**Relationship predicates:** works_for (person→company), contact_for (person→company), client_of (company→company), vendor_of (company→company), subtrade_of (company→company), quoted_for (person/company→service), uses_material (service→material), supplied_by (material→company), worked_on (person→project), communicates_with (person→person).
 
 ### agent_writing_profiles
 
-Per-user per-company communication style profiles. Feature-gated behind `ai_email_memory`. Updated on every AI-tier sync cycle from outbound email analysis.
+Per-user per-company per-relationship-type communication style profiles. Feature-gated behind `ai_email_memory`. Phase C builds profiles per relationship type (10 types).
 
 ```sql
 CREATE TABLE agent_writing_profiles (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id              UUID NOT NULL REFERENCES companies(id),
+  company_id              UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   user_id                 UUID NOT NULL REFERENCES users(id),
+  profile_type            TEXT NOT NULL DEFAULT 'general',  -- Phase C: relationship type
   formality_score         FLOAT,
   avg_sentence_length     FLOAT,
   greeting_patterns       JSONB,
   closing_patterns        JSONB,
-  vocabulary_preferences  JSONB,
+  vocabulary_preferences  JSONB,   -- Also stores common_phrases, hedging_tendency, punctuation_habits
   tone_traits             JSONB,
   emails_analyzed         INT DEFAULT 0,
   updated_at              TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(company_id, user_id)
+  UNIQUE(company_id, user_id, profile_type)
 );
 ```
+
+**Profile types:** client_new_inquiry, client_quoting, client_active_project, client_followup, vendor_ordering, vendor_inquiry, subtrade_coordination, warranty_claim, internal, general. Clustered for galaxy visualization: client, vendor, subtrade, internal, general.
 
 ### Modified Tables: opportunities
 
@@ -2190,6 +2236,13 @@ CREATE POLICY "Company-scoped thread access"
 -- admin_feature_overrides: OPS admin only (service role)
 ALTER TABLE admin_feature_overrides ENABLE ROW LEVEL SECURITY;
 -- No user-facing RLS — accessed via service role in admin API routes only
+
+-- graph_entities: company-scoped (Phase C)
+ALTER TABLE graph_entities ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Company members can view their entities"
+  ON graph_entities FOR SELECT USING (company_id = (auth.jwt()->>'company_id')::uuid);
+CREATE POLICY "Service role has full access to entities"
+  ON graph_entities FOR ALL USING (auth.role() = 'service_role');
 
 -- agent_memories, agent_knowledge_graph, agent_writing_profiles: company-scoped
 ALTER TABLE agent_memories ENABLE ROW LEVEL SECURITY;
