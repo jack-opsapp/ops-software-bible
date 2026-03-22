@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: March 16, 2026
+**Last Updated**: March 19, 2026
 **iOS Reference**: `OPS/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -31,7 +31,8 @@
 17. [Supabase Table Reference](#supabase-table-reference)
 18. [Bubble.io (Legacy)](#bubbleio-legacy)
 19. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
-20. [Email Pipeline Integration Routes (15 Routes)](#email-pipeline-integration-routes-15-routes)
+20. [Email Pipeline Integration Routes (24 Routes)](#email-pipeline-integration-routes-24-routes)
+21. [OpenAI API Key Separation](#openai-api-key-separation)
 
 ---
 
@@ -62,8 +63,9 @@ iOS App (SwiftData)                   OPS Web (Next.js)
     |-- HTTPS --------> app.opsapp.co ----+--- /api/uploads/presign --> AWS S3
     |                                      +--- /api/notifications/send --> OneSignal
     |                                      +--- /api/stripe/* --> Stripe
-    |                                      +--- /api/integrations/email/* --> Email Pipeline (8 routes)
+    |                                      +--- /api/integrations/email/* --> Email Pipeline (17 routes)
     |                                      +--- /api/integrations/microsoft365/* --> M365 OAuth (2 routes)
+    |                                      +--- /api/cron/auto-send --> Auto-send cron (5 min)
     |                                      +--- /api/admin/ai-features/* --> AI Feature Admin (3 routes)
     |                                      +--- /api/cron/email-sync --> Scheduled email sync
     |                                      +--- /api/cron/webhook-renewal --> Webhook renewal
@@ -1343,9 +1345,9 @@ Every entity uses **upsert on `bubble_id` conflict**, making the migration safe 
 
 ---
 
-## Email Pipeline Integration Routes (15 Routes)
+## Email Pipeline Integration Routes (24 Routes)
 
-The Email Pipeline system adds 15 API routes across 4 route groups. All routes live in `OPS-Web/src/app/api/`. Unless noted, all routes use `getServiceRoleClient()` with `setSupabaseOverride()` for Supabase access (bypassing RLS). All long-running routes set `maxDuration = 300` (5 min, Vercel Pro limit).
+The Email Pipeline system adds 24 API routes across 6 route groups. All routes live in `OPS-Web/src/app/api/`. Unless noted, all routes use `getServiceRoleClient()` with `setSupabaseOverride()` for Supabase access (bypassing RLS). All long-running routes set `maxDuration = 300` (5 min, Vercel Pro limit).
 
 ### 1. POST /api/integrations/email/analyze
 
@@ -1542,7 +1544,7 @@ Each `ImportLead` has: `id, threadId, clientName, clientEmail, clientPhone?, sta
 | Response | `{ ok: true, synced: number, staleSweepChanges: number, results: SyncResult[] }` |
 | Service calls | `SyncEngine.runSync()`, `SyncEngine.sweepStaleLeads()` |
 
-**Behavior:** Queries all active email connections, checks each against its `sync_interval_minutes` + `last_synced_at` to determine if sync is due, runs `SyncEngine.runSync()` for each. Also runs `SyncEngine.sweepStaleLeads()` to detect follow-up-needed opportunities based on correspondence age (independent of new email arrival). Each `SyncResult`: `{ connectionId, email, provider, activitiesCreated, newLeads, error? }`.
+**Behavior:** Queries all active email connections, batch-fetches companies and filters by active subscription via `getSubscriptionInfo()` before running sync — expired/cancelled companies are silently skipped. Checks each connection against its `sync_interval_minutes` + `last_synced_at` to determine if sync is due, runs `SyncEngine.runSync()` for each. Also runs `SyncEngine.sweepStaleLeads()` to detect follow-up-needed opportunities based on correspondence age (independent of new email arrival). Manual sync (`POST /api/integrations/email/manual-sync`) also checks subscription status before proceeding. Each `SyncResult`: `{ connectionId, email, provider, activitiesCreated, newLeads, error? }`.
 
 ### 15. POST /api/cron/webhook-renewal
 
@@ -1555,6 +1557,142 @@ Each `ImportLead` has: `id, threadId, clientName, clientEmail, clientPhone?, sta
 | Service calls | `EmailService.getConnection()`, provider `renewWebhook()`, `EmailService.updateConnection()` |
 
 **Behavior:** Finds active connections with webhooks expiring within 2 days, renews each via the provider abstraction (Gmail: re-register Pub/Sub watch with 7-day expiry; M365: renew subscription with 3-day expiry), updates `webhook_subscription_id` and `webhook_expires_at`.
+
+### 16. POST /api/integrations/email/send
+
+**Purpose:** Sends an email via the user's connected Gmail or M365 account.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role (subscription check + rate limit 100/hour) |
+| Request body | `{ userId, companyId, connectionId, to: string[], cc?: string[], subject, body, format?: "markdown"\|"plain", opportunityId?, inReplyTo?, threadId? }` |
+| Response | `{ ok: true, messageId, threadId }` |
+| Service calls | `EmailService.getConnection()`, provider `sendMessage()`, `OpportunityService.createActivity()`, `EmailMatchingServiceV2.match()` |
+
+**Behavior:** When `format="markdown"`, converts `**bold**`, `*italic*`, `[link](url)` to HTML via `markdownToEmailHtml()` before sending. Creates an outbound activity record with `body_text`, `to_emails`, `cc_emails`, `has_attachments`. Updates opportunity correspondence counts if `opportunityId` is provided. Links thread via `opportunity_email_threads` upsert. Applies "OPS Pipeline" label to the thread (non-fatal if label application fails). Gmail: RFC 2822 encoding with `In-Reply-To` + `References` headers for threading. M365: Graph API `/createReply` for threading, `/sendMail` for new emails.
+
+### 17. GET /api/integrations/email/inbox
+
+**Purpose:** Proxy inbox requests to Gmail/M365 for the in-app email viewer.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Query params | `companyId` (required), `threadId?` (single thread), `q?` (search), `maxResults?` (default 50) |
+| Response (inbox) | `{ threads: InboxThread[], nextPageToken? }` |
+| Response (thread) | `{ messages: ThreadMessage[] }` |
+| Service calls | `EmailService.getConnection()`, provider `listThreads()` / `getThread()` |
+
+**Behavior:** Two modes: inbox listing (deduped by `threadId`) or thread detail (all messages in chronological order). Uses `EmailProviderInterface` abstraction, handles token refresh automatically. Permission: `email.view` required for All Mail tab access.
+
+### 18. POST /api/integrations/email/ai-draft
+
+**Purpose:** Generates an AI email draft using writing profile + thread context + memory facts.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role (ungated — any user with email connected) |
+| Request body | `{ companyId, userId, connectionId, opportunityId?, threadId?, recipientEmail?, recipientName? }` |
+| Response | `{ available: boolean, draft: string (markdown), draftHistoryId: string, confidence: number, sources: string[], reason?: string }` |
+| Service calls | `WritingProfileService.getProfile()`, `MemoryService.getFacts()` (if Phase C enabled), `DraftGenerator.generateDraft()` |
+
+**Behavior:** Assembles context from: writing profile + thread messages (last 20 from `activities.body_text`) + opportunity summary + memory facts (if `ai_email_memory` feature gate enabled). Model: `gpt-5.4-mini` via `OPENAI_API_KEY_DRAFTING`. Creates an `ai_draft_history` record with `status='drafted'` for tracking draft outcomes.
+
+### 19. POST /api/integrations/email/draft-feedback
+
+**Purpose:** Records the outcome of an AI-generated draft (sent or discarded) and triggers writing profile learning.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Request body | `{ draftHistoryId, companyId, userId, outcome: "sent"\|"discarded", finalVersion? }` |
+| Response | `{ ok: true, editDistance?: number, changesDetected?: string[] }` |
+| Service calls | Direct queries on `ai_draft_history`, `WritingProfileService.learn()` |
+
+**Behavior:** Computes edit distance (word-level Levenshtein) between original draft and `finalVersion`. Detects specific changes: greeting modifications, closing modifications, tone shifts. Updates the `ai_draft_history` record with outcome and edit metrics. Triggers writing profile learning if 3+ consistent changes are detected across recent drafts.
+
+### 20. GET /api/integrations/email/draft-stats
+
+**Purpose:** Returns AI draft approval statistics for a user.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Query params | `companyId` (required), `userId` (required) |
+| Response | `{ totalSent: number, sentWithoutChanges: number, approvalRate: number, commonChanges: string[], suggestAutoSend: boolean }` |
+| Service calls | Direct queries on `ai_draft_history` |
+
+**Behavior:** Aggregates draft outcomes for the user. `suggestAutoSend` returns `true` when `approvalRate >= 0.95` AND `totalSent >= 20`, indicating the user trusts AI drafts enough to enable automatic sending.
+
+### 21. GET /api/integrations/email/auto-send/settings
+
+**Purpose:** Returns auto-send configuration for the user's email connection.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Query params | `companyId` (required), `userId` (required) |
+| Response | `{ featureEnabled: boolean, settings: { enabled: boolean, businessHoursStart: string, businessHoursEnd: string, timezone: string, delayMinMinutes: number, delayMaxMinutes: number } }` |
+| Service calls | `AdminFeatureOverrideService.isAIFeatureEnabled()`, direct query on `email_auto_send_settings` |
+
+**Behavior:** Feature-gated by `ai_auto_send` admin flag. If the feature is not enabled for the company, returns `{ featureEnabled: false, settings: null }`.
+
+### 22. PUT /api/integrations/email/auto-send/settings
+
+**Purpose:** Updates auto-send configuration for the user's email connection.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Request body | Partial settings object (any subset of: `enabled`, `businessHoursStart`, `businessHoursEnd`, `timezone`, `delayMinMinutes`, `delayMaxMinutes`) |
+| Response | `{ ok: true, settings: AutoSendSettings }` |
+| Service calls | `AdminFeatureOverrideService.isAIFeatureEnabled()`, upsert on `email_auto_send_settings` |
+
+**Behavior:** Feature-gated by `ai_auto_send` admin flag. Accepts partial updates — only the provided fields are modified.
+
+### 23. POST /api/integrations/email/auto-send/cancel
+
+**Purpose:** Cancels a pending auto-send email before it is dispatched.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Request body | `{ id: string, companyId: string }` |
+| Response | `{ ok: true, cancelled: boolean }` |
+| Service calls | Direct update on `pending_auto_sends`, `ai_draft_history` |
+
+**Behavior:** Sets the pending auto-send record status to `"cancelled"` and marks the associated `ai_draft_history` entry as `"discarded"`.
+
+### 24. POST /api/cron/auto-send
+
+**Purpose:** Processes pending auto-send emails. Runs every 5 minutes via Vercel Cron.
+
+| Field | Value |
+|-------|-------|
+| Auth | Cron secret (`Authorization: Bearer $CRON_SECRET`) |
+| Response | `{ processed: number, sent: number, failed: number, errors: string[] }` |
+| Service calls | Direct query on `pending_auto_sends`, internal `POST /api/integrations/email/send`, `AdminFeatureOverrideService.isAIFeatureEnabled()` |
+
+**Behavior:** Finds `pending_auto_sends` records where `scheduled_send_at <= now()`, limit 50 per run. Verifies auto-send is still enabled for each connection's company before dispatching. Sends via internal `POST /api/integrations/email/send`. Failed sends are retried up to 3 times, then permanently marked as `"failed"`.
+
+---
+
+## OpenAI API Key Separation
+
+The email pipeline uses **separate OpenAI API keys** for different workloads to enable independent rate limiting, cost tracking, and key rotation:
+
+| Key | Purpose | Used By |
+|-----|---------|---------|
+| `OPENAI_API_KEY_IMPORT` | Initial inbox scan — Phase A triage (`gpt-4o-mini`) + Phase B extraction (`gpt-5.4-mini`) | `POST /api/integrations/email/analyze`, `POST /api/integrations/email/import` |
+| `OPENAI_API_KEY_SYNC` | Ongoing sync — stage evaluation, memory extraction, writing profiles | `POST /api/cron/email-sync`, `POST /api/integrations/email/manual-sync` |
+| `OPENAI_API_KEY_DRAFTING` | AI email draft generation | `POST /api/integrations/email/ai-draft` |
+
+All three keys fall back to `OPENAI_API_KEY` if the specific key is not set in the environment.
+
+**Factory**: `src/lib/api/services/openai-clients.ts` exports three functions:
+- `getImportOpenAI()` — returns client configured with `OPENAI_API_KEY_IMPORT`
+- `getSyncOpenAI()` — returns client configured with `OPENAI_API_KEY_SYNC`
+- `getDraftingOpenAI()` — returns client configured with `OPENAI_API_KEY_DRAFTING`
 
 ---
 

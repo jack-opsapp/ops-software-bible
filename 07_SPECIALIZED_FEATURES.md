@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** March 16, 2026
+**Last Updated:** March 19, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -26,6 +26,7 @@
 16. [Schedule Tab Redesign](#16-schedule-tab-redesign)
 17. [Feature Flags System](#17-feature-flags-system)
 18. [Intel Galaxy Visualization (Web)](#18-intel-galaxy-visualization-web)
+19. [In-App Email System (Web)](#19-in-app-email-system-web)
 
 ---
 
@@ -3356,6 +3357,219 @@ Phase C toast: "New intel available" → "View Intel" CTA → navigates to `/int
 | `src/lib/hooks/use-intel-graph.ts` | TanStack Query hook |
 | `src/app/api/intel/graph/route.ts` | Graph API |
 | `src/app/api/intel/entity/[entityId]/route.ts` | Entity detail API |
+
+---
+
+## 19. In-App Email System (Web)
+
+### Overview
+
+The OPS web app provides a full in-app email client so users never need to open Gmail/M365. Built across 5 sprints (completed 2026-03-19). Connects to the email pipeline integration documented in `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` §10 for sync, pattern detection, and AI classification.
+
+### Inbox View (`/inbox`)
+
+Two-tab layout with permission-gated access:
+
+| Tab | Data Source | Permission |
+|-----|-------------|------------|
+| **Pipeline** | `activities` grouped by `email_thread_id`, filtered to threads linked to opportunities | `pipeline.view` |
+| **All Mail** | Server-side API route proxying Gmail/M365 inbox with pagination and token refresh | `email.view` |
+
+**Pipeline Tab:**
+- Queries activities grouped by `email_thread_id`
+- Each row shows: sender, subject, snippet, timestamp, linked opportunity name, AI summary indicator (`ai_summary` present)
+- Click opens thread view
+
+**All Mail Tab:**
+- Server-side API route proxies live Gmail/M365 inbox
+- Pagination support with token refresh on expiry
+- Shows all email, not just pipeline-linked threads
+
+**Thread View:**
+- Chronological messages within a thread
+- AI opportunity summary banner displayed at top (when `ai_summary` exists on linked opportunity)
+- Reply button triggers compose modal in reply mode
+
+**Unread Count:**
+- Badge on sidebar nav "Inbox" item
+- 30-second polling interval
+
+### Compose Modal
+
+**Trigger Points:**
+- Pipeline card action menu
+- Inbox thread reply button
+- FAB (Floating Action Button)
+- Direct compose from inbox
+
+**Modes:**
+
+| Mode | Behavior |
+|------|----------|
+| **New email** | Blank compose — all fields empty |
+| **Reply** | Pre-fills `to`, `subject` (with "Re:" prefix), quoted original message, `threadId`, `inReplyTo` header |
+
+**Sender Dropdown:**
+- Resolves available senders from `email_connections` table
+- Supports multiple connected accounts (e.g., personal Gmail + company M365)
+
+**Fields:**
+- **From** — sender dropdown
+- **To** — email address input
+- **CC** — collapsible, hidden by default
+- **Subject** — text input
+- **Body** — markdown-capable text area
+
+**Markdown Toolbar:**
+- Bold: `**text**`
+- Italic: `*text*`
+- Link: `[text](url)`
+
+**Send Flow:**
+- Body stored as markdown during composition
+- Converted to HTML at send time via `markdownToEmailHtml()`
+- Sent through the connected provider's API (Gmail or M365)
+
+### Email Templates
+
+**Table:** `email_templates` (company-scoped, RLS-protected)
+
+**Categories:**
+| Category Slug | Display Name |
+|---------------|-------------|
+| `follow_up` | Follow Up |
+| `scheduling` | Scheduling |
+| `estimate` | Estimate |
+| `invoice` | Invoice |
+| `introduction` | Introduction |
+| `general` | General |
+
+**Merge Fields:**
+
+| Field | Resolved From |
+|-------|--------------|
+| `{{client_name}}` | Linked opportunity's client name |
+| `{{project_title}}` | Linked opportunity's project title |
+| `{{company_name}}` | Current user's company name |
+
+**Behavior:**
+- Template picker in compose modal — dropdown grouped by category
+- If body is non-empty when selecting a template, confirmation prompt before replacing
+- Variables resolved at compose time from linked opportunity/client context
+- Unresolvable variables (e.g., composing without opportunity context) highlighted in amber with a warning banner
+
+**Management:**
+- CRUD via Settings → Email Templates tab
+
+### AI Email Drafting (3-Phase Progression)
+
+#### Phase 1 — Profile Building
+
+`WritingProfileService` captures tone, style, greeting, and closing patterns from the user's outbound emails. After 5+ analyzed emails, AI drafting becomes available. Profile data stored in `agent_writing_profiles` table.
+
+#### Phase 2 — AI Draft + Human Review
+
+**Trigger:** "AI Draft" button (Sparkles icon) in compose modal.
+
+**Context Assembly:**
+1. Writing profile (tone, greeting, closing patterns)
+2. Thread messages (last 20 in conversation)
+3. Opportunity `ai_summary` (if linked)
+4. Memory facts from `agent_memories` (if Phase C enabled)
+
+**Model:** `gpt-5.4-mini` via `OPENAI_API_KEY_DRAFTING`
+
+**Output:** Markdown draft matching the user's voice and writing style.
+
+**Edit Tracking:**
+- Word-level Levenshtein diff records original AI draft vs user's final version in `ai_draft_history`
+- Tracked change categories: greeting changes, closing changes, tone shifts
+- Writing profile learning: 3+ consistent changes to the same pattern automatically updates the profile
+
+**User Metrics:**
+- Approval rate (% of drafts sent without changes)
+- Common change patterns
+- Declining edit frequency over time (learning indicator)
+
+#### Phase 3 — Auto-Send (Feature-Gated)
+
+**Feature gate:** `ai_auto_send`
+
+**Activation:** Suggested when approval rate reaches 95% over 20+ drafts ("you only changed 1 of the last 20").
+
+**When enabled:**
+1. New inbound email arrives on a linked thread
+2. AI draft generated automatically
+3. Draft held for randomized delay before sending
+
+**Delay Configuration:**
+- Configurable min/max (default 30-60 minutes)
+- Randomized within range to avoid suspicious patterns
+- Business hours enforcement: default 8am-6pm in user's timezone, configurable
+
+**Cron:** `/api/cron/auto-send`
+- Runs every 5 minutes
+- Processes up to 50 pending auto-sends per cycle
+- Max 3 retries for failed sends, then permanently marked as failed
+
+**User Controls:**
+- Cancel pending auto-sends from inbox UI
+- Disable auto-send at any time (reverts to Phase 2 behavior)
+
+### Stage Manual Override System
+
+**Column:** `opportunities.stage_manually_set` (BOOLEAN, default `false`)
+
+**Set to `true`:** When user drags a pipeline card to a new stage on the Kanban board.
+
+**Effect:** When `true`, both the deterministic `StageEvaluator` (correspondence-count rules) AND the AI `evaluateStagesWithSummary()` skip stage changes for this opportunity. The user's manual placement is respected.
+
+**Cleared to `false`:** When a new inbound email arrives. Specifically, `processInboundEmail()` → `updateCorrespondenceCounts()` detects `direction = inbound` and clears the flag, allowing automated stage evaluation to resume.
+
+**Exception:** Terminal flag notifications (`likely_won` / `likely_lost`) are always sent regardless of the manual override flag — the user should always know about win/loss signals even if they've manually placed the opportunity.
+
+### Sync Engine Hardening (2026-03-19)
+
+Improvements to the email sync engine reliability and data completeness:
+
+**Subscription Gating:**
+- Cron batch-fetches companies, filters by `getSubscriptionInfo().isActive` before running sync
+- Manual sync checks subscription status, returns 403 if inactive
+- Webhook handlers (Gmail Pub/Sub, M365 Change Notifications) pass `CRON_SECRET` Bearer token when calling manual-sync endpoint
+
+**Activity Data Enrichment:**
+- Activities now store: `body_text` (full email body), `to_emails`, `cc_emails`, `has_attachments`, `attachment_count`
+
+**Timestamp Validation:**
+- `last_inbound_at` / `last_outbound_at` on opportunities only updated if the email date is newer than the existing value
+- `stage_entered_at` set on ALL stage changes (count-based, AI eval, stale sweep)
+- `last_activity_at` uses the email's actual date, not the sync timestamp
+
+**Sent Safety Net:**
+- Prevents duplicate thread link constraint violations
+- Processes CC recipients on outbound emails
+
+**AI Evaluation Optimization:**
+- `evaluateStagesWithSummary()` returns both stage and 1-2 sentence summary in a single API call
+- Summary written to `opportunities.ai_summary`
+
+**Stale Lead Sweep:**
+- Runs on every cron cycle
+- Respects `stage_manually_set` flag (skips manually placed opportunities)
+
+### OpenAI API Key Separation
+
+Three separate API keys for granular cost tracking in the OpenAI dashboard:
+
+| Key | Env Variable | Purpose |
+|-----|-------------|---------|
+| Import | `OPENAI_API_KEY_IMPORT` | Initial inbox scan (Phase A triage + Phase B extraction) |
+| Sync | `OPENAI_API_KEY_SYNC` | Ongoing sync (stage evaluation + summary, memory extraction, writing profiles) |
+| Drafting | `OPENAI_API_KEY_DRAFTING` | AI email draft generation |
+
+**Factory:** `src/lib/api/services/openai-clients.ts`
+- Exports: `getImportOpenAI()`, `getSyncOpenAI()`, `getDraftingOpenAI()`
+- All fall back to `OPENAI_API_KEY` if the specific key is not set
 
 ---
 

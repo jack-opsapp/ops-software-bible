@@ -4,7 +4,7 @@
 
 **Purpose**: Defines the complete data flow for a trade job from first contact through to a paid invoice. Documents all entity relationships, automation triggers, new entities, and required changes to existing entities. This is the master reference for how leads, pipeline, clients, estimates, projects, tasks, and invoices inter-operate.
 
-**Last Updated**: March 16, 2026
+**Last Updated**: March 19, 2026
 **Designed With**: ops-web codebase + ops-software-bible review session
 
 ---
@@ -2139,6 +2139,10 @@ Email integration API routes exist on the web backend (`OPS-Web/src/app/api/inte
 Supporting web services: `email-service.ts`, `email-sync-service.ts`, `email-matching-service.ts`, `email-classifier.ts`, `use-email-connections.ts`, `email-setup-wizard.tsx`.
 
 No email integration exists on iOS. The iOS app reads from the same `opportunities` table (which gains new correspondence tracking columns) but does not connect to or sync email accounts.
+
+#### In-App Email Client (Web — Built 2026-03-19)
+
+The web app includes a full in-app email client at `/inbox` (inbox view, compose modal, email templates, AI drafting with 3-phase progression, auto-send, and stage manual override). Sync engine hardened with subscription gating, activity data enrichment, timestamp validation, and OpenAI API key separation across three keys (import/sync/drafting). See `07_SPECIALIZED_FEATURES.md` §19 for the complete in-app email system documentation.
 
 ---
 

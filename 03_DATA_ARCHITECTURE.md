@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: March 16, 2026
+**Last Updated**: March 19, 2026
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -569,6 +569,13 @@ class Opportunity: Identifiable {
     var createdAt: Date
     var updatedAt: Date
     var lastActivityAt: Date?
+
+    // Email system columns (Supabase only — not in SwiftData model)
+    // stage_manually_set BOOLEAN NOT NULL DEFAULT false — true when user manually drags card to new stage;
+    //   prevents AI/deterministic stage override. Cleared to false when new inbound email arrives
+    //   (situation evolved, AI can re-evaluate)
+    // ai_summary         TEXT — 1-2 sentence AI-generated summary of the opportunity, cached and
+    //   refreshed each sync cycle that touches the thread via evaluateStagesWithSummary()
 }
 ```
 
@@ -594,6 +601,13 @@ class Activity: Identifiable {
     var createdBy: String?
     var createdAt: Date
     var metadata: String?
+
+    // Email fields (Supabase columns — not in SwiftData model)
+    // to_emails       TEXT[] DEFAULT '{}'          — recipient email addresses
+    // cc_emails       TEXT[] DEFAULT '{}'          — CC'd email addresses
+    // body_text       TEXT                         — full email body (markdown from compose, plain text from sync)
+    // has_attachments BOOLEAN NOT NULL DEFAULT false — whether email has attachments
+    // attachment_count INT NOT NULL DEFAULT 0      — number of attachments
 }
 ```
 
@@ -1919,6 +1933,7 @@ These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AN
 - **Migration 035** added: `opportunity_email_threads`, `admin_feature_overrides`, and correspondence tracking columns on `opportunities`.
 - **Migration 036** added: `agent_memories` (with pgvector), `agent_knowledge_graph`, `agent_writing_profiles`.
 - **Migration 037-040** (Phase C Memory Bank): `graph_entities` table, entity FK columns on `agent_knowledge_graph` (source_entity_id, target_entity_id, link_type), `profile_type` on `agent_writing_profiles` (new unique constraint), `entity_id`/`valid_from`/`valid_to` on `agent_memories`.
+- **Email compose/auto-send migrations**: New columns on `activities` (to_emails, cc_emails, body_text, has_attachments, attachment_count), new columns on `opportunities` (stage_manually_set, ai_summary), new JSONB column on `email_connections` (auto_send_settings), new tables `email_templates`, `ai_draft_history`, `pending_auto_sends`.
 
 ### email_connections
 
@@ -1943,6 +1958,7 @@ CREATE TABLE email_connections (
   webhook_expires_at      TIMESTAMPTZ,
   ai_review_enabled       BOOLEAN DEFAULT false,           -- ongoing AI classification (feature-gated)
   ai_memory_enabled       BOOLEAN DEFAULT false,           -- memory accumulation (feature-gated)
+  auto_send_settings      JSONB,                            -- auto-send config: { enabled, business_hours_start, business_hours_end, timezone, delay_min_minutes, delay_max_minutes, enabled_at }
   status                  TEXT DEFAULT 'setup_incomplete',  -- 'active' | 'paused' | 'error' | 'setup_incomplete'
   created_at              TIMESTAMPTZ DEFAULT NOW(),
   updated_at              TIMESTAMPTZ DEFAULT NOW()
@@ -1960,6 +1976,20 @@ CREATE TABLE email_connections (
   "formSubjectPatterns": ["got a new submission", "new form entry"],
   "userEmailAddresses": ["canprojack@gmail.com"],
   "aiClassificationThreshold": 0.7
+}
+```
+
+`auto_send_settings` stores the per-connection auto-send configuration as JSONB:
+
+```json
+{
+  "enabled": true,
+  "business_hours_start": "08:00",
+  "business_hours_end": "18:00",
+  "timezone": "America/Toronto",
+  "delay_min_minutes": 30,
+  "delay_max_minutes": 60,
+  "enabled_at": "2026-03-19T14:30:00Z"
 }
 ```
 
@@ -2178,6 +2208,92 @@ CREATE TABLE agent_writing_profiles (
 
 **Profile types:** client_new_inquiry, client_quoting, client_active_project, client_followup, vendor_ordering, vendor_inquiry, subtrade_coordination, warranty_claim, internal, general. Clustered for galaxy visualization: client, vendor, subtrade, internal, general.
 
+### email_templates
+
+Company-scoped email templates with merge field support. Used by the compose flow and AI draft generation.
+
+```sql
+CREATE TABLE email_templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  subject TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL CHECK (category IN ('follow_up','scheduling','estimate','invoice','introduction','general')),
+  sort_order INT NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+**RLS:** Company-scoped (SELECT/INSERT/UPDATE/DELETE).
+
+**Index:** `(company_id, category, sort_order) WHERE is_active = true`
+
+**Merge fields:** `{{client_name}}`, `{{project_title}}`, `{{company_name}}` — resolved at send time by the compose/draft layer.
+
+### ai_draft_history
+
+Tracks AI-generated email drafts for edit tracking and writing profile learning. Each draft records the original AI output and the final user-edited version, enabling edit distance computation and auto-send confidence scoring.
+
+```sql
+CREATE TABLE ai_draft_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id UUID NOT NULL,
+  user_id UUID NOT NULL,
+  opportunity_id UUID,
+  connection_id UUID,
+  thread_id TEXT,
+  original_draft TEXT NOT NULL,
+  final_version TEXT,
+  status TEXT NOT NULL DEFAULT 'drafted' CHECK (status IN ('drafted','sent','discarded')),
+  sent_without_changes BOOLEAN DEFAULT false,
+  edit_distance INT DEFAULT 0,
+  changes_made JSONB DEFAULT '{}',
+  sent_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+- `edit_distance`: Word-level Levenshtein distance between `original_draft` and `final_version`.
+- `changes_made`: Structured diff — `{ greeting?: {from, to}, closing?: {from, to}, tone?: string }`.
+- When `sent_without_changes` reaches 95% over 20+ drafts, auto-send is suggested to the user.
+
+### pending_auto_sends
+
+Auto-send queue for AI-generated email drafts held for randomized delay before sending. Business hours enforced (default 8am-6pm in user's timezone). Processed by cron job `/api/cron/auto-send` every 5 minutes.
+
+```sql
+CREATE TABLE pending_auto_sends (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id UUID NOT NULL,
+  connection_id UUID NOT NULL,
+  opportunity_id UUID,
+  thread_id TEXT,
+  in_reply_to TEXT,
+  to_emails TEXT[] DEFAULT '{}',
+  cc_emails TEXT[] DEFAULT '{}',
+  subject TEXT NOT NULL,
+  draft_text TEXT NOT NULL,
+  draft_history_id UUID REFERENCES ai_draft_history(id),
+  scheduled_send_at TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','cancelled','failed')),
+  retry_count INT NOT NULL DEFAULT 0,
+  sent_at TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+- **Delay:** Randomized between `delay_min_minutes` and `delay_max_minutes` from `email_connections.auto_send_settings` (default 30-60 min).
+- **Business hours:** Sends only within `business_hours_start`-`business_hours_end` in the user's timezone. If scheduled outside hours, deferred to next business window.
+- **Retries:** Max 3 retries, then permanently set to `failed`.
+- **Cancellation:** User can cancel pending sends from the UI before `scheduled_send_at`.
+
 ### Modified Tables: opportunities
 
 New columns added to `opportunities` for email correspondence tracking:
@@ -2192,7 +2308,12 @@ ALTER TABLE opportunities ADD COLUMN last_message_direction TEXT;    -- 'in' | '
 ALTER TABLE opportunities ADD COLUMN ai_stage_confidence FLOAT;
 ALTER TABLE opportunities ADD COLUMN ai_stage_signals TEXT[];
 ALTER TABLE opportunities ADD COLUMN detected_value INT;
+ALTER TABLE opportunities ADD COLUMN stage_manually_set BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE opportunities ADD COLUMN ai_summary TEXT;
 ```
+
+- `stage_manually_set`: Set to `true` when user manually drags card to new stage; prevents AI/deterministic stage override. Cleared to `false` when new inbound email arrives (situation evolved, AI can re-evaluate).
+- `ai_summary`: 1-2 sentence AI-generated summary of the opportunity, cached and refreshed each sync cycle that touches the thread via `evaluateStagesWithSummary()`.
 
 These columns are used by the sync engine's correspondence-count stage rules (free tier) and AI stage evaluation (gated tier).
 
