@@ -1,10 +1,10 @@
 # 11_CLIENT_PORTAL.md
 
-**Last Updated**: February 28, 2026
+**Last Updated**: March 25, 2026
 
 ## Document Purpose
 
-Complete reference for the OPS Client Portal — a client-facing web portal within the OPS web app where end customers (homeowners, property managers) can view project status, approve/decline estimates, answer line-item questions, pay invoices via Stripe, view project photos, and message the company. Company-customizable branding with 3 templates, light/dark mode, and accent colors.
+Complete reference for the OPS Client Portal — a client-facing web portal within the OPS web app where end customers (homeowners, property managers) can view project status, approve/decline estimates, answer line-item questions, pay invoices via Stripe, view project photos, and message the company. Company-customizable branding with 3 templates, light/dark mode, accent colors, expanded CSS custom properties, and document field visibility overrides.
 
 ---
 
@@ -14,26 +14,30 @@ The Client Portal is a **public-facing route group** (`/portal`) within the exis
 
 ### Key Differentiators
 - **Line-item questions** — Unique feature: companies attach questions directly to estimate line items (e.g., "What color railings?" on the "Railing Installation" line item). 5 answer types: text, number, select, multiselect, color. No competitor offers this.
-- **Company-customizable branding** — Logo, accent color, 3 templates (Modern, Classic, Bold), light/dark mode, custom welcome message.
+- **Company-customizable branding** — Logo, accent color, 3 templates (Modern, Classic, Bold), light/dark mode, custom welcome message. **Expanded template skins** with 30+ CSS custom properties controlling cards, progress bars, galleries, bubbles, status badges, section dividers, and headers.
 - **Zero account creation** — Clients access via magic links, verify with email, get 30-day sessions. No passwords.
+- **Phase Timeline** — Tasks grouped by task type into phases with computed progress (completed/in-progress/upcoming). Collapsed on mobile, expanded on desktop.
+- **Document visibility overrides** — Portal-level branding settings (show/hide quantities, unit prices, line totals, descriptions, tax, discount) override document template settings. Three-state control: "Use template" (null) / "Always show" (true) / "Always hide" (false).
+- **Token-based branding** — The magic link landing page loads branding from the validate-token API response and applies CSS vars before rendering, so the email form is company-branded from the first frame.
+- **Project switcher** — Multi-project clients can switch between projects from the project detail page without returning to home.
 
 ### Architecture
 ```
-/portal/[token]              → Magic link landing (public)
+/portal/[token]              → Magic link landing (public, company-branded)
 /portal/verify               → Session expired fallback (public)
 /portal/home                 → Dashboard: projects, estimates, invoices
 /portal/estimates/[id]       → Estimate detail + approve/decline
 /portal/estimates/[id]/questions → Answer line-item questions
-/portal/invoices/[id]        → Invoice detail + Stripe payment
-/portal/projects/[id]        → Project detail + photos + timeline
-/portal/messages             → Two-way messaging
+/portal/invoices/[id]        → Invoice detail + balance callout
+/portal/projects/[id]        → Project detail + phase timeline + photos
+/portal/messages             → Two-way messaging with project context
 ```
 
 ---
 
 ## Database Schema
 
-Six new Supabase tables, all with RLS enabled. Migration file: `supabase/migrations/007_portal_schema.sql`
+Six Supabase tables, all with RLS enabled. Migration file: `supabase/migrations/007_portal_schema.sql`
 
 ### portal_tokens
 Magic link tokens for portal access. Generated when company shares portal or sends estimate/invoice.
@@ -49,6 +53,7 @@ Magic link tokens for portal access. Generated when company shares portal or sen
 | verified_at | TIMESTAMPTZ | Set when email verified |
 | created_at | TIMESTAMPTZ | |
 | revoked_at | TIMESTAMPTZ | Soft-revoke |
+| is_preview | BOOLEAN | For admin preview tokens |
 
 **Indexes:** `idx_portal_tokens_token` (token), `idx_portal_tokens_client` (client_id, company_id)
 
@@ -79,6 +84,12 @@ Company-customizable portal appearance. One row per company (upsert pattern).
 | theme_mode | TEXT | `'dark'` | `light`, `dark` |
 | font_combo | TEXT | `'modern'` | Tied to template |
 | welcome_message | TEXT | null | Shown on portal home |
+| show_quantities | BOOLEAN | null | null=inherit from template |
+| show_unit_prices | BOOLEAN | null | null=inherit from template |
+| show_line_totals | BOOLEAN | null | null=inherit from template |
+| show_descriptions | BOOLEAN | null | null=inherit from template |
+| show_tax | BOOLEAN | null | null=inherit from template |
+| show_discount | BOOLEAN | null | null=inherit from template |
 | created_at, updated_at | TIMESTAMPTZ | | |
 
 ### line_item_questions
@@ -109,7 +120,7 @@ Client answers to questions. Upsert on (question_id, client_id).
 | answered_at | TIMESTAMPTZ | |
 
 ### portal_messages
-Client ↔ company messaging. Two sender types.
+Client <-> company messaging. Two sender types.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -125,19 +136,6 @@ Client ↔ company messaging. Two sender types.
 | read_at | TIMESTAMPTZ | null = unread |
 | created_at | TIMESTAMPTZ | |
 
-### Migration 009: line_item_answers Unique Constraint Fix
-
-Migration file: `supabase/migrations/009_fix_line_item_answers_unique.sql` (pending)
-
-Adds the missing `UNIQUE` constraint on `(question_id, client_id)` to the `line_item_answers` table. This constraint is required for the upsert operations in `LineItemQuestionService.submitAnswer()`, which uses `ON CONFLICT (question_id, client_id)` to update existing answers rather than creating duplicates.
-
-```sql
-ALTER TABLE line_item_answers
-  ADD CONSTRAINT uq_answer_question_client UNIQUE (question_id, client_id);
-```
-
-> **Migration numbering collision:** Two migration files share the `009` prefix. `009_blog_schema.sql` (blog categories, topics, and posts tables) has already been executed and lives in `EXECUTED/009_blog_schema.sql`. The pending `009_fix_line_item_answers_unique.sql` remains in the migrations root. These were authored independently and collided on the same sequence number.
-
 ---
 
 ## Authentication Flow
@@ -149,8 +147,10 @@ ALTER TABLE line_item_answers
    → Sends branded email via SendGrid with magic link
 
 2. Client clicks link → /portal/[64-char-hex-token]
-   → Page validates token (GET /api/portal/auth/validate-token)
-   → Shows email verification form
+   → Page calls GET /api/portal/auth/validate-token
+   → Response includes branding: { logoUrl, accentColor, template, themeMode, companyName }
+   → Page generates CSS vars from branding and applies BEFORE rendering form
+   → Shows company-branded email verification form (logo, company name, accent CTA)
 
 3. Client enters email → POST /api/portal/auth/verify
    → Server validates: token exists, not expired, not revoked, email matches client
@@ -187,10 +187,11 @@ All portal services use `getServiceRoleClient()` (Supabase service role key) sin
 - `revokeToken(tokenId)` → soft revoke
 
 ### PortalService (`portal-service.ts`)
-Main data aggregation service (~660 lines).
+Main data aggregation service.
 - `getPortalData(clientId, companyId)` → `PortalClientData` (client, company, branding, projects, estimates, invoices, unread count)
-- `getEstimateForPortal(estimateId, clientId)` → estimate + line items + questions/answers
-- `getInvoiceForPortal(invoiceId, clientId)` → invoice + line items + payments
+- `getEstimateForPortal(estimateId, clientId)` → estimate + line items + questions/answers + template
+- `getInvoiceForPortal(invoiceId, clientId)` → invoice + line items + payments + template
+- `getProjectForPortal(projectId, clientId)` → project + tasks (with taskType) + photos (structured: id, url, thumbnailUrl, source, caption, is_client_visible) + estimates + invoices
 - `markEstimateViewed(estimateId)` → updates viewed_at
 - `approveEstimate(estimateId, clientId)` → status → approved
 - `declineEstimate(estimateId, clientId, reason?)` → status → declined
@@ -203,50 +204,17 @@ Main data aggregation service (~660 lines).
 
 ### PortalMessageService (`portal-message-service.ts`)
 - `getMessages(clientId, companyId, options?)` → paginated, optionally filtered by project/estimate/invoice
-- `sendMessage(data)` → insert
+- `sendMessage(data)` → insert (supports `projectId` context from URL param)
 - `markRead(messageId)` / `markAllRead(clientId, companyId)`
 - `getUnreadCount(clientId, companyId)` / `getUnreadCountForCompany(companyId)`
 - `getConversations(companyId)` → grouped by client for admin inbox
 
 ### PortalBrandingService (`portal-branding-service.ts`)
 - `getBranding(companyId)` → get or create default
-- `updateBranding(companyId, data)` → upsert
+- `updateBranding(companyId, data)` → upsert (now includes visibility override fields)
 
 ### PortalActivityService (`portal-activity-service.ts`)
 Non-blocking activity logging for portal events. Catches errors and logs them but never throws.
-- `logEstimateViewed(params)` → ActivityType.EstimateSent
-- `logEstimateApproved(params)` → ActivityType.EstimateAccepted
-- `logEstimateDeclined(params)` → ActivityType.EstimateDeclined
-- `logQuestionsAnswered(params)` → ActivityType.Note
-- `logPaymentReceived(params)` → ActivityType.PaymentReceived
-- `logClientMessage(params)` → ActivityType.Note (direction: inbound)
-
----
-
-## API Routes
-
-All portal API routes at `src/app/api/portal/`. Every protected route:
-1. Reads `ops-portal-session` cookie
-2. Validates via `requirePortalSession(req)`
-3. Extracts clientId + companyId
-4. Calls service method
-5. Returns JSON
-
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/api/portal/auth/send-link` | POST | Create token + send magic link email |
-| `/api/portal/auth/verify` | POST | Validate token+email, create session, set cookie |
-| `/api/portal/auth/validate-token` | GET | Check if token is valid/expired/revoked |
-| `/api/portal/data` | GET | Full PortalClientData aggregate |
-| `/api/portal/estimates/[id]` | GET | Estimate detail + mark as viewed |
-| `/api/portal/estimates/[id]/approve` | POST | Approve estimate |
-| `/api/portal/estimates/[id]/decline` | POST | Decline estimate (optional reason) |
-| `/api/portal/estimates/[id]/questions` | GET/POST | Get questions+answers / Submit answers |
-| `/api/portal/invoices/[id]` | GET | Invoice detail + payments |
-| `/api/portal/invoices/[id]/pay` | POST | Create Stripe PaymentIntent |
-| `/api/portal/projects/[id]` | GET | Project detail |
-| `/api/portal/messages` | GET/POST | Get paginated messages / Send message |
-| `/api/portal/share` | POST | Admin sends magic link to client |
 
 ---
 
@@ -260,39 +228,85 @@ All portal API routes at `src/app/api/portal/`. Every protected route:
 | **Classic** | Merriweather (700) | Inter | 8px | Professional serif headings |
 | **Bold** | Oswald (600) | Open Sans | 4px | Trade/construction, uppercase headings |
 
-### CSS Custom Properties
-`generatePortalTheme(branding)` in `src/lib/portal/theme.ts` returns CSS vars applied to the portal shell:
+### CSS Custom Properties (Expanded)
 
-```typescript
-'--portal-bg'             // Background (dark: #0A0A0A, light: #FAFAFA)
-'--portal-card'           // Card background (dark: #191919, light: #FFFFFF)
-'--portal-text'           // Primary text (dark: #E5E5E5, light: #1A1A1A)
-'--portal-text-secondary' // (dark: #A7A7A7, light: #6B7280)
-'--portal-text-tertiary'  // (dark: #737373, light: #9CA3AF)
-'--portal-accent'         // Company accent color
-'--portal-accent-hover'   // Lightened 10%
-'--portal-border'         // (dark: rgba(255,255,255,0.1), light: rgba(0,0,0,0.1))
-'--portal-success'        // #059669
-'--portal-warning'        // #D97706
-'--portal-error'          // #DC2626
-'--portal-heading-font'   // Template-specific
-'--portal-body-font'      // Template-specific
-'--portal-heading-weight' // Template-specific
-'--portal-heading-transform' // Template-specific (e.g., uppercase for Bold)
-'--portal-radius'         // Card border radius
+`generatePortalTheme(branding)` in `src/lib/portal/theme.ts` returns 30+ CSS vars applied to the portal shell:
+
+**Standard properties:**
+```
+--portal-bg, --portal-card, --portal-text, --portal-text-secondary, --portal-text-tertiary
+--portal-accent, --portal-accent-text, --portal-accent-hover
+--portal-border, --portal-success, --portal-warning, --portal-error
+--portal-heading-font, --portal-body-font, --portal-heading-weight
+--portal-heading-transform, --portal-letter-spacing
+--portal-radius, --portal-radius-sm, --portal-radius-lg
+--portal-card-padding
+```
+
+**Card properties:**
+```
+--portal-card-shadow, --portal-card-border
+--portal-card-accent-edge, --portal-card-accent-edge-width
+```
+
+**Progress properties:**
+```
+--portal-progress-height, --portal-progress-radius
+```
+
+**Gallery properties:**
+```
+--portal-gallery-gap, --portal-gallery-item-radius
+```
+
+**Bubble properties (messages):**
+```
+--portal-bubble-radius
+```
+
+**Status badge properties:**
+```
+--portal-status-style  (pill-rounded | pill-bordered | text-bold)
+```
+
+**Section properties:**
+```
+--portal-section-divider, --portal-section-divider-color, --portal-section-divider-height
+```
+
+**Header properties:**
+```
+--portal-header-style, --portal-header-border
 ```
 
 All portal components use `var(--portal-xxx)` via inline styles, with Tailwind for layout.
+
+### Document Visibility Overrides
+
+Portal branding settings include 6 visibility override fields. Resolution order:
+1. Portal branding override (non-null) → takes precedence
+2. Document template setting → used when portal override is null
+3. Default → true (show everything)
+
+Resolved by `resolvePortalVisibility()` in `src/lib/portal/resolve-visibility.ts`.
 
 ---
 
 ## Portal Pages
 
 ### Magic Link Landing (`/portal/[token]`)
-- Validates token on load
-- Shows branded email verification form
-- On verify: creates session, redirects to `/portal/home`
-- Expired/revoked: shows error with company contact
+- Validates token on load → gets branding from API response
+- Generates CSS vars from branding data BEFORE rendering
+- Shows company-branded form: logo centered, company name, email input, accent CTA
+- Error states maintain company branding
+- "powered by OPS" subtle at bottom
+- Preview tokens auto-verify (no email needed)
+
+### Session Expired (`/portal/verify`)
+- Same visual treatment as landing page
+- Clock icon + "Your session has expired" messaging
+- Contact provider hint
+- "powered by OPS" subtle at bottom
 
 ### Portal Home (`/portal/home`)
 - Welcome: "Hi, [FirstName]" + company welcome message
@@ -300,187 +314,153 @@ All portal components use `var(--portal-xxx)` via inline styles, with Tailwind f
 - **Invoices due**: balance > 0, not void/written_off
 - **Your projects**: grid of project cards
 
+### Project Detail (`/portal/projects/[id]`)
+Sections in order:
+1. **Project Header** — title, status badge, address, date range. Project switcher if client has 2+ projects.
+2. **Project Progress** — `PortalPhaseTimeline` component. Tasks grouped by taskType into phases. Phase status computed: all completed → completed, any in progress → in progress, all upcoming → upcoming. Collapsed on mobile, expanded on desktop.
+3. **Photos** — `PortalPhotoGallery` component. Default: horizontal scroll row of latest 4-6 photos. "See All" expands to full gallery grouped by source (Site Visit / In Progress / Completion). Only shows photos where `is_client_visible = true`. Hidden if no photos.
+4. **Documents** — flat list of linked estimates/invoices. Action-needed items highlighted with accent border + AlertCircle icon.
+5. **Contact** — "Send a Message" CTA linking to `/portal/messages?projectId=${id}`.
+
 ### Estimate Detail (`/portal/estimates/[id]`)
 - Header: number, title, status badge, dates, expiration warning
+- From/To party sections
 - Client message from company
-- Line items: name, qty, unit price, line total. Optional items section.
-- Question indicator badges on line items with questions
-- Totals: subtotal, discount, tax, total, deposit
-- **Actions** (when status is sent/viewed/changes_requested):
-  - **Approve** (green) → confirmation dialog → redirects to questions if any
-  - **Request Changes** (amber) → dialog with reason textarea
-  - **Decline** (red) → dialog with optional reason
+- Line items: conditionally show/hide quantity, unit price, line total, description based on `resolvePortalVisibility()`
+- Question callout card above actions if unanswered questions exist
+- **Action hierarchy** (when status is sent/viewed/changes_requested):
+  - **Approve**: full-width accent CTA at top
+  - **Request Changes**: half-width muted button (left)
+  - **Decline**: half-width muted button (right)
+- All dialogs at z-[3000] (modal layer)
 
 ### Line Item Questions (`/portal/estimates/[id]/questions`)
 - Grouped by line item with section headers
 - Progress indicator: "X of Y required questions answered"
-- 5 answer types:
-  - `text` → text input
-  - `number` → number input
-  - `select` → dropdown from options
-  - `multiselect` → checkbox group as styled button cards
-  - `color` → color swatches (resolves names to hex) or hex input
+- 5 answer types: text, number, select, multiselect, color
 - Pre-fills existing answers
 - Submit validates all required answered
 
 ### Invoice Detail (`/portal/invoices/[id]`)
 - Header: number, dates, status, due date
-- Line items table
-- Totals: subtotal, discount, tax, total
-- Payment history
-- Balance due (highlighted)
-- **Pay Now**: amount input + payment form (Stripe PaymentIntent integration)
-
-### Project Detail (`/portal/projects/[id]`)
-- Header: title, address, status, dates
-- Task timeline: vertical timeline with status-colored dots
-- Photo gallery: grid with fullscreen lightbox, keyboard navigation
-- Linked estimates and invoices with status badges
+- From/To party sections
+- Line items with visibility overrides from `resolvePortalVisibility()`
+- **Balance Due Callout** — prominent visual block pulled out of totals:
+  - Balance > 0: large centered balance amount. No Pay button (deferred until Stripe integration).
+  - Balance = 0: green "Paid in Full — Thank You" confirmation block with check icon.
+  - Overdue: due date in warning color, warning border on balance block.
+- Totals summary (subtotal, discount, tax, total, amount paid)
+- Payment history: chronological list with date, method, reference, amount
 
 ### Messages (`/portal/messages`)
-- Threaded view: client messages right, company messages left
+- Reads `projectId` from URL search params for context tagging
+- Auto-attaches `projectId` to the first message sent if present
+- Skin-aware bubble radius (`--portal-bubble-radius`)
+- Threaded view: client messages right (accent), company messages left (card)
 - Date-grouped separators
 - Auto-scroll to latest
 - Compose area: textarea + send button
-- Context tags (project, estimate, invoice linked)
+
+---
+
+## Portal Components
+
+### Status Badge (`portal-status-badge.tsx`)
+Reads `--portal-status-style` CSS var to determine rendering:
+- `pill-rounded`: rounded-full background with text (default)
+- `pill-bordered`: rounded-full border with text, no background fill
+- `text-bold`: no pill, just bold colored text
+
+Status → color mapping: approved/paid=success, sent=accent, viewed/awaiting_payment=warning, declined/past_due=error, etc.
+
+### Phase Timeline (`portal-phase-timeline.tsx`)
+Groups tasks by `taskType.name`. Each group is a "phase." Phase status computed from task statuses. Tasks with no taskType go into an "Other" phase. Mobile: collapsed by default, tap to expand. Desktop: all expanded.
+
+### Photo Gallery (`portal-photo-gallery.tsx`)
+Accepts structured photos (id, url, thumbnailUrl, source, caption). Default: horizontal scroll row. "See All" expands grouped by source. Lightbox at z-[3000] with keyboard/swipe navigation and captions.
+
+### Project Switcher (`portal-project-switcher.tsx`)
+Only rendered when client has 2+ projects. Dropdown showing project title + status. Navigates to new project on select.
 
 ---
 
 ## Admin-Side Portal Features
 
 ### Portal Branding Settings Tab
-`src/components/settings/portal-branding-tab.tsx` — added to Settings page as "Client Portal" tab.
+`src/components/settings/portal-branding-tab.tsx`
 
 Sections:
-1. **Company Logo** — URL input + live preview
-2. **Accent Color** — 6 preset swatches + custom hex input
+1. **Company Logo** — toggle company logo vs custom upload
+2. **Accent Color** — preset swatches + custom hex input
 3. **Portal Template** — 3 radio cards (Modern, Classic, Bold)
 4. **Theme Mode** — Light/Dark toggle
 5. **Welcome Message** — Textarea
+6. **Document Display** — 6 toggle groups (quantities, unit prices, line totals, descriptions, tax, discount). Each has 3 states: "Use template setting" (null) / "Always show" (true) / "Always hide" (false). Implemented as segmented controls.
 
-### Line Item Question Editor
-`src/components/ops/line-item-question-editor.tsx` — controlled component used in the estimate builder.
-
-- Each line item gets a `?` icon button with question count badge (integrated into `LineItemEditor`)
-- Question form: text input, answer type selector, options editor, required toggle
-- Answer types: text, number, single select, multi select, color
-- Options editor for select/multiselect/color types with tag-pill UI
-
-### Share Portal Button
-`src/components/ops/share-portal-button.tsx` — reusable button for sending magic links.
-
-- Used on project detail, estimate detail, invoice detail
-- Pre-fills client email
-- Posts to `/api/portal/share`
-- Shows success toast
-
-### Admin Portal Inbox
-`src/app/(dashboard)/portal-inbox/page.tsx` — split-view inbox for all client messages.
-
-- Left panel: conversation list (grouped by client, unread badges)
-- Right panel: message thread with compose
-- Real-time polling: conversations every 30s, active thread every 15s
-- Auto-marks client messages as read when conversation opened
-- Added to sidebar as "Portal Inbox" nav item
+Preview: inline mockup shows template + accent + theme changes in real-time. Full preview via "Preview Portal" button creates a preview token and opens in new tab.
 
 ---
 
-## Email Templates
+## i18n Keys
 
-SendGrid-powered branded emails. Located in `src/lib/email/`.
+All portal text uses `useDictionary("portal")`. Dictionaries at:
+- `src/i18n/dictionaries/en/portal.json`
+- `src/i18n/dictionaries/es/portal.json`
 
-| Template | Trigger | Content |
-|----------|---------|---------|
-| **Magic Link** | Company shares portal / sends estimate/invoice | "Access Your Portal" with branded button |
-| **Estimate Ready** | Estimate sent to client | "New Estimate Available" with amount + link |
-| **Questions Reminder** | Manual reminder | "Please Answer Questions" to unblock project |
-| **Invoice Ready** | Invoice sent to client | "New Invoice" with amount + due date + link |
+Key namespaces:
+- `nav.*` — navigation labels
+- `home.*` — home page
+- `project.*` — project detail (includes `progress`, `documents`, `contact`, `switchProject`)
+- `estimate.*` — estimate detail
+- `invoice.*` — invoice detail (includes `paidInFull`)
+- `messages.*` — messages page
+- `landing.*` — magic link landing (includes `validating`, `verifyTitle`, `verifyDesc`, `emailPlaceholder`, `accessPortal`, `expiredTitle`, `invalidTitle`, `poweredBy`)
+- `verify.*` — session expired (includes `subtitle`, `contactProvider`)
+- `phaseTimeline.*` — phase timeline (includes `other`, `current`)
+- `taskTimeline.*` — task status labels
+- `gallery.*` — photo gallery (includes `seeAll`, `showLess`, `sourceSiteVisit`, `sourceInProgress`, `sourceCompletion`)
+- `questions.*` — question flow
+- `payment.*` — payment flow
+- `toggle.*` — language toggle
 
-All emails use:
-- Company logo in header
-- Company accent color for CTA buttons
-- Responsive HTML with inline CSS
-
----
-
-## TanStack Query Hooks
-
-Portal-specific hooks in `src/lib/hooks/`. All use `portalFetch()` helper (adds `credentials: "include"` for cookie auth) and `portalKeys` factory for cache keys.
-
-| Hook | Purpose |
-|------|---------|
-| `usePortalData()` | Full portal data aggregate |
-| `usePortalEstimate(id)` | Estimate detail |
-| `useApproveEstimate()` | Mutation: approve |
-| `useDeclineEstimate()` | Mutation: decline with reason |
-| `usePortalInvoice(id)` | Invoice detail |
-| `useCreatePaymentIntent()` | Mutation: Stripe payment |
-| `usePortalProject(id)` | Project detail |
-| `usePortalMessages(options?)` | Paginated messages |
-| `useSendPortalMessage()` | Mutation: send message |
-| `usePortalQuestions(estimateId)` | Questions + answers |
-| `useSubmitPortalAnswers()` | Mutation: submit answers |
+Settings i18n (`useDictionary("settings")`):
+- `portalBranding.visibilityTitle` — "Document Display"
+- `portalBranding.visibilityDesc` — description
+- `portalBranding.useTemplate`, `alwaysShow`, `alwaysHide` — segmented control labels
+- `portalBranding.quantities`, `unitPrices`, `lineTotals`, `descriptions`, `tax`, `discount` — field labels
 
 ---
 
-## Dependencies
+## Z-Index Scale (Portal)
 
-| Package | Purpose |
-|---------|---------|
-| `@sendgrid/mail` | Email delivery for magic links and notifications |
-| `stripe` | Server-side Stripe API (PaymentIntent creation) |
-| `@stripe/stripe-js` | Client-side Stripe.js loader |
-| `@stripe/react-stripe-js` | React Stripe Elements components |
+| Layer | z-index | Usage |
+|-------|---------|-------|
+| Content | 0-10 | Normal page flow |
+| Dropdown | 1000 | Project switcher dropdown |
+| Modal | 3000 | Lightbox, approve/decline dialogs |
+
+---
+
+## Deferred Features
+
+1. **Stripe payment integration** — Pay Now button hidden on invoice detail until Stripe Elements integration is complete.
+2. **Real-time messaging** — Currently polling every 15s. Supabase Realtime subscription planned.
+3. **Photo upload from portal** — Clients can view but not upload photos. Planned for future release.
+4. **Portal notifications** — Push/email notifications for portal events (new estimate, message reply). Currently email-only via SendGrid.
 
 ---
 
 ## File Inventory
 
-### New Files (~50)
+### Portal-Specific Files
 
-**Database:**
-- `supabase/migrations/007_portal_schema.sql`
-- `supabase/migrations/009_fix_line_item_answers_unique.sql` — unique constraint fix for line_item_answers upsert
+**Theme & Visibility (4):**
+- `src/lib/portal/theme.ts` — generates CSS custom properties from branding
+- `src/lib/portal/templates.ts` — template configs (fonts, radii, weights)
+- `src/lib/portal/resolve-visibility.ts` — portal branding visibility overrides
+- `src/lib/portal/resolve-template-branding.ts` — template branding merger
 
-**Types:**
-- `src/lib/types/portal.ts`
-
-**Services (6):**
-- `src/lib/api/services/portal-auth-service.ts`
-- `src/lib/api/services/portal-service.ts`
-- `src/lib/api/services/line-item-question-service.ts`
-- `src/lib/api/services/portal-message-service.ts`
-- `src/lib/api/services/portal-branding-service.ts`
-- `src/lib/api/services/portal-activity-service.ts`
-
-**Email (5):**
-- `src/lib/email/sendgrid.ts`
-- `src/lib/email/templates/layout.ts`
-- `src/lib/email/templates/magic-link.ts`
-- `src/lib/email/templates/estimate-ready.ts`
-- `src/lib/email/templates/questions-reminder.ts`
-- `src/lib/email/templates/invoice-ready.ts`
-
-**API Routes (12):**
-- `src/app/api/portal/auth/send-link/route.ts`
-- `src/app/api/portal/auth/verify/route.ts`
-- `src/app/api/portal/auth/validate-token/route.ts`
-- `src/app/api/portal/data/route.ts`
-- `src/app/api/portal/estimates/[id]/route.ts`
-- `src/app/api/portal/estimates/[id]/approve/route.ts`
-- `src/app/api/portal/estimates/[id]/decline/route.ts`
-- `src/app/api/portal/estimates/[id]/questions/route.ts`
-- `src/app/api/portal/invoices/[id]/route.ts`
-- `src/app/api/portal/invoices/[id]/pay/route.ts`
-- `src/app/api/portal/projects/[id]/route.ts`
-- `src/app/api/portal/messages/route.ts`
-- `src/app/api/portal/share/route.ts`
-
-**Theme (2):**
-- `src/lib/portal/theme.ts`
-- `src/lib/portal/templates.ts`
-
-**Portal Pages (8):**
+**Portal Pages (11):**
 - `src/app/(portal)/layout.tsx`
 - `src/app/(portal)/portal/layout.tsx`
 - `src/app/(portal)/portal/providers.tsx`
@@ -493,56 +473,21 @@ Portal-specific hooks in `src/lib/hooks/`. All use `portalFetch()` helper (adds 
 - `src/app/(portal)/portal/projects/[id]/page.tsx`
 - `src/app/(portal)/portal/messages/page.tsx`
 
-**Portal Components (10):**
+**Portal Components (14):**
 - `src/components/portal/portal-shell.tsx`
 - `src/components/portal/portal-header.tsx`
 - `src/components/portal/portal-nav.tsx`
 - `src/components/portal/portal-project-card.tsx`
-- `src/components/portal/portal-status-badge.tsx`
+- `src/components/portal/portal-status-badge.tsx` — skin-aware (pill-rounded/pill-bordered/text-bold)
 - `src/components/portal/portal-estimate-view.tsx`
 - `src/components/portal/portal-line-item-card.tsx`
 - `src/components/portal/portal-question-field.tsx`
-- `src/components/portal/portal-invoice-view.tsx`
+- `src/components/portal/portal-invoice-view.tsx` — with balance due callout
 - `src/components/portal/portal-payment-form.tsx`
-- `src/components/portal/portal-photo-gallery.tsx`
+- `src/components/portal/portal-photo-gallery.tsx` — structured photos, source grouping, lightbox
 - `src/components/portal/portal-task-timeline.tsx`
-
-**Admin Components (4):**
-- `src/components/settings/portal-branding-tab.tsx`
-- `src/components/ops/line-item-question-editor.tsx`
-- `src/components/ops/portal-inbox.tsx`
-- `src/components/ops/share-portal-button.tsx`
-- `src/app/(dashboard)/portal-inbox/page.tsx`
-
-**Hooks (6):**
-- `src/lib/hooks/use-portal-data.ts`
-- `src/lib/hooks/use-portal-estimate.ts`
-- `src/lib/hooks/use-portal-invoice.ts`
-- `src/lib/hooks/use-portal-project.ts`
-- `src/lib/hooks/use-portal-messages.ts`
-- `src/lib/hooks/use-portal-questions.ts`
-
-**Helpers:**
-- `src/lib/api/portal-api-helpers.ts`
-
-### Modified Files
-- `src/middleware.ts` — portal route handling
-- `src/app/(dashboard)/settings/page.tsx` — added Portal tab
-- `src/components/layouts/sidebar.tsx` — added Portal Inbox nav item
-- `src/components/ops/line-item-editor.tsx` — added question button per line item
-- `src/lib/hooks/index.ts` — barrel exports for portal hooks
-
----
-
-## Environment Variables
-
-| Variable | Purpose |
-|----------|---------|
-| `SENDGRID_API_KEY` | SendGrid email delivery |
-| `SENDGRID_FROM_EMAIL` | Sender email address |
-| `STRIPE_SECRET_KEY` | Stripe server-side API |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe client-side |
-| `NEXT_PUBLIC_APP_URL` | Base URL for magic links (e.g., `https://app.opsapp.co`) |
+- `src/components/portal/portal-phase-timeline.tsx` — task type grouping, phase progress
+- `src/components/portal/portal-project-switcher.tsx` — multi-project navigation
 
 ---
 
@@ -551,29 +496,10 @@ Portal-specific hooks in `src/lib/hooks/`. All use `portalFetch()` helper (adds 
 1. **Token expiry:** 7 days. Session expiry: 30 days.
 2. **Email verification:** Client must enter the exact email associated with their client record.
 3. **Data isolation:** All service methods verify `client_id` matches session to prevent cross-client access.
-4. **Activity logging is non-blocking:** Errors are logged but never thrown, so portal operations aren't blocked.
+4. **Activity logging is non-blocking:** Errors are logged but never thrown.
 5. **Estimate actions:** Only available when status is `sent`, `viewed`, or `changes_requested`.
-6. **Questions required:** All required questions must be answered before submission; optional questions can be skipped.
-7. **Branding defaults:** New companies get Modern template, dark mode, #417394 accent.
-8. **Message read tracking:** Company messages marked read when client opens thread. Client messages marked read when admin opens conversation.
-9. **Stripe payments:** PaymentIntent created server-side, completed client-side via Stripe Elements. Webhook records payment.
-
----
-
-## Testing Checklist
-
-1. Create test company with portal branding (logo, accent, Modern template, dark mode)
-2. Create client with email
-3. Create estimate with line items and questions
-4. Send estimate → verify magic link email received
-5. Click magic link → verify email → land on portal home
-6. View estimate → verify line items, totals, question indicator badges
-7. Approve estimate → verify status change + activity logged
-8. Answer questions → verify answers saved + progress tracking
-9. Create invoice → send → verify client sees it in portal
-10. Pay invoice via Stripe → verify payment recorded
-11. Send message → verify appears in admin inbox
-12. Switch branding to Classic + light mode → verify portal updates
-13. Verify 30-day session persists
-14. Verify expired magic link shows error
-15. Verify wrong email shows error
+6. **Questions required:** All required questions must be answered before submission.
+7. **Branding defaults:** New companies get Modern template, dark mode, #417394 accent, all visibility overrides null (inherit from template).
+8. **Message context:** Messages can be tagged with projectId from URL search params on first send.
+9. **Photo visibility:** Only photos with `is_client_visible = true` are shown in the portal.
+10. **Visibility cascade:** Portal branding overrides (non-null) → document template settings → default (show all).
