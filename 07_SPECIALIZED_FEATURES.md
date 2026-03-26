@@ -27,6 +27,7 @@
 17. [Feature Flags System](#17-feature-flags-system)
 18. [Intel Galaxy Visualization (Web)](#18-intel-galaxy-visualization-web)
 19. [In-App Email System (Web)](#19-in-app-email-system-web)
+20. [Mobile Wizard System](#20-mobile-wizard-system)
 
 ---
 
@@ -2065,6 +2066,43 @@ fun FloatingActionMenu(
 }
 ```
 
+### Log Activity (Voice Quick Logger)
+
+**Location:** FAB → WORK group (top item)
+**Permission:** `pipeline.manage` + `pipeline` feature flag
+**File:** `Views/Pipeline/LogActivitySheet.swift`
+
+Voice-first quick logger for recording correspondence with leads. Users speak a natural sentence (e.g., "Call with John Smith, spoke about adding stairs, 13 treads") and the app parses it into structured activity data.
+
+**Components:**
+- `SpeechRecognitionManager` — SFSpeechRecognizer wrapper with contextual string boosting from SwiftData
+- `VoiceActivityParser` — Local keyword/name extraction with fuzzy Levenshtein matching
+- `LogActivityViewModel` — Sheet state management, opportunity loading, save orchestration
+- `LogActivitySheet` — Main UI with mic hero, type chips, opportunity picker, notes field
+- `OpportunityPickerView` — Searchable opportunity list with inline "+ New Lead" creation
+
+**Voice Parsing Flow:**
+1. Type extraction — keyword match at start (call, email, meeting, note, site visit)
+2. Contact extraction — "with [1-3 words]" pattern → fuzzy match against active opportunities
+3. Notes extraction — remainder cleaned (filler words removed, capitalized)
+
+**Match Confidence Levels:**
+- Exact (score >= 0.9): auto-selects opportunity
+- High (score >= 0.7): auto-selects opportunity
+- Ambiguous (multiple matches): shows disambiguation picker
+- No match: pre-fills inline lead creation with parsed name
+- No contact pattern: user selects manually
+
+**Speech Recognition:**
+- Engine: SFSpeechRecognizer (Apple built-in)
+- Server-based when online, on-device offline fallback
+- contextualStrings populated from: active opportunity names, client names, team member names
+- Auto-stop after 3 seconds of silence
+- Audio session: .playAndRecord + .voiceChat (noise suppression, echo cancellation)
+
+**Activity Types (user-loggable):** call, email, meeting, note, site_visit
+**Optional Metadata:** direction (inbound/outbound), outcome, duration (minutes)
+
 ---
 
 ## 10. Advanced UI Patterns
@@ -3572,5 +3610,329 @@ Three separate API keys for granular cost tracking in the OpenAI dashboard:
 - All fall back to `OPENAI_API_KEY` if the specific key is not set
 
 ---
+
+## 20. Mobile Wizard System
+
+Cross-platform reference for the in-app guided wizard system. Both iOS and Android implementations conform to this dock.
+
+**Design spec:** `docs/superpowers/specs/2026-03-10-in-app-wizard-system-design.md`
+
+### Principles
+
+- **Real data, not demo data.** Wizards guide users through actual creation flows.
+- **Lightweight.** Persistent instruction bar at bottom — no overlays, spotlights, or dimming.
+- **Deferrable.** Every wizard supports "Maybe Later" and "Don't show again."
+- **Offline-first.** All trigger conditions and step detection use local state only.
+
+### Role & Permission Gating
+
+Three wizard-access tiers mapped from five user roles:
+
+| UserRole | Wizard Tier |
+|---|---|
+| `.admin`, `.owner` | Admin |
+| `.office`, `.operator` | Office |
+| `.crew`, `.unassigned` | Field |
+
+**Tier visibility:**
+- **Field:** Project Lifecycle, Scheduling, Job Board, Navigation, Photo Documentation, Project Notes, Settings
+- **Office:** All field + Team Management, Inventory, Expenses
+- **Admin:** All + Crew Location, Pipeline, Estimates, Invoices, Permissions
+
+Wizards with `requiredPermission` are hidden entirely if the user lacks that permission, regardless of tier.
+
+### Wizard Inventory
+
+#### Sequenced (prompted proactively)
+
+| # | wizardId | Display Name | Trigger | Min Tier | Permission | Status |
+|---|----------|-------------|---------|----------|------------|--------|
+| 1 | `project_lifecycle` | PROJECT LIFECYCLE | First session, 0 projects | Field | — | **Built** |
+
+#### Contextual (triggered on first feature encounter)
+
+| # | wizardId | Display Name | Trigger | Min Tier | Permission | Status |
+|---|----------|-------------|---------|----------|------------|--------|
+| 2 | `scheduling_calendar` | SCHEDULING & CALENDAR | First Calendar tab visit | Field | — | **Built** |
+| 3 | `job_board` | JOB BOARD | First Job Board tab visit | Field | — | **Built** |
+| 4 | `team_management` | TEAM MANAGEMENT | First team settings visit | Office | — | **Built** |
+| 5 | `navigation_directions` | NAVIGATION & DIRECTIONS | First "Get Directions" tap | Field | — | Not built |
+| 6+7 | `documentation` | DOCUMENTATION & DETAILS | First project detail visit | Field | — | **Built** |
+| 8 | `crew_location` | CREW LOCATION TRACKING | First map view | Admin | `crew_location.view` | Not built |
+| 9 | `inventory_setup` | INVENTORY SETUP | First Inventory tab visit, 0 items | Office | `inventory.manage` | **Built** |
+| 10 | `pipeline_crm` | PIPELINE / CRM | First Pipeline tab visit | Admin | `pipeline.view` | Not built |
+| 11 | `estimates` | ESTIMATES | First estimate creation | Admin | `estimates.create` | Not built |
+| 12 | `invoices` | INVOICES | First invoice action | Admin | `estimates.create` | Not built |
+| 13 | `expenses_accounting` | EXPENSES & ACCOUNTING | First expense visit | Office | `expenses.create` | Not built |
+| 14 | `permissions_roles` | PERMISSIONS & ROLES | First permissions settings visit | Admin | `settings.company` | **Built** |
+| 15 | `settings_security` | SETTINGS & SECURITY | First settings visit | Field | — | **Built** |
+
+#### Data-Condition (triggered by accumulated state)
+
+| # | wizardId | Display Name | Trigger | Min Tier | Permission | Status |
+|---|----------|-------------|---------|----------|------------|--------|
+| 16 | `task_review` | TASK REVIEW | 5+ overdue tasks | Field | `tasks.view` | **Built** |
+| 17 | `payment_review` | PAYMENT REVIEW | 5+ completed projects | Office | `finances.view` | **Built** |
+
+### Built Wizard Definitions
+
+#### 1. Project Lifecycle (`project_lifecycle`)
+
+**Type:** Sequenced | **Icon:** `hammer.circle` | **Tier:** Field | **Banner:** "Want help creating your first project?"
+
+| Step | id | Instruction | Target Screen | Notification | Skippable |
+|------|-----|------------|---------------|-------------|-----------|
+| 1 | `open_fab` | TAP THE + BUTTON | JobBoard | `WizardFABTapped` | Yes |
+| 2 | `select_create_client` | TAP "CREATE CLIENT" | FABMenu | `WizardCreateClientTapped` | Yes |
+| 3 | `fill_client_name` | ENTER THE CLIENT'S NAME | ClientForm | `WizardClientSaved` | Yes |
+| 4 | `open_fab_project` | TAP THE + BUTTON AGAIN | JobBoard | `WizardFABTapped` | Yes |
+| 5 | `select_create_project` | TAP "CREATE PROJECT" | FABMenu | `WizardCreateProjectTapped` | Yes |
+| 6 | `select_client` | SELECT YOUR CLIENT | ProjectForm | `WizardProjectClientSelected` | Yes |
+| 7 | `enter_project_name` | ENTER A PROJECT NAME | ProjectForm | `WizardProjectNameEntered` | Yes |
+| 8 | `add_task` | ADD A TASK | ProjectForm | `WizardTaskAdded` | Yes |
+| 9 | `assign_date` | SET A DATE FOR THE TASK | TaskForm | `WizardTaskDateSet` | Yes |
+| 10 | `assign_crew` | ASSIGN A CREW MEMBER | TaskForm | `WizardTaskCrewAssigned` | Yes |
+| 11 | `save_project` | SAVE YOUR PROJECT | ProjectForm | `WizardProjectSaved` | Yes |
+| 12 | `view_on_board` | FIND YOUR PROJECT ON THE BOARD | JobBoard | `WizardProjectStatusChanged` | Yes |
+
+**Notification sources (iOS):**
+| Notification | Posted From |
+|---|---|
+| `WizardFABTapped` | `FloatingActionMenu.swift` — FAB button tap |
+| `WizardCreateClientTapped` | `FloatingActionMenu.swift` — "New Client" menu item |
+| `WizardClientSaved` | `ClientSheet.swift` — after client saved |
+| `WizardCreateProjectTapped` | `FloatingActionMenu.swift` — "New Project" menu item |
+| `WizardProjectClientSelected` | `ProjectFormSheet.swift` — client row tapped |
+| `WizardProjectNameEntered` | `ProjectFormSheet.swift` — title onChange (empty → non-empty) |
+| `WizardTaskAdded` | `ProjectFormSheet.swift` — new task saved from inline TaskFormSheet |
+| `WizardTaskDateSet` | `TaskFormSheet.swift` — scheduler confirmed |
+| `WizardTaskCrewAssigned` | `TaskFormSheet.swift` — selectedTeamMemberIds onChange (empty → non-empty) |
+| `WizardProjectSaved` | `ProjectFormSheet.swift` — project create success |
+| `WizardProjectStatusChanged` | `UniversalJobBoardCard.swift` — status swipe success |
+
+#### 9. Inventory Setup (`inventory_setup`)
+
+**Type:** Contextual | **Icon:** `shippingbox.fill` | **Tier:** Office | **Permission:** `inventory.manage` | **Banner:** "Let's set up your inventory"
+
+| Step | id | Instruction | Notification | Skippable |
+|------|-----|------------|-------------|-----------|
+| 1 | `choose_method` | ADD YOUR ITEMS | — (coordinator-driven) | Yes |
+| 2 | `add_items` | ADD YOUR ITEMS | — (coordinator-driven) | Yes |
+| 3 | `set_thresholds` | SET STOCK ALERTS | — (coordinator-driven) | Yes |
+| 4 | `take_snapshot` | TAKE FIRST SNAPSHOT | — (coordinator-driven) | Yes |
+
+**Note:** Inventory wizard uses a dedicated `InventoryWizardCoordinator` that calls `wizardStateManager.completeCurrentStep()` / `skipCurrentStep()` directly instead of NotificationCenter. Triggered from `InventoryView.checkInventoryWizard()` when the user has `inventory.manage` permission and 0 company items.
+
+#### 16. Task Review (`task_review`)
+
+**Type:** Data-condition | **Icon:** `rectangle.stack.fill` | **Tier:** Field | **Permission:** `tasks.view` | **Banner:** "You have overdue tasks — want a quick walkthrough of task review?"
+
+| Step | id | Instruction | Notification | Skippable |
+|------|-----|------------|-------------|-----------|
+| 1 | `open_task_review` | OPEN TASK REVIEW | `WizardTaskReviewOpened` | No |
+| 2 | `demo_swipe_right` | SWIPE RIGHT → COMPLETE | `WizardTaskSwipedRight` | Yes |
+| 3 | `demo_swipe_left` | SWIPE LEFT → SKIP | `WizardTaskSwipedLeft` | Yes |
+| 4 | `demo_swipe_up` | SWIPE UP → RESCHEDULE | `WizardTaskSwipedUp` | Yes |
+| 5 | `free_review` | YOU'RE ALL SET — KEEP REVIEWING | `WizardTaskReviewDismissed` | Yes |
+
+**Notification sources (iOS):**
+| Notification | Posted From |
+|---|---|
+| `WizardTaskReviewOpened` | `TaskCompletionReviewView.swift` — onAppear |
+| `WizardTaskSwipedRight` | `TaskCompletionReviewView.swift` — handleSwipe `.right` |
+| `WizardTaskSwipedLeft` | `TaskCompletionReviewView.swift` — handleSwipe `.left` |
+| `WizardTaskSwipedUp` | `TaskCompletionReviewView.swift` — handleSwipe `.up` |
+| `WizardTaskReviewDismissed` | `TaskCompletionReviewView.swift` — onDisappear |
+
+#### 17. Payment Review (`payment_review`)
+
+**Type:** Data-condition | **Icon:** `creditcard.circle` | **Tier:** Office | **Permission:** `finances.view` | **Banner:** "You have completed projects to review — want a quick walkthrough?"
+
+| Step | id | Instruction | Notification | Skippable |
+|------|-----|------------|-------------|-----------|
+| 1 | `open_payment_review` | OPEN PAYMENT REVIEW | `WizardPaymentReviewOpened` | No |
+| 2 | `demo_swipe_right` | SWIPE RIGHT → CLOSE PROJECT | `WizardProjectSwipedRight` | Yes |
+| 3 | `demo_swipe_left` | SWIPE LEFT → SKIP | `WizardProjectSwipedLeft` | Yes |
+| 4 | `demo_swipe_up` | SWIPE UP → SEND REMINDER | `WizardProjectSwipedUp` | Yes |
+| 5 | `free_review` | YOU'RE ALL SET — KEEP REVIEWING | `WizardPaymentReviewDismissed` | Yes |
+
+**Notification sources (iOS):**
+| Notification | Posted From |
+|---|---|
+| `WizardPaymentReviewOpened` | `ProjectPaymentReviewView.swift` — onAppear |
+| `WizardProjectSwipedRight` | `ProjectPaymentReviewView.swift` — handleSwipe `.right` |
+| `WizardProjectSwipedLeft` | `ProjectPaymentReviewView.swift` — handleSwipe `.left` |
+| `WizardProjectSwipedUp` | `ProjectPaymentReviewView.swift` — handleSwipe `.up` |
+| `WizardPaymentReviewDismissed` | `ProjectPaymentReviewView.swift` — onDisappear |
+
+#### 2. Scheduling & Calendar (`scheduling_calendar`)
+
+**Type:** Contextual | **Icon:** `calendar` | **Tier:** Field | **Banner:** "Want a quick tour of your schedule?"
+
+| Step | id | Instruction | Notification | Skippable |
+|------|-----|------------|-------------|-----------|
+| 1 | `scroll_week` | SWIPE TO BROWSE THE WEEK | `WizardCalendarWeekScrolled` | Yes |
+| 2 | `tap_day` | TAP A DAY TO SEE ITS TASKS | `WizardCalendarDayTapped` | Yes |
+| 3 | `toggle_month` | SWITCH TO MONTH VIEW | `WizardCalendarMonthToggled` | Yes |
+| 4 | `explore_month` | EXPLORE THE MONTH | `WizardCalendarMonthExplored` | Yes |
+| 5 | `tap_task` | TAP A TASK FOR DETAILS | `WizardCalendarTaskTapped` | Yes |
+
+**Notification sources (iOS):**
+| Notification | Posted From |
+|---|---|
+| `WizardCalendarWeekScrolled` | `ScheduleView.swift` — onReceive CalendarWeekViewScrolled |
+| `WizardCalendarDayTapped` | `CalendarDaySelector.swift` — day cell onTap |
+| `WizardCalendarMonthToggled` | `ScheduleView.swift` — onChange viewMode to .month |
+| `WizardCalendarMonthExplored` | `ScheduleView.swift` — onReceive CalendarMonthViewScrolled/Pinched |
+| `WizardCalendarTaskTapped` | `DayCanvasView.swift` — task card tap (ShowCalendarTaskDetails) |
+
+#### 3. Job Board (`job_board`)
+
+**Type:** Contextual | **Icon:** `list.clipboard` | **Tier:** Field | **Banner:** "Want a quick tour of the job board?"
+
+| Step | id | Instruction | Notification | Skippable |
+|------|-----|------------|-------------|-----------|
+| 1 | `browse_projects` | SCROLL THROUGH YOUR PROJECTS | `WizardJobBoardScrolled` | Yes |
+| 2 | `open_filters` | TAP THE FILTER BUTTON | `WizardJobBoardFilterOpened` | Yes |
+| 3 | `swipe_status` | SWIPE A PROJECT CARD RIGHT | `WizardProjectStatusChanged` | Yes |
+| 4 | `tap_project` | TAP A PROJECT TO OPEN IT | `WizardJobBoardProjectTapped` | Yes |
+| 5 | `view_closed` | CHECK YOUR CLOSED PROJECTS | `WizardJobBoardClosedViewed` | Yes |
+
+**Notification sources (iOS):**
+| Notification | Posted From |
+|---|---|
+| `WizardJobBoardScrolled` | `JobBoardProjectListView.swift` — onAppear |
+| `WizardJobBoardFilterOpened` | `JobBoardView.swift` — filter button action |
+| `WizardProjectStatusChanged` | `UniversalJobBoardCard.swift` — status swipe success |
+| `WizardJobBoardProjectTapped` | `ProjectDetailsView.swift` — handleOnAppear |
+| `WizardJobBoardClosedViewed` | `JobBoardProjectListView.swift` — closed section button |
+
+#### 6+7. Documentation & Details (`documentation`)
+
+**Type:** Contextual | **Icon:** `doc.text.image` | **Tier:** Field | **Banner:** "Want to learn how to document your jobs?"
+
+| Step | id | Instruction | Notification | Skippable |
+|------|-----|------------|-------------|-----------|
+| 1 | `view_activity` | VIEW THE ACTIVITY TAB | `WizardActivityTabViewed` | Yes |
+| 2 | `view_details` | SWITCH TO THE DETAILS TAB | `WizardDetailsTabViewed` | Yes |
+| 3 | `write_note` | WRITE A NOTE | `WizardNotePosted` | Yes |
+| 4 | `capture_photo` | CAPTURE A PHOTO | `WizardPhotoCaptured` | Yes |
+| 5 | `annotate_photo` | ANNOTATE A PHOTO | `WizardPhotoAnnotated` | Yes |
+
+**Notification sources (iOS):**
+| Notification | Posted From |
+|---|---|
+| `WizardActivityTabViewed` | `ActivityTabView.swift` — onAppear |
+| `WizardDetailsTabViewed` | `DetailsTabView.swift` — onAppear |
+| `WizardNotePosted` | `ProjectNotesViewModel.swift` — postNote() optimistic insert |
+| `WizardPhotoCaptured` | `ProjectDetailsView.swift` — CameraBatchView completion |
+| `WizardPhotoAnnotated` | `PhotoAnnotationView.swift` — saveAnnotation() |
+
+#### 4. Team Management (`team_management`)
+
+**Type:** Contextual | **Icon:** `person.3.fill` | **Tier:** Office | **Banner:** "Want help setting up your team?"
+
+| Step | id | Instruction | Notification | Skippable |
+|------|-----|------------|-------------|-----------|
+| 1 | `view_team` | BROWSE YOUR TEAM | `WizardTeamListViewed` | Yes |
+| 2 | `view_company_code` | FIND YOUR COMPANY CODE | `WizardCompanyCodeViewed` | Yes |
+| 3 | `send_invite` | INVITE A TEAM MEMBER | `WizardTeamInviteSent` | Yes |
+| 4 | `assign_role` | ASSIGN A ROLE | `WizardTeamRoleAssigned` | Yes |
+
+**Notification sources (iOS):**
+| Notification | Posted From |
+|---|---|
+| `WizardTeamListViewed` | `ManageTeamView.swift` — onAppear |
+| `WizardCompanyCodeViewed` | `ManageTeamView.swift` — invite sheet onAppear |
+| `WizardTeamInviteSent` | `ManageTeamView.swift` — after sendInvitations() |
+| `WizardTeamRoleAssigned` | `ManageTeamView.swift` — after updateMemberRole() |
+
+#### 15. Settings & Security (`settings_security`)
+
+**Type:** Contextual | **Icon:** `gearshape.fill` | **Tier:** Field | **Banner:** "Want to set up your profile and security?"
+
+| Step | id | Instruction | Notification | Skippable |
+|------|-----|------------|-------------|-----------|
+| 1 | `open_profile` | OPEN YOUR PROFILE | `WizardProfileViewed` | Yes |
+| 2 | `open_company` | VIEW COMPANY SETTINGS | `WizardCompanyInfoViewed` | Yes |
+| 3 | `enable_pin` | SET UP A PIN | `WizardPINEnabled` | Yes |
+| 4 | `configure_notifications` | CONFIGURE NOTIFICATIONS | `WizardNotificationsConfigured` | Yes |
+
+**Notification sources (iOS):**
+| Notification | Posted From |
+|---|---|
+| `WizardProfileViewed` | `ProfileSettingsView.swift` — onAppear |
+| `WizardCompanyInfoViewed` | `OrganizationDetailsView.swift` — onAppear |
+| `WizardPINEnabled` | `SecuritySettingsView.swift` — PINSetupSheet after PIN set |
+| `WizardNotificationsConfigured` | `NotificationSettingsView.swift` — onAppear |
+
+#### 14. Permissions & Roles (`permissions_roles`)
+
+**Type:** Contextual | **Icon:** `lock.shield` | **Tier:** Admin | **Permission:** `settings.company` | **Banner:** "Want a walkthrough of permissions?"
+
+| Step | id | Instruction | Notification | Skippable |
+|------|-----|------------|-------------|-----------|
+| 1 | `view_roles` | BROWSE THE ROLES | `WizardRolesTabViewed` | Yes |
+| 2 | `view_role_detail` | TAP A ROLE TO SEE ITS PERMISSIONS | `WizardRoleDetailViewed` | Yes |
+| 3 | `switch_to_team` | SWITCH TO THE TEAM TAB | `WizardTeamPermissionsViewed` | Yes |
+| 4 | `view_member_overrides` | TAP A TEAM MEMBER | `WizardMemberOverrideViewed` | Yes |
+
+**Notification sources (iOS):**
+| Notification | Posted From |
+|---|---|
+| `WizardRolesTabViewed` | `PermissionsManagementView.swift` — onAppear |
+| `WizardRoleDetailViewed` | `RoleDetailView.swift` — onAppear |
+| `WizardTeamPermissionsViewed` | `PermissionsManagementView.swift` — onChange tab to .team |
+| `WizardMemberOverrideViewed` | `UserPermissionDetailView.swift` — onAppear |
+
+### Trigger Types
+
+| Type | Evaluation Method | Called From |
+|------|------------------|------------|
+| **Sequenced** | `WizardTriggerService.evaluateSequencedWizards(projectCount:)` | `MainTabView.onAppear` (4s delay) |
+| **Contextual** | `WizardTriggerService.evaluateTrigger(for:context:)` | Feature-area view `.onAppear` |
+| **Data-condition** | `WizardTriggerService.evaluateDataConditions(overdueTaskCount:completedProjectCount:)` | `MainTabView.onAppear` (4s delay) |
+
+### State Machine
+
+```
+notStarted ──[start]──→ inProgress
+notStarted ──[dismiss + doNotShow]──→ notStarted (doNotShow = true)
+inProgress ──[all steps done]──→ completed
+inProgress ──[exit]──→ inProgress (progress saved)
+completed  ──[restart from settings]──→ inProgress (step 0, new sessionId)
+dismissed  ──[re-enable in settings]──→ notStarted (doNotShow = false)
+```
+
+### Persistence
+
+**iOS:** `WizardState` SwiftData model (registered in `OPSApp.sharedModelContainer`)
+**Android:** Room entity (same schema)
+**Sync:** Supabase `wizard_states` table, last-active-wins conflict resolution
+
+### Architecture (iOS)
+
+| Component | File | Purpose |
+|---|---|---|
+| `WizardDefinitionProtocol` | `Wizard/Models/WizardDefinition.swift` | Protocol all wizard definitions conform to |
+| `WizardStepDefinition` | `Wizard/Models/WizardDefinition.swift` | Step data (id, instruction, notification, skippable) |
+| `WizardRegistry` | `Wizard/Definitions/WizardRegistry.swift` | Central registry of all wizard definitions |
+| `WizardStateManager` | `Wizard/State/WizardStateManager.swift` | State machine — active wizard, step progression, analytics |
+| `WizardTriggerService` | `Wizard/State/WizardTriggerService.swift` | Evaluates trigger conditions, role/permission gating |
+| `WizardAnalyticsService` | `Wizard/Analytics/WizardAnalyticsService.swift` | Event recording |
+| `WizardState` | SwiftData model | Per-user persistence (status, step, doNotShow, duration) |
+| `WizardEnvironment` | `Wizard/Environment/WizardEnvironment.swift` | SwiftUI environment keys for stateManager + triggerService |
+| `WizardBanner` | `Wizard/Views/WizardBanner.swift` | Top banner UI |
+| `WizardPromptOverlay` | `Wizard/Views/WizardPromptOverlay.swift` | Start/dismiss modal |
+| `WizardInstructionBar` | `Wizard/Views/WizardInstructionBar.swift` | Bottom instruction bar (active wizard) |
+
+### Adding a New Wizard
+
+1. Create a new struct conforming to `WizardDefinitionProtocol` in `Wizard/Definitions/`
+2. Add it to `WizardRegistry.allWizards`
+3. For **contextual** wizards: call `wizardTriggerService.evaluateTrigger(for:context:)` from the feature view's `.onAppear`
+4. For **data-condition** wizards: add evaluation logic to `evaluateDataConditions()` or create a new evaluation method
+5. Post `NotificationCenter` notifications from the views where each step is completed
+6. Update this dock with the full step table and notification sources
 
 **End of Document**
