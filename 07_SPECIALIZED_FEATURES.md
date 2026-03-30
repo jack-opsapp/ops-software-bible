@@ -1,8 +1,8 @@
 # 07 - Specialized Features
 
-**Last Updated:** March 19, 2026
+**Last Updated:** March 29, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
-**Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
+**Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
 ---
 
@@ -13,7 +13,7 @@
 3. [Calendar Event Scheduling](#3-calendar-event-scheduling)
 4. [Image Capture & S3 Sync](#4-image-capture--s3-sync)
 5. [PIN Management](#5-pin-management)
-6. [Job Board Features](#6-job-board-features)
+6. [Projects Spatial Canvas & Spreadsheet View (Web)](#6-projects-spatial-canvas--spreadsheet-view-web)
 7. [Swipe-to-Change-Status Gestures](#7-swipe-to-change-status-gestures)
 8. [Form Sheets with Progressive Disclosure](#8-form-sheets-with-progressive-disclosure)
 9. [Floating Action Menu](#9-floating-action-menu)
@@ -1214,234 +1214,359 @@ class PinManager @Inject constructor(
 
 ---
 
-## 6. Job Board Features
+## 6. Projects Spatial Canvas & Spreadsheet View (Web)
 
-### Overview
-Central hub for projects, tasks, clients, and dashboard. Section-based navigation with filtering, sorting, and bulk operations.
+**Added:** 2026-03-29
+**Scope:** Unified `/projects` route replacing both the old `/projects` list page and the `/job-board` kanban board. Two view modes: spatial canvas (default) and spreadsheet.
 
-### JobBoardView (iOS)
-**Location:** `OPS/OPS/Views/JobBoard/JobBoardView.swift` (1,211 lines)
+> **Route removal:** The `/job-board` route directory (`src/app/(dashboard)/job-board/`) was deleted. The `/projects` route was rewritten from a list page to the spatial canvas. All sidebar references to "Job Board" were removed. The iOS app retains its own `JobBoardView` (documented in prior revisions of this section).
 
-**Sections:**
-```swift
-enum JobBoardSection: String, CaseIterable {
-    case dashboard = "Dashboard"
-    case clients = "Clients"
-    case projects = "Projects"
-    case tasks = "Tasks"
-}
+### Architecture
+
+```
+page.tsx (orchestrator)
+  ├── ProjectFloatingToolbar (search, filters, sort, view toggle, bulk bar)
+  ├── MetricsHeader (active count, total value, completed, overdue)
+  ├── DndContext (dnd-kit)
+  │   ├── [canvas mode]
+  │   │   ├── ProjectCanvas (viewport: pan/zoom/marquee/dot-grid)
+  │   │   │   ├── ProjectStageStack (one per active status column)
+  │   │   │   │   └── ProjectCard (collapsed 60px / bird's-eye 8px pill)
+  │   │   │   │       └── ProjectCardExpanded (inline detail + quick actions)
+  │   │   │   ├── ProjectTerminalRegion (Closed — grid layout)
+  │   │   │   └── ProjectMarqueeSelect (AABB selection rectangle)
+  │   │   ├── ProjectArchiveTray (bottom drawer for Archived projects)
+  │   │   ├── ProjectDragOverlay (ghost card during drag)
+  │   │   ├── ProjectDragConfirmation (first-time status-change dialog)
+  │   │   └── ProjectContextMenu (right-click actions)
+  │   └── [spreadsheet mode]
+  │       └── ProjectSpreadsheet (table with inline editing)
+  │           ├── SpreadsheetHeader (sortable column headers + visibility dropdown)
+  │           ├── SpreadsheetRow (per-project row with editable cells)
+  │           └── SpreadsheetBulkBar (selection actions bar)
+  └── ProjectDetailPopover (tabbed floating window, tethered to card)
 ```
 
-**Section Picker:**
-```swift
-struct JobBoardSectionSelector: View {
-    @Binding var selectedSection: JobBoardSection
-    @Environment(\.tutorialMode) private var tutorialMode
+### Layout Architecture — HUD Overlay Pattern
 
-    var body: some View {
-        HStack(spacing: 8) {
-            ForEach(JobBoardSection.allCases, id: \.self) { section in
-                Button(action: {
-                    guard !tutorialMode else { return }
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        selectedSection = section
-                    }
-                }) {
-                    Text(section.rawValue.uppercased())
-                        .font(OPSStyle.Typography.cardBody)
-                        .foregroundColor(
-                            selectedSection == section
-                                ? OPSStyle.Colors.cardBackgroundDark
-                                : OPSStyle.Colors.secondaryText
-                        )
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(
-                                    selectedSection == section
-                                        ? OPSStyle.Colors.primaryText
-                                        : .clear
-                                )
-                        )
-                }
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(OPSStyle.Colors.cardBackgroundDark)
-        )
-    }
-}
-```
+The topbar (56px) and sidebar (72px on md+) are fixed glass overlays that float above page content. Pages render full-bleed behind them. This allows spatial canvas pages (pipeline, projects, intel) to use the entire viewport for pan/zoom surfaces.
 
-**Task Filtering:**
-```swift
-private var filteredTasks: [ProjectTask] {
-    // Cache lookups to avoid O(n*m)
-    let allProjects = dataController.getAllProjects()
-    let projectsById = Dictionary(uniqueKeysWithValues: allProjects.map { ($0.id, $0) })
-    let taskTypesById = Dictionary(uniqueKeysWithValues: allTaskTypes.map { ($0.id, $0) })
+| Element | CSS | Purpose |
+|---------|-----|---------|
+| Sidebar | `fixed left-0 top-0 w-[72px] h-full z-[500]` | Navigation rail, hidden on mobile |
+| Topbar | `fixed top-0 right-0 h-[56px] left-0 md:left-[72px] z-10` | Header with notifications and user menu |
+| Main content | `h-screen w-full pl-0 md:pl-[72px]` | Content area, padded for sidebar on desktop |
+| Full-bleed pages | No `pt-[56px]` — content renders behind topbar | Canvas/intel pages that own the viewport |
+| Standard pages | `pt-[56px]` on container | Pages that need topbar clearance (e.g., inbox) |
 
-    var filtered = allTasks
+### Canvas View
 
-    // Filter by status
-    if !selectedStatuses.isEmpty {
-        filtered = filtered.filter { selectedStatuses.contains($0.status) }
-    }
+#### Stage Columns (Left to Right)
 
-    // Filter by task type
-    if !selectedTaskTypeIds.isEmpty {
-        filtered = filtered.filter { selectedTaskTypeIds.contains($0.taskTypeId) }
-    }
+| Column | Status | Color Source |
+|--------|--------|-------------|
+| 1 | RFQ | `PROJECT_STATUS_COLORS[ProjectStatus.RFQ]` |
+| 2 | Estimated | `PROJECT_STATUS_COLORS[ProjectStatus.Estimated]` |
+| 3 | Accepted | `PROJECT_STATUS_COLORS[ProjectStatus.Accepted]` |
+| 4 | In Progress | `PROJECT_STATUS_COLORS[ProjectStatus.InProgress]` |
+| 5 | Completed | `PROJECT_STATUS_COLORS[ProjectStatus.Completed]` |
 
-    // Filter by team members
-    if !selectedTeamMemberIds.isEmpty {
-        filtered = filtered.filter { task in
-            let taskTeamMemberIds = Set(task.getTeamMemberIds())
-            return !taskTeamMemberIds.intersection(selectedTeamMemberIds).isEmpty
-        }
-    }
+**Terminal region (right side):** Closed projects in a 3-column grid layout.
+**Archive tray:** Bottom drawer for Archived projects, toggled from toolbar.
 
-    // Search text
-    if !searchText.isEmpty {
-        filtered = filtered.filter { task in
-            let taskTypeName = taskTypesById[task.taskTypeId]?.display ?? ""
-            let projectName = projectsById[task.projectId]?.title ?? ""
+#### Layout Constants
 
-            return taskTypeName.localizedCaseInsensitiveContains(searchText) ||
-                   projectName.localizedCaseInsensitiveContains(searchText) ||
-                   (task.taskNotes?.localizedCaseInsensitiveContains(searchText) ?? false)
-        }
-    }
+| Constant | Value | Notes |
+|----------|-------|-------|
+| `CARD_WIDTH` | 200px | Matches pipeline for layout engine compatibility |
+| `CARD_HEIGHT` | 60px | Taller than pipeline (44px) — two lines + progress bar |
+| `CARD_PILL_HEIGHT` | 8px | Bird's-eye mode pill height |
+| `STACK_GAP` | 10px | Vertical gap between cards |
+| `STACK_HORIZONTAL_GAP` | 80px | Horizontal gap between columns |
+| `STACK_HEADER_HEIGHT` | 52px | Column header height |
+| `CANVAS_PADDING` | 200px | Padding around canvas content |
+| `TERMINAL_COLS` | 3 | Columns in terminal region grid |
+| `TERMINAL_GAP` | 80px | Gap between terminal grid cells |
+| `MIN_ZOOM` | 0.3 | Minimum zoom level |
+| `MAX_ZOOM` | 1.5 | Maximum zoom level |
+| `DEFAULT_ZOOM` | 0.8 | Initial zoom on load |
+| `BIRD_EYE_THRESHOLD` | 0.5 | Zoom below this renders pills instead of cards |
 
-    // Sort
-    switch sortOption {
-    case .scheduledDateDescending:
-        return filtered.sorted {
-            ($0.scheduledDate ?? Date.distantPast) > ($1.scheduledDate ?? Date.distantPast)
-        }
-    case .scheduledDateAscending:
-        return filtered.sorted {
-            ($0.scheduledDate ?? Date.distantPast) < ($1.scheduledDate ?? Date.distantPast)
-        }
-    case .statusAscending:
-        return filtered.sorted { $0.status.sortOrder < $1.status.sortOrder }
-    case .statusDescending:
-        return filtered.sorted { $0.status.sortOrder > $1.status.sortOrder }
-    }
-}
-```
+#### Viewport & Interaction
 
-**Crew Restrictions:**
-```swift
-private var isCrew: Bool {
-    return dataController.currentUser?.role == .crew
-}
+- **Pan:** Middle-click drag, clamped to keep content visible
+- **Zoom:** Wheel (trackpad or mouse) toward cursor, range 0.3x-1.5x
+- **Marquee select:** Left-drag on empty canvas, AABB intersection test
+- **Bird's-eye mode:** Zoom < 0.5 renders cards as 8px colored pills, hides region chrome
+- **Dot grid background:** 24px spacing, 0.7px dots at `rgba(255,255,255,0.06)`
+- **Auto-fit:** `fitAll()` on first load, scales to 90% of viewport
+- **Keyboard:** Escape clears selection, context menu, and marquee
 
-// In body:
-if !isCrew {
-    JobBoardSectionSelector(selectedSection: $selectedSection)
-        .padding(.top, 70)
-} else {
-    // Crew only sees dashboard
-    Spacer().frame(height: 70)
-}
-```
+#### Card Design
 
-### UniversalJobBoardCard (iOS)
-**Location:** `OPS/OPS/Views/JobBoard/UniversalJobBoardCard.swift` (1,826 lines)
+**Collapsed state (~60px):**
 
-**Card Types:**
-```swift
-enum JobBoardCardType {
-    case project(Project)
-    case client(Client)
-    case task(ProjectTask)
-}
-```
+| Element | Position | Content |
+|---------|----------|---------|
+| Title | Line 1 left | `project.title ?? formatStreetAddress(project.address) ?? "Untitled Project"` |
+| Value | Line 1 right | Formatted currency (accounting permission only) |
+| Client name | Line 2 | Dimmed `text-text-tertiary`, empty if no client |
+| Progress bar | Bottom 2px | `completedTasks / totalTasks`, status color fill |
+| Left border | 3px solid | Status color from `PROJECT_STATUS_COLORS` |
 
-**Badge Logic:**
-```swift
-// Unscheduled badge
-private func shouldShowUnscheduledBadge(for project: Project) -> Bool {
-    // No tasks = unscheduled
-    if project.tasks.isEmpty {
-        return true
-    }
+**Surface:** `rgba(13,13,13,0.6)` + `backdrop-blur(20px) saturate(1.2)` + `1px solid rgba(255,255,255,0.08)`
 
-    // Filter out completed/cancelled
-    let relevantTasks = project.tasks.filter { task in
-        task.status != .completed && task.status != .cancelled
-    }
+**States:** Selected (2px solid status color + glow), Hovered (1px solid at 50% opacity), Bird's-eye (8px pill)
 
-    // All tasks completed/cancelled = hide badge
-    if relevantTasks.isEmpty {
-        return false
-    }
+**Expanded state (inline below card):** Task summary, team avatars, date range, days in status. Quick actions: Open Detail, Add Task (permission-gated), Record Payment (permission-gated), Archive.
 
-    // Check if any unscheduled
-    let unscheduledTasks = relevantTasks.filter { task in
-        task.calendarEvent?.startDate == nil
-    }
-    return !unscheduledTasks.isEmpty
-}
-```
+**Staleness:** Cards dim based on recency of activity, calculated by `calculateBatchProjectStaleness()`.
 
-**Metadata Row:**
-```swift
-private var metadataItems: [(icon: String, text: String)] {
-    switch cardType {
-    case .project(let project):
-        var items: [(icon: String, text: String)] = []
+#### Stage Stack Headers
 
-        // Address (truncates at 35% width)
-        if let address = project.address, !address.isEmpty {
-            items.append((OPSStyle.Icons.location, formatAddressStreetOnly(address)))
-        } else {
-            items.append((OPSStyle.Icons.location, "NO ADDRESS"))
-        }
+Each column header shows status name, card count, and total value (accounting permission only). Hover reveals average days in status and oldest project. Bottom border animates left-to-right on hover with the status color.
 
-        // Calendar
-        if let startDate = project.startDate {
-            items.append((OPSStyle.Icons.calendar, DateHelper.simpleDateString(from: startDate)))
-        } else {
-            items.append((OPSStyle.Icons.calendar, "-"))
-        }
+#### Drag & Drop
 
-        // Team members
-        let teamCount = project.teamMembers.count
-        items.append((OPSStyle.Icons.personTwo, "\(teamCount)"))
+**Status change via drag:** Drag cards between columns to change project status. First-time drag shows a confirmation dialog (stored in localStorage as `ops_projects_drag_confirmed`). After confirmation, all subsequent drags are silent. Fires `useUpdateProjectStatus` mutation with optimistic update and toast on error.
 
-        return items
+**Free-form positioning:** Drop on empty canvas saves a custom position (Finder-style). Custom positions override layout engine positions. Stored in `customPositions` map.
 
-    case .task(let task):
-        var items: [(icon: String, text: String)] = []
+**Multi-select drag:** Shift/Meta click for multi-select. Drag all selected cards together with batch count badge on overlay.
 
-        // Address from parent project
-        if let project = dataController.getAllProjects().first(where: { $0.id == task.projectId }) {
-            if let address = project.address, !address.isEmpty {
-                items.append((OPSStyle.Icons.location, formatAddressStreetOnly(address)))
-            } else {
-                items.append((OPSStyle.Icons.location, "NO ADDRESS"))
-            }
-        }
+**Archive drop:** Archive tray appears at bottom during drag. Drop on tray sets status to Archived.
 
-        // Calendar
-        if let startDate = task.calendarEvent?.startDate {
-            items.append((OPSStyle.Icons.calendar, DateHelper.simpleDateString(from: startDate)))
-        } else {
-            items.append((OPSStyle.Icons.calendar, "-"))
-        }
+#### Context Menu
 
-        // Team members
-        let teamMemberCount = task.getTeamMemberIds().count
-        items.append((OPSStyle.Icons.personTwo, "\(teamMemberCount)"))
+Right-click on card(s) shows: Open Detail, Change Status (submenu), Add Task, Record Payment (permission-gated), Archive, Delete (permission-gated with confirmation). Multi-select shows batch actions.
 
-        return items
-    }
-}
-```
+#### Detail Popover
+
+Floating window tethered to the expanded card, managed by `useProjectDetailPopoverStore` (Zustand). Supports multiple concurrent popovers with z-index stacking, minimize/restore, drag repositioning, and resize.
+
+| Constant | Value |
+|----------|-------|
+| `POPOVER_DEFAULT_WIDTH` | 440px |
+| `POPOVER_DEFAULT_HEIGHT` | 520px |
+| `POPOVER_MIN_WIDTH` | 360px |
+| `POPOVER_MIN_HEIGHT` | 320px |
+| `POPOVER_Z_BASE` | 2000 |
+
+**Tabs:**
+
+| Tab | Content |
+|-----|---------|
+| Overview | Title, address, client info, status, dates, team, description, notes |
+| Tasks | Task list grouped by status with progress |
+| Financial | Estimates + invoices linked to project (permission-gated: `accounting.view`) |
+| Photos | Project photos grid |
+
+**Actions:** Edit project, Delete (soft delete with confirmation), Get Directions (maps link), Add Task, Record Payment (permission-gated).
+
+### Canvas Store (Zustand)
+
+**Store:** `useProjectCanvasStore` — `src/app/(dashboard)/projects/_components/project-canvas-store.ts`
+
+| State | Type | Purpose |
+|-------|------|---------|
+| `viewportX`, `viewportY` | `number` | Pan position |
+| `zoom` | `number` | Current zoom level (0.3-1.5) |
+| `canvasWidth`, `canvasHeight` | `number` | Computed canvas dimensions |
+| `sortBy` | `ProjectSortOption` | Global sort: `"title" \| "client" \| "date" \| "value" \| "progress"` |
+| `statusSortOverrides` | `Map<string, ProjectSortOption>` | Per-column sort override |
+| `selectedCardIds` | `Set<string>` | Currently selected project IDs |
+| `expandedCardIds` | `Set<string>` | Currently expanded project IDs |
+| `hoveredCardId` | `string \| null` | Hovered card ID |
+| `isDragging` | `boolean` | Drag in progress |
+| `dragCardIds` | `string[]` | IDs being dragged |
+| `dragOrigin` | `CardPosition \| null` | Drag start coordinates |
+| `isMarqueeActive` | `boolean` | Marquee selection in progress |
+| `marqueeStart`, `marqueeEnd` | `CardPosition \| null` | Marquee rectangle bounds |
+| `contextMenu` | `ContextMenuState \| null` | Context menu state (position, type, target) |
+| `customPositions` | `Map<string, CardPosition>` | Finder-style free-form card positions |
+| `isArchiveTrayOpen` | `boolean` | Archive tray visibility |
+| `firstDragConfirmed` | `boolean` | Whether user has confirmed first drag (persisted to localStorage) |
+
+### Layout Engine
+
+**File:** `src/app/(dashboard)/projects/_components/project-layout-engine.ts`
+
+The layout engine computes card positions for the canvas. Active statuses are arranged as vertical columns left-to-right. Terminal statuses (Closed) use a multi-column grid. The engine accepts projects grouped by status, sort options, and custom positions, and returns `ProjectCanvasLayout` with:
+
+- `stacks[]` — one `StackLayout` per active status with header position, card positions, and region bounds
+- `terminalRegions[]` — one `TerminalRegionLayout` per terminal status with grid positions
+- `canvasWidth`, `canvasHeight` — total computed canvas dimensions
+
+Sort function `sortProjects()` supports sorting by title (alpha), client (alpha), date (newest first), value (highest first), and progress (highest first). Per-column sort overrides allow different sort orders per status column.
+
+### Spreadsheet View
+
+Toggled via the toolbar's view mode control (Canvas / Spreadsheet icons). The spreadsheet replaces the canvas with a full-width table.
+
+**Component:** `ProjectSpreadsheet` — `src/app/(dashboard)/projects/_components/project-spreadsheet.tsx`
+
+#### Columns (21 total)
+
+Column definitions live in `src/app/(dashboard)/projects/_components/spreadsheet/spreadsheet-columns.ts`.
+
+| Column ID | Header | Width | Sortable | Editable | Default Visible | Permission |
+|-----------|--------|-------|----------|----------|----------------|------------|
+| `actions` | (menu) | 40px | No | No | Yes | — |
+| `status` | Status | 120px | Yes | Status picker | Yes | — |
+| `title` | Title | 200px | Yes | Text | Yes | — |
+| `client` | Client | 150px | Yes | No | Yes | — |
+| `address` | Address | 180px | Yes | Text | Yes | — |
+| `startDate` | Start Date | 100px | Yes | Date | Yes | — |
+| `endDate` | End Date | 100px | Yes | Date | Yes | — |
+| `progress` | Progress | 120px | Yes | No | Yes | — |
+| `estimateTotal` | Estimate Total | 100px | Yes | No | Yes | `accounting.view` |
+| `invoiceTotal` | Invoice Total | 100px | Yes | No | No | `accounting.view` |
+| `tasks` | Tasks | 100px | Yes | No | No | — |
+| `duration` | Duration | 80px | Yes | Number | No | — |
+| `team` | Team | 100px | No | No | No | — |
+| `images` | Images | 100px | No | No | No | — |
+| `clientEmail` | Client Email | 160px | No | No | No | — |
+| `clientPhone` | Client Phone | 120px | No | No | No | — |
+| `notes` | Notes | 200px | No | No | No | — |
+| `description` | Description | 200px | Yes | Textarea | No | — |
+| `pipeline` | Pipeline | 80px | No | No | No | — |
+| `daysInStatus` | Days in Status | 90px | Yes | No | No | — |
+| `created` | Created | 100px | Yes | No | No | — |
+
+#### Column Visibility
+
+Users toggle column visibility via a dropdown in the header. Visibility state is persisted to localStorage (`ops_projects_spreadsheet_columns`). Functions: `loadColumnVisibility()`, `saveColumnVisibility()`, `getDefaultColumnVisibility()`.
+
+#### Inline Editing
+
+Click a cell to edit. Edit types per column:
+
+| Edit Type | Component | Behavior |
+|-----------|-----------|----------|
+| `text` | `SpreadsheetCellText` | Single-line text input, blur/Enter to save |
+| `textarea` | `SpreadsheetCellTextarea` | Multi-line text, blur to save |
+| `date` | `SpreadsheetCellDate` | Date input |
+| `number` | `SpreadsheetCellNumber` | Numeric input |
+| `status` | `SpreadsheetCellStatus` | Dropdown with all project statuses, color-coded |
+
+All edits fire `useUpdateProject` or `useUpdateProjectStatus` mutations. Changes are optimistic.
+
+#### Bulk Actions
+
+Checkbox column for row selection. Shift-click for range select. When rows are selected, the `SpreadsheetBulkBar` appears in the toolbar with:
+
+- **Change Status** — dropdown with all statuses (RFQ through Closed)
+- **Archive** — moves selected projects to Archived
+- **Delete** — soft delete with confirmation (permission-gated: `projects.delete`)
+- **Clear selection** — deselects all
+
+#### Status Filters
+
+The toolbar provides three status filter tabs in spreadsheet mode:
+
+| Filter | Shows |
+|--------|-------|
+| `active` | RFQ, Estimated, Accepted, InProgress, Completed |
+| `archived` | Archived projects |
+| `closed` | Closed projects |
+
+#### Sorting
+
+Click column header to cycle: none -> ascending -> descending. Sort indicator arrow shown in header. Sorting is client-side on the filtered dataset.
+
+### Toolbar
+
+**Component:** `ProjectFloatingToolbar` — `src/app/(dashboard)/projects/_components/project-floating-toolbar.tsx`
+
+Frosted glass bar below the metrics header. Contains:
+
+- **Search input** — filters across title, client name, address (case-insensitive substring)
+- **Team member filter** — dropdown to filter by assigned team member
+- **Client filter** — dropdown to filter by client
+- **Sort control** — title, client, date, value (permission-gated), progress (canvas mode only)
+- **View toggle** — Canvas (`LayoutGrid` icon) / Spreadsheet (`Table2` icon)
+- **Archive toggle** — show/hide archived projects tray (canvas mode only)
+- **Closed toggle** — show/hide closed projects (canvas mode only)
+- **Bulk action bar** — appears when spreadsheet rows are selected
+
+### Metrics Header
+
+Pipeline-style metrics header at top of page (reuses `MetricsHeader` component).
+
+| Metric | Source |
+|--------|--------|
+| Active projects | Count of projects with status in RFQ, Estimated, Accepted, InProgress |
+| Total value | Sum of invoice totals for active projects (`accounting.view` required) |
+| Completed | Count of Completed projects |
+| Overdue | Projects past `endDate` that are not Completed/Closed/Archived |
+
+### Data Hooks
+
+| Hook | Purpose |
+|------|---------|
+| `useScopedProjects()` | Permission-aware project list |
+| `useClients()` | Client name/email/phone lookup |
+| `useTeamMembers()` | Team member avatars and names |
+| `useProjectMetrics()` | Metrics header data |
+| `useInvoices()` | Project value calculation (group by `projectId`, sum totals) |
+| `useEstimates()` | Estimate totals per project |
+| `useTasks()` | Task counts (total + completed) per project |
+| `useUpdateProjectStatus()` | Status change mutation (drag, context menu, spreadsheet) |
+| `useUpdateProject()` | Field-level edit mutation (spreadsheet inline editing) |
+| `useDeleteProject()` | Soft delete mutation |
+
+### Permission Matrix
+
+| Action | Permission Required |
+|--------|-------------------|
+| View canvas / spreadsheet | `projects.view` |
+| See all projects | `projects.view` scope `"all"` |
+| See only assigned | `projects.view` scope `"assigned"` |
+| Drag to change status | `projects.edit` |
+| Inline edit cells (spreadsheet) | `projects.edit` |
+| Add task from expanded card | `tasks.create` |
+| Record payment | `accounting.edit` |
+| See project value / financial columns | `accounting.view` |
+| Archive project | `projects.edit` |
+| Delete project | `projects.delete` |
+| Bulk actions (spreadsheet) | `projects.edit` / `projects.delete` |
+| Edit project (in popover) | `projects.edit` |
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/app/(dashboard)/projects/page.tsx` | Page orchestrator — data fetching, DnD context, view mode routing |
+| `src/app/(dashboard)/projects/_components/project-canvas-store.ts` | Zustand store for canvas state (viewport, selection, drag, sort) |
+| `src/app/(dashboard)/projects/_components/project-canvas.tsx` | Viewport container (pan/zoom/marquee/dot-grid) |
+| `src/app/(dashboard)/projects/_components/project-layout-engine.ts` | Layout calculator (columns, terminal grid, canvas dimensions) |
+| `src/app/(dashboard)/projects/_components/project-card.tsx` | Card rendering (collapsed + bird's-eye pill) |
+| `src/app/(dashboard)/projects/_components/project-card-expanded.tsx` | Expanded card info rows + quick actions |
+| `src/app/(dashboard)/projects/_components/project-stage-stack.tsx` | Column rendering with header + droppable zone |
+| `src/app/(dashboard)/projects/_components/project-terminal-region.tsx` | Closed region (3-column grid layout) |
+| `src/app/(dashboard)/projects/_components/project-drag-overlay.tsx` | Ghost card during drag |
+| `src/app/(dashboard)/projects/_components/project-marquee-select.tsx` | Selection rectangle with AABB intersection |
+| `src/app/(dashboard)/projects/_components/project-context-menu.tsx` | Right-click menu (single + multi-select) |
+| `src/app/(dashboard)/projects/_components/project-floating-toolbar.tsx` | Toolbar (search/filter/sort/view toggle/bulk bar) |
+| `src/app/(dashboard)/projects/_components/project-archive-tray.tsx` | Bottom drawer for archived projects |
+| `src/app/(dashboard)/projects/_components/project-detail-popover.tsx` | Detail popover (tabbed floating window) |
+| `src/app/(dashboard)/projects/_components/project-detail-popover-store.ts` | Popover state (Zustand) — position, z-index, tabs, minimize |
+| `src/app/(dashboard)/projects/_components/project-drag-confirmation.tsx` | First-time drag confirmation dialog |
+| `src/app/(dashboard)/projects/_components/project-staleness.ts` | Staleness opacity calculator |
+| `src/app/(dashboard)/projects/_components/project-spreadsheet.tsx` | Spreadsheet view — table with inline editing, sorting, selection |
+| `src/app/(dashboard)/projects/_components/spreadsheet/spreadsheet-columns.ts` | Column definitions, visibility persistence |
+| `src/app/(dashboard)/projects/_components/spreadsheet/spreadsheet-header.tsx` | Sortable column headers + column visibility dropdown |
+| `src/app/(dashboard)/projects/_components/spreadsheet/spreadsheet-row.tsx` | Per-project row with editable cells |
+| `src/app/(dashboard)/projects/_components/spreadsheet/spreadsheet-bulk-bar.tsx` | Bulk action bar (status change, archive, delete) |
+| `src/app/(dashboard)/projects/_components/spreadsheet/spreadsheet-cell-text.tsx` | Inline text cell editor |
+| `src/app/(dashboard)/projects/_components/spreadsheet/spreadsheet-cell-textarea.tsx` | Inline textarea cell editor |
+| `src/app/(dashboard)/projects/_components/spreadsheet/spreadsheet-cell-date.tsx` | Inline date cell editor |
+| `src/app/(dashboard)/projects/_components/spreadsheet/spreadsheet-cell-number.tsx` | Inline number cell editor |
+| `src/app/(dashboard)/projects/_components/spreadsheet/spreadsheet-cell-status.tsx` | Inline status picker cell |
+
+### iOS Job Board (Legacy Reference)
+
+The iOS app retains its own `JobBoardView` (`OPS/OPS/Views/JobBoard/JobBoardView.swift`) with section-based navigation (Dashboard, Clients, Projects, Tasks) and `UniversalJobBoardCard` (`OPS/OPS/Views/JobBoard/UniversalJobBoardCard.swift`). The iOS job board is a separate implementation from the web projects canvas and operates on SwiftData/SwiftUI. See prior revisions of this section for full iOS job board documentation.
 
 ---
 
@@ -3118,7 +3243,7 @@ Shortcuts are disabled when focus is in an `<input>` or `<textarea>`.
 **HIGH (feature parity):**
 7. ImageSyncManager with S3 integration
 8. NavigationEngine with Kalman filter
-9. Job Board filtering and sorting
+9. Job Board filtering and sorting (iOS — web replaced by Projects Spatial Canvas, see §6)
 10. Form sheets with progressive disclosure
 11. Inventory management system
 12. Notification system with OneSignal
