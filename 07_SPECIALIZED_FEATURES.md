@@ -3179,7 +3179,7 @@ Constraint: UNIQUE(flag_slug, user_id)
 | `invoices` | Invoices | /invoices | invoices.view, invoices.create, invoices.edit, invoices.delete, invoices.send, invoices.record_payment, invoices.void | Enabled |
 | `products` | Products & Services | /products | products.view, products.manage | Enabled |
 | `inventory` | Inventory | /inventory | inventory.view, inventory.manage, inventory.import | Enabled |
-| `portal` | Client Portal | /portal-inbox | portal.view, portal.manage_branding | Enabled |
+| `portal` | Client Portal | /inbox (portal channel) | portal.view, portal.manage_branding | Enabled |
 | `ai_email_review` | AI Email Review | /settings/integrations | email.configure_ai | Disabled |
 | `ai_email_memory` | AI Email Memory | /settings/integrations | email.configure_ai | Disabled |
 
@@ -3404,33 +3404,48 @@ Phase C toast: "New intel available" → "View Intel" CTA → navigates to `/int
 
 The OPS web app provides a full in-app email client so users never need to open Gmail/M365. Built across 5 sprints (completed 2026-03-19). Connects to the email pipeline integration documented in `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` §10 for sync, pattern detection, and AI classification.
 
-### Inbox View (`/inbox`)
+### Unified Inbox View (`/inbox`)
 
-Two-tab layout with permission-gated access:
+Three-panel layout merging email threads and client portal messages into a single conversation view. Replaces the old two-tab (Pipeline/All Mail) and separate `/portal-inbox` page.
 
-| Tab | Data Source | Permission |
-|-----|-------------|------------|
-| **Pipeline** | `activities` grouped by `email_thread_id`, filtered to threads linked to opportunities | `pipeline.view` |
-| **All Mail** | Server-side API route proxying Gmail/M365 inbox with pagination and token refresh | `email.view` |
+**Architecture:**
+- Left panel (320px fixed): Conversation list with search, channel badges (EMAIL/PORTAL/UNMATCHED)
+- Center panel (flex): Message thread with iMessage-style bubbles, floating toolbar filter
+- Right panel (320px, collapsible): Client context — contact info, projects, estimates, invoices
 
-**Pipeline Tab:**
-- Queries activities grouped by `email_thread_id`
-- Each row shows: sender, subject, snippet, timestamp, linked opportunity name, AI summary indicator (`ai_summary` present)
-- Click opens thread view
+**Data Sources (merged into `InboxConversation`):**
 
-**All Mail Tab:**
-- Server-side API route proxies live Gmail/M365 inbox
-- Pagination support with token refresh on expiry
-- Shows all email, not just pipeline-linked threads
+| Source | Data | Grouping |
+|--------|------|----------|
+| `activities` table | Email threads grouped by `email_thread_id`, linked to opportunities via `opportunity_id` | By `client_id` (from opportunity) |
+| `portal_messages` table | Client portal messages | By `client_id` |
+| Email provider API (Gmail/M365) | Full email thread bodies via `provider.fetchThread(threadId)` | By thread ID |
 
-**Thread View:**
-- Chronological messages within a thread
-- AI opportunity summary banner displayed at top (when `ai_summary` exists on linked opportunity)
-- Reply button triggers compose modal in reply mode
+**Conversation Normalization (`useUnifiedConversations`):**
+- Groups pipeline threads by `clientId` (from the linked opportunity's `client_id`)
+- Merges portal conversations by matching `clientId`
+- Unmatched threads (no `clientId`) grouped by sender email address
+- Each `InboxConversation` carries its `emailThreadIds[]` — single data source, no desync
+- 30-second polling interval
+
+**Thread View (`useUnifiedThread`):**
+- Fetches email content from provider API (`/api/integrations/email/inbox?threadId=...`) — returns actual email bodies, not activity table stubs
+- Falls back to `activities` table if provider is unavailable
+- Fetches portal messages from `portal_messages` table for matched clients
+- Channel filter toolbar (ALL/EMAIL/PORTAL) floats as overlay on the message area
+- Messages sorted chronologically with date dividers and channel dividers
+- Direction detection: compares sender domain against current user's domain
 
 **Unread Count:**
-- Badge on sidebar nav "Inbox" item
-- 30-second polling interval
+- Combined email + portal unread count on sidebar "Inbox" badge
+- Email: from `InboxService.getUnreadCount()` (activities table)
+- Portal: from `portal_messages` where `sender_type = 'client'` and `read_at IS NULL`
+- 60-second polling interval
+
+**Removed:**
+- `/portal-inbox` page (deleted — portal messages now in unified inbox)
+- Separate "Pipeline" and "All Mail" tabs (replaced by channel filter toolbar)
+- `pipeline-thread-list.tsx`, `all-mail-list.tsx`, `portal-inbox.tsx` components (deleted)
 
 ### Compose Modal
 

@@ -23,6 +23,7 @@
 12. [Accessibility Standards](#12-accessibility-standards)
 13. [Animation & Motion](#13-animation--motion)
 14. [Anti-Patterns](#14-anti-patterns)
+15. [Z-Index Stacking Scale (Web)](#15-z-index-stacking-scale-web)
 
 ---
 
@@ -2518,6 +2519,46 @@ OPS/OPS/Views/Components/ (76 files)
 ├── ProfileImageUploader.swift
 └── UserAvatar.swift
 ```
+
+---
+
+## 15. Z-Index Stacking Scale (Web)
+
+The OPS web app uses a defined z-index scale. Higher z-index = closer to the viewer. Every component must use a value from this scale — never invent arbitrary numbers.
+
+### The Scale
+
+| Layer | z-index range | Gap to next | Purpose | Current occupants |
+|-------|--------------|-------------|---------|-------------------|
+| **base** | 0 | 10 | Normal document flow | Page content, map container |
+| **content** | 1–10 | 90 | In-page elevation | Main content wrapper (1), map vignettes (2), calendar hover/select states (3–5), map filter rail (5) |
+| **interactive** | 100–200 | 300 | Actively manipulated elements | Drag handles (100), ghost overlays, resize indicators, inline editors |
+| **nav** | 500 | 500 | Fixed navigation chrome | Sidebar (500) |
+| **dropdown** | 1000 | 500 | Menus & dropdowns | Select menus, autocomplete lists, task form dropdowns |
+| **floating-ui** | 1500–1600 | 400 | Persistent floating elements | Bug report btn (1500), action prompts (1500), FAB backdrop (1540), FAB (1550), window dock (1560) |
+| **window** | 2000+ | 1000 | Floating windows (dynamic) | Create forms — managed by `window-store.ts`, auto-increments on focus |
+| **modal** | 3000 | 2000 | Portaled dialogs & sheets | Radix Dialog/Sheet (rendered via portal to `<body>`) |
+| **map-controls** | 5000 | 4000 | Full-screen map page only | Map toggle button, map scale widget |
+| **emergency** | 9000–9999 | — | Absolute top, blocks everything | Sign-out overlay (9999), lockout overlay (9000) |
+
+### Rules
+
+1. **Decorative overlays must never exceed the content layer (10).** The z-[800] map vignette bug was caused by violating this.
+2. **Floating windows use dynamic z-index** starting at 2000, incrementing by 1 on each focus/open. They coexist with portaled modals because Radix portals append to `<body>`.
+3. **When adding a new fixed/absolute element**, find the right layer in the table. Use a value within that layer's range. Do not invent new ranges.
+4. **Gaps between layers are intentional.** They absorb future additions without shifting existing values. The 100–500 gap between interactive and nav can hold a future sticky header, toast rail, etc.
+5. **Same z-index is fine for elements that never visually overlap.** The FAB and bug report button can share a layer because they occupy different screen corners.
+
+### Where This Lives in Code
+
+- `stores/window-store.ts` — `nextZIndex` starting value and per-type size overrides
+- `components/layouts/sidebar.tsx` — nav layer
+- `components/ops/floating-action-button.tsx` — floating-ui layer
+- `components/ops/sign-out-overlay.tsx` — emergency layer
+
+### Migration Notes
+
+The codebase was audited on 2026-03-23. Many existing components still use the old tight scale (sidebar at 45, FAB at 95, etc.). These should be migrated to the new scale as components are touched — no big-bang refactor needed. The old values still work correctly because their relative ordering is preserved.
 
 ---
 

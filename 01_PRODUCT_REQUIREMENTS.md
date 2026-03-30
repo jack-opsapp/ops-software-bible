@@ -1076,7 +1076,7 @@ The app must function fully without internet connectivity. All features must be 
 ### 14. Pipeline / CRM (iOS & OPS Web)
 
 #### Pipeline Board — OPS Web
-- **8-Stage Kanban Board** — New Lead, Qualifying, Quoting, Quoted, Follow-Up, Negotiation, Won, Lost
+- **9-Stage Kanban Board** — New Lead, Qualifying, Quoting, Quoted, Follow-Up, Negotiation, Won, Lost, Discarded
 - **Drag-and-Drop** — Move opportunities between stages via @dnd-kit
 - **Stage Transitions** — Every stage move recorded as immutable history
 - **Win Probability** — Per-stage default + per-opportunity override
@@ -1084,7 +1084,8 @@ The app must function fully without internet connectivity. All features must be 
 - **Stale Indicators** — Cards flagged if no activity within threshold (7 days default)
 - **Days in Stage** — Displayed on each card
 - **Won/Lost Prompts** — Loss reason required when moving to Lost; actual value for Won
-- **Terminal Columns** — Won and Lost are narrower, separate from active stages
+- **Discard** — Terminal stage for leads not worth pursuing. No confirmation dialog. Discarded leads stay in the system for analytics but are off the active board. Enables ad targeting quality measurement: won+lost (real leads) vs discarded (junk quality).
+- **Terminal Columns** — Won, Lost, and Discarded are separate from active stages. Won/Lost shown in metrics bar with expandable deal lists. Discarded count shown in metrics bar for ad quality tracking.
 
 #### Pipeline Tab — iOS
 The Pipeline tab on iOS is a dedicated tab that appears conditionally based on the user having the `pipeline` special permission. It contains a segmented nav with four sections: **Pipeline**, **Estimates**, **Invoices**, and **Accounting**.
@@ -1110,8 +1111,9 @@ The Pipeline tab on iOS is a dedicated tab that appears conditionally based on t
 - AccountingDashboard (content managed in Pipeline tab)
 
 **Pipeline Stages (Shared iOS & Web):**
-- `PipelineStage` enum: newLead, qualifying, quoting, quoted, followUp, negotiation, won, lost
-- Terminal stages: won and lost (cannot advance further)
+- `PipelineStage` enum: newLead, qualifying, quoting, quoted, followUp, negotiation, won, lost, discarded
+- Terminal stages: won, lost, and discarded (cannot advance further)
+- Discarded = "not worth pursuing" — distinct from lost (which implies a real opportunity that didn't close)
 - Each stage has a display name, color, and `next` stage for progression
 
 #### Lead Management

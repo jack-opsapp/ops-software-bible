@@ -1366,7 +1366,7 @@ A 5-step wizard replaces the previous 6-step filter-based wizard. Located in `sr
    - Manual add for additional patterns/sources
 
 4. **Review & Import** — All detected leads with AI-determined pipeline stage:
-   - Grouped by stage: New Lead, Qualifying, Quoting, Quoted, Follow-Up, Negotiation, Won, Lost
+   - Grouped by stage: New Lead, Qualifying, Quoting, Quoted, Follow-Up, Negotiation, Won, Lost, Discarded
    - Each lead shows: client name, email, last message date, correspondence count, detected stage
    - Duplicates pre-grouped with merge prompt
    - User can adjust stage, remove false positives, merge duplicates
@@ -1934,6 +1934,7 @@ EmailConnection ────── Company ──── CompanySettings
 | Negotiation | `negotiation` | Inbound activity | Revised estimate sent → Quoted; estimate approved → Won |
 | Won | `won` | Estimate approved | Terminal |
 | Lost | `lost` | Estimate declined | Terminal |
+| Discarded | `discarded` | User marks lead as not worth pursuing | Terminal — ad quality signal |
 
 ### Project Statuses
 

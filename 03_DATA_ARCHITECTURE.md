@@ -1498,10 +1498,13 @@ enum PipelineStage: String, Codable, CaseIterable, Identifiable {
     case negotiation  = "negotiation"    // 75%
     case won          = "won"            // 100%
     case lost         = "lost"           // 0%
+    case discarded    = "discarded"      // 0% — lead not worth pursuing (ad quality signal)
 }
 ```
 
 Properties: `displayName`, `isTerminal`, `next`, `winProbability`, `staleThresholdDays`.
+
+Terminal stages: `won`, `lost`, `discarded`. Discarded is a third terminal state meaning "not worth pursuing" — the lead contacted us (counts as an ad conversion) but was junk quality. Used for ad targeting quality analytics: compare won+lost (real leads) vs discarded (bad quality).
 
 ### ActivityType
 
