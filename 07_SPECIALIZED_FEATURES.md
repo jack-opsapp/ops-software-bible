@@ -28,6 +28,8 @@
 18. [Intel Galaxy Visualization (Web)](#18-intel-galaxy-visualization-web)
 19. [In-App Email System (Web)](#19-in-app-email-system-web)
 20. [Mobile Wizard System](#20-mobile-wizard-system)
+21. [Blog & Content Marketing Pipeline](#21-blog--content-marketing-pipeline)
+22. [Social Media Generation & Publishing](#22-social-media-generation--publishing)
 
 ---
 
@@ -4074,5 +4076,319 @@ dismissed  ──[re-enable in settings]──→ notStarted (doNotShow = false)
 4. For **data-condition** wizards: add evaluation logic to `evaluateDataConditions()` or create a new evaluation method
 5. Post `NotificationCenter` notifications from the views where each step is completed
 6. Update this dock with the full step table and notification sources
+
+---
+
+## 21. Blog & Content Marketing Pipeline
+
+### Overview
+
+OPS runs a fully automated weekly content pipeline orchestrated by Cowork scheduled tasks, with human review/veto checkpoints via Slack. The pipeline covers topic research → drafting → publishing → newsletter → social media generation → Instagram publishing. Jackson's only required actions are optional: pick a blog topic, approve/revise drafts, or veto social posts with a ❌ reaction. Everything else auto-fires on schedule.
+
+### Weekly Cadence
+
+Content is generated in two phases: blog on Saturday–Sunday, social on Sunday evening. Jackson reviews all social content in a single Sunday batch. Posts publish on their scheduled days throughout the week.
+
+**Phase 1 — Blog (Saturday → Monday)**
+
+| Day | Time | Task ID | What Happens | Slack Channel | Human Action |
+|-----|------|---------|--------------|---------------|--------------|
+| Saturday | 8:00 AM | `blog-topic-scout` | Researches trending trades topics, suggests 3–5 options | `#blog-drafts` | Pick a topic (or #1 auto-selects) |
+| Sunday | 8:01 PM | `blog-auto-draft` | Writes full HTML post + newsletter + LinkedIn + image, saves as draft (`is_live=false`) | `#blog-drafts` | Approve, request revisions, or ignore (auto-publishes Mon) |
+| Monday | 5:09 AM | `blog-auto-publish` | Sets `is_live=true` + `published_at` if approved or no response | `#blog-drafts` | None (or request revisions to hold) |
+| Tuesday | 10:00 AM | `blog-newsletter-sender` | Sends newsletter for posts published in last 6 days, checks `email_log` for dupes | `#blog-drafts` | None |
+
+**Phase 2 — Social Content Batch (Sunday evening → week)**
+
+All social content is generated Sunday evening and posted to `#social-media` for batch review. Each post includes a `publish_day` tag. Jackson reviews everything at once on Sunday night.
+
+| Day | Time | Task ID | What Happens | Publishes | Slack Channel |
+|-----|------|---------|--------------|-----------|---------------|
+| Sunday | 8:30 PM | `social-blog-promo` | IG carousel (4–5 slides, 1080×1350) + LinkedIn post from blog draft | Monday 9 AM | `#social-media` |
+| Sunday | 8:45 PM | `opp-weekly` | OPS Performance Protocol graphic (1080×1080) + caption | Thursday 9 AM | `#social-media` |
+| Sunday | 9:00 PM | `social-feature-release` | Even ISO weeks: feature carousel (3–5 slides, 1080×1350) | Wednesday 9 AM | `#social-media` |
+| Sunday | 9:00 PM | `social-insight` | Odd ISO weeks: data insight graphic (1080×1080) | Wednesday 9 AM | `#social-media` |
+
+**Phase 3 — Scheduled Publishing**
+
+| Day | Time | Task ID | What Publishes |
+|-----|------|---------|----------------|
+| Monday | 9:00 AM | `social-auto-publish` | Blog carousel → Instagram |
+| Wednesday | 9:00 AM | `social-auto-publish` | Feature release or Insight → Instagram |
+| Thursday | 9:00 AM | `social-auto-publish` | OPP → Instagram |
+
+### Approval / Veto Mechanics
+
+- **Blog drafts:** Post to `#blog-drafts`. "approve" publishes immediately. Revision requests hold the post. No response → auto-publishes Monday 5 AM.
+- **Social posts:** All generated Sunday evening, posted to `#social-media` with scheduled publish day. ❌ reaction kills the post. Text replies with revisions trigger re-generation. Posts publish on their scheduled day at 9 AM unless killed. Jackson reviews the entire week's content in one Sunday session.
+- **Newsletter:** Fully automatic. Checks `app_settings.blog_newsletter_enabled` kill switch and `email_log` for duplicate prevention. No approval needed.
+
+### Architecture Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Blog Admin Dashboard | `OPS-Web/src/app/admin/blog/page.tsx` | Manual list, create, edit, delete posts |
+| Blog Post Editor | `OPS-Web/src/app/admin/blog/_components/blog-post-editor.tsx` | Rich text editor with FAQ, slug, categories |
+| Image Upload Route | `OPS-Web/src/app/api/admin/blog/upload/route.ts` | Uploads to `images` bucket at `blog/{timestamp}-{random}.{ext}` |
+| Public Blog (OPS-Web) | `OPS-Web/src/app/blog/page.tsx`, `[slug]/page.tsx` | ISR-cached public rendering, JSON-LD schema |
+| Public Blog (ops-site) | `ops-site/src/lib/blog.ts` | Static marketing site reads same `blog_posts` table |
+| Blog API | `OPS-Web/src/app/api/blog/posts/route.ts` | GET (list), POST (create), PUT (update) |
+| Newsletter API | `OPS-Web/src/app/api/blog/newsletter/route.ts` | Send post to subscribers via SendGrid |
+| Scheduled Tasks | `~/Documents/Claude/Scheduled/` | Cowork automation — 11 tasks orchestrate the full pipeline |
+
+### Database Tables
+
+**`blog_posts`** — Core content table:
+- `id` (uuid pk), `title`, `subtitle`, `slug` (unique), `author`, `content` (HTML), `summary`, `teaser`, `meta_title`
+- `thumbnail_url` — public URL in `images` bucket
+- `category_id`, `category2_id` — FK to `blog_categories`
+- `is_live` (boolean) — draft/published toggle
+- `display_views` (int), `word_count` (int)
+- `faqs` (jsonb) — array of `{question, answer}` for FAQ schema
+- `published_at`, `created_at`, `updated_at`
+
+**`blog_categories`** — `id`, `name`, `slug` (unique), `created_at`
+
+**`blog_topics`** — Content idea backlog: `id`, `topic`, `author`, `image_url`, `used` (boolean), `created_at`, `updated_at`
+
+**`newsletter_subscribers`** — `id`, `email` (unique), `first_name`, `source`, `is_active`, `subscribed_at`, `unsubscribed_at`
+
+**`newsletter_content`** — Monthly product update emails: `id`, `month`, `year`, `shipped` (array), `in_progress` (array), `bug_fixes` (array), `coming_up` (array), `custom_intro`, `custom_outro`, `status`, `created_at`, `updated_at`
+
+**`email_log`** — Audit trail: `id`, `user_id`, `email_type`, `recipient_email`, `subject`, `sent_at`, `status`, `error_message`, `metadata` (jsonb)
+
+**`app_settings`** — Kill switches: `key` (text pk), `value` (jsonb), `updated_at`. Key `blog_newsletter_enabled` gates newsletter sends.
+
+### Storage Conventions
+
+| Bucket | Public | Purpose | RLS |
+|--------|--------|---------|-----|
+| `images` | Yes | Blog thumbnails, in-post images | Anon read; admin write via upload route |
+| `social-media` | Yes | Generated social graphics | Anon upload restricted to generator paths |
+
+- Blog thumbnails: `images/blog-thumbnails/{name}.webp`
+- In-post images: `images/blog/{timestamp}-{random}.{ext}`
+- Social images: `social-media/{prefix}/{timestamp}/slide_*.png`
+
+### Auth Gating
+
+Blog admin routes require Firebase auth + `isAdminEmail()` check (`verifyAdminAuth`). Public `/blog/*` routes and ops-site reads are unauthenticated. Newsletter send requires Bearer token (`BLOG_API_KEY` env var).
+
+### Public Rendering
+
+Both OPS-Web and ops-site render the same `blog_posts` data:
+- **OPS-Web** `/blog/[slug]` — ISR with 300s revalidation, full OpenGraph/Twitter cards, JSON-LD Article + FAQPage schema
+- **ops-site** — static build via `getLatestPosts()`, `getPostBySlug()` from `ops-site/src/lib/blog.ts` (service role key)
+
+### Newsletter Flow (Automated)
+
+1. `blog-newsletter-sender` fires Tuesday 10 AM
+2. Queries Supabase for blog posts published in last 6 days
+3. Checks `email_log` to prevent duplicate sends
+4. Verifies `app_settings.blog_newsletter_enabled` kill switch
+5. Calls `POST /api/blog/newsletter` with `post_id`
+6. Route queries `newsletter_subscribers` where `is_active = true`
+7. Sends via SendGrid using post's `title`, `teaser`, `thumbnail_url`, `content`
+8. Logs each send to `email_log` with status and error
+9. Posts status summary to `#blog-drafts` (sent count, errors, or skip reason)
+
+---
+
+## 22. Social Media Generation & Publishing
+
+### Overview
+
+Social media assets are generated by Cowork scheduled tasks using Python CLI scripts, uploaded to Supabase Storage, reviewed via Slack, and auto-published to Instagram via an edge function. The pipeline is fully automated with a human-veto model: content posts to `#social-media` for review, and auto-publishes after a 6-hour window unless killed with ❌.
+
+### Social Generators
+
+Located at `OPS-Web/scripts/social-generators/`:
+
+| Generator | CLI Entry | Output | Dimensions |
+|-----------|-----------|--------|------------|
+| `carousel_generator.py` | `--post-number --title --subtitle --slug --slides --thumbnail` | Multi-slide PNG set (title + content + CTA) | 1080×1350 (4:5) |
+| `feature_generator.py` | `--feature-name --tagline --slides --version --slug` | Multi-slide PNG set (update/feature announcement) | 1080×1350 (4:5) |
+| `insight_generator.py` | `--headline --stat --stat-label --stat-color --context --source --output` | Single PNG (data insight card) | 1080×1080 (1:1) |
+| `opp_generator.py` | `--number --title --lines` | Single PNG (field manual style) | 1080×1080 (1:1) |
+
+All generators:
+- Use the OPS portal color palette: `C_SUCCESS` (#9DB582), `C_NEGATIVE` (#B58289), `C_ALERT` (#C4A868)
+- Support inline color markup: `{green:+32%}` renders colored text
+- Require fonts at `$OPS_FONT_DIR` (default `OPS-Web/public/fonts`): Kosugi-Regular, Mohave-Bold, Mohave-Regular
+- Output PNGs to local disk; scheduled tasks handle upload automatically
+
+### Upload Utility
+
+`supabase_upload.py` — Uploads generated PNGs to the `social-media` bucket.
+
+```
+python supabase_upload.py --prefix blog-carousel slide_1.png slide_2.png
+```
+
+Returns public URLs: `https://ijeekuhbatykdomumfjx.supabase.co/storage/v1/object/public/social-media/{prefix}/{timestamp}/slide_*.png`
+
+Auth: Uses anon key (hardcoded in file, lines 25–26). RLS restricts anon uploads to generator-convention paths within `social-media` bucket.
+
+### Automated Social Content Schedule
+
+**Sunday Generation Batch** — all content created and posted to `#social-media` for review:
+
+| Task ID | Generates At | Content Type | Publishes | Frequency |
+|---------|-------------|-------------|-----------|-----------|
+| `social-blog-promo` | Sunday 8:30 PM | Blog carousel (4–5 slides) + LinkedIn post | Monday 9 AM | Weekly |
+| `opp-weekly` | Sunday 8:45 PM | OPS Performance Protocol graphic (square) | Thursday 9 AM | Weekly |
+| `social-feature-release` | Sunday 9:00 PM | Feature/update carousel (3–5 slides) | Wednesday 9 AM | Biweekly (even ISO weeks) |
+| `social-insight` | Sunday 9:00 PM | Data insight graphic (square) | Wednesday 9 AM | Biweekly (odd ISO weeks) |
+
+**Scheduled Publishing** — `social-auto-publish` runs Mon/Wed/Thu at 9 AM, publishing only posts tagged for that day.
+
+Each generator task: creates content → runs brand voice enforcement → uploads to Supabase Storage → posts to `#social-media` (C0ASCNEHMAS) with publish metadata JSON (`publish_day`, `urls`, `caption`) for the auto-publisher to read.
+
+### Instagram Publishing
+
+Edge function: `OPS-Web/supabase/functions/social-publish-instagram/index.ts`
+
+**Trigger:** Called by `social-auto-publish` scheduled task (Mon/Wed/Thu 9 AM) or manual HTTP POST.
+
+**Required Secrets** (set in Supabase Dashboard → Edge Functions):
+- `INSTAGRAM_ACCESS_TOKEN` — Long-lived Meta user token (60-day expiry)
+- `INSTAGRAM_USER_ID` — IG Business Account ID
+- `SOCIAL_PUBLISH_SECRET` — Bearer token for auth
+
+**Request:**
+```json
+{
+  "image_urls": ["https://...social-media/...slide_01.png"],
+  "caption": "Post caption #OPS",
+  "post_type": "carousel" | "single"
+}
+```
+
+**Workflow:**
+1. Single image → create container → poll until ready → publish
+2. Carousel (2–10 images) → create child containers in parallel → create carousel container → poll → publish
+3. Polling: up to 60s (20 attempts × 3s) per container
+4. Returns `X-Token-Warning` header when token expiry < 7 days
+
+**Response:**
+```json
+{
+  "success": true,
+  "post_id": "17999...",
+  "type": "carousel",
+  "image_count": 5,
+  "token_days_remaining": 45
+}
+```
+
+### Auto-Publish Logic (`social-auto-publish`)
+
+Runs Mon/Wed/Thu at 9 AM. Checks `#social-media` for posts tagged with today's `publish_day` and applies these rules:
+1. **❌ reaction** → post is killed, not published
+2. **Replacement image attached** → re-uploads and uses new image
+3. **Text revision reply** → re-generates caption or swaps content
+4. **No `publish_day` match** → skipped (not scheduled for today)
+5. **No objection** → publishes via `social-publish-instagram` edge function
+6. Posts summary to `#social-media` only if activity occurred (publish, skip, or kill)
+7. **Legacy posts** (no `publish_day` metadata) → treated as immediately eligible if 6+ hours old, for backward compatibility
+
+### Known Gaps
+
+1. **No social queue table** — published posts are tracked only via Slack history. No DB record of what was generated, when, or the resulting IG post ID.
+2. **No web admin notifications** — no OPS-Web rail notification for pipeline events. All status reporting goes to Slack.
+3. **No retry logic** — if Instagram publish fails, the `social-auto-publish` task reports the error to Slack but does not automatically retry on next run.
+4. **No draft preview** — blog posts only visible publicly when `is_live = true`.
+5. **Hardcoded anon key** in `supabase_upload.py` — should use env var.
+6. **Token management** — Instagram token expires every 60 days. `social-auto-publish` checks the `X-Token-Warning` header and posts a warning to Slack when < 7 days remain, but there is no auto-refresh. Jackson must manually rotate the token via Meta Developer Console.
+7. **Missing migration files** — `newsletter_subscribers`, `newsletter_content`, `email_log`, and `app_settings` tables exist in Supabase but have no corresponding migration files in the repo. Should be captured in migrations for reproducibility.
+
+---
+
+## iOS Core Spotlight Indexing (2026-04-14)
+
+The iOS app indexes user-accessible data into iPhone Spotlight so OPS records appear in the system-wide search. Projects, Clients, Tasks, Invoices, and Estimates are indexed with thumbnails, phone-number / email metadata, and permission gating. Search works offline (the index is on-device), and taps route into the app via the existing deep-link notification system.
+
+### Architecture
+
+- `SpotlightIndexManager` (`OPS/OPS/Services/Spotlight/SpotlightIndexManager.swift`) — singleton, permission-gated index writer. Bulk backfill + per-entity incremental methods with scope-aware removal.
+- `SpotlightItemBuilder` — converts SwiftData entities to `CSSearchableItem`
+- `SpotlightThumbnailRenderer` — produces 256×256 JPEG thumbnails from cached project images / client avatars, with SF Symbol fallbacks
+- `SpotlightSyncTracker` — collects per-sync-pass dirty / deleted entity IDs so incremental updates are targeted, not full re-indexes
+- `SpotlightBackfillCoordinator` — runs the initial indexing pass with a live iOS local notification showing progress, under a `UIBackgroundTask` so it survives app-background mid-run
+- `SpotlightTapRouter` — handles `CSSearchableItemActionType` continuations, re-checks permissions, routes to detail views via existing `OpenXxxDetails` notifications
+- `SpotlightDomainIdentifiers` — domain identifier constants (`co.opsapp.spotlight.project` etc.) used for targeted removal and tap decoding
+- `AccessDeniedSheet` — shown when a tapped result is no longer permitted (e.g. role changed after indexing)
+
+### Trigger points
+
+- **Initial backfill:** after first successful full sync post-login, via `SpotlightBackfillCoordinator.runIfNeeded(context:)` called from `DataController` login flow
+- **Incremental updates:** after every `InboundProcessor.linkAllRelationships` — dispatches the `SpotlightSyncTracker` diff (upserts + removals). Every merge method for an indexed entity (project, client, task, invoice, estimate) calls `markDirty` or `markDeleted` based on whether the server soft-deleted the entity.
+- **Role change:** when `PermissionStore.fetchPermissions` detects a new `roleId`, posts `SpotlightReindexRequested` notification → MainTabView clears and re-runs backfill
+- **Logout:** `DataController.logout()` clears the entire index via `SpotlightIndexManager.clearAll()`
+
+### Permission gates (index time + tap time)
+
+Using the existing `PermissionStore` keys:
+- `projects.view` → Projects + Tasks (tasks inherit projects gate)
+- `clients.view` → Clients
+- `pipeline.view` → Invoices + Estimates (same gate as the Money tab where these live)
+- `estimates.view` → Estimates (also honored if a role grants it without pipeline access)
+
+Field crew (without `hasFullAccess("projects.view")`) only gets their assigned projects / tasks indexed. Projects in RFQ/Estimated status are hidden from users without `pipeline.view`.
+
+**Permission checks happen twice:** at index time (we only write items the user is allowed to see) AND at tap time (in `SpotlightTapRouter`, in case the role changed between indexing and the tap). A tapped result the user is no longer permitted to see shows the `AccessDeniedSheet`.
+
+### Domain identifiers
+
+- `co.opsapp.spotlight.project`
+- `co.opsapp.spotlight.client`
+- `co.opsapp.spotlight.task`
+- `co.opsapp.spotlight.invoice`
+- `co.opsapp.spotlight.estimate`
+
+Item IDs are `"<domain>:<entityId>"` — decoded on tap to determine which entity type to open.
+
+### Deep linking
+
+Spotlight taps post the same notifications used by push notifications and universal links:
+- `OpenProjectDetails` / `OpenClientDetails` / `OpenTaskDetails` / `OpenInvoiceDetails` / `OpenEstimateDetails`
+
+`MainTabView` observes each and routes to the appropriate detail sheet via `AppState`:
+- `showClientDetails` → `ClientSheet(mode: .edit(client))`
+- `showInvoiceDetails` → `InvoiceDetailViewDeepLinkWrapper`
+- `showEstimateDetails` → `EstimateDetailViewDeepLinkWrapper`
+- `showAccessDenied` → `AccessDeniedSheet`
+
+The `ops://` URL scheme is registered in Info.plist for direct deep-link access: `ops://projects/{id}`, `ops://clients/{id}`, `ops://invoices/{id}`, `ops://estimates/{id}`. Handled in `AppDelegate.application(_:open:options:)`.
+
+### Thumbnails
+
+- **Projects:** first cached image from `ImageFileManager.shared` (`Documents/ProjectImages/`) — iterates through all cached images until one renders successfully, falling back to a briefcase SF Symbol
+- **Clients:** avatar from `ClientAvatarCache.shared` (`Documents/ClientAvatars/`) — **new in this release**, required because avatars were previously memory-only. Falls back to `person.crop.circle.fill`.
+- **Tasks:** parent project's thumbnail, or `checklist` SF Symbol
+- **Invoices / Estimates:** SF Symbols (`doc.text.fill` / `doc.plaintext.fill`)
+- All rendered at 256×256 JPEG quality 0.7
+
+### Invoice & Estimate local persistence (companion architectural change)
+
+Previously invoices, estimates, line items, and payments were fetched on-demand from Supabase via `InvoiceViewModel` / `EstimateViewModel` and held in in-memory `@Published` arrays. This meant they did not work offline and had no sync chokepoint for Spotlight indexing.
+
+**Now they are locally persisted in SwiftData via `InboundProcessor`.** The sync engine pulls these entities with field-level merge (respecting pending `SyncOperation`s), same pattern as Projects/Clients/Tasks. View models are thin filter/action layers that read from SwiftData via explicit `@Query` or `FetchDescriptor`.
+
+Sync order: `.estimate` before `.invoice` because invoices can reference estimates via `estimate_id`.
+
+Call sites that previously used `invoiceVM.setup(companyId:)` / `estimateVM.setup(companyId:)` now pass a `modelContext`: `setup(companyId:modelContext:)`.
+
+### Caps & scaling
+
+No arbitrary caps — Core Spotlight scales to millions of items. Bulk-index methods sort by `updatedAt` / `lastSyncedAt` descending so that if Spotlight ages items out under memory pressure, the most-recently-touched ones stay.
+
+### Known limitations (2026-04-14)
+
+1. **Universal links not wired** — the `applinks:app.opsapp.co` entitlement is not set up. Web-based deep links would need this added. For now, only the `ops://` scheme is supported.
+2. **Task deep-link context** — task details require a parent project ID. A tap on a Spotlight task result currently routes via `OpenTaskDetails` without the project context; MainTabView falls back to opening the project. A future enhancement can encode both IDs in the Spotlight item identifier.
+3. **Tests not automated** — Core Spotlight has no test-accessible read API. See `OPS/OPS/Services/Spotlight/SPOTLIGHT_MANUAL_TESTS.md` for the manual checklist.
+
+---
 
 **End of Document**
