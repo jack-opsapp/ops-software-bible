@@ -1364,7 +1364,12 @@ OPS-Web is the primary web application — the admin dashboard, management porta
 {
   images: {
     remotePatterns: [
-      { protocol: "https", hostname: "*.amazonaws.com", pathname: "/ops-app-files-prod/**" }
+      // Virtual-hosted-style (primary — how S3 actually serves files)
+      { protocol: "https", hostname: "ops-app-files-prod.s3.us-west-2.amazonaws.com", pathname: "/**" },
+      // Path-style fallback
+      { protocol: "https", hostname: "s3.us-west-2.amazonaws.com", pathname: "/ops-app-files-prod/**" },
+      // Google account avatars (OAuth sign-in)
+      { protocol: "https", hostname: "lh3.googleusercontent.com" }
     ]
   },
   experimental: {
@@ -1373,8 +1378,52 @@ OPS-Web is the primary web application — the admin dashboard, management porta
 }
 ```
 
-- Remote images are allowed only from the S3 bucket `ops-app-files-prod`.
+- Remote images are allowed from the S3 bucket `ops-app-files-prod` (both URL styles) and Google avatars.
+- The bucket is virtual-hosted — legacy Bubble files live at `/company-<id>/profiles/...`, new web uploads live at `/shop/...` and other prefixes. The pattern must allow `/**`, not `/ops-app-files-prod/**` (which belongs to path-style URLs only).
 - Bundle optimization enabled for large icon/chart/date libraries.
+
+#### S3 Bucket CORS
+
+The `ops-app-files-prod` bucket must have CORS configured so browsers can load profile images, logos, and other assets from `app.opsapp.co` (and preview subdomains) for canvas operations, color extraction, and photo markup.
+
+```json
+[
+  {
+    "AllowedOrigins": [
+      "https://app.opsapp.co",
+      "https://*.opsapp.co",
+      "https://*.vercel.app",
+      "http://localhost:3000"
+    ],
+    "AllowedMethods": ["GET", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag", "Content-Length", "Content-Type"],
+    "MaxAgeSeconds": 3000
+  },
+  {
+    "AllowedOrigins": [
+      "https://app.opsapp.co",
+      "https://*.opsapp.co",
+      "https://*.vercel.app",
+      "http://localhost:3000"
+    ],
+    "AllowedMethods": ["PUT", "POST"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]
+```
+
+Apply via AWS CLI:
+```bash
+aws s3api put-bucket-cors \
+  --bucket ops-app-files-prod \
+  --region us-west-2 \
+  --cors-configuration file://s3-cors.json
+```
+
+Or paste into **S3 → ops-app-files-prod → Permissions → Cross-origin resource sharing (CORS)** in the AWS console.
 
 ### OPS-Web Environment Variables
 
