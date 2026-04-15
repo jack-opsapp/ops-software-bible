@@ -4391,4 +4391,61 @@ No arbitrary caps — Core Spotlight scales to millions of items. Bulk-index met
 
 ---
 
+## Auth Action Handler (Firebase OOB)
+
+**Location:** `OPS-Web/src/app/(auth)/auth/action/page.tsx`
+**URL:** `https://app.opsapp.co/auth/action`
+**Firebase config:** `notification.sendEmail.callbackUri` set to the above URL via Identity Toolkit admin API (`OPS-Web/scripts/firebase/update-auth-config.ts`).
+
+### What it handles
+
+Every Firebase Auth out-of-band (OOB) email link points at this page. Four modes, one page, one card:
+
+1. `mode=resetPassword` → `ResetFlow.tsx` — validates via `verifyPasswordResetCode`, collects new password with strength meter, submits via `confirmPasswordReset`.
+2. `mode=verifyEmail` → `VerifyFlow.tsx` — applies the action code via `applyActionCode`.
+3. `mode=recoverEmail` → `RecoverFlow.tsx` — shows old/new email confirmation, applies the action code to revert.
+4. `mode=signIn` → `SignInFlow.tsx` — email-link sign-in (dormant; no flow currently emits email-link sign-in links).
+
+### Visual design
+
+The handler page is a product surface, not a marketing surface. It uses the OPS-Web interface design system directly: `background #000000`, frosted-glass card `rgba(10,10,10,0.70) + backdrop-blur(20px) saturate(1.2)`, `ops-accent #597794`, Mohave + Kosugi, 2.5px button radius, 5px card radius, borders-only depth, `cubic-bezier(0.22, 1, 0.36, 1)` easing. Every field-first rule applies: 60pt touch targets, 16px+ text, no spinner spam, graceful reduced-motion.
+
+### Smart-split success flow
+
+After a successful action, the page detects `navigator.userAgent`:
+
+- **iOS** → primary CTA `OPEN OPS` → `https://app.opsapp.co/open?from=<action>` (Universal Link → iOS app opens → Keychain auto-fills the new password)
+- **Android / Desktop** → primary CTA `SIGN IN ON WEB` → `/login`
+
+iOS Keychain autofill works because `webcredentials:app.opsapp.co` is declared in `OPS/OPS/OPS.entitlements`.
+
+### Web-to-app bridge (`/open`)
+
+`OPS-Web/src/app/(auth)/open/page.tsx` is a Universal Link landing page. iOS intercepts the path via the AASA file and hands it to `OPSApp.swift`'s `handleUniversalLink` function, which posts `OpenAppFromWeb` notification. If the iOS app isn't installed, the page renders a fallback with App Store link and "Continue on web" options.
+
+### Ship sequence
+
+Never flip Firebase `callbackUri` without first: (1) shipping the handler page to production, (2) deploying the AASA update at least 24h earlier, (3) shipping the iOS app update with the `/open` route handler. The config update script read-back-verifies the flip; rollback is a single API call reverting `callbackUri` to the Firebase default.
+
+### Key files
+
+| File | Role |
+|---|---|
+| `OPS-Web/src/app/(auth)/auth/action/page.tsx` | Route + mode dispatcher |
+| `OPS-Web/src/app/(auth)/auth/action/HandlerShell.tsx` | Card visual shell |
+| `OPS-Web/src/app/(auth)/auth/action/ResetFlow.tsx` | Password reset state machine |
+| `OPS-Web/src/app/(auth)/auth/action/VerifyFlow.tsx` | Email verify |
+| `OPS-Web/src/app/(auth)/auth/action/RecoverFlow.tsx` | Email recovery |
+| `OPS-Web/src/app/(auth)/auth/action/SignInFlow.tsx` | Email-link sign-in |
+| `OPS-Web/src/app/(auth)/auth/action/HandlerError.tsx` | 6 error kinds |
+| `OPS-Web/src/app/(auth)/auth/action/SuccessState.tsx` | Smart-split success |
+| `OPS-Web/src/app/(auth)/auth/action/copy.ts` | Locked ops-copywriter voice strings |
+| `OPS-Web/src/app/(auth)/open/page.tsx` | Web-to-app bridge fallback |
+| `OPS-Web/public/.well-known/apple-app-site-association` | AASA with `/open` patterns |
+| `OPS/OPS/OPSApp.swift` (line ~283) | iOS `handleUniversalLink` dispatcher |
+| `OPS-Web/scripts/firebase/update-auth-config.ts` | Firebase config update script |
+| `OPS-Web/scripts/firebase/firebase-stock-templates.ts` | Handcrafted HTML for stock templates |
+
+---
+
 **End of Document**

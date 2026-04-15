@@ -2562,6 +2562,79 @@ The codebase was audited on 2026-03-23. Many existing components still use the o
 
 ---
 
+## 16. Email Template System
+
+OPS transactional email uses React Email (`@react-email/components`) with two canonical layouts and a fixed set of primitives. Every template traces its styling to `OPS-Web/src/lib/email/react/primitives/tokens.ts`.
+
+### Two layouts
+
+- **`OpsEmailLayout`** (`OPS-Web/src/lib/email/react/layouts/OpsEmailLayout.tsx`) — matte-black OPS branding. Used for all OPS-to-user emails: password reset, team invite, trial expiry, beta, blog newsletter, ads briefing. Hero band is the OPS wordmark; footer is `OPS Ltd. — Built by trades, for trades.`
+- **`PortalEmailLayout`** (`OPS-Web/src/lib/email/react/layouts/PortalEmailLayout.tsx`) — whitelabel with configurable `companyName`, `logoUrl`, `accentColor` props. Used for portal emails where a contractor's customer sees the contractor's branding, not OPS. The accent color fills the CTA button; the logo or company name fills the hero band. Footer reads `Sent by {companyName} via OPS`.
+
+### Three bands (hybrid structure)
+
+Every email has three vertical bands:
+
+1. **Hero band** — `#0A0A0A` dark, 40×32 padding, contains wordmark + optional eyebrow label (Kosugi uppercase, tracking 2px)
+2. **Body band** — `#F6F4EF` warm off-white, 40×32 padding, contains headline + paragraphs + CTA button + optional info blocks
+3. **Footer band** — `#0A0A0A` dark, 32×32 padding, contains sender attribution + physical address (CAN-SPAM / CASL) + optional unsubscribe link
+
+Light body is safer in hostile email clients (Gmail dark mode, Outlook desktop) than pure dark, while the dark bands preserve the OPS brand signature.
+
+### Primitives
+
+| Primitive | File | Role |
+|---|---|---|
+| `Hero` | `primitives/Hero.tsx` | Dark top band — OPS wordmark or portal logo/name + eyebrow |
+| `BodyBand` | `primitives/Body.tsx` | Light body wrapper |
+| `Headline` | `primitives/Headline.tsx` | Mohave H1/H2 |
+| `Paragraph` | `primitives/Paragraph.tsx` | Body text (on-light or on-dark) |
+| `Button` | `primitives/Button.tsx` | Bulletproof table-based CTA — matte black (or portal accent override) |
+| `Divider` | `primitives/Divider.tsx` | 1px rule (on-light or on-dark) |
+| `Spacer` | `primitives/Spacer.tsx` | Vertical rhythm unit |
+| `InfoBlock` | `primitives/InfoBlock.tsx` | Boxed secondary info with label |
+| `Footer` | `primitives/Footer.tsx` | Dark footer band with 4 permutations (ops/portal × transactional/marketing) |
+
+### Sender identities
+
+Four buckets, all defined in `OPS-Web/src/lib/email/senders.ts`:
+
+| Bucket | Email | Display name | Use |
+|---|---|---|---|
+| **OPS Dispatch** | `dispatch@opsapp.co` | `OPS Dispatch` | Product, team, beta, trial, billing, internal, ads briefing |
+| **OPS Gate** | `gate@opsapp.co` | `OPS Gate` | Security, auth, password, email verification, email change |
+| **OPS Field Notes** | `field@opsapp.co` | `OPS Field Notes` | Blog newsletter, long-form |
+| **Portal** | `noreply@opsapp.co` | `{companyName}` (whitelabel) | Portal magic link, estimate, invoice, questions |
+
+All OPS senders share SPF/DKIM/DMARC records on the `opsapp.co` zone. Setup runbook at `OPS-Web/docs/email/sendgrid-senders-setup.md`.
+
+### Physical address
+
+Every OPS-branded email footer includes OPS Ltd.'s registered postal address per CAN-SPAM (US) and CASL (Canada) requirements:
+
+`OPS Ltd. · 1515 Douglas St, Victoria, BC V8W 2G4, Canada`
+
+The address is a constant in both `OpsEmailLayout.tsx` and `PortalEmailLayout.tsx`. Change it there when the company's registered address changes.
+
+### Voice
+
+Every string in every template runs through the `ops-copywriter` skill before locking. Forbidden: `contractor`, `welcome!`, `awesome!`, `our team`, exclamation points, hedging language, corporate jargon. Required: direct second-person, concrete next step, trades-native vocabulary, Jocko-terse headlines. See `docs/tailored/auth-action-handler-design.md §4.9` for the voice rules.
+
+### Preview server
+
+`npm run email:dev` in `OPS-Web/` spins up `react-email dev` on port 3001 with hot reload for every template in `src/lib/email/react/templates/`. Every template exports a `PreviewProps` constant that provides realistic mock data for the preview. Use this during development to iterate visual changes without sending real emails.
+
+### Test sending
+
+`OPS-Web/scripts/email/test-send.ts` lets you fire the password-reset template at any address from the terminal. Reads from `.env.local` for SendGrid and Firebase Admin credentials.
+
+### Migration history
+
+- **Before 2026-04-15:** raw HTML template strings, dark-only layouts, inconsistent senders, no physical address, no unsubscribe on marketing mail, Courier fallback fonts.
+- **2026-04-15:** migrated all 14 templates to React Email + added 3 new (EmailVerification, EmailChangeConfirmation, plus the handler page flows), established 4 sender buckets, added CASL-compliant footer with full postal address.
+
+---
+
 **End of Design System Documentation**
 
-This document serves as the complete design system reference for OPS iOS and Android implementations. All code must conform to these standards to maintain brand consistency and field-first usability.
+This document serves as the complete design system reference for OPS iOS, Android, and Web implementations. All code must conform to these standards to maintain brand consistency and field-first usability.
