@@ -1,0 +1,90 @@
+OPS — THE END-TO-END CRM FOR TRADES
+
+OPS runs your whole business from lead to paid. Sales pipeline, quoting, invoicing, scheduling, crew dispatch, field execution — one platform, with an iOS field app that actually works offline. Built for specialized trades running 1 to 10 person crews.
+
+Electricians. Plumbers. HVAC. Landscapers. Window and exterior cleaners. Aluminum railings. Deck builders. Mobile auto detailing. Pressure washing. Residential and commercial cleaning.
+
+
+[ WHAT'S DIFFERENT ABOUT OPS ]
+
+We surveyed operators running Jobber, ServiceTitan, Housecall Pro, QuickBooks, whiteboards. Every decision below came from what they said.
+
+PIPELINE STARTS AT THE LEAD, NOT THE BOOKING. 8-stage Kanban — New Lead through Qualifying, Quoting, Follow-Up, Negotiation, Won. Most trades software picks up after the client's on the hook. OPS tracks from the first email.
+
+AI EMAIL LEAD IMPORT. Connect Gmail or Microsoft 365. OPS scans your inbox, classifies leads with AI, matches them to existing clients, drops them into the pipeline. No copy-paste.
+
+REAL OFFLINE. The iOS app is offline-first from the ground up. Jobs load in basements, rural routes, dead zones — because they were already cached. Updates queue and sync when signal returns.
+
+ESTIMATES BUILT FOR REAL JOBS. Line items, optional add-ons, deposit schedules, payment milestones, PDFs, version control. One-click conversion to invoice.
+
+PHOTO MARKUP ON THE JOB. Draw on job photos with PencilKit. Attach notes. Document damage, scope, and deliverables. Syncs automatically.
+
+DEEP PERMISSIONS. 5 role presets (Admin, Owner, Office, Operator, Crew), 55+ granular permissions, scoped access per user.
+
+DIRECT LINE TO THE FOUNDER. You tell us what's missing. We ship weekly.
+
+A THIRD THE PRICE OF JOBBER.
+
+
+[ WHAT'S IN THE APP TODAY ]
+
+SALES & CRM
+> 8-stage pipeline Kanban with drag-and-drop
+> AI email lead import (Gmail / Microsoft 365)
+> Clients and sub-contacts, activity timeline, follow-up tracking
+
+QUOTING & INVOICING
+> Estimate builder — line items, options, deposit schedules, payment milestones
+> One-click estimate to invoice conversion
+> Products and services catalog with margin tracking
+> Partial payments, balance tracking, PDF storage, version control
+> QuickBooks and Sage OAuth connection
+
+SCHEDULING
+> 5-view calendar — month, week, day, team timeline, agenda
+> Drag-and-drop scheduling, click-to-create, conflict detection
+> Project notes with @mentions and photo attachments
+
+iOS FIELD APP
+> Offline-first — works in basements, rural routes, dead zones
+> Turn-by-turn navigation to every job site
+> Photo documentation with PencilKit markup and notes
+> Task status tracking from unstarted to billed
+> Job Board with role-based sections
+> Inventory tracking
+> 4-digit PIN security, Google and Apple Sign-In
+> 25-phase interactive tutorial
+
+
+[ WHO BUILT THIS ]
+
+Started as a summer laborer. Framing, formwork, concrete. Moved into deck construction. Ran railings. Started my own shop. Scaled it from zero to $1.6M in four years.
+
+Tried Jobber. Tried ServiceTitan. Tried Housecall Pro. My crew wouldn't touch any of them. So I built OPS and used it to break the million mark.
+
+Try the interactive tutorial on our site. Three minutes. No download.
+
+
+[ PRICING ]
+
+30-day free trial. 10 seats included.
+$90/month — 3 seats
+$140/month — 5 seats
+$190/month — 10 seats
+20% off annual. Every feature at every tier.
+
+
+[ SHIPPING NEXT — FROM OPERATOR FEEDBACK ]
+
+> Multi-crew time-specific scheduling (start times, not just dates)
+> Recurring schedules for cleaning and maintenance routes
+> Commission tracking for estimators and door-knockers
+> Email estimates and invoices direct from the app
+> Two-way QuickBooks and Sage sync
+> Per-job materials and inventory tracking
+
+Tell us yours. We ship weekly.
+
+Built by trades. For trades.
+
+Download OPS. Get back to work.
