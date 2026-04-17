@@ -455,6 +455,18 @@ Text("Status").font(.system(size: 12))               // Hardcoded
 - **Important information**: 18-20pt
 - **Touch target labels**: 16pt minimum
 
+### Brand Typography Boundary
+
+Cake Mono is a brand-surface typeface — used only in:
+- Logo lockups (iOS, Android, web)
+- App icon
+- Marketing hero wordmarks (`ops-site/`)
+- Social share / OG images
+
+Never enters product UI on any platform. Product UI uses Mohave + Kosugi + JetBrains Mono (web) or the iOS/Android equivalents defined in `OPS/OPS/Styles/OPSStyle.swift` and the Android design system. Web lockups outline Cake Mono glyphs as SVG paths so no font file is shipped in the product bundle.
+
+Bebas Neue is deprecated (removed 2026-04-17). Do not reintroduce.
+
 ---
 
 ## 4. Layout & Spacing
