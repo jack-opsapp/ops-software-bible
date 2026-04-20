@@ -1430,6 +1430,63 @@ Each `ImportLead` has: `id, threadId, clientName, clientEmail, clientPhone?, sta
 
 **Behavior:** When `checkOnly: true`, returns availability without calling the LLM — checks feature gate and writing profile confidence (requires ≥50%, ~100+ emails). When generating, fetches opportunity + client + last inbound email, calls `DraftGenerator` which uses the writing profile + memory facts + knowledge graph to produce a contextual reply draft.
 
+### 6a. POST /api/integrations/email/analyze-memory (Phase C entry)
+
+**Purpose:** Kicks off the Phase C pipeline — extracts business intelligence from classified email threads, populates `agent_memories` + `agent_knowledge_graph` + `agent_writing_profiles`. Fire-and-forget from Phase B completion; background via `after()`.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Request body | `{ jobId, connectionId, companyId }` (UUIDs) |
+| Response | `{ ok: true }` or `{ skipped: true }` (feature gate) |
+| Max duration | 800s (Vercel) |
+| Service calls | `AdminFeatureOverrideService.isAIFeatureEnabled()`, `EmailService.getConnection()`/`getProvider()`, `MemoryService.initPhaseCPipelineState()`/`runPhaseCChunks()`, `finalizePhaseC()` |
+| File | `OPS-Web/src/app/api/integrations/email/analyze-memory/route.ts` |
+
+**Feature gate:** `phase_c` (renamed from `ai_email_memory`). Route short-circuits with `{ skipped: true }` when disabled.
+
+**Chunked pipeline architecture:** A single invocation cannot reliably finish Phase C for non-trivial inboxes (hundreds of threads × per-thread gpt-4o-mini extraction call + DB upserts). The route instead:
+
+1. **Bootstrap (entry only):** Read Phase B `leads` + `notLeadReasons` off `gmail_scan_jobs.result`, re-fetch every referenced thread from Gmail (concurrency 5, retry-with-backoff 3×), classify each thread into `{ classification, profileType, messages[] }`, build the `PhaseCPipelineState`, persist to `gmail_scan_jobs.result.phaseCPipeline`.
+2. **Entity resolution (once per pipeline):** Deterministic DB-upsert pass over ALL threads — fast, no LLM — sets `state.entityResolutionDone = true`, persists.
+3. **Chunked extraction:** Process `CHUNK_SIZE = 12` threads per chunk. Each thread = one gpt-4o-mini call + downstream upserts (~3–8s). After each chunk, persist `state.startIndex` advanced to the next unprocessed thread, then re-check the `CHUNK_TIME_BUDGET_MS = 550_000` in-call budget. If exhausted, yield (persist + dispatch continuation); otherwise continue.
+4. **Finalize:** When `runPhaseCChunks` returns `done: true`, call `finalizePhaseC()` — build writing profiles, strip `phaseCPipeline`/`phaseCError` from `result`, write `phaseCComplete: true` + `phaseCStats`, fire the completion notification.
+
+**Time budgets:** `maxDuration = 800s` per Vercel invocation; `CHUNK_TIME_BUDGET_MS = 550_000` leaves ~250s headroom for either the finalize path (writing-profile gpt-4o-mini calls, ~45–60s with concurrency 2) or a continuation dispatch.
+
+**Row-level execution lock:** Both entry and continuation handlers wrap the pipeline invocation in `acquirePhaseCLock(…, "entry" | "continuation")` / `releasePhaseCLock()`. On contention (another runner already holds an unexpired lock), the route logs and returns without retrying — duplicate dispatches (webhook retry, user double-click on retry, overlapping entry routes) are treated as benign since the holding runner carries progress forward. Lock release happens inline before dispatching the next continuation (so the next runner can acquire immediately) AND in an outer `finally()` as a crash safety net. The outer release is idempotent because `release_phase_c_lock` is fenced by holder ID. See `03_DATA_ARCHITECTURE.md` → `gmail_scan_jobs` → Phase C lock RPC functions, migration `070_phase_c_row_lock.sql`, and helper `OPS-Web/src/lib/api/services/phase-c-pipeline-helpers.ts`.
+
+**Error marker:** On exception, the route writes `result.phaseCError = { message, at, stage: "entry" | "continuation", failedAtIndex }` via `writePhaseCError()` WITHOUT clearing `phaseCPipeline`. The wizard UI reads `(phaseCError && phaseCPipeline)` as "indexing paused — retry", and a user-initiated retry re-POSTs `/analyze-memory`, which detects the existing `phaseCPipeline` and dispatches a continuation from `state.startIndex` — no re-processed threads. This diverges from Phase B's error pattern on purpose: Phase B writes `status: "error"` and treats failure as terminal; Phase C has a native resume path via the chunked pipeline, so `status` is left alone (Phase B owns that column) and only `result.phaseCError` is marked. `finalizePhaseC()` strips `phaseCError` on success, so a stale error from a prior failed attempt can't mislead the wizard.
+
+**Resume-on-reentry:** If entry is called and `priorResult.phaseCPipeline` already exists (e.g. a prior invocation wrote it before crashing), entry releases its own lock and dispatches `/analyze-memory-continue` rather than re-running bootstrap. If `priorResult.phaseCComplete` is true, both handlers skip immediately.
+
+### 6b. POST /api/integrations/email/analyze-memory-continue (Phase C continuation)
+
+**Purpose:** Resumes a chunked Phase C run from `gmail_scan_jobs.result.phaseCPipeline.startIndex`. Fired by the entry route and by itself (self-dispatch) whenever a single invocation's budget is exhausted before all threads are processed.
+
+| Field | Value |
+|-------|-------|
+| Auth | Service role |
+| Request body | `{ jobId, connectionId, companyId }` (UUIDs) |
+| Response | `{ ok: true }` or `{ skipped: true }` (feature gate) |
+| Max duration | 800s (Vercel) |
+| Service calls | `AdminFeatureOverrideService.isAIFeatureEnabled()`, `MemoryService.runPhaseCChunks()`, `finalizePhaseC()` |
+| File | `OPS-Web/src/app/api/integrations/email/analyze-memory-continue/route.ts` |
+
+**Behavior:** Reads `priorResult.phaseCPipeline` (typed as `PhaseCPipelineState`) off the job row — no parameters travel in the POST body beyond the ID triple. Continuation:
+
+1. Acquire the Phase C row lock as `continuation:<uuid>` (return if held by another runner).
+2. Load state; if `phaseCComplete` already set, skip. If `phaseCPipeline` missing, log and abort (entry route may have failed during bootstrap — user must retry).
+3. Call `runPhaseCChunks(companyId, state, { chunkSize: 12, timeBudgetMs: 550_000, persistState })` which resumes at `state.startIndex`. Returns `{ done, state: finalState }`.
+4. If `done`, re-read `priorResult` (to capture concurrent writes) and call `finalizePhaseC()`. Otherwise release the lock inline, then fire-and-forget `dispatchPhaseCContinuation(jobId, connectionId, companyId)`.
+
+**Finalize behavior** (`finalizePhaseC` in `OPS-Web/src/lib/api/services/phase-c-pipeline-helpers.ts`):
+
+- Builds per-relationship-type writing profiles via `MemoryService.buildWritingProfiles()` — a concurrency-2 work-stealing pool over the accumulated `emailsByProfileType` map. Serialized finalize was ~90s for 9 profile types; two workers bring it to ~45s, well inside the ~250s finalize headroom. Concurrency is explicitly capped at 2 (defined as `CONCURRENCY = 2` at `memory-service.ts:1078`) to mirror `email-ai-classifier.ts` and stay inside OpenAI tier-1 rate limits (~30k TPM on gpt-4o-mini; each profile call is ~4–6k tokens). Work-stealing (vs lock-step batching) matters because 2-sample vs 10-sample analyses have wide latency variance.
+- Writes `result.phaseCStats = { factsExtracted, entitiesCreated, edgesCreated, profilesBuilt, profilesByTypeStats, processingTimeMs, threadsProcessed }` and sets `phaseCComplete: true`.
+- Strips both `phaseCPipeline` (several-MB JSONB working buffer — leaving it in place would bloat every future read of the job row) and `phaseCError` (stale markers from prior failed attempts).
+- Inserts a standard `notifications` row — `type: "mention"`, `title: "Indexing complete"`, `body: "<N> data points captured"`, `action_url: "/intel"`.
+
 ### 7. POST /api/integrations/email/webhook/gmail
 
 **Purpose:** Receives Gmail Pub/Sub push notifications and triggers sync.
@@ -1442,6 +1499,33 @@ Each `ImportLead` has: `id, threadId, clientName, clientEmail, clientPhone?, sta
 | Service calls | Internal fetch to `/api/integrations/email/manual-sync` (fire-and-forget) |
 
 **Behavior:** Decodes the Pub/Sub payload to get the email address, looks up active connections for that email, debounces (skips if synced within last 30 seconds), then triggers manual-sync for each matching connection. Always returns 200 to avoid Pub/Sub retries.
+
+**OIDC token verification:** Pub/Sub push requests are authenticated via a Google-signed OIDC token in the `Authorization: Bearer …` header. The route decodes the token, verifies the signature against Google's JWKS, then strict-equals (`===`) the `aud` claim to `GOOGLE_PUBSUB_PUSH_AUDIENCE` and the `email` claim to `GOOGLE_PUBSUB_SERVICE_ACCOUNT`. Mismatch → 401 dropped silently; Pub/Sub treats 401 as "don't retry" (correct for auth-misconfig cases, wrong for transient ones — acceptable tradeoff here).
+
+**Env var hygiene:** All three Gmail webhook env vars (`GOOGLE_PUBSUB_TOPIC`, `GOOGLE_PUBSUB_PUSH_AUDIENCE`, `GOOGLE_PUBSUB_SERVICE_ACCOUNT`) are defensively `.trim()`'d on read — a trailing newline in the Vercel-stored value silently broke `users.watch` with an "Invalid topicName does not match projects/…" error (Gmail validates topic names against a regex) and silently 401'd every real push delivery (strict-equality comparators don't tolerate whitespace). Trim is applied at `webhook/gmail/route.ts:24-25` (audience, service account) and `gmail-provider.ts:412` (topic). The Microsoft and Gmail OAuth client ID/secret env vars (`MICROSOFT_CLIENT_ID/SECRET`, `GOOGLE_GMAIL_CLIENT_ID/SECRET`) are also trimmed at the call site since they pass through to external OAuth token endpoints as URL-encoded form values where a newline produces an opaque 400.
+
+### Gmail Real-Time Webhook Architecture (GCP Project Split)
+
+Gmail push notifications require the Pub/Sub topic and the Gmail OAuth client to live in the **same GCP project** — a hard Gmail API requirement, not a soft suggestion. iOS and Web do not share a GCP project for this infrastructure.
+
+| Resource | GCP Project | Notes |
+|----------|-------------|-------|
+| iOS Gmail OAuth client + topic | `ops-app-ios` | iOS uses a separate project — do not touch from web deploys. |
+| Web Gmail OAuth client | `civic-champion-439517-e7` | Auto-generated GCP project ID; the project display name can be renamed in the GCP console (to e.g. "OPS App Web") without migrating any resources since only the ID is immutable. |
+| Web Pub/Sub topic | `projects/civic-champion-439517-e7/topics/gmail-push` | Same project as the OAuth client (Gmail requirement). |
+| Web push subscription | `gmail-push-sub-web` | Push delivery to `https://app.opsapp.co/api/integrations/email/webhook/gmail`, OIDC auth enabled. |
+| Web push service account | `gmail-pubsub-pusher@civic-champion-439517-e7.iam.gserviceaccount.com` | The `email` claim on every incoming OIDC token. Matched against `GOOGLE_PUBSUB_SERVICE_ACCOUNT`. |
+| Gmail Pub/Sub publisher SA | `gmail-api-push@system.gserviceaccount.com` | Google-managed. Must have `roles/pubsub.publisher` on the topic or `users.watch` silently succeeds but no messages publish. |
+| Audience | `https://app.opsapp.co/api/integrations/email/webhook/gmail` | Configured on the subscription (step 1.3 of the runbook) and in `GOOGLE_PUBSUB_PUSH_AUDIENCE`. |
+
+**Env vars on Vercel:**
+
+- `GOOGLE_PUBSUB_TOPIC` — passed to Gmail `/watch` as `topicName`. Must match `projects/<project>/topics/<name>` exactly (Gmail regex-validates).
+- `GOOGLE_PUBSUB_PUSH_AUDIENCE` — strict-equals compared to the OIDC `aud` claim in the webhook route.
+- `GOOGLE_PUBSUB_SERVICE_ACCOUNT` — strict-equals compared to the OIDC `email` claim in the webhook route.
+- All three are `.trim()`'d on read (defensive layer shipped 2026-04-19). Setting the values via `printf` + `vercel env add` is the safe path; pasting into the Vercel UI can introduce trailing newlines.
+
+**Manual runbook for initial setup or topic migration:** `OPS-Web/docs/runbooks/gmail-pubsub-webhook-fix.md`. Covers GCP console steps (topic creation, Gmail publisher IAM grant, push subscription with OIDC auth), Vercel env-var steps (with `wc -c` byte-count verification that values have no trailing newline), redeploy, per-user reconnect, and end-to-end verification (`email_connections.webhook_subscription_id` populated + Vercel logs show successful `users.watch` + live test email delivery).
 
 ### 8. POST /api/integrations/email/webhook/microsoft365
 

@@ -2004,17 +2004,28 @@ Tracks async inbox analysis jobs during wizard Step 2. **Note:** This table was 
 
 ```sql
 CREATE TABLE gmail_scan_jobs (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  connection_id     UUID NOT NULL,
-  company_id        TEXT NOT NULL,
-  status            TEXT NOT NULL DEFAULT 'pending',
-  progress          JSONB DEFAULT '{"stage": "pending", "current": 0, "total": 0, "message": "Starting scan..."}',
-  result            JSONB,
-  error_message     TEXT,
-  created_at        TIMESTAMPTZ DEFAULT now(),
-  updated_at        TIMESTAMPTZ DEFAULT now()
+  id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  connection_id               UUID NOT NULL,
+  company_id                  TEXT NOT NULL,
+  status                      TEXT NOT NULL DEFAULT 'pending',
+  progress                    JSONB DEFAULT '{"stage": "pending", "current": 0, "total": 0, "message": "Starting scan..."}',
+  result                      JSONB,
+  error_message               TEXT,
+  -- Phase C row-level execution lock (migration 070_phase_c_row_lock.sql).
+  -- NULL on both = no lock held. See RPC functions below.
+  phase_c_lock_holder_id      TEXT,
+  phase_c_lock_expires_at     TIMESTAMPTZ,
+  created_at                  TIMESTAMPTZ DEFAULT now(),
+  updated_at                  TIMESTAMPTZ DEFAULT now()
 );
 ```
+
+**Phase C lock columns** (added 2026-04-19 via migration `070_phase_c_row_lock.sql`):
+
+- `phase_c_lock_holder_id TEXT` — Opaque string identifying the Phase C runner currently processing this row. Composed by callers as `"<stage>:<uuid>"` (e.g. `"entry:9f3c…"` or `"continuation:b81a…"`) so log grepping can tell which invocation last held the lock. NULL means no lock.
+- `phase_c_lock_expires_at TIMESTAMPTZ` — Wall-clock expiry for `phase_c_lock_holder_id`. Covers the crash case where a runner dies mid-chunk without calling release; the next attempt treats an expired lock as free.
+
+Chosen over `pg_try_advisory_xact_lock` because xact-level advisory locks release at transaction end — which for chunked Phase C means per-chunk (too short — doesn't protect the multi-chunk run). Session-level advisory locks are keyed to the Postgres connection, which for a pooled service-role client is ambient and can't be released by a different invocation after a crash. Row-level with an expiry avoids both problems.
 
 **Status values** (set by the analyze route during background processing):
 - `pending` — Job created, analysis not yet started
@@ -2066,6 +2077,58 @@ CREATE TABLE gmail_scan_jobs (
 ```
 
 **RLS:** None — queried via service-role client only.
+
+**Phase C lock RPC functions** (migration `070_phase_c_row_lock.sql`):
+
+```sql
+-- Atomic acquisition. Claims the lock iff currently unheld or expired.
+-- Returns TRUE on success, FALSE on contention. The WHERE clause is the
+-- atomicity guarantee: PostgreSQL evaluates it under row-level locking,
+-- so two concurrent callers see serialized access to the same row.
+CREATE FUNCTION acquire_phase_c_lock(
+  p_job_id UUID,
+  p_holder TEXT,
+  p_lease_seconds INT DEFAULT 900
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE v_rows INT;
+BEGIN
+  UPDATE gmail_scan_jobs
+  SET phase_c_lock_holder_id = p_holder,
+      phase_c_lock_expires_at = NOW() + (p_lease_seconds || ' seconds')::INTERVAL
+  WHERE id = p_job_id
+    AND (phase_c_lock_holder_id IS NULL
+         OR phase_c_lock_expires_at < NOW());
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN v_rows = 1;
+END;
+$$;
+
+-- Fenced release. Only clears the lock if the supplied holder still owns
+-- it. Calling twice with the same holder, or after another runner has
+-- stolen an expired lock, is a no-op.
+CREATE FUNCTION release_phase_c_lock(
+  p_job_id UUID,
+  p_holder TEXT
+) RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  UPDATE gmail_scan_jobs
+  SET phase_c_lock_holder_id = NULL,
+      phase_c_lock_expires_at = NULL
+  WHERE id = p_job_id
+    AND phase_c_lock_holder_id = p_holder;
+END;
+$$;
+```
+
+**Lease duration:** 900s (default). Chosen slightly longer than the Phase C route's 800s `maxDuration` so a hard crash between the final `runPhaseCChunks` yield and the outer `finally()` can't block a retry for much more than one invocation lifetime. The TypeScript helper in `OPS-Web/src/lib/api/services/phase-c-pipeline-helpers.ts` (`PHASE_C_LOCK_LEASE_SECONDS = 900`) must match this default.
+
+**Fenced-release semantics:** The release UPDATE matches on both `id` and `phase_c_lock_holder_id`, so a double-release is a no-op. This is critical because the inner Phase C runner releases ahead of dispatching a continuation (so the next runner can acquire immediately instead of racing the still-held lock), then the outer route handler's `finally()` runs a second release as a crash safety net. Without fencing, the outer `finally()` could stomp on a fresh lock acquired in the interim by the next runner.
+
+**Caller contract:** `OPS-Web/src/lib/api/services/phase-c-pipeline-helpers.ts` wraps both RPCs as `acquirePhaseCLock(supabase, jobId, "entry" | "continuation")` (returns the holder ID string or null on contention) and `releasePhaseCLock(supabase, jobId, holderId)`. Both Phase C routes (`/api/integrations/email/analyze-memory`, `/api/integrations/email/analyze-memory-continue`) use this pattern; contention means skip without retrying — duplicate dispatch is treated as benign because the holding runner will carry progress forward.
 
 ### opportunity_email_threads
 

@@ -3447,6 +3447,39 @@ Full-bleed 3D galaxy visualization at `/intel` — the visual manifestation of P
 **Feature gate:** `phase_c` (renamed from `ai_email_memory`)
 **Tech:** React Three Fiber (lazy loaded, ~150KB gzip not in critical path)
 
+### Pipeline Execution (how Phase C actually runs)
+
+Phase C kicks off from Phase B completion as fire-and-forget, and runs as a **chunked, self-dispatching pipeline** across multiple Vercel invocations. The pipeline is durable — state lives on the `gmail_scan_jobs` row between invocations, so a crash or timeout never loses progress.
+
+**Routes:**
+
+- `/api/integrations/email/analyze-memory` — entry. Bootstraps the pipeline (re-fetches threads, classifies, initializes state) then runs the first chunk batch.
+- `/api/integrations/email/analyze-memory-continue` — self-dispatching continuation. Resumes from `state.startIndex` off the persisted `gmail_scan_jobs.result.phaseCPipeline`.
+
+**Per-invocation budgets:** Vercel `maxDuration = 800s`; in-call chunk budget `CHUNK_TIME_BUDGET_MS = 550_000`. The 250s headroom covers either the finalize path (concurrency-2 writing-profile build, ~45–60s) or a continuation dispatch. Chunk size is 12 threads — small enough that a Lambda kill loses < 2 min of work.
+
+**Row-level execution lock (migration `070_phase_c_row_lock.sql`):** Before running, each invocation acquires a row lock on the `gmail_scan_jobs` row via `acquire_phase_c_lock(jobId, "entry:<uuid>" | "continuation:<uuid>", 900)`. Contention means another runner is active — skip without retrying. Duplicate dispatches (webhook retry, user double-click on retry button, overlapping entry routes) are thus benign: the holding runner carries progress forward. Release happens inline before dispatching the next continuation (so the next runner can acquire immediately instead of racing the still-held lock), with an outer `finally()` as crash safety net. Release is fenced by holder ID, so the outer release is idempotent.
+
+**Error marker:** On exception, `writePhaseCError` sets `result.phaseCError = { message, at, stage, failedAtIndex }` WITHOUT clearing `phaseCPipeline`. Wizard reads `(phaseCError && phaseCPipeline)` as "indexing paused — retry"; user retry re-POSTs the entry route, which detects existing pipeline state and dispatches a continuation from `state.startIndex` — no re-processed threads. Diverges from Phase B's terminal error pattern on purpose (Phase C has a native resume path). `finalizePhaseC` strips both `phaseCPipeline` and `phaseCError` on success so a stale error can't mislead the wizard.
+
+**Finalize:** When `runPhaseCChunks` returns `done: true`, `finalizePhaseC()`:
+
+1. Builds per-relationship-type writing profiles via `MemoryService.buildWritingProfiles()` — a concurrency-2 work-stealing pool (defined `CONCURRENCY = 2` at `memory-service.ts:1078`). Matches `email-ai-classifier.ts` to stay inside OpenAI tier-1 rate limits (~30k TPM on gpt-4o-mini; each profile call ~4–6k tokens). Work-stealing over lock-step batching because 2-sample vs 10-sample analyses have wide per-call latency variance.
+2. Writes `result.phaseCStats = { factsExtracted, entitiesCreated, edgesCreated, profilesBuilt, profilesByTypeStats, processingTimeMs, threadsProcessed }`, sets `phaseCComplete: true`.
+3. Strips `phaseCPipeline` (several-MB JSONB working buffer) and `phaseCError` from `result`.
+4. Fires `notifications` row — `title: "Indexing complete"`, `action_url: "/intel"`.
+
+**Validation (Canpro 2026 runs, same session, idempotency check):**
+
+| Run | Threads | Facts | Profiles | Edges | Processing time |
+|-----|---------|-------|----------|-------|-----------------|
+| 1 | 143 | 432 | 4 | 166 | 21:17 |
+| 2 | 157 | 267 new | 4 | 170 | 21:12 |
+
+Run 2 against a largely overlapping thread set produced only incremental new facts (upserts are idempotent) with proportional new edges, confirming the chunked pipeline + row lock + upsert-safe DB writes deliver at-least-once semantics without duplicate accumulation.
+
+**Helper module:** `OPS-Web/src/lib/api/services/phase-c-pipeline-helpers.ts` — `acquirePhaseCLock`, `releasePhaseCLock`, `writePhaseCError`, `buildPersistStateFn`, `dispatchPhaseCContinuation`, `finalizePhaseC`.
+
 ### Data Sources
 
 The galaxy merges Phase C entities with live OPS data:
@@ -3645,7 +3678,18 @@ Three-panel layout merging email threads and client portal messages into a singl
 
 #### Phase 1 — Profile Building
 
-`WritingProfileService` captures tone, style, greeting, and closing patterns from the user's outbound emails. After 5+ analyzed emails, AI drafting becomes available. Profile data stored in `agent_writing_profiles` table.
+`WritingProfileService` captures tone, style, greeting, and closing patterns from the user's outbound emails. Profile data stored in `agent_writing_profiles` table.
+
+Two distinct thresholds gate this phase — keep them straight:
+
+| Threshold | Value | Gate | Source |
+|-----------|-------|------|--------|
+| **Profile build** | ≥2 outbound samples per relationship type | Whether a profile row is written at all | `memory-service.ts:523-524` (`buildSingleWritingProfile`) |
+| **Draft availability** | `emails_analyzed ≥ 5` on the matched profile | Whether `/api/integrations/email/draft` returns a non-empty draft | `ai-draft-service.ts:323` |
+
+Profiles are **built** at ≥2 outbound samples (lowered from 3 in commit `69c48a7b` — 3 left small-inbox or early-stage-heavy accounts like Canpro's 91-thread run, where nearly everything classified as `client_new_inquiry`, with zero profiles and no AI drafting at all). Below 2 there isn't enough signal for even greeting/closing pattern detection.
+
+Drafts are **generated** only when the matched profile's `emails_analyzed ≥ 5` — the confidence gate. Two-sample profiles exist in the DB and are surfaced in galaxy visualizations and debug endpoints, but they don't drive drafts until accumulation reaches 5. A user with a 2-sample `client_new_inquiry` profile and a 12-sample `client_quoting` profile can get drafts for quoting but not for new-inquiry replies.
 
 #### Phase 2 — AI Draft + Human Review
 

@@ -1470,6 +1470,41 @@ All env vars are documented in `.env.example`. Legend: `[V]` = configured in Ver
 
 **Local development:** Copy `.env.example` to `.env.local` and fill values, or pull from Vercel with `npx vercel env pull .env.local`.
 
+### Env var hygiene (trailing whitespace is a silent breaker)
+
+Vercel's env-var UI does not strip trailing whitespace on paste. A single trailing newline baked into a value in Vercel persists through `process.env.*` reads and breaks any downstream consumer that either (a) strict-equality-compares the value against a server-supplied claim, or (b) passes the value through a regex validator. Both failure modes are silent — they surface as 401s or opaque 400s with no hint of the root cause.
+
+Rule: every env var read by a route handler that feeds into strict comparisons or external regex validators MUST be `.trim()`'d on read. This is a belt-and-braces defense — the stored value should also be clean, but the code layer is what guarantees correctness across paste errors, key rotations, and future contributors who don't know the incident history.
+
+Concretely trimmed as of commit `f4d326d0` (2026-04-19):
+
+| Env var | Consumer | Failure mode if untrimmed |
+|---------|----------|---------------------------|
+| `GOOGLE_PUBSUB_TOPIC` | Gmail `users.watch` | Gmail's `projects/<project>/topics/<name>` regex rejects with "Invalid topicName does not match …". `email_connections.webhook_subscription_id` stays NULL. |
+| `GOOGLE_PUBSUB_PUSH_AUDIENCE` | Gmail webhook route, OIDC `aud` claim comparator | Silent 401 on every real push. Pub/Sub stops delivering. |
+| `GOOGLE_PUBSUB_SERVICE_ACCOUNT` | Gmail webhook route, OIDC `email` claim comparator | Silent 401 on every real push. |
+| `GOOGLE_GMAIL_CLIENT_ID`, `GOOGLE_GMAIL_CLIENT_SECRET` | Gmail OAuth token endpoint (URL-encoded form body) | Opaque 400 from Google's token endpoint. |
+| `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` | M365 OAuth token endpoint (URL-encoded form body) | Opaque 400 from Microsoft's token endpoint. |
+
+**Safe value-setting pattern (no trailing newline):**
+
+```bash
+# Pipe via printf — no trailing newline
+printf "projects/civic-champion-439517-e7/topics/gmail-push" | vercel env add GOOGLE_PUBSUB_TOPIC production
+
+# Verify after setting:
+vercel env pull .env.verify.production --environment=production
+grep -E "GOOGLE_PUBSUB_(TOPIC|PUSH_AUDIENCE|SERVICE_ACCOUNT)=" .env.verify.production | cat -A
+# Every line must end with `$` and nothing after — no `\n$`.
+rm .env.verify.production
+```
+
+### Common Runbooks
+
+| Scenario | Runbook |
+|----------|---------|
+| Gmail real-time webhook broken / wrong GCP project / trailing newline on a Pub/Sub env var | `OPS-Web/docs/runbooks/gmail-pubsub-webhook-fix.md` — covers GCP console setup (topic, IAM grants, push subscription with OIDC auth), Vercel env-var update procedure with byte-count verification, per-user reconnect, and end-to-end verification. Referenced from `04_API_AND_INTEGRATION.md` § Gmail Real-Time Webhook Architecture. |
+
 ### Build & Scripts
 
 ```json
