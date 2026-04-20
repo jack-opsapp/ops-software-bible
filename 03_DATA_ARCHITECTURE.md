@@ -1191,6 +1191,50 @@ Permission tables have their own RLS policies:
 - **Write**: Only users with `team.assign_roles` permission can create/modify custom roles, assign roles, and modify role permissions
 - Preset roles cannot be updated or deleted (enforced by `NOT is_preset` checks on write policies)
 
+### Mention-Based Project Access (Migration 074, 2026-04-20)
+
+**Rule**: a user tagged in any live (non-soft-deleted) `project_notes.mentioned_user_ids` entry for a project gains read-only view access to the project and its tasks, regardless of `projects.team_member_ids` membership.
+
+**Scope of grant**:
+- Read: `projects`, `project_tasks` — extended via new helper.
+- Write: **no extension**. Mention-granted users cannot edit project fields, tasks, schedule, team, estimates, invoices, or expenses. Enforced at the DB via unchanged `role_scope_update` policies calling the original `current_user_in_project` helper.
+- Client-side surfaces: mention-granted projects appear in Universal Search + iOS Spotlight only. Hidden from Job Board "My Projects", Calendar, Schedule, and Map by design — discoverability limited to push-notification deep link and search.
+
+**SQL (Migration 074):**
+
+```sql
+-- New read-only helper — superset of current_user_in_project with mention branch.
+CREATE OR REPLACE FUNCTION private.current_user_can_view_project(p_project_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+  SELECT private.current_user_in_project(p_project_id)
+      OR EXISTS (
+        SELECT 1 FROM public.project_notes pn
+        WHERE pn.project_id = p_project_id::text
+          AND pn.deleted_at IS NULL
+          AND private.get_current_user_id()::text = ANY(COALESCE(pn.mentioned_user_ids, ARRAY[]::text[]))
+      );
+$$;
+```
+
+**Policies updated** (read-only — write policies intentionally untouched):
+- `projects.role_scope_read` — `assigned` branch now calls `current_user_can_view_project(projects.id)`.
+- `project_tasks.role_scope_read` — `assigned` branch now calls `current_user_can_view_project(project_id)`.
+
+**Policies NOT changed** (to keep mention-grant view-only):
+- `projects.role_scope_update`, `project_tasks.role_scope_update`, `estimates.role_scope_update`, `invoices.role_scope_update` — continue to call the team-only `current_user_in_project`.
+
+**iOS client integration**:
+- `MentionAccessIndex` (`OPS/Utilities/`) — on-device index of projectIds the current user has mention access to. Rebuilt from cached `ProjectNote` rows on login, sync completion, Realtime note events.
+- `ProjectAccessHelper.narrowVisible` vs `.wideVisible` — surface-specific predicates. Job Board uses narrow; Search/Spotlight use wide.
+- `PermissionStore.canViewProject(_ project:, userId:)` — per-record check combining base-role scope + mention-grant.
+- Mention-only users see a read-locked `ProjectQuickActionsBar` with only the "NOTE" action available (reply-only, per Bug G9 Rule 2).
+
+**Context**: Bug G9 (2026-04-20). Source of truth: `docs/superpowers/plans/2026-04-20-mention-based-project-access.md`.
+
 ### Auth ID Resolution
 
 **Critical**: Supabase `auth.uid()` returns the Supabase Auth UUID, which is different from `users.id` (the application-level UUID). The `users` table has an `auth_id` column that maps the Supabase Auth UUID to the app user. A helper function resolves this:
