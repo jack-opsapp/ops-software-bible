@@ -2408,6 +2408,159 @@ CREATE TABLE email_filter_presets (
 
 Seeded with ~100+ common noise sources across categories.
 
+### email_threads (Inbox v2, migration 071 — 2026-04-20)
+
+Per-thread state for the rebuilt inbox. Every email the company sees gets a
+row here — denormalized so list queries are a single-table scan.
+
+```sql
+CREATE TABLE public.email_threads (
+  id                          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id                  uuid NOT NULL REFERENCES companies(id),
+  connection_id               uuid NOT NULL REFERENCES email_connections(id),
+  provider_thread_id          text NOT NULL,          -- Gmail threadId | M365 conversationId
+
+  -- Primary classification (exactly one)
+  primary_category            text NOT NULL DEFAULT 'OTHER'
+    CHECK (primary_category IN ('LEAD','CLIENT','VENDOR','SUBTRADE','PLATFORM_BID',
+                                 'LEGAL','JOB_SEEKER','COLLECTIONS','MARKETING',
+                                 'RECEIPT','PERSONAL','INTERNAL','OTHER')),
+  category_confidence         numeric(3,2) DEFAULT 0.0,
+  category_classified_at      timestamptz,
+  category_classifier_version text DEFAULT 'v1',
+  category_manually_set       boolean NOT NULL DEFAULT false,
+
+  -- Secondary labels (multi)
+  labels                      text[] NOT NULL DEFAULT '{}',
+
+  -- Triage
+  archived_at                 timestamptz,
+  snoozed_until               timestamptz,
+  priority_score              numeric(4,2) DEFAULT 0.0,
+  ai_summary                  text,
+
+  -- Denormalized summary (updated from latest message on each sync tick)
+  subject                     text,
+  participants                text[] DEFAULT '{}',
+  first_message_at            timestamptz NOT NULL,
+  last_message_at             timestamptz NOT NULL,
+  message_count               int NOT NULL DEFAULT 0,
+  unread_count                int NOT NULL DEFAULT 0,
+  latest_direction            text CHECK (latest_direction IN ('inbound','outbound')),
+  latest_sender_email         text,
+  latest_sender_name          text,
+  latest_snippet              text,
+
+  -- Linkage (nullable — VENDOR/LEGAL/etc. threads won't have these)
+  opportunity_id              uuid REFERENCES opportunities(id),
+  client_id                   uuid REFERENCES clients(id),
+
+  created_at                  timestamptz NOT NULL DEFAULT now(),
+  updated_at                  timestamptz NOT NULL DEFAULT now(),
+
+  CONSTRAINT email_threads_unique_provider UNIQUE (connection_id, provider_thread_id)
+);
+```
+
+**Indexes (migration 071):**
+- `idx_email_threads_company_lastmsg` — `(company_id, last_message_at DESC) WHERE archived_at IS NULL AND snoozed_until IS NULL` — drives the Everything rail
+- `idx_email_threads_company_category` — `(company_id, primary_category, last_message_at DESC) WHERE archived_at IS NULL` — drives category filter chips
+- `idx_email_threads_snoozed` — `(snoozed_until) WHERE snoozed_until IS NOT NULL` — drives `/api/cron/unsnooze`
+- `idx_email_threads_opportunity` — `(opportunity_id) WHERE opportunity_id IS NOT NULL` — back-reference from pipeline
+
+The 13 primary categories and the 6 secondary labels (`URGENT`,
+`AWAITING_REPLY`, `HAS_ATTACHMENT`, `HAS_QUOTE`, `HAS_INVOICE`,
+`FROM_NEW_SENDER`) are enforced only in application code (the CHECK covers
+primary only; labels are an application-level contract).
+
+### email_thread_category_corrections (migration 071)
+
+Learning feedback for Phase C. Every time the user recategorizes a thread
+manually, we record the from/to categories plus signals (sender email,
+domain, participant hash, subject keywords) so the classifier can fan out
+the correction to similar threads.
+
+```sql
+CREATE TABLE public.email_thread_category_corrections (
+  id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id           uuid NOT NULL REFERENCES companies(id),
+  thread_id            uuid NOT NULL REFERENCES email_threads(id) ON DELETE CASCADE,
+  user_id              uuid NOT NULL REFERENCES users(id),
+  from_category        text NOT NULL,
+  to_category          text NOT NULL,
+  sender_email         text,
+  sender_domain        text,
+  participants_hash    text,
+  subject_keywords     text[],
+  note                 text,
+  applied_to_similar   boolean NOT NULL DEFAULT false,
+  similar_count        int NOT NULL DEFAULT 0,
+  created_at           timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_corrections_company_domain
+  ON email_thread_category_corrections(company_id, sender_domain)
+  WHERE sender_domain IS NOT NULL;
+```
+
+### Column additions (migration 071)
+
+```sql
+-- First-archive write-back preference per email connection
+ALTER TABLE email_connections
+  ADD COLUMN archive_writeback_preference text
+    CHECK (archive_writeback_preference IN ('ask','archive_in_gmail','mark_read_only','ops_only'))
+    DEFAULT 'ask';
+
+-- Per-message classifier provenance
+ALTER TABLE activities
+  ADD COLUMN classified_at timestamptz,
+  ADD COLUMN classifier_version text;
+```
+
+### Phase C category autonomy (JSONB on email_connections — no new columns)
+
+Per-primary-category autonomy lives under
+`email_connections.auto_send_settings.category_autonomy`, keyed by
+`primary:<CATEGORY>`. Example stored value:
+
+```jsonb
+{
+  "primary:LEAD":         "auto_draft",
+  "primary:CLIENT":       "auto_send",
+  "primary:VENDOR":       "auto_draft",
+  "primary:PLATFORM_BID": "auto_archive",
+  "primary:LEGAL":        "draft_on_request",
+  "primary:RECEIPT":      "auto_archive",
+  "client_new_inquiry":   "auto_send",       // legacy per-relationship key
+  "vendor_ordering":      "auto_draft"       // legacy per-relationship key
+}
+```
+
+The legacy per-relationship keys (`client_new_inquiry`, `vendor_ordering`,
+etc.) continue to drive the ai-draft-service writing-profile graduation
+checks. Inbox v2 adds the `primary:*` namespace alongside — no migration
+touches this column since it's JSONB.
+
+### RPC get_inbox_density_per_client (migration 073)
+
+Used by the Intel galaxy to size client-node thread-density halos.
+
+```sql
+CREATE OR REPLACE FUNCTION public.get_inbox_density_per_client(p_company_id uuid)
+RETURNS TABLE (client_id uuid, thread_count int, last_message_at timestamptz)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT client_id, COUNT(*)::int, MAX(last_message_at)
+  FROM public.email_threads
+  WHERE company_id = p_company_id
+    AND client_id IS NOT NULL
+    AND archived_at IS NULL
+  GROUP BY client_id;
+$$;
+```
+
 ### RLS Policies (Email Integration)
 
 All new tables require Row-Level Security:

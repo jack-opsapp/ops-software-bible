@@ -971,6 +971,10 @@ if isLoading {
 - Z-index: 999
 ```
 
+#### Keyboard Annotations (Web)
+
+Keyboard shortcut chips on the web app render through a single `KeyHint` primitive (`OPS-Web/src/components/ui/key-hint.tsx`). **Do not hand-roll `<kbd>` markup.** Two variants — `chip` (standalone, boxed) and `inline` (bracketed mono for use inside coloured buttons). Full spec, canonical modifier glyphs, and accessibility rules live in `.interface-design/system.md` § Keyboard Annotations.
+
 ### Navigation Components
 
 #### Segmented Control
@@ -2644,6 +2648,61 @@ Every string in every template runs through the `ops-copywriter` skill before lo
 
 - **Before 2026-04-15:** raw HTML template strings, dark-only layouts, inconsistent senders, no physical address, no unsubscribe on marketing mail, Courier fallback fonts.
 - **2026-04-15:** migrated all 14 templates to React Email + added 3 new (EmailVerification, EmailChangeConfirmation, plus the handler page flows), established 4 sender buckets, added CASL-compliant footer with full postal address.
+
+---
+
+## 17. Inbox v2 Category Palette (Web)
+
+The thirteen primary inbox categories use border-only color cues (chip
+pattern per §9). The palette is deliberately muted — only `LEAD` and
+`CLIENT` get the ops-accent; everything else lives in a neutral / warning
+register so the eye doesn't blow out on a busy inbox.
+
+| Category | Hex | Role |
+|----------|-----|------|
+| `LEAD` | `#597794` | Primary accent — money in motion |
+| `CLIENT` | `#597794` | Primary accent — existing relationship |
+| `VENDOR` | `#6b7280` | Neutral gray — operational supplier |
+| `SUBTRADE` | `#6b7280` | Neutral gray — operational collaborator |
+| `PLATFORM_BID` | `#8b7e3a` | Dim gold — bid invitation, needs attention |
+| `LEGAL` | `#a4584f` | Muted rose — elevated risk |
+| `JOB_SEEKER` | `#6b7280` | Neutral gray — hiring signal |
+| `COLLECTIONS` | `#a4584f` | Muted rose — elevated risk |
+| `MARKETING` | `#4a4a4a` | Deep mute — low priority |
+| `RECEIPT` | `#4a4a4a` | Deep mute — transactional |
+| `PERSONAL` | `#4a4a4a` | Deep mute — non-business |
+| `INTERNAL` | `#4a4a4a` | Deep mute — team chatter |
+| `OTHER` | `#4a4a4a` | Deep mute — unclassified |
+
+**Rendering contract (`CategoryChip`):**
+
+- 2px solid left border in the category hex; other three sides at 40% alpha
+- Background at ~8% alpha of the hex
+- Text always `text-text-2` (inherits through `currentColor`)
+- Typography: `font-cakemono font-light uppercase`, 10–11px, tracking 0.16–0.18em
+- Radius 4px (`rounded-chip`)
+- Manual override (`category_manually_set = true`): add a 1px ring in `rgba(255,255,255,0.12)` so users can scan threads they've personally re-labeled
+
+The same palette drives the `categoryDotColor()` helper (left-edge unread
+indicator on the thread list and the small dot on the category filter
+chips). Source of truth: `src/components/ops/inbox/category-chip.tsx`.
+
+---
+
+## 18. Category Autonomy Level Tones (Web)
+
+The dashboard `phase-c-autonomy` widget paints each per-category autonomy
+row with a tone matching the level. Same palette used by the settings UI
+so the dashboard and settings read consistently.
+
+| Level | Fg | Bg (alpha) |
+|-------|----|------------|
+| `auto_send` | `#9DB582` (olive) | `rgba(157,181,130,0.18)` |
+| `auto_follow_up` | `#9DB582` (olive) | `rgba(157,181,130,0.12)` |
+| `auto_archive` | `#C4A868` (tan) | `rgba(196,168,104,0.14)` |
+| `auto_draft` | `#6F94B0` (ops-accent) | `rgba(111,148,176,0.14)` |
+| `draft_on_request` | `#8A8A8A` (text-3) | `rgba(255,255,255,0.04)` |
+| `off` | `#6A6A6A` (text-mute) | `rgba(255,255,255,0.02)` |
 
 ---
 

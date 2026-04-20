@@ -3549,6 +3549,7 @@ Phase C toast: "New intel available" → "View Intel" CTA → navigates to `/int
 | `src/components/intel/galaxy-edges.tsx` | Proximity-revealed edges |
 | `src/components/intel/galaxy-center.tsx` | Self/company center node |
 | `src/components/intel/galaxy-starfield.tsx` | Ambient background stars |
+| `src/components/intel/galaxy-thread-density-halos.tsx` | Inbox v2 — ring halos around client nodes sized by thread count, colored by recency |
 | `src/components/intel/hud/*.tsx` | Floating HUD overlays |
 | `src/components/intel/node-info.tsx` | Tier 2/3 drill-down panel |
 | `src/stores/intel-store.ts` | Zustand state |
@@ -3556,246 +3557,226 @@ Phase C toast: "New intel available" → "View Intel" CTA → navigates to `/int
 | `src/app/api/intel/graph/route.ts` | Graph API |
 | `src/app/api/intel/entity/[entityId]/route.ts` | Entity detail API |
 
+### Inbox v2 thread-density halos (added 2026-04-20)
+
+Every CLIENT node in the galaxy carries a translucent ring rendered by `galaxy-thread-density-halos.tsx`. The ring encodes two signals:
+
+- **Radius** = `log(thread_count) / log(26)` → min 0.18, max 0.95 (log scale so 1 vs 3 threads matters more than 20 vs 50)
+- **Color** = recency of `last_message_at`:
+  - `<= 24h` → `#6F94B0` (fresh — ops-accent blue)
+  - `<= 7d` → `#9DB582` (warm — olive)
+  - `<= 30d` → `#C4A868` (tepid — tan)
+  - `> 30d` → `#6A6A6A` (cold — muted)
+- **Opacity** = 0.28 → 0.60 on the same log scale
+- **Interaction** = none — `raycast={() => null}` so pointer events pass through to the node hit targets
+
+Data source: `public.get_inbox_density_per_client(p_company_id uuid)` RPC (migration 073), which returns `(client_id, thread_count, last_message_at)` for every client with active (`archived_at IS NULL`) threads in `email_threads`. Query refresh: 60s stale / 5 min interval. Rings are billboarded to the camera every frame.
+
 ---
 
-## 19. In-App Email System (Web)
+## 19. In-App Email System (Web) — Inbox v2
 
 ### Overview
 
-The OPS web app provides a full in-app email client so users never need to open Gmail/M365. Built across 5 sprints (completed 2026-03-19). Connects to the email pipeline integration documented in `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` §10 for sync, pattern detection, and AI classification.
-
-### Unified Inbox View (`/inbox`)
-
-Three-panel layout merging email threads and client portal messages into a single conversation view. Replaces the old two-tab (Pipeline/All Mail) and separate `/portal-inbox` page.
-
-**Architecture:**
-- Left panel (320px fixed): Conversation list with search, channel badges (EMAIL/PORTAL/UNMATCHED)
-- Center panel (flex): Message thread with iMessage-style bubbles, floating toolbar filter
-- Right panel (320px, collapsible): Client context — contact info, projects, estimates, invoices
-
-**Data Sources (merged into `InboxConversation`):**
-
-| Source | Data | Grouping |
-|--------|------|----------|
-| `activities` table | Email threads grouped by `email_thread_id`, linked to opportunities via `opportunity_id` | By `client_id` (from opportunity) |
-| `portal_messages` table | Client portal messages | By `client_id` |
-| Email provider API (Gmail/M365) | Full email thread bodies via `provider.fetchThread(threadId)` | By thread ID |
-
-**Conversation Normalization (`useUnifiedConversations`):**
-- Groups pipeline threads by `clientId` (from the linked opportunity's `client_id`)
-- Merges portal conversations by matching `clientId`
-- Unmatched threads (no `clientId`) grouped by sender email address
-- Each `InboxConversation` carries its `emailThreadIds[]` — single data source, no desync
-- 30-second polling interval
-
-**Thread View (`useUnifiedThread`):**
-- Fetches email content from provider API (`/api/integrations/email/inbox?threadId=...`) — returns actual email bodies, not activity table stubs
-- Falls back to `activities` table if provider is unavailable
-- Fetches portal messages from `portal_messages` table for matched clients
-- Channel filter toolbar (ALL/EMAIL/PORTAL) floats as overlay on the message area
-- Messages sorted chronologically with date dividers and channel dividers
-- Direction detection: compares sender domain against current user's domain
+The OPS web inbox at `/inbox` is the operator panel for **Phase C**, OPS's AI executive-assistant agent. Every email — not just pipeline leads — flows through the inbox, gets AI-classified into one of thirteen primary categories, and is surfaced to the user with the right triage affordances (archive, snooze, recategorize, Phase C-drafted reply, etc.). Rebuilt 2026-04-20 (plan: `docs/superpowers/plans/...`, commits `f05627ff` → `2430fbdc`).
 
-**Unread Count:**
-- Combined email + portal unread count on sidebar "Inbox" badge
-- Email: from `InboxService.getUnreadCount()` (activities table)
-- Portal: from `portal_messages` where `sender_type = 'client'` and `read_at IS NULL`
-- 60-second polling interval
+### Design intent
 
-**Removed:**
-- `/portal-inbox` page (deleted — portal messages now in unified inbox)
-- Separate "Pipeline" and "All Mail" tabs (replaced by channel filter toolbar)
-- `pipeline-thread-list.tsx`, `all-mail-list.tsx`, `portal-inbox.tsx` components (deleted)
+The previous inbox (§19 v1, 2026-03-19) was *pipeline-only* — only threads that already had an `opportunity_id` were visible, which meant every vendor, subtrade, legal, receipt, and internal email stayed in Gmail. The v2 rebuild makes the inbox Phase C's UI: the agent does the work (triage, classify, draft, follow up), the user reviews and overrides. Fyxer/Superhuman tier ergonomics are the explicit target.
 
-### Compose Modal
+### Data model
 
-**Trigger Points:**
-- Pipeline card action menu
-- Inbox thread reply button
-- FAB (Floating Action Button)
-- Direct compose from inbox
+All thread state lives on the `email_threads` table. Messages still live on `activities` (unchanged). See §03_DATA_ARCHITECTURE.md for the full schema — tables `email_threads` and `email_thread_category_corrections` were added in migration `071_email_threads_and_corrections.sql` (2026-04-20).
+
+### Primary categories (exactly one per thread)
+
+| Category | When it applies |
+|----------|-----------------|
+| `LEAD` | Potential customer inquiring about work, receiving a quote, in pre-win conversations |
+| `CLIENT` | Existing/past customer — post-win, warranty, referrals, repeat work |
+| `VENDOR` | Supplier selling materials/products TO the company |
+| `SUBTRADE` | Another trade/crew pitching services or coordinating as a subcontractor |
+| `PLATFORM_BID` | Automated bid invitations (Procore, BuilderTrend, PlanHub, SmartBidNet, BuildingConnected) |
+| `LEGAL` | Lawyers, settlements, liens, disputes, insurance claims with legal implications |
+| `JOB_SEEKER` | Someone seeking employment with the company |
+| `COLLECTIONS` | AR disputes, overdue payment chases, credit agencies |
+| `MARKETING` | Promotional emails, newsletters, cold outreach |
+| `RECEIPT` | Transactional confirmations, shipping, order receipts, invoice copies |
+| `PERSONAL` | Non-business correspondence |
+| `INTERNAL` | Emails between employees of the company |
+| `OTHER` | Does not fit any category |
 
-**Modes:**
+Categories are **LAW** — adding / removing / renaming requires a migration and a plan-level decision.
+
+### Secondary labels (multi-valued)
 
-| Mode | Behavior |
-|------|----------|
-| **New email** | Blank compose — all fields empty |
-| **Reply** | Pre-fills `to`, `subject` (with "Re:" prefix), quoted original message, `threadId`, `inReplyTo` header |
+`URGENT` · `AWAITING_REPLY` · `HAS_ATTACHMENT` · `HAS_QUOTE` · `HAS_INVOICE` · `FROM_NEW_SENDER`. Also **LAW** — the classifier prompt and the UI chip set are keyed off this exact list.
 
-**Sender Dropdown:**
-- Resolves available senders from `email_connections` table
-- Supports multiple connected accounts (e.g., personal Gmail + company M365)
+### Split-inbox rails
 
-**Fields:**
-- **From** — sender dropdown
-- **To** — email address input
-- **CC** — collapsible, hidden by default
-- **Subject** — text input
-- **Body** — markdown-capable text area
+The left rail of `/inbox` is a four-rail segmented control:
 
-**Markdown Toolbar:**
-- Bold: `**text**`
-- Italic: `*text*`
-- Link: `[text](url)`
+| Rail | Query | Keyboard |
+|------|-------|----------|
+| **Needs reply** | `labels @> '{AWAITING_REPLY}' AND archived_at IS NULL AND snoozed_until IS NULL` | `1` |
+| **Everything** | `archived_at IS NULL AND snoozed_until IS NULL` | `2` |
+| **Scheduled** | `snoozed_until IS NOT NULL AND snoozed_until > now()` | `3` |
+| **Done** | `archived_at IS NOT NULL` | `4` |
 
-**Send Flow:**
-- Body stored as markdown during composition
-- Converted to HTML at send time via `markdownToEmailHtml()`
-- Sent through the connected provider's API (Gmail or M365)
+Below the rails, a horizontal strip of **category filter chips** (ALL + 13 categories) narrows the active rail by `primary_category`.
 
-### Email Templates
+### Thread classifier
 
-**Table:** `email_templates` (company-scoped, RLS-protected)
+- Service: `src/lib/api/services/thread-classifier-service.ts`
+- Model: `gpt-5.4-mini` via `OPENAI_API_KEY_SYNC`
+- Invocation: fire-and-forget from `EmailThreadService.upsertFromEmail` (sync step 7.5)
+- Skip rule: only reclassify when `category_confidence < 0.6` or the thread is new; user corrections (`category_manually_set = true`) are never overwritten
+- Learned rules: corrections keyed by `sender_domain` and `participants_hash` are fed back as priors so Phase C learns per-sender taxonomy
+- Cost: ~$0.50–2.00 per 1000 threads at backfill; ~$0.30/week per active inbox
 
-**Categories:**
-| Category Slug | Display Name |
-|---------------|-------------|
-| `follow_up` | Follow Up |
-| `scheduling` | Scheduling |
-| `estimate` | Estimate |
-| `invoice` | Invoice |
-| `introduction` | Introduction |
-| `general` | General |
+### Phase C autonomy router
 
-**Merge Fields:**
+`src/lib/api/services/phase-c-autonomy-router.ts` — runs after every classify and every new inbound on a classified thread. Dispatches per the per-category autonomy level stored in `email_connections.auto_send_settings.category_autonomy["primary:<CATEGORY>"]`.
 
-| Field | Resolved From |
-|-------|--------------|
-| `{{client_name}}` | Linked opportunity's client name |
-| `{{project_title}}` | Linked opportunity's project title |
-| `{{company_name}}` | Current user's company name |
+| Level | Behavior |
+|-------|----------|
+| `off` | Phase C does nothing beyond classifying |
+| `draft_on_request` | User can click "AI Draft"; no background work |
+| `auto_draft` | Phase C drafts on every inbound, holds in `ai_draft_history` |
+| `auto_send` | Phase C drafts + schedules via `AutoSendService` with business-hour delay |
+| `auto_archive` | Phase C archives (RECEIPT / MARKETING / PLATFORM_BID reject) |
+| `auto_follow_up` | LEAD/CLIENT — auto-nudge after configurable quiet days |
 
-**Behavior:**
-- Template picker in compose modal — dropdown grouped by category
-- If body is non-empty when selecting a template, confirmation prompt before replacing
-- Variables resolved at compose time from linked opportunity/client context
-- Unresolvable variables (e.g., composing without opportunity context) highlighted in amber with a warning banner
+**Global AUTO_SEND gate:** The router caps any category-level `auto_send` / `auto_follow_up` to `auto_draft` behavior until the global Phase C autonomy level in `AutonomyMilestoneService` reaches AUTO_SEND (level 4). This prevents any email from being sent before the overall writing profile is proven.
 
-**Management:**
-- CRUD via Settings → Email Templates tab
+**Allowed levels per category:**
 
-### AI Email Drafting (3-Phase Progression)
+| Category | Valid levels |
+|----------|--------------|
+| LEAD | off · draft_on_request · auto_draft · auto_send · auto_follow_up |
+| CLIENT | off · draft_on_request · auto_draft · auto_send · auto_follow_up |
+| VENDOR / SUBTRADE | off · draft_on_request · auto_draft · auto_send |
+| PLATFORM_BID | off · draft_on_request · auto_draft · auto_send · auto_archive |
+| LEGAL / COLLECTIONS / JOB_SEEKER | off · draft_on_request |
+| MARKETING / RECEIPT / PERSONAL / INTERNAL / OTHER | off · auto_archive |
 
-#### Phase 1 — Profile Building
+### Write-back preference
 
-`WritingProfileService` captures tone, style, greeting, and closing patterns from the user's outbound emails. Profile data stored in `agent_writing_profiles` table.
-
-Two distinct thresholds gate this phase — keep them straight:
-
-| Threshold | Value | Gate | Source |
-|-----------|-------|------|--------|
-| **Profile build** | ≥2 outbound samples per relationship type | Whether a profile row is written at all | `memory-service.ts:523-524` (`buildSingleWritingProfile`) |
-| **Draft availability** | `emails_analyzed ≥ 5` on the matched profile | Whether `/api/integrations/email/draft` returns a non-empty draft | `ai-draft-service.ts:323` |
-
-Profiles are **built** at ≥2 outbound samples (lowered from 3 in commit `69c48a7b` — 3 left small-inbox or early-stage-heavy accounts like Canpro's 91-thread run, where nearly everything classified as `client_new_inquiry`, with zero profiles and no AI drafting at all). Below 2 there isn't enough signal for even greeting/closing pattern detection.
-
-Drafts are **generated** only when the matched profile's `emails_analyzed ≥ 5` — the confidence gate. Two-sample profiles exist in the DB and are surfaced in galaxy visualizations and debug endpoints, but they don't drive drafts until accumulation reaches 5. A user with a 2-sample `client_new_inquiry` profile and a 12-sample `client_quoting` profile can get drafts for quoting but not for new-inquiry replies.
-
-#### Phase 2 — AI Draft + Human Review
-
-**Trigger:** "AI Draft" button (Sparkles icon) in compose modal.
-
-**Context Assembly:**
-1. Writing profile (tone, greeting, closing patterns)
-2. Thread messages (last 20 in conversation)
-3. Opportunity `ai_summary` (if linked)
-4. Memory facts from `agent_memories` (if Phase C enabled)
-
-**Model:** `gpt-5.4-mini` via `OPENAI_API_KEY_DRAFTING`
-
-**Output:** Markdown draft matching the user's voice and writing style.
-
-**Edit Tracking:**
-- Word-level Levenshtein diff records original AI draft vs user's final version in `ai_draft_history`
-- Tracked change categories: greeting changes, closing changes, tone shifts
-- Writing profile learning: 3+ consistent changes to the same pattern automatically updates the profile
-
-**User Metrics:**
-- Approval rate (% of drafts sent without changes)
-- Common change patterns
-- Declining edit frequency over time (learning indicator)
-
-#### Phase 3 — Auto-Send (Feature-Gated)
-
-**Feature gate:** `ai_auto_send`
-
-**Activation:** Suggested when approval rate reaches 95% over 20+ drafts ("you only changed 1 of the last 20").
-
-**When enabled:**
-1. New inbound email arrives on a linked thread
-2. AI draft generated automatically
-3. Draft held for randomized delay before sending
-
-**Delay Configuration:**
-- Configurable min/max (default 30-60 minutes)
-- Randomized within range to avoid suspicious patterns
-- Business hours enforcement: default 8am-6pm in user's timezone, configurable
-
-**Cron:** `/api/cron/auto-send`
-- Runs every 5 minutes
-- Processes up to 50 pending auto-sends per cycle
-- Max 3 retries for failed sends, then permanently marked as failed
-
-**User Controls:**
-- Cancel pending auto-sends from inbox UI
-- Disable auto-send at any time (reverts to Phase 2 behavior)
-
-### Stage Manual Override System
-
-**Column:** `opportunities.stage_manually_set` (BOOLEAN, default `false`)
-
-**Set to `true`:** When user drags a pipeline card to a new stage on the Kanban board.
-
-**Effect:** When `true`, both the deterministic `StageEvaluator` (correspondence-count rules) AND the AI `evaluateStagesWithSummary()` skip stage changes for this opportunity. The user's manual placement is respected.
-
-**Cleared to `false`:** When a new inbound email arrives. Specifically, `processInboundEmail()` → `updateCorrespondenceCounts()` detects `direction = inbound` and clears the flag, allowing automated stage evaluation to resume.
-
-**Exception:** Terminal flag notifications (`likely_won` / `likely_lost`) are always sent regardless of the manual override flag — the user should always know about win/loss signals even if they've manually placed the opportunity.
-
-### Sync Engine Hardening (2026-03-19)
-
-Improvements to the email sync engine reliability and data completeness:
-
-**Subscription Gating:**
-- Cron batch-fetches companies, filters by `getSubscriptionInfo().isActive` before running sync
-- Manual sync checks subscription status, returns 403 if inactive
-- Webhook handlers (Gmail Pub/Sub, M365 Change Notifications) pass `CRON_SECRET` Bearer token when calling manual-sync endpoint
-
-**Activity Data Enrichment:**
-- Activities now store: `body_text` (full email body), `to_emails`, `cc_emails`, `has_attachments`, `attachment_count`
-
-**Timestamp Validation:**
-- `last_inbound_at` / `last_outbound_at` on opportunities only updated if the email date is newer than the existing value
-- `stage_entered_at` set on ALL stage changes (count-based, AI eval, stale sweep)
-- `last_activity_at` uses the email's actual date, not the sync timestamp
-
-**Sent Safety Net:**
-- Prevents duplicate thread link constraint violations
-- Processes CC recipients on outbound emails
-
-**AI Evaluation Optimization:**
-- `evaluateStagesWithSummary()` returns both stage and 1-2 sentence summary in a single API call
-- Summary written to `opportunities.ai_summary`
-
-**Stale Lead Sweep:**
-- Runs on every cron cycle
-- Respects `stage_manually_set` flag (skips manually placed opportunities)
-
-### OpenAI API Key Separation
-
-Three separate API keys for granular cost tracking in the OpenAI dashboard:
-
-| Key | Env Variable | Purpose |
-|-----|-------------|---------|
-| Import | `OPENAI_API_KEY_IMPORT` | Initial inbox scan (Phase A triage + Phase B extraction) |
-| Sync | `OPENAI_API_KEY_SYNC` | Ongoing sync (stage evaluation + summary, memory extraction, writing profiles) |
-| Drafting | `OPENAI_API_KEY_DRAFTING` | AI email draft generation |
-
-**Factory:** `src/lib/api/services/openai-clients.ts`
-- Exports: `getImportOpenAI()`, `getSyncOpenAI()`, `getDraftingOpenAI()`
-- All fall back to `OPENAI_API_KEY` if the specific key is not set
-
----
+On the first archive action per connection, a modal asks: when I archive in OPS, what should happen in Gmail / Outlook?
+
+| Value | Gmail | M365 |
+|-------|-------|------|
+| `archive_in_gmail` | Remove `INBOX` label | Move to Archive folder |
+| `mark_read_only` | Add `READ` label (no INBOX change) | PATCH `isRead=true` |
+| `ops_only` | No provider call | No provider call |
+| `ask` *(default)* | First action forces the modal | First action forces the modal |
+
+Persisted on `email_connections.archive_writeback_preference`. Snooze always removes the INBOX label regardless of preference; unsnooze re-adds it via the `/api/cron/unsnooze` cron (every 5 min).
+
+### Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Next thread |
+| `k` / `↑` | Previous thread |
+| `Enter` / `→` | Open selected |
+| `e` | Archive |
+| `s` | Snooze picker |
+| `l` | Recategorize menu |
+| `u` | Toggle read/unread |
+| `r` | Reply |
+| `⇧D` | Phase C AI draft |
+| `c` | Compose new |
+| `/` | Focus search |
+| `⌘K` | Open command palette |
+| `1` / `2` / `3` / `4` | Switch rail |
+| `z` | Undo last toast action |
+| `Esc` | Back to list |
+
+### Command palette (⌘K)
+
+Full-screen overlay built on `cmdk`. Type to fuzzy-search threads (live API query when ≥2 chars). Also exposes: archive / snooze / recategorize / mark unread / AI draft / compose new / switch rail / filter category. All commands collapse into the same keyboard flow as the inline shortcuts.
+
+### Notifications
+
+Fired from `EmailThreadService.classifyAndUpdate` post-hook:
+
+| Event | Type | Persistent |
+|-------|------|------------|
+| Thread newly classified as LEAD | `leads_waiting` — "New lead: {sender}" | No |
+| Thread newly classified as PLATFORM_BID | `leads_waiting` — "Platform bid: {platform}" | No |
+| URGENT label appears on an inbound thread | `role_needed` — "Urgent reply needed: {sender}" | No |
+| Category ready to graduate to auto_send | `ai_milestone` — persistent until user acts | Yes |
+
+Graduation check runs daily via `/api/cron/phase-c-graduation-check`.
+
+### Dashboard integration
+
+Two widgets ship with Inbox v2:
+
+1. `inbox-leads` — unread LEAD count + 7-day daily sparkline + median inbound-to-first-outbound response time. Clicks deep-link to `/inbox?category=LEAD&filter=needs_reply`.
+2. `phase-c-autonomy` — weekly AUTO / DRAFTS / SURFACED tallies + per-category autonomy-level bars. Clicks deep-link to `/settings/email-category-autonomy`.
+
+Registered in `src/lib/types/dashboard-widgets.ts` under category `alerts` with `requiredPermission: "inbox.view"`.
+
+### Intel galaxy integration
+
+Each CLIENT node in `/intel` carries a thread-density halo (billboarded ring). Radius scales `log(thread_count)`; color grades fresh → warm → tepid → cold by `last_message_at` recency. Fed by the `get_inbox_density_per_client(company_id)` RPC (migration 073).
+
+### Permissions
+
+All gating flows through `inboxModule` in `src/lib/types/permissions.ts`:
+
+| Permission | Admin | Owner | Office | Operator | Crew |
+|-----------|-------|-------|--------|----------|------|
+| `inbox.view` | ✓ | ✓ | ✓ | ✓ | — |
+| `inbox.view_company` | ✓ | ✓ | ✓ | — | — |
+| `inbox.archive` | ✓ | ✓ | ✓ | ✓ | — |
+| `inbox.snooze` | ✓ | ✓ | ✓ | ✓ | — |
+| `inbox.categorize` | ✓ | ✓ | ✓ | — | — |
+| `inbox.send` | ✓ | ✓ | ✓ | — | — |
+| `inbox.configure_phase_c` | ✓ | ✓ | — | — | — |
+
+### API surface
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/inbox/threads` | GET | Paginated list (cursor-based, 30s refetch). Scope + rail + category + search query params. |
+| `/api/inbox/threads/[id]` | GET | Thread detail incl. provider messages. |
+| `/api/inbox/threads/[id]` | PATCH | Actions: `archive` / `unarchive` / `snooze` / `unsnooze` / `recategorize` / `markRead`. |
+| `/api/inbox/writeback-preference` | POST | Set `archive_writeback_preference` on a connection. |
+| `/api/cron/unsnooze` | GET | 5-min cron — re-applies INBOX to snoozed threads past their `snoozed_until`. |
+| `/api/cron/stale-leads` | GET | Hourly cron — invokes router on LEAD/CLIENT threads >7d quiet with outbound-last. |
+| `/api/cron/phase-c-graduation-check` | GET | Daily cron — fires `ai_milestone` notifications for categories ready to graduate. |
+
+### Key files
+
+| File | Role |
+|------|------|
+| `src/app/(dashboard)/inbox/page.tsx` | Three-panel page layout + command palette + undo toast host |
+| `src/components/ops/inbox/conversation-list.tsx` | Thread list (infinite query, hover actions, keyboard shortcuts) |
+| `src/components/ops/inbox/thread-detail-view.tsx` | Center pane (header, Phase C strip, AI summary, messages, action bar) |
+| `src/components/ops/inbox/thread-context-panel.tsx` | Right rail with Phase C insights |
+| `src/components/ops/inbox/category-chip.tsx` | 13-category display chip + interactive (RecategorizeMenu trigger) |
+| `src/components/ops/inbox/recategorize-menu.tsx` | Popover with all categories + "Tell Phase C why" note |
+| `src/components/ops/inbox/split-inbox-tabs.tsx` | Four-rail segmented control |
+| `src/components/ops/inbox/category-filter-chips.tsx` | Horizontal category filter strip |
+| `src/components/ops/inbox/snooze-picker.tsx` | Presets + custom datetime picker |
+| `src/components/ops/inbox/writeback-preference-modal.tsx` | First-archive preference modal |
+| `src/components/ops/inbox/command-palette.tsx` | ⌘K overlay |
+| `src/components/ops/inbox/undo-toast.tsx` | Portaled 5s undo toast + `z` hotkey |
+| `src/components/ops/inbox/phase-c-status-strip.tsx` | Thread-top banner surfacing Phase C state |
+| `src/lib/api/services/email-thread-service.ts` | Thread CRUD, classify dispatcher, notifications hook |
+| `src/lib/api/services/thread-classifier-service.ts` | 13-category classifier (gpt-5.4-mini) |
+| `src/lib/api/services/phase-c-autonomy-router.ts` | Per-category action router |
+| `src/lib/api/services/phase-c-category-autonomy-service.ts` | Per-category level CRUD + graduation check |
+| `src/lib/api/services/phase-c-learning-service.ts` | Apply corrections to similar threads |
+| `src/lib/hooks/use-inbox-threads.ts` | TanStack Query hooks (list, detail, actions, unread count) |
+| `src/lib/types/email-thread.ts` | TypeScript types + DB mapper |
+
+### What replaced the old §19
+
+The pre-rebuild inbox used `InboxService.getPipelineThreads()` (pipeline-only) and grouped threads into `InboxConversation` by client. Legacy files removed in Phase 7 cleanup: `inbox-service.ts`, `use-unified-inbox.ts`, `use-inbox.ts`, `unified-inbox.ts` types, and nine legacy inbox components. The `ComposeEmailModal` and thread message fetching via provider `fetchThread` are retained and reused by v2.
 
 ## 20. Mobile Wizard System
 
