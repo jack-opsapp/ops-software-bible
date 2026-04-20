@@ -44,7 +44,7 @@ OPS uses a **field-first architecture** designed for reliability, offline capabi
 ├── UI Layer: SwiftUI (declarative, native)
 ├── Data Layer: SwiftData (persistence, queries)
 ├── Network Layer: Supabase Swift SDK + async/await
-├── Sync Engine: Operation Log + Replay (SyncEngine, OutboundProcessor, InboundProcessor)
+├── Sync Engine: DataActor (@ModelActor background writes) + SyncEngine (MainActor orchestration); legacy OutboundProcessor/InboundProcessor retained behind FeatureFlags.useDataActor
 ├── State Management: ObservableObject + @Published + @Observable
 ├── Navigation: TabView + NavigationStack
 ├── Maps: Mapbox SDK (MapboxMaps)
@@ -178,14 +178,14 @@ OPS/OPS/
 │   │       ├── PhotoAnnotationRepository.swift
 │   │       ├── NotificationRepository.swift
 │   │       └── CalendarUserEventRepository.swift  # CRUD for calendar_user_events (added 2026-03-02)
-│   ├── Sync/ (8 files — rebuilt 2026-03-08)
-│   │   ├── SyncEngine.swift             # @MainActor @Observable central orchestrator (push/pull cycles, lifecycle)
-│   │   ├── OutboundProcessor.swift      # @MainActor local→server push with operation coalescing + dependency ordering
-│   │   ├── InboundProcessor.swift       # @MainActor server→local pull with field-level merge protection
-│   │   ├── RealtimeProcessor.swift      # @MainActor ObservableObject Supabase Realtime WebSocket (9 entity types)
-│   │   ├── PhotoProcessor.swift         # @MainActor adaptive photo uploads (WiFi 3 concurrent, cellular 1)
+│   ├── Sync/ (9 files — rebuilt 2026-03-08, DataActor refactor 2026-04-19)
+│   │   ├── SyncEngine.swift             # @MainActor @Observable orchestrator; dispatches through DataActor when FeatureFlags.useDataActor is on (default true 2026-04-19)
+│   │   ├── OutboundProcessor.swift      # LEGACY @MainActor path for local→server push; retained behind FeatureFlags.useDataActor for rollback
+│   │   ├── InboundProcessor.swift       # LEGACY @MainActor path for server→local pull; retained behind FeatureFlags.useDataActor for rollback
+│   │   ├── RealtimeProcessor.swift      # @MainActor Supabase Realtime WebSocket subscription (9 entity types); SwiftData writes dispatch to DataActor when flag on
+│   │   ├── PhotoProcessor.swift         # @MainActor adaptive photo uploads (WiFi 3 concurrent, cellular 1) — moves to PhotoActor in Phase 3
 │   │   ├── BackgroundSyncScheduler.swift  # BGTaskScheduler wrapper (refresh 15min, processing 30min)
-│   │   ├── SyncTypes.swift              # Shared enums (SyncError, ConnectionState, SyncEntityType — 24 types)
+│   │   ├── SyncTypes.swift              # Shared enums (SyncError, ConnectionState, SyncEntityType — 27 registered, 12 inbound-synced)
 │   │   ├── SyncStatusProvider.swift     # UI state bridge for sync indicators
 │   │   └── SupabaseSyncManager.swift    # Legacy adapter (retained for entity fetch methods not yet migrated)
 │   ├── Services/ (1 file)
@@ -578,8 +578,11 @@ OPS/OPS/
 │       ├── CrewTooltipCard.swift
 │       └── GeofenceBannerView.swift
 │
-├── Utilities/ (25 files)
-│   ├── DataController.swift        # Central data coordinator (800+ lines)
+├── Utilities/ (28 files)
+│   ├── DataController.swift        # Central data coordinator (~5000 lines; @MainActor, owns DataActor + refresh bridge)
+│   ├── DataActor.swift             # @ModelActor singleton — owns all sync/cleanup/background SwiftData writes (~2400 lines, Phase 1 2026-04-19)
+│   ├── MainContextRefreshBridge.swift  # Sendable notification rebroadcast for @Query refresh (iOS 18.2 FB14750050 insurance; iOS 26 fixed)
+│   ├── FeatureFlags.swift          # useDataActor (default true), useActorForDataControllerWrites (Phase 2), usePhotoActor (Phase 3)
 │   ├── DataHealthManager.swift     # Data integrity checks
 │   ├── AnalyticsManager.swift      # Event tracking
 │   ├── ImageFileManager.swift      # File-based image storage
@@ -1015,6 +1018,38 @@ struct ContentView: View {
     }
 }
 ```
+
+### DataActor (Background SwiftData Writes)
+
+**File:** `OPS/Utilities/DataActor.swift` (~2400 lines)
+**Status:** Phase 1 complete 2026-04-19; flag-defaulted-on. Phase 2 (DataController CRUD migration) and Phase 3 (PhotoActor split) planned post-bake.
+**References:** `docs/superpowers/specs/2026-04-18-model-actor-refactor-design.md` (design), `docs/superpowers/plans/2026-04-18-model-actor-phase1-sync-foundation.md` (Phase 1 plan), `docs/superpowers/verification/2026-04-19-phase1-verification.md` (device verification log).
+
+**Why it exists.** The main-queue `ModelContext` (from `sharedModelContainer.mainContext`) is the binding point for SwiftUI `@Query` and `@Bindable`. Writing to it from any executor other than main corrupts SwiftData's internal state (malloc double-free crashes). Before Phase 1, sync / cleanup / background writes all happened `@MainActor` — safe, but blocks the main thread during full sync (2–5 seconds for mid-size contractor datasets). DataActor moves those writes onto a separate background `ModelContext` owned by an `@ModelActor` singleton, eliminating both the crash class and the main-thread pin.
+
+**Architecture (C-pragmatic per Apple WWDC24 Sessions 10137/10138).**
+
+- **Main context + `@MainActor`** — SwiftUI view-driven edits via `@Bindable`/`@Query`. Autosave on. This is SwiftData's sweet spot; untouched by the refactor.
+- **DataActor (`@ModelActor`) + background context** — all bulk/sync/cleanup/background writes. Autosave off; mutations wrapped in `modelContext.transaction { }` for atomicity. Singleton, created once in `DataController.setModelContext` (synchronously, to avoid races with auth-path and network-reconnect sync triggers that run before async Tasks complete).
+
+**Cross-actor contract.**
+
+- Pass `PersistentIdentifier` (Sendable) across the actor boundary. Re-fetch via `modelContext.model(for: id)` on the receiving side. Registry lookup, not a predicate fetch.
+- Actors never accept `@Model` instances as parameters. Actors never touch `mainContext`. Main-actor code never touches the actor's context.
+
+**Refresh bridge.** iOS 18.2 has a known bug (FB14750050) where `@Query`-observing views don't auto-refresh when a background actor context inserts rows. `MainContextRefreshBridge` closes it: actor posts a Sendable notification on save with `[PersistentIdentifier]` payload, bridge force-registers inserted IDs in mainContext via `model(for:)`, bumps a `@Published` refresh counter. iOS 26 verification showed Apple appears to have fixed the underlying bug; bridge retained as insurance.
+
+**SyncEngine wiring.** `SyncEngine.configure` accepts `dataActor: DataActor?`. When `FeatureFlags.useDataActor` is on AND actor is non-nil, `fullSync/pullDelta/pushPending/syncCompanyNow/deltaSyncSince` dispatch to actor methods; otherwise legacy `@MainActor InboundProcessor/OutboundProcessor` paths run unchanged. `SyncEngine.setDataActor(_:)` is a late-bind setter used by `DataController.setModelContext` to cover auth-path initialization ordering.
+
+**Rollback.** `UserDefaults.standard.set(false, forKey: "feature.useDataActor")` + relaunch. Legacy paths take over; no data migration required (actor uses the same store file as the main context).
+
+**Phase 1 scope (complete).** InboundProcessor full port (syncCompany, syncUsers, syncClients, syncTaskTypes, syncProjects, syncTasks, syncSubClients, syncProjectNotes, syncPhotoAnnotations, syncDeckDesigns, syncEstimates with deleted-IDs, syncInvoices with line-items + payments + deleted-IDs, linkAllRelationships, field-level `acceptableFields` merge helper); OutboundProcessor full port (processPendingOperations, executeOperation, routeToRepository, entity handlers, coalesceOperations, per-state transactions for backoff correctness); RealtimeProcessor dispatch via `RealtimeUpdate` enum + `handleRealtimeUpdate(_:)` entry point (Supabase channel subscription stays on main per SDK requirement); all five `cleanupDuplicate*` methods; SyncEngine routing + connectivity guard on main + Spotlight snapshot replay.
+
+**Phase 2 scope (pending post-bake).** DataController CRUD write methods (`deleteProject/deleteTask/deleteClient/deleteUserAccount/updateUserProfile/updateTaskStatus/updateProjectStatus/saveClient/createProject/createTask/createClient/createTaskType/markForSyncAndAttemptImmediate/performSyncedOperation`) + sync helpers (`syncProjectTeamMembers/syncTaskStatusOptions/backfillOnboardingCompleted/forceRefreshCompany/removeSampleProjects/fetchOpsContacts`). View-driven `@Bindable` edits stay on main. Flag: `useActorForDataControllerWrites`.
+
+**Phase 3 scope (pending).** Extract dedicated `PhotoActor` for `LocalPhoto` writes + photo upload pipeline. Parallel write lane with DataActor. Flag: `usePhotoActor`.
+
+**Known followup.** At dev-account scale, `MainContextRefreshBridge.model(for:)` force-registration adds small per-row overhead with no amortizing benefit (no main-thread pin to relieve at <50 rows). Tracked as Supabase `bug_reports` `914b3945-27f5-4823-9e4b-d42f0407fcc2`; resolved at mid-size scale.
 
 ### Per-Screen ViewModels
 

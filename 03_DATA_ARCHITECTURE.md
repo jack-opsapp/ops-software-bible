@@ -1878,6 +1878,8 @@ Task.detached { await processProject(project: project) }
 
 SwiftData models are tied to their ModelContext. Passing models across thread boundaries causes crashes.
 
+**For off-main writes, use `DataActor`** (see `06_TECHNICAL_ARCHITECTURE.md` → "DataActor (Background SwiftData Writes)"). Cross the actor boundary with `PersistentIdentifier` (Sendable) and re-fetch via `modelContext.model(for: id)` on the receiving side. Never hand `@Model` instances to an actor.
+
 ### 2. Always Fetch Fresh Models
 
 ```swift
@@ -1889,11 +1891,15 @@ func processProject(projectId: String) async {
 }
 ```
 
+Inside `DataActor` methods, use `self.modelContext` (the actor's background context); do not create ad-hoc `ModelContext(sharedModelContainer)` instances from within an actor.
+
 ### 3. Use @MainActor for UI Operations
 
-### 4. Explicit ModelContext.save()
+### 4. Context-Specific Save Semantics
 
-Always save explicitly after changes -- do not rely on auto-save.
+**Main context (`sharedModelContainer.mainContext`):** autosave on. Explicit `try context.save()` still required after mutations for deterministic persistence; do not rely solely on autosave timing.
+
+**DataActor's background context:** autosave off. Wrap all mutation sequences in `try modelContext.transaction { ... }` — atomic at the SQLite level, persists on block exit, composes cleanly with SwiftData inverse-relationship cascades. Do NOT call `save()` inside a DataActor method; the transaction block handles commit.
 
 ### 5. Complete Data Wipe on Logout
 
@@ -1910,7 +1916,7 @@ This data architecture provides:
 - **Supabase DTOs** for clean API separation with snake_case column mapping
 - **Task-based scheduling** with dates stored directly on ProjectTask (CalendarEvent removed)
 - **Computed properties** for project dates, client contact cascading, and team aggregation
-- **Defensive patterns** to prevent SwiftData threading crashes
+- **Defensive patterns** to prevent SwiftData threading crashes, plus `@ModelActor DataActor` isolation for all background writes (Phase 1 of ModelActor refactor complete 2026-04-19)
 - **Complete enum system** for statuses, roles, pipeline stages, and financial types
 
 **Key Principles**:
