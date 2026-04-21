@@ -1158,31 +1158,78 @@ Having scope `all` automatically satisfies checks for `assigned` and `own`. Havi
 
 ### has_permission() RPC Function
 
+The production function accepts **`text`** for both the permission name and scope — not the `app_permission` / `permission_scope` enums the original 015 draft called for. The actually-deployed migration (`20260303054857 create_roles_and_permissions`) stored `role_permissions.permission` as `text`, and the v2 inbox permissions (migration 072, 2026-04-20) insert string values directly against that text column. Migration 075 (2026-04-20) creates the RPC server-side callers rely on — a predecessor with the enum signature never existed in prod, which caused every `checkPermissionById` call to return 403 until 075 landed.
+
 ```sql
-CREATE OR REPLACE FUNCTION has_permission(
-  p_user_id uuid,
-  p_permission app_permission,
-  p_required_scope permission_scope DEFAULT 'all'
+CREATE OR REPLACE FUNCTION public.has_permission(
+  p_user_id        uuid,
+  p_permission     text,
+  p_required_scope text DEFAULT 'all'
 ) RETURNS boolean
-LANGUAGE plpgsql SECURITY DEFINER STABLE
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = 'public', 'pg_temp'
 AS $$
+DECLARE
+  v_is_admin boolean;
+  v_scope    text;
 BEGIN
-  RETURN EXISTS (
+  IF p_user_id IS NULL OR p_permission IS NULL THEN
+    RETURN false;
+  END IF;
+
+  -- 1. Admin / account-holder / company-admin bypass (mirrors the client
+  --    PermissionStore and private.current_user_is_admin).
+  SELECT EXISTS (
     SELECT 1
-    FROM user_roles ur
-    JOIN role_permissions rp ON rp.role_id = ur.role_id
-    WHERE ur.user_id = p_user_id
-      AND rp.permission = p_permission
+    FROM public.users u
+    LEFT JOIN public.companies c ON c.id = u.company_id
+    WHERE u.id = p_user_id
+      AND u.deleted_at IS NULL
       AND (
-        rp.scope = 'all'
-        OR rp.scope = p_required_scope
-        OR (p_required_scope = 'own' AND rp.scope IN ('own', 'assigned', 'all'))
-        OR (p_required_scope = 'assigned' AND rp.scope IN ('assigned', 'all'))
+        COALESCE(u.is_company_admin, false)
+        OR u.id::text = c.account_holder_id
+        OR u.id::text = ANY(COALESCE(c.admin_ids, ARRAY[]::text[]))
       )
-  );
+  ) INTO v_is_admin;
+  IF v_is_admin THEN RETURN true; END IF;
+
+  -- 2. Role-based scope lookup (widest scope wins).
+  SELECT rp.scope
+  INTO v_scope
+  FROM public.user_roles ur
+  JOIN public.role_permissions rp ON rp.role_id = ur.role_id
+  WHERE ur.user_id = p_user_id::text            -- user_roles.user_id is text
+    AND rp.permission = p_permission
+  ORDER BY CASE rp.scope
+    WHEN 'all' THEN 1
+    WHEN 'assigned' THEN 2
+    WHEN 'own' THEN 3
+    ELSE 4
+  END
+  LIMIT 1;
+
+  IF v_scope IS NULL THEN RETURN false; END IF;
+
+  -- 3. Scope hierarchy check.
+  IF v_scope = 'all' THEN RETURN true; END IF;
+  IF v_scope = 'assigned' THEN
+    RETURN p_required_scope IN ('assigned', 'own');
+  END IF;
+  IF v_scope = 'own' THEN
+    RETURN p_required_scope = 'own';
+  END IF;
+
+  RETURN false;
 END;
 $$;
 ```
+
+**Callers:**
+- Server: `checkPermissionById(userId, permission, requiredScope?)` in
+  `OPS-Web/src/lib/supabase/check-permission.ts`. Fail-closed with
+  structured error logging on RPC failure.
+- RLS: `private.current_user_has_permission(text, text)` for the same
+  logic in an `auth.uid()`-scoped context. Used in policies.
 
 ### RLS on Permission Tables
 

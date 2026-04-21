@@ -3588,6 +3588,16 @@ The previous inbox (§19 v1, 2026-03-19) was *pipeline-only* — only threads th
 
 All thread state lives on the `email_threads` table. Messages still live on `activities` (unchanged). See §03_DATA_ARCHITECTURE.md for the full schema — tables `email_threads` and `email_thread_category_corrections` were added in migration `071_email_threads_and_corrections.sql` (2026-04-20).
 
+### Cache-fill strategy
+
+Inbox v2 is a **cache-first** design (Superhuman/Fyxer model): the inbox list is always served from `email_threads`, never from a live Gmail/M365 list call. Thread detail opens live-fetch the provider for full bodies, then fall back to `activities` on provider failure. Three pipelines populate the cache:
+
+1. **Live delta sync** (`src/lib/api/services/sync-engine.ts`, Step 7.5) — every email flowing through `createActivity` is upserted into `email_threads` via `EmailThreadService.upsertFromEmail`, then classified. This is the steady-state path for mail arriving after the connection is linked.
+
+2. **Activities backfill** (`migration 076_backfill_email_threads.sql`, 2026-04-20) — SQL-only, idempotent. Walks the existing `activities` table (filtered to real emails via `email_message_id IS NOT NULL`, skipping synthetic "Pipeline import:" rows), derives direction from `from_email = connection.email`, seeds `AWAITING_REPLY`/`HAS_ATTACHMENT` labels via the same regex heuristics as `evaluateLabelsFromMessages`, and upserts one row per unique `(connection_id, provider_thread_id)` pair. Covers everything in `activities` but misses mail that was never synced (e.g. non-opportunity-linked threads from before the v2 rebuild).
+
+3. **Historical Gmail/M365 backfill** (`POST /api/inbox/backfill`, endpoint added 2026-04-20) — the missing Superhuman-style "on-connect full sync". Walks the provider's full mailbox via the new `EmailProviderInterface.listThreadIds({ pageSize, after, pageToken })` method — Gmail implementation uses `/messages?q=in:anywhere after:<epoch>` with `nextPageToken`, M365 uses `/me/messages?$select=conversationId&$orderby=receivedDateTime desc` with `@odata.nextLink`. For each thread not already cached, the endpoint pulls full content via `provider.fetchThread` and runs every message through `EmailThreadService.upsertFromEmail`. One call = one list page, processed end-to-end; clients loop until `completed: true`. Verified at 200–300 threads / ~100s per call — safe inside Vercel's 300 s limit on mailboxes up to a few thousand unseen threads. Classification is off by default; backfilled threads land as `OTHER` and get classified on the next inbound message or via explicit reclassify.
+
 ### Primary categories (exactly one per thread)
 
 | Category | When it applies |
@@ -3742,9 +3752,10 @@ All gating flows through `inboxModule` in `src/lib/types/permissions.ts`:
 | Route | Method | Purpose |
 |-------|--------|---------|
 | `/api/inbox/threads` | GET | Paginated list (cursor-based, 30s refetch). Scope + rail + category + search query params. |
-| `/api/inbox/threads/[id]` | GET | Thread detail incl. provider messages. |
+| `/api/inbox/threads/[id]` | GET | Thread detail incl. provider messages. Live-fetches Gmail/M365 for full bodies and derives direction server-side against the connection email; falls back to `activities` if the provider call fails. Each message carries `direction`, `bodyText`, and `cleanBodyText` (quoted reply chain stripped via `stripQuotedContent`). |
 | `/api/inbox/threads/[id]` | PATCH | Actions: `archive` / `unarchive` / `snooze` / `unsnooze` / `recategorize` / `markRead`. |
 | `/api/inbox/writeback-preference` | POST | Set `archive_writeback_preference` on a connection. |
+| `/api/inbox/backfill` | POST | Pulls historical mailbox content into `email_threads` one list-page at a time. Provider-agnostic (Gmail `messages.list`, M365 `/me/messages`). Body: `{ connectionId, monthsBack?=12, maxPages?=1, startPageToken?, classify?=false, dryRun?=false }`. Response reports `threadsSeen / threadsAlreadyPresent / threadsBackfilled / messagesUpserted / nextPageToken / completed`. Idempotent via `(connection_id, provider_thread_id)` unique constraint — safe to re-run and interleave with live sync. Clients loop until `completed: true` or `nextPageToken: null`. |
 | `/api/cron/unsnooze` | GET | 5-min cron — re-applies INBOX to snoozed threads past their `snoozed_until`. |
 | `/api/cron/stale-leads` | GET | Hourly cron — invokes router on LEAD/CLIENT threads >7d quiet with outbound-last. |
 | `/api/cron/phase-c-graduation-check` | GET | Daily cron — fires `ai_milestone` notifications for categories ready to graduate. |
