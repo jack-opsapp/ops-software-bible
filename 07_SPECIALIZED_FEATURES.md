@@ -2804,47 +2804,36 @@ User notification preferences stored in `@AppStorage`:
 - **Priority filter:** "all", "important", "critical"
 - **Temporary mute:** mute for N hours
 
-#### Web Notification Rail (OPS Web)
+#### Web Notifications Drawer (OPS Web — 2026-04-23)
 
-The web app surfaces notifications via a horizontal rail in the TopBar header, replacing the old page action buttons (now handled by the FAB).
+The web app surfaces notifications via a right-edge vertical drawer, triggered by a reusable `<EdgeTab>` primitive. Replaces the 2026-03-09 horizontal topbar rail. See `docs/superpowers/specs/2026-04-23-vertical-notification-system.md` for design rationale.
 
 **Components:**
-- `src/components/layouts/notification-rail.tsx` — Container with collapsed/expanded toggle
-- `src/components/layouts/notification-pill.tsx` — Collapsed indicator (6×14px rounded pill, color-coded)
-- `src/components/layouts/notification-mini-card.tsx` — Expanded inline card (180px, frosted glass, 36px tall)
-- `src/components/layouts/notification-card-full.tsx` — Full card for modal view (title, body, timestamp, action button)
-- `src/components/layouts/notification-modal.tsx` — Centered dialog with grouped notifications (Today/Yesterday/Earlier)
+- `src/components/ui/edge-tab.tsx` + `edge-tab.types.ts` — reusable 28px right-edge tab primitive (consumed by Notifications now, FAB in a future migration)
+- `src/components/layouts/notifications-tab.tsx` — Notifications-specific tab wrapper (count + accent + `N` shortcut)
+- `src/components/layouts/notifications-drawer.tsx` — 360px drawer with chip-filter buckets (ALL/CRITICAL/ATTENTION/AMBIENT), row list, header actions (mute/clear-all), footer
+- `src/components/layouts/notifications-row.tsx` — expandable row (icon + title + timestamp; click expands body + action buttons + dismiss)
+- `src/lib/notifications/notification-meta.ts` — NOTIF_TYPE_META registry mapping 18 NotificationType values to `{label, icon, tone}`
+- `src/lib/notifications/translate-copy.ts` — i18n-keyed notification content translator (shared util)
+- `src/stores/edge-tab-store.ts` — Zustand single-slot mutual-exclusion store (`activeTab: 'notifications' | 'fab' | null`)
 
 **States:**
-- **Collapsed (default):** Row of small pills stacking left-to-right (oldest first). Gray = standard, accent (#597794) = persistent. Count label after pills. Click to expand.
-- **Expanded:** Pills animate into mini cards with horizontal scroll. Each card shows title, optional action button, optional dismiss X. "View all" button at end.
-- **Modal:** Triggered by bell icon or "View all". Full notification cards grouped by date. "Dismiss all" for non-persistent.
+- **Closed (default):** 28px edge tab flush right. Vertical "NOTIFICATIONS" wordmark + count badge + bell glyph. Left accent stripe is rose if any CRITICAL, tan if any ATTENTION, steel-blue (accent) otherwise.
+- **Open:** 360px drawer slides in from right (260ms); tab grows to drawer-area height, glyph rotates to ×, wordmark reads "CLOSE". Drawer shows chip filters, scrollable row list, footer.
+- **Row expanded:** click any row to inline-expand body + inline actions (ACTION button, SNOOZE stub, DISMISS).
 
-**Data Model Extensions (Web):**
-```typescript
-interface AppNotification {
-  // ... base fields (id, userId, companyId, type, title, body, projectId, noteId, isRead, createdAt) ...
-  persistent: boolean;       // true = cannot be dismissed by user
-  actionUrl: string | null;  // deep-link (e.g. "/projects/abc")
-  actionLabel: string | null; // button label (e.g. "View Results")
-}
-```
+**Keyboard:**
+- `N` toggles the drawer (global; suppressed in inputs/textareas/contenteditable).
+- `Escape` closes the drawer.
+- Arrow `Up`/`Down` move focus between rows.
 
-Supabase columns: `persistent` (BOOLEAN DEFAULT false), `action_url` (TEXT), `action_label` (TEXT).
+**Mutual exclusion:** `useEdgeTabStore` ensures only one edge tab drawer is open at a time. Opening Notifications will atomically close the future FAB drawer.
 
-**State Management:**
-- `src/stores/notification-rail-store.ts` — Zustand store for collapsed/expanded/modal UI state
-- `src/lib/hooks/use-notifications.ts` — TanStack Query hook with 30s stale time, optimistic dismiss mutations (`useDismissNotification`, `useDismissAllNotifications`)
+**Data Model:** unchanged — existing `AppNotification` + `notifications` table (columns `persistent`, `action_url`, `action_label` already present).
 
-**Service Methods (Web):**
-- `NotificationService.fetchUnread(userId, companyId)` — ascending order, limit 50
-- `NotificationService.markAsRead(notificationId)` — single dismiss
-- `NotificationService.markAllAsRead(userId, companyId)` — mark all read
-- `NotificationService.dismissAllDismissible(userId, companyId)` — dismiss only non-persistent
+**Motion:** `drawerVariants` / `rowVariants` / `chipVariants` in `src/lib/utils/motion.ts`, all with reduced-motion fallbacks.
 
-**Animation:** All variants in `src/lib/utils/motion.ts` with `EASE_SMOOTH` easing and reduced-motion fallbacks. No spring/bounce.
-
-**Integration Pattern:** Any feature that produces a user-facing event should insert a row into the `notifications` table. The rail picks it up automatically via the polling hook.
+**Integration:** any feature that produces a user-facing event inserts a row into the `notifications` table. The drawer picks it up automatically via TanStack Query's `useNotifications()` hook.
 
 ---
 
