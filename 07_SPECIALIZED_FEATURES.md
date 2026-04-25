@@ -2809,13 +2809,13 @@ User notification preferences stored in `@AppStorage`:
 The web app surfaces notifications via a right-edge vertical drawer, triggered by a reusable `<EdgeTab>` primitive. Replaces the 2026-03-09 horizontal topbar rail. See `docs/superpowers/specs/2026-04-23-vertical-notification-system.md` for design rationale.
 
 **Components:**
-- `src/components/ui/edge-tab.tsx` + `edge-tab.types.ts` — reusable 28px right-edge tab primitive (consumed by Notifications now, FAB in a future migration)
+- `src/components/ui/edge-tab.tsx` + `edge-tab.types.ts` — reusable 28px right-edge tab primitive (consumed by Notifications and Quick Actions)
 - `src/components/layouts/notifications-tab.tsx` — Notifications-specific tab wrapper (count + accent + `N` shortcut)
 - `src/components/layouts/notifications-drawer.tsx` — 360px drawer with chip-filter buckets (ALL/CRITICAL/ATTENTION/AMBIENT), row list, header actions (mute/clear-all), footer
 - `src/components/layouts/notifications-row.tsx` — expandable row (icon + title + timestamp; click expands body + action buttons + dismiss)
 - `src/lib/notifications/notification-meta.ts` — NOTIF_TYPE_META registry mapping 18 NotificationType values to `{label, icon, tone}`
 - `src/lib/notifications/translate-copy.ts` — i18n-keyed notification content translator (shared util)
-- `src/stores/edge-tab-store.ts` — Zustand single-slot mutual-exclusion store (`activeTab: 'notifications' | 'fab' | null`)
+- `src/stores/edge-tab-store.ts` — Zustand single-slot mutual-exclusion store (`activeTab: 'notifications' | 'quick-actions' | null`)
 
 **States:**
 - **Closed (default):** 28px edge tab flush right. Vertical "NOTIFICATIONS" wordmark + count badge + bell glyph. Left accent stripe is rose if any CRITICAL, tan if any ATTENTION, steel-blue (accent) otherwise.
@@ -2827,13 +2827,59 @@ The web app surfaces notifications via a right-edge vertical drawer, triggered b
 - `Escape` closes the drawer.
 - Arrow `Up`/`Down` move focus between rows.
 
-**Mutual exclusion:** `useEdgeTabStore` ensures only one edge tab drawer is open at a time. Opening Notifications will atomically close the future FAB drawer.
+**Mutual exclusion:** `useEdgeTabStore` ensures only one edge tab drawer is open at a time. Opening Notifications atomically closes Quick Actions and vice versa.
 
 **Data Model:** unchanged — existing `AppNotification` + `notifications` table (columns `persistent`, `action_url`, `action_label` already present).
 
 **Motion:** `drawerVariants` / `rowVariants` / `chipVariants` in `src/lib/utils/motion.ts`, all with reduced-motion fallbacks.
 
 **Integration:** any feature that produces a user-facing event inserts a row into the `notifications` table. The drawer picks it up automatically via TanStack Query's `useNotifications()` hook.
+
+---
+
+#### Web Quick Actions Edge Tab (OPS Web — 2026-04-25)
+
+The Quick Actions tab replaces the prior bottom-right circular FAB (`floating-action-button.tsx`, removed 2026-04-25). It mounts on the right edge below Notifications and pairs with a 308×452 panel-anchored drawer. Spec source: `ops-design-system-v2/project/fab/variants.jsx` V1 — selected per the design brief at `ops-design-system-v2/project/fab/FAB Redesign.html` for "lowest intrusion / ops-iest shape." Long-press edit mode is dropped in favor of a persistent `CUSTOMIZE →` footer routing to `/settings?tab=quick-actions`.
+
+**Components:**
+- `src/components/layouts/quick-actions-tab.tsx` — wraps `<EdgeTab>`. `restHeight=132`, `stackOffset=+94` (mirrors notif `-94`), accent always `--ops-accent`, plus glyph rotates 0°→45° on open. `Q` keyboard shortcut.
+- `src/components/layouts/quick-actions-drawer.tsx` — 308×452 panel-anchored drawer. Header `// QUICK ACTIONS` + `Q` KeyHint, action list (icon + label + 3-letter hint), footer `CUSTOMIZE →`.
+- `src/lib/hooks/use-quick-actions.ts` — returns the user's filtered actions (permission + feature-flag + user-prefs filtering, lifted from the deleted FAB component).
+- `src/lib/constants/fab-actions.ts` — extended with `hintCode` field per action: `EXP / LED / EST / INV / CLI / PRJ / TSK / TTY / ITM`.
+
+**Drawer surface (denser than Notifications by spec):**
+- Background: `rgba(32, 34, 38, 0.92)` (denser, slightly lighter tone for action-list legibility)
+- Border: `1px solid rgba(255, 255, 255, 0.18)`, `border-right: none`
+- Backdrop: `blur(28px) saturate(1.3)`
+- Top-edge highlight gradient applied (matches all glass surfaces)
+- Position: anchored to tab vertical center via `stackOffset` math, NOT full-rail like Notifications
+
+**States:**
+- **Closed:** 28×132 tab. Vertical "QUICK ACTIONS" wordmark + `+` glyph. Steel-blue (`--ops-accent`) accent stripe always.
+- **Open:** drawer slides in from right (260ms); tab grows to drawer height, glyph rotates 45° → `×`, wordmark reads "CLOSE". Drawer shows action list + customize footer.
+- **Hover (closed):** tab brightens, glow shadow on accent stripe, tooltip with `Q` KeyHint flies out left.
+
+**Action click:**
+1. Permission check (`usePermissionStore.can(action.requiredPermission)`).
+2. Feature flag check (`canAccessFeature(getSlugForRoute(...))`).
+3. SetupGate check — if incomplete, opens `SetupInterceptionModal` with the action queued via `pendingAction`.
+4. On gated approval: `handler === "window"` → `useWindowStore.openWindow(...)`; `handler === "route"` → `router.push(...)`.
+5. Drawer closes via `useEdgeTabStore.close('quick-actions')`.
+
+**Keyboard:**
+- `Q` toggles the drawer (global; suppressed in inputs/textareas/contenteditable; no modifiers).
+- `Escape` closes.
+
+**Hide conditions:** identical to the prior FAB — hidden on `/intel`, when dashboard customizing, when a wizard is open, or when the duplicate-review sheet is open. Returns `null` from both tab and drawer when any condition is true.
+
+**Customize:** the `CUSTOMIZE →` footer button routes to `/settings?tab=quick-actions` and closes the drawer. Settings tab provides reorder + add/remove for the user's `fabActions` preference array (existing `updateFabActions` mutation in `auth-store.ts`).
+
+**Motion:** `quickActionsDrawerVariants` / `quickActionsRowVariants` in `src/lib/utils/motion.ts`, both with reduced-motion fallbacks (opacity-only at 150ms).
+
+**Removed:**
+- `src/components/ops/floating-action-button.tsx` (deleted 2026-04-25)
+- Long-press edit mode (replaced by routed customize)
+- The bottom-right 52px circular FAB position
 
 ---
 
