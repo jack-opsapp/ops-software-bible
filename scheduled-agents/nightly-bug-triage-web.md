@@ -14,7 +14,7 @@ This prompt is the OPS-Web cron's entry point. It inherits the full contract in 
 |---|---|
 | Working directory | `/Users/jacksonsweet/Projects/OPS/OPS-Web` |
 | Main branch | `main` |
-| Build command | `npm run typecheck && npm run build` (typecheck runs `tsc --noEmit`; `build` runs Next.js) |
+| Build command | `npm run type-check && npm run build` (`type-check` runs `tsc --noEmit`; `build` runs Next.js) |
 | Style source of truth | `.interface-design/system.md` + tokens in `src/styles/tokens.css` |
 | Data layer | Supabase + TanStack Query. RLS enabled on all app tables. |
 | Auth | Firebase Auth JWT → Supabase (via Firebase↔Supabase bridge) |
@@ -45,7 +45,7 @@ All of `OPS-Web/src/` except:
 
 ## Per-platform build-failure policy
 
-`npm run typecheck && npm run build` must succeed before committing. If it fails:
+`npm run type-check && npm run build` must succeed before committing. If it fails:
 
 1. First, try to fix the error if clearly caused by the current change.
 2. If the failure appears pre-existing (fails on `main`), revert the current bug's changes, escalate with `requires_human_review = true` and reason `"Nightly web agent: build fails on main — pre-existing break. Cannot verify fix in isolation."`

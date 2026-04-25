@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>co.opsapp.nightly-bug-triage-web</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-l</string>
+        <string>/Users/jacksonsweet/Projects/OPS/ops-software-bible/scheduled-agents/local/nightly-bug-triage-web.sh</string>
+    </array>
+
+    <!-- Local time. launchd's StartCalendarInterval is in the system's
+         local timezone, NOT UTC. 3am local = 3am wherever the Mac is. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- If the Mac is asleep at 3am, launchd will fire as soon as it wakes
+         (StartCalendarInterval has built-in catch-up semantics on macOS).
+         Combine with `pmset repeat wakeorpoweron` for guaranteed wake. -->
+
+    <key>StandardOutPath</key>
+    <string>/Users/jacksonsweet/Library/Logs/ops-nightly/web-launchd.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jacksonsweet/Library/Logs/ops-nightly/web-launchd.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Ensure PATH includes Homebrew + claude's install dir, since
+             launchd starts with a minimal PATH. Adjust if your claude
+             binary lives elsewhere. -->
+        <key>PATH</key>
+        <string>/Users/jacksonsweet/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Don't restart on exit. This is a once-per-day job. -->
+    <key>RunAtLoad</key>
+    <false/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
