@@ -2938,6 +2938,31 @@ Full doc: `OPS-Web/docs/email/suppressions.md`.
 - **Webhook hardening:** `email_events` now has `uq_email_events_idempotency` so SendGrid retries don't duplicate rows. The webhook upserts with `ignoreDuplicates: true` and is rate-limited to 600 req/min/IP via Vercel KV.
 - **Operator controls:** `POST /api/admin/email/suppressions` to add manual entries (single or batch up to 1000), `DELETE /api/admin/email/suppressions/{email}?list=` to unblock.
 
+### §14.6 Email compliance — CAN-SPAM + CASL
+
+Every OPS email carries a compliance footer (legal name + physical address +
+unsubscribe link) and `List-Unsubscribe` / `List-Unsubscribe-Post` headers
+(RFC 2369 + RFC 8058). The unsubscribe token is HMAC-SHA256 over
+`email|list|expiresAt`, signed with `EMAIL_UNSUBSCRIBE_SECRET`. POST to
+`/api/email/unsubscribe` (JSON or form-urlencoded for Gmail one-click)
+verifies and inserts into `email_suppressions` (PR 1 / §14.5).
+
+CASL consent is recorded in `newsletter_subscribers.consent_at` /
+`consent_ip` / `consent_source` (migration 084). Newsletter signup form
+lives in `ops-site` — those routes write the consent columns; OPS-Web only
+reads them for inquiry response.
+
+Whitelabel portal emails use the customer's `companies.physical_address`
+(migration 085) — the OPS address is the fallback when the company hasn't
+filled it in.
+
+- Source of truth for legal identifiers: `OPS-Web/src/lib/email/constants.ts`.
+- Compliance footer primitive: `src/lib/email/react/primitives/ComplianceFooter.tsx`.
+- Header injection: `buildComplianceHeaders()` inside `src/lib/email/sendgrid.tsx`.
+- Public POST endpoint: `src/app/api/email/unsubscribe/route.ts`.
+- Public confirmation page: `src/app/unsubscribe/page.tsx` (en + es).
+- Operator runbook: `OPS-Web/docs/email/compliance.md`.
+
 ---
 
 ## 15. Crew Location Tracking
