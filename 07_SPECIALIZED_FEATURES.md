@@ -2881,6 +2881,53 @@ The Quick Actions tab replaces the prior bottom-right circular FAB (`floating-ac
 - Long-press edit mode (replaced by routed customize)
 - The bottom-right 52px circular FAB position
 
+### §14.4 Email infrastructure (typed React Email)
+
+OPS-Web sends every transactional and marketing email through
+`src/lib/email/sendgrid.tsx`. The chokepoint exposes one typed function per
+email kind (`sendPasswordReset`, `sendTeamInvite`, `sendBetaAccessRequest`,
+`sendTrialExpiryWarning`, etc.) and routes each through one of four sender
+buckets defined in `src/lib/email/senders.ts`:
+
+| Bucket | Address | Purpose |
+|--------|---------|---------|
+| DISPATCH | `dispatch@opsapp.co` | Product, team, beta, trial, billing, ads briefing |
+| GATE | `gate@opsapp.co` | Security, auth, password, email verification |
+| FIELD_NOTES | `field@opsapp.co` | Newsletter, long-form content |
+| PORTAL | per-company name + `SENDGRID_FROM_EMAIL` | Whitelabel portal emails |
+
+Templates are React components under `src/lib/email/react/templates/`
+(17 today: `PasswordReset`, `EmailVerification`, `EmailChangeConfirmation`,
+`TeamInvite`, `RoleNeeded`, `BetaAccessRequest`, `BetaAccessDecision`,
+`AdsBriefing`, `BlogNewsletter`, `FieldNotesNewsletter`,
+`TrialExpiryWarning`, `TrialExpiryDiscount`, `TrialExpiryReengagement`,
+`PortalEstimateReady`, `PortalInvoiceReady`, `PortalMagicLink`,
+`PortalQuestionsReminder`). Each template is composed of layout primitives
+in `src/lib/email/react/primitives/` (`Body`, `Button`, `Divider`, `Footer`,
+`Headline`, `Hero`, `InfoBlock`, `Paragraph`, `Spacer`) and wrapped in
+either `OpsEmailLayout` or `PortalEmailLayout`.
+
+Tokens live in `src/lib/email/react/primitives/tokens.ts` (`emailTokens`
+const). The token shape is intentionally email-constrained — only inline
+styles, only web-safe fonts, no `backdrop-filter`. The web-app glass
+surface (`rgba(18,18,20,0.58)` + `backdrop-blur(28px)`) is replaced with an
+opaque `rgba(10,10,10,0.70)` fill since `backdrop-filter` does not render
+in any major email client.
+
+Fonts: **Mohave** for body and headings (uppercase headings use
+`letter-spacing: 0.04em`, `font-weight: 400`), **JetBrains Mono** for
+micro-labels and numbers. Cake Mono is Adobe Typekit-only and is not
+available in email. Kosugi was retired 2026-04-17.
+
+PMF re-render: `src/lib/email/pmf-bridge.tsx` selects between the legacy
+`src/emails/pmf/*` templates and the new typed templates
+(`PmfThresholdAlert`, `PmfDailyDigest`, `PmfWeeklyDigest`) based on
+`EMAIL_PMF_NEW_TEMPLATES`. Defaults to legacy. Set to `true` in staging
+during the bake; flip in production after a one-week soak.
+
+Operator setup: `OPS-Web/docs/email/sendgrid-senders-setup.md`. Until DNS
+is aligned, every typed sender falls back to `SENDGRID_FROM_EMAIL`.
+
 ---
 
 ## 15. Crew Location Tracking
