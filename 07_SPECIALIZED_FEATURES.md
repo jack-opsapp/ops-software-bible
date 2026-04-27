@@ -2928,6 +2928,16 @@ during the bake; flip in production after a one-week soak.
 Operator setup: `OPS-Web/docs/email/sendgrid-senders-setup.md`. Until DNS
 is aligned, every typed sender falls back to `SENDGRID_FROM_EMAIL`.
 
+### §14.5 Email suppressions
+
+Full doc: `OPS-Web/docs/email/suppressions.md`.
+
+- **Source of truth:** `public.email_suppressions` (added 2026-04-27 via migrations `079`–`083`). Every send checks this table before dispatch.
+- **Auto-population:** trigger `trg_email_events_auto_suppress` fans `bounce` (hard/blocked), `spamreport`, `unsubscribe`, and `group_unsubscribe` events from the SendGrid webhook into the suppression list. Soft bounces and dropped events are not auto-suppressed.
+- **Send-time gate:** every `sendXxx` in `src/lib/email/sendgrid.tsx` routes through `gatedSend`, which calls `isSuppressed(email, list)` and silently skips suppressed recipients. Skipped sends emit `email_log.status='suppression_skipped'` for observability.
+- **Webhook hardening:** `email_events` now has `uq_email_events_idempotency` so SendGrid retries don't duplicate rows. The webhook upserts with `ignoreDuplicates: true` and is rate-limited to 600 req/min/IP via Vercel KV.
+- **Operator controls:** `POST /api/admin/email/suppressions` to add manual entries (single or batch up to 1000), `DELETE /api/admin/email/suppressions/{email}?list=` to unblock.
+
 ---
 
 ## 15. Crew Location Tracking
