@@ -5293,4 +5293,128 @@ send to a suppressed address must remove the suppression first via
 
 ---
 
+### §14.12 Event Monitor + Anomaly Alerts (PR 8)
+
+Live operational dashboard inside `/admin/email?tab=event-monitor` plus a
+5-minute cron that detects deliverability anomalies, writes an
+audit-grade log, fires notification rail entries, and — for critical
+bounce / spam spikes — auto-pauses global sending via PR 4's `pause()`.
+
+**Thresholds** (`src/lib/email/anomaly-thresholds.ts`):
+
+| Kind | Warn | Critical | Notes |
+|---|---|---|---|
+| `bounce_spike` | bounce_pct ≥ 5% | bounce_pct ≥ 10% | Min 5 sends/window |
+| `spam_spike` | spam_pct ≥ 0.1% | spam_pct ≥ 0.5% | Min 5 delivered/window |
+| `delivery_drop` | delivered/sent < 80% | < 60% | Min 5 sends/window |
+| `volume_drop` | sent/baseline < 10% | < 1% | Requires 60-min baseline |
+
+The pure `evaluateThresholds(snapshot)` returns the full list of breaches.
+`MIN_SENDS_FOR_PCT = 5` suppresses noise from tiny windows.
+
+**Anomaly cron — `/api/cron/email/anomaly-check` (every 5 min):**
+
+1. Calls `email_event_metrics(15)` + `email_event_metrics(60)` (baseline).
+2. Runs `evaluateThresholds`.
+3. Reads recent `email_anomaly_log` (60 min) — dedup map keyed by `kind`.
+4. Skips evals where same kind already logged at ≥ severity within 60 min.
+5. Inserts new anomaly into `email_anomaly_log`.
+6. For `severity = critical` AND kind ∈ {`bounce_spike`, `spam_spike`}:
+   calls `pause('global', reason, severity='critical', anomalyLogId=<id>)` —
+   actor identity from `PMF_OPERATOR_USER_ID` / `PMF_NOTIFICATION_EMAIL`.
+7. Inserts `notifications` row (type `email_anomaly`) — persistent for
+   critical, dismissible for warn. `action_url = /admin/email?tab=event-monitor`.
+8. Updates the anomaly row with `pause_audit_id`, `notification_id`,
+   `action_taken` (human-readable description).
+
+**Action chain (auditable in SQL):**
+
+```
+email_anomaly_log.id
+    │
+    ├── notification_id    → notifications.id (rail entry)
+    ├── pause_audit_id     → email_pause_audit_log.id
+    │       │
+    │       └── (where action='pause', severity='critical',
+    │            anomaly_log_id=email_anomaly_log.id ← back-pointer)
+    │
+    └── action_taken        (text describing the chain)
+```
+
+**Tables / RPCs:**
+
+- `email_anomaly_log` — append-only log. Indexed `(kind, detected_at DESC)`,
+  partial `(... WHERE resolved_at IS NULL)`. UPDATE/DELETE revoked from
+  non-service roles.
+- `email_pause_audit_log` — extended in PR 8 with optional `severity` +
+  `anomaly_log_id` columns. Manual pauses from killswitch admin route leave
+  both NULL; cron pauses populate both.
+- `email_event_metrics(p_minutes_back, p_bucket)` — SECURITY DEFINER, returns
+  JSONB blob: `{window_minutes, total_sent, total_delivered, total_bounced,
+  bounce_pct, total_spam, spam_pct, total_open, open_pct, total_click,
+  click_pct, error_events, by_minute[]}`. Bucket sizes: `1m | 5m | 15m | null`.
+- `email_top_bounce_domains(p_minutes_back, p_limit)` — SECURITY DEFINER,
+  returns `(domain, bounce_count, bounce_pct)` ordered DESC.
+- `idx_email_events_timestamp_event` — composite covering index on the
+  metrics RPC hot path.
+
+**Admin UI — Event Monitor tab:**
+
+| Component | Role |
+|---|---|
+| `BounceGauge` | Semicircular SVG arc 0..15% with green/yellow/red zones. Needle animates with `EASE_SMOOTH` over 0.6s. Always 15-min window regardless of UI filter. |
+| `MonitorMetricBar` | 6 metric cards (sent / delivered / bounced / spam / opened / clicked) with 60-min sparklines from `by_minute` buckets. JetBrains Mono `tnum`. |
+| `EventStream` | AnimatePresence list, last 50 rows, polls every 5s while visible. Each row colored by event type. |
+| `TopBounceDomains` | Top 10 with horizontal `#B58289` fill bars, polls every 10s. |
+| `AnomalyHistory` | Paginated table (25/page), expandable JSON context rows, polls every 15s. |
+| `MonitorFilters` | Window (15m/1h/6h/24h), bucket (1m/5m/15m), event types (chips). |
+
+All polling pauses on `document.visibilityState !== 'visible'` to avoid
+wasted calls when the operator is on another tab.
+
+**Cron schedule (in `vercel.json`):**
+
+| Path | Schedule (UTC) |
+|---|---|
+| `/api/cron/email/anomaly-check` | `*/5 * * * *` |
+
+**Env vars (no new ones):**
+
+| Name | Use |
+|---|---|
+| `CRON_SECRET` | Cron auth (Bearer token) |
+| `PMF_OPERATOR_USER_ID` | Actor on auto-pause + recipient of rail notification |
+| `PMF_NOTIFICATION_EMAIL` | Actor email on auto-pause audit row |
+| `PMF_OPERATOR_COMPANY_ID` | `notifications.company_id` (NOT NULL) |
+
+**Migrations:**
+
+| File | Role |
+|---|---|
+| `OPS-Web/supabase/migrations/104_email_pause_audit_log_anomaly_columns.sql` | severity + anomaly_log_id columns |
+| `OPS-Web/supabase/migrations/105_email_anomaly_log.sql` | Anomaly log table + FK back from pause audit log |
+| `OPS-Web/supabase/migrations/106_email_event_metrics_rpc.sql` | RPC pair |
+| `OPS-Web/supabase/migrations/107_email_events_timestamp_event_idx.sql` | Composite covering index |
+
+**Key files:**
+
+| File | Role |
+|---|---|
+| `OPS-Web/src/lib/email/anomaly-thresholds.ts` | Pure evaluator + constants |
+| `OPS-Web/src/lib/email/pause.ts` | Extended `pause()` with severity + anomalyLogId, returns `pauseAuditId` |
+| `OPS-Web/src/app/api/cron/email/anomaly-check/route.ts` | The 5-min cron |
+| `OPS-Web/src/app/api/admin/email/monitor/metrics/route.ts` | Live metrics |
+| `OPS-Web/src/app/api/admin/email/monitor/stream/route.ts` | Recent events |
+| `OPS-Web/src/app/api/admin/email/monitor/domains/route.ts` | Top bounce domains |
+| `OPS-Web/src/app/api/admin/email/monitor/anomalies/route.ts` | Paginated anomaly log |
+| `OPS-Web/src/app/admin/email/_components/event-monitor-tab.tsx` | Orchestrator |
+| `OPS-Web/src/app/admin/email/_components/bounce-gauge.tsx` | Gauge |
+| `OPS-Web/src/app/admin/email/_components/event-stream.tsx` | Live tail |
+| `OPS-Web/src/app/admin/email/_components/monitor-metric-bar.tsx` | 6 metric cards |
+| `OPS-Web/src/app/admin/email/_components/top-bounce-domains.tsx` | Domain list |
+| `OPS-Web/src/app/admin/email/_components/anomaly-history.tsx` | Anomaly log UI |
+| `OPS-Web/src/app/admin/email/_components/monitor-filters.tsx` | Filter chips |
+
+---
+
 **End of Document**
