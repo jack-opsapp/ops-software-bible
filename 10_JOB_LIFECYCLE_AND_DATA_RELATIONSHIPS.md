@@ -722,6 +722,80 @@ interface CompanySettings {
 
 ---
 
+## Recurring Task Lifecycle (Phase 3 — added 2026-04-27)
+
+Recurring tasks short-circuit the estimate-driven task generation pipeline. They live as `task_recurrences` templates that the cron worker `/api/cron/recurrence-generate` materializes into concrete `project_tasks` rows on a 60-day rolling horizon. Generated occurrences are otherwise normal tasks — schedulable, completable, deletable.
+
+### Flow diagram
+
+```
+                ┌──────────────────────────────────────────┐
+  USER ACTION   │ Repeat picker on task detail panel       │
+                │ Selects: Off / Daily / Weekly / ... /    │
+                │ Custom (RFC 5545 RRULE editor)           │
+                └────────────────────┬─────────────────────┘
+                                     │
+                                     ▼
+                ┌──────────────────────────────────────────┐
+  TEMPLATE      │ task_recurrences row                     │
+  CREATED       │   rrule, start_anchor, end_anchor,       │
+                │   all_day, start_time, end_time,         │
+                │   duration, team_member_ids,             │
+                │   next_generation_at = NOW()             │
+                └────────────────────┬─────────────────────┘
+                                     │
+                                     ▼
+                ┌──────────────────────────────────────────┐
+  CRON RUN      │ /api/cron/recurrence-generate every 4h:  │
+                │ 1. SELECT WHERE next_generation_at<=NOW()│
+                │ 2. RRule.between(NOW, NOW+60d)           │
+                │ 3. For each candidate:                   │
+                │    - lookup exception (skip / override)  │
+                │    - INSERT project_tasks (recurrence_id │
+                │      + recurrence_origin_date)           │
+                │    - emit `schedule_change` notification │
+                │ 4. UPDATE next_generation_at = NOW+4h    │
+                └────────────────────┬─────────────────────┘
+                                     │
+                                     ▼
+                ┌──────────────────────────────────────────┐
+  CALENDAR      │ project_tasks row visible in Day / Week /│
+                │ Month / Crew / Hourly views just like    │
+                │ any one-off task. Drag / edit triggers   │
+                │ the recurrence-edit prompt.              │
+                └────────────────────┬─────────────────────┘
+                                     │
+                  ┌──────────────────┼──────────────────┐
+                  │                  │                  │
+                  ▼                  ▼                  ▼
+            ┌─────────┐      ┌──────────────┐    ┌──────────┐
+            │ this    │      │ this+follow  │    │ all      │
+            │         │      │              │    │          │
+            │ exception│     │ cap original │    │ patch    │
+            │ row +   │      │ end_anchor;  │    │ original │
+            │ patch   │      │ fork new tpl;│    │ template │
+            │ task    │      │ re-point     │    │ (cron    │
+            │         │      │ future tasks │    │ regens)  │
+            └─────────┘      └──────────────┘    └──────────┘
+```
+
+### Idempotency
+
+`uq_project_tasks_recurrence_origin` on `(recurrence_id, recurrence_origin_date) WHERE recurrence_id IS NOT NULL AND deleted_at IS NULL` prevents duplicate inserts on cron re-runs. The cron also pre-fetches existing origins per-recurrence so it skips before attempting the insert (avoiding 23505 noise in logs).
+
+### Soft-delete semantics
+
+`RecurrenceService.softDelete(templateId)` cascades:
+1. `task_recurrences.deleted_at = NOW()` — template no longer runs in the cron.
+2. `project_tasks.deleted_at = NOW()` for every row where `recurrence_id = templateId AND status = 'active' AND start_date > NOW()` — un-started future occurrences disappear.
+3. Past, in-progress, and completed occurrences are preserved as historical records.
+
+### Notification fan-out
+
+Every materialized occurrence fires a `schedule_change` notification per assigned crew member (`team_member_ids`). The web notification rail (Section 14, Edge Tab) picks them up via TanStack Query polling. iOS users will see them via the existing OneSignal push channel once iOS adopts the `recurrenceId` columns (planned post-Phase-3).
+
+---
+
 ## New Entities
 
 ### `TaskTemplate` (Bubble) — NEW

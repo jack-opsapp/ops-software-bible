@@ -619,6 +619,52 @@ Task-only scheduling architecture (as of November 2025 migration). All calendar 
 
 > **Note (2026-03-02):** The Schedule Tab view layer was redesigned. `CalendarSchedulerSheet` (documented below) remains the tool used for *setting* task dates from within TaskFormSheet/ProjectFormSheet. The Schedule Tab itself — how tasks are *displayed* across days — was rebuilt with `DayCanvasView` and `CalendarDaySelector`. See [Section 16: Schedule Tab](#16-schedule-tab-redesign) for the full view architecture.
 
+> **Note (2026-04-27 — Phase 3, Web only):** OPS-Web's `/calendar` gained two capabilities documented in [Section 3a: Time Precision and Recurrence (Web)](#3a-time-precision-and-recurrence-web). iOS retains the existing all-day model — these features ship to web first.
+
+### 3a. Time Precision and Recurrence (Web)
+
+Phase 3 on `OPS-Web/src/app/(dashboard)/calendar/`. Spec at `docs/superpowers/specs/2026-04-27-calendar-time-precision-recurrence.md`.
+
+**Time precision (all-day vs timed)**:
+- Source of truth is the new `project_tasks.all_day` column (`BOOLEAN NOT NULL DEFAULT TRUE`). Pre-Phase-3 tasks are all-day even though they carry hardcoded `start_time = 08:00:00` and `end_time = 17:00:00`.
+- Toggling `all_day = false` on a task seeds `start_time` / `end_time` from `companies.default_work_start` / `default_work_end` (defaults `08:00–17:00`).
+- The task detail panel renders an "ALL-DAY ON / OFF" segmented control plus two `<input type="time" step="900">` inputs (15-min snap, JetBrains Mono with tabular-nums).
+- Time labels render on Day, Week (via DayTaskCard), Crew, and Month-expanded cards when `event.allDay === false`.
+
+**Hourly Day view**:
+- `CalendarGridDay` switches to `DayHourlyGrid` whenever any event in the visible day has `allDay === false`.
+- 16-hour vertical column (FIRST_HOUR=6 → LAST_HOUR=22) with 60-min rows and 15-min sub-grid.
+- All-day events render in a fixed-height strip above the hourly grid so they remain visible.
+- Drag = vertical reschedule, snapped to 15-min increments via `Math.round(deltaY / SNAP_PX) * SNAP_PX`.
+- Resize handles (top + bottom, 6px) edit `start_time` and `end_time` independently. Minimum 15-min duration enforced.
+
+**Repeat picker (RFC 5545 RRULE)**:
+- Lives in the task detail panel below the Schedule section. Six presets (Off, Daily, Weekly on `<weekday>`, Biweekly on `<weekday>`, Monthly on `<day>`, Custom).
+- Custom editor supports FREQ + INTERVAL + BYDAY (weekly) / BYMONTHDAY (monthly) + end condition (Never / Until / Count).
+- Driven by `rrule@^2.8.1`. Strings are stored verbatim on `task_recurrences.rrule` so the cron parses them with `RRule.parseString`.
+- Enabling repeat on a one-off task: creates a `task_recurrences` template seeded from the task, then soft-deletes the seed task. Cron materializes the first occurrence (and every future occurrence in the 60-day window) within minutes.
+
+**Edit-this / Following / All scope prompt**:
+- `<RecurrenceEditPrompt>` (Radix AlertDialog at z-modal=3000) appears whenever a user edits a series-bound task — drag in any view, or change the repeat rule in the panel.
+- Three options:
+  - **This** → upsert a `task_recurrence_exceptions` row with `action='reschedule'` (or `skip` for delete) for the original date. Live task row patched in place.
+  - **This and following** → cap original template's `end_anchor` at `originalDate - 1`, fork a new template from `originalDate` with the patch applied, re-point future generated tasks to it.
+  - **Entire series** → patch the original template directly. Cron regenerates everything from `next_generation_at = NOW()`.
+- Cancel returns no-op; the calling mutation is aborted.
+
+**Cron generation (`/api/cron/recurrence-generate`)**:
+- Vercel cron registered in `vercel.json` at `0 */4 * * *` (every 4 hours). Bearer token = `CRON_SECRET`.
+- For every active `task_recurrences` row whose `next_generation_at <= NOW()`:
+  1. Build `RRule.fromString(rrule)` with `dtstart = start_anchor`, optional `until = end_anchor`.
+  2. Expand `between(NOW(), NOW() + 60 days)` (the `RECURRENCE_HORIZON_DAYS` window).
+  3. For each candidate date: look up exception → skip / apply override / use template defaults. Compute `start_date`, `end_date`, `start_time`, `end_time`, `team_member_ids`. Insert into `project_tasks` with `recurrence_id`, `recurrence_origin_date`. Skip on unique-conflict (idempotent).
+  4. Emit one `schedule_change` notification per assigned crew member per generated task.
+  5. Update `next_generation_at = NOW() + 4h`.
+
+**Performance**: At 100 active recurrences with ~9 occurrences each over 60 days, the cron writes ~900 rows per 4h run. Vercel Pro plan covers the cost; Supabase impact is negligible.
+
+---
+
 ### CalendarSchedulerSheet (iOS)
 **Location:** `OPS/OPS/Views/Components/Scheduling/CalendarSchedulerSheet.swift` (968 lines)
 
@@ -2834,6 +2880,13 @@ The web app surfaces notifications via a right-edge vertical drawer, triggered b
 **Motion:** `drawerVariants` / `rowVariants` / `chipVariants` in `src/lib/utils/motion.ts`, all with reduced-motion fallbacks.
 
 **Integration:** any feature that produces a user-facing event inserts a row into the `notifications` table. The drawer picks it up automatically via TanStack Query's `useNotifications()` hook.
+
+**`schedule_change` notification (Phase 3 — 2026-04-27):**
+- Emitted by `useUpdateTask` when the union of (`startDate`, `endDate`, `startTime`, `endTime`, `allDay`) changes on a task. Recipients = union of prior + new `team_member_ids` so removed crew also see the move.
+- Emitted by `/api/cron/recurrence-generate` for each newly-materialized occurrence — one row per assigned crew member.
+- Title: "Task rescheduled" (`useUpdateTask`) or "Recurring task scheduled" (cron). Body includes project title and date.
+- `action_url = /calendar?date=YYYY-MM-DD&task=<uuid>` so clicking deep-links to the affected day with the task panel open.
+- `persistent = false` (standard, dismissible). Use a `task_review_stack` persistent variant only for batch-confirm flows.
 
 ---
 
