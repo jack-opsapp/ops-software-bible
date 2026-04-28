@@ -678,6 +678,7 @@ final class OpsContact {
 class Opportunity: Identifiable {
     @Attribute(.unique) var id: String
     var companyId: String
+    var title: String?              // mirrors NOT NULL DB column; Optional in SwiftData for store-migration safety
     var contactName: String
     var contactEmail: String?
     var contactPhone: String?
@@ -698,10 +699,17 @@ class Opportunity: Identifiable {
     //   (situation evolved, AI can re-evaluate)
     // ai_summary         TEXT — 1-2 sentence AI-generated summary of the opportunity, cached and
     //   refreshed each sync cycle that touches the thread via evaluateStagesWithSummary()
+    // title              TEXT NOT NULL — deal display title (e.g. "Renata Shoop - Lead").
+    //   Not stored in SwiftData (iOS displays via contactName). Web sets explicit title in
+    //   create-lead-modal.tsx; iOS sets "{contactName} - Lead" in LogActivityViewModel.save().
+    //   Defense-in-depth trigger trg_opportunities_default_title (BEFORE INSERT) auto-fills
+    //   title from contact_name when null/empty, falling back to "New Lead".
 }
 ```
 
 **Computed**: `weightedValue`, `daysInStage`, `isStale`.
+
+**Title invariant**: `opportunities.title` is `TEXT NOT NULL`. Every insert path must supply it. A `BEFORE INSERT` trigger (`trg_opportunities_default_title` — migration `add_opportunities_title_default_trigger`) populates it from `contact_name` if a client forgets, so the column constraint never fails an otherwise valid insert. Clients should still send an explicit title to match the human-readable convention used across the product (`"{contactName} - Lead"` for manual creation, `"{fromName} — Email Inquiry"` for email triage).
 
 ---
 
@@ -719,7 +727,11 @@ class Activity: Identifiable {
     var opportunityId: String
     var companyId: String
     var type: ActivityType
-    var body: String?
+    var subject: String?            // mirrors NOT NULL DB column; Optional locally for migration safety
+    var body: String?               // maps to DB `content`
+    var direction: String?          // 'inbound' | 'outbound', meaningful for call/email
+    var outcome: String?            // free-form result, set from Log Activity metadata
+    var durationMinutes: Int?       // meaningful for call/meeting
     var createdBy: String?
     var createdAt: Date
     var metadata: String?
@@ -730,8 +742,19 @@ class Activity: Identifiable {
     // body_text       TEXT                         — full email body (markdown from compose, plain text from sync)
     // has_attachments BOOLEAN NOT NULL DEFAULT false — whether email has attachments
     // attachment_count INT NOT NULL DEFAULT 0      — number of attachments
+    // subject         TEXT NOT NULL                — display title for the activity timeline
+    //   (web reads as `subject || activityTypeLabel(type)`); for emails this is the actual
+    //   email subject, for manually-logged activities a derived label like "Call with {contact}"
+    //   or the first line of notes truncated to 100 chars
+    // direction       TEXT CHECK ∈ {inbound, outbound} — only meaningful for call/email
+    // outcome         TEXT                         — free-form result of the activity
+    // duration_minutes INT                          — only meaningful for call/meeting
 }
 ```
+
+**Subject invariant**: `activities.subject` is `TEXT NOT NULL` with no default. Trigger `trg_activities_default_subject` (migration `add_activities_subject_default_trigger`, BEFORE INSERT) auto-fills it as a defense-in-depth measure: first non-empty line of `content` (truncated to 100 chars), else a type-derived label (`Call`, `Note`, `Site visit`, etc.), else `Activity`. Clients should send an explicit `subject` for best UX — iOS Log Activity flow derives `"{first line of notes}"` or `"Call with {contactName}"` style from form state.
+
+**iOS payload (CreateActivityDTO)** sends: `opportunity_id, company_id, type, subject, content, direction (call/email only), outcome (when non-empty), duration_minutes (call/meeting only and >0), created_by`. Other columns rely on Postgres defaults (`is_read`, `match_needs_review`, `has_attachments`, `attachment_count`, `sent_by_agent`, `created_at`).
 
 ---
 
