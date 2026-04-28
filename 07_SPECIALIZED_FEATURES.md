@@ -3239,6 +3239,87 @@ resume mark those notifications `is_read=true` by matching the title
 
 ---
 
+### §14.10 Campaign analytics (PR 6)
+
+`/admin/email` → **Campaign Analytics** tab (2nd tab, after Overview). Lists
+every campaign and lets each row expand inline to a detail panel with:
+
+- **8 metric cards** (Cake Mono Light 28px numerics): Sent, Delivered (with
+  bounce % secondary), Open rate, Click rate, CTOR, Spam, Unsub, Suppressed
+  (with in-flight secondary). Cards stagger in at 60ms.
+- **Animated Sankey funnel**: enqueued → dispatched → delivered → opened →
+  clicked. Recharts `<Sankey>` with framer-motion `<motion.path>` linking
+  pathLength 0→1 staggered 80ms per link. Empty state when fewer than 2
+  stages have data.
+- **Top-10 bouncing domains** as horizontal Recharts BarChart. First bar
+  uses tan, remainder use steel-blue accent.
+- **Template-version compare** card (`TemplateVersionCompareCard`) hidden
+  when fewer than 2 versions sent. Side-by-side table comparing sent / open
+  rate / click rate / bounce rate; winning column rendered olive.
+- All animations honor `useReducedMotion()` — fall back to opacity-only.
+
+#### Data flow
+
+| Source | RPC | Returns |
+|---|---|---|
+| `email_campaigns` + `email_jobs` + `email_events` | `campaign_engagement_stats(p_campaign_id uuid)` | Single jsonb of all 16 metric values + `per_domain_bounce_summary` (top 10) |
+| same | `campaign_funnel_stages(p_campaign_id uuid)` | One row per stage `(stage text, value bigint)` |
+| `email_jobs` joined to `email_campaigns` (template_id = email_type) + `email_events` | `template_version_compare(p_email_type, p_version_a, p_version_b, p_since)` | jsonb with `versions[v]` keyed by version string |
+
+All three RPCs are `SECURITY DEFINER`. EXECUTE revoked from `anon` and
+`authenticated` — admin/service-role only.
+
+Note on schema: `email_log` does NOT have `sg_message_id` — the version
+compare RPC therefore sources from `email_jobs` (which carries
+template_version, sg_message_id, status, recipient_email, created_at) and
+joins `email_campaigns` to filter by `template_id = email_type`. Spam and
+unsubscribe counts are derived from event aggregation since `email_campaigns`
+has no counter columns for those events.
+
+#### Routes
+
+- `GET /api/admin/email/campaigns/[id]/engagement` — returns
+  `{ ok, stats, funnel }`. UUID-validated (400 on invalid). 60s
+  `Cache-Control: private, max-age=60`.
+- `GET /api/admin/email/templates/[type]/versions/compare?a=X&b=Y&since=ISO`
+  — returns `{ ok, result }`. 60s cache.
+- `GET /api/admin/email/campaigns?include_versions=1` — extends PR 3's list
+  route with `templateVersionsSent: string[]` per row by aggregating distinct
+  `template_version` values from `email_jobs`.
+
+Both new routes wrap `withAdmin` + `requireAdmin` and use Next.js 15 dynamic
+route handler signature (`params: Promise<{...}>`, `await ctx.params`).
+
+#### Migrations
+
+| File | Effect |
+|---|---|
+| `098_email_log_template_version.sql` | Adds `template_version text` + partial index on `(email_type, template_version)` |
+| `099_email_jobs_template_version.sql` | Adds `template_version text` + partial index on `(campaign_id, template_version)` |
+| `100_campaign_engagement_rpcs.sql` | Adds `campaign_engagement_stats` + `campaign_funnel_stages` + 3 supporting indexes |
+| `101_template_version_compare_rpc.sql` | Adds `template_version_compare` |
+
+#### Motion variants
+
+Centralized in `src/lib/utils/motion.ts`:
+- `campaignMetricGridVariants` — 60ms stagger, 320ms duration
+- `sankeyLinkVariants` — pathLength 0→1, 80ms stagger, 420ms duration
+- `sankeyNodeVariants` — opacity + scale, 280ms
+- `animatedCountVariants` — opacity + 4px lift
+
+All use `EASE_SMOOTH` (`[0.22, 1, 0.36, 1]`).
+
+#### Tests
+
+- Unit: `tests/unit/email/campaign-query-mappers.test.ts` (3 tests — funnel
+  numeric coercion + null/error handling).
+- Unit: `tests/unit/email/campaign-detail-panel.test.tsx` (Sankey empty-state
+  rendering — fewer than 2 stages collapses to tactical empty card).
+- Integration: `tests/integration/campaign-engagement-route.test.ts`
+  (3 tests — UUID validation, 404 on missing, 200 + 60s Cache-Control).
+
+---
+
 ## 15. Crew Location Tracking
 
 ### Overview
