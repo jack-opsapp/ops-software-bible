@@ -3684,7 +3684,82 @@ Full month calendar grid:
 ## 17. Web Calendar Overhaul (OPS-Web)
 
 **Added:** 2026-03-02
-**Scope:** Complete rebuild of the OPS-Web calendar from a 1119-line monolith into a modular 18-component interactive scheduling system.
+**Updated:** 2026-04-27 (Phase 1+2 visual + structural rework)
+**Scope:** Complete rebuild of the OPS-Web calendar. Originally a 1119-line monolith; refactored into a modular component system. Phase 1+2 (2026-04-27) reworked the visual identity, view structure, and floating-UI portal layer.
+
+### Phase 1+2 Visual + Structural Rework (2026-04-27)
+
+The 22-task rework lives in `docs/superpowers/specs/2026-04-27-calendar-visual-structural-rework.md`. Key changes:
+
+**View structure:** `Day · Week · Month · Crew` (was `Timeline · Month · Day`).
+- `'timeline'` renamed to `'crew'` everywhere. Zustand persist v2 migrate function rewrites stored values on read; defensive fallback to `'week'` for unknown view values.
+- New `Week` view: 7-column day stack (Mon–Sun, weekStartsOn: 1), all-day fallback layout reusing `<DayTaskCard>`. Hourly mode ships with Phase 3.
+- `Crew` (formerly Timeline) folder/symbol/data-type rename: `timeline/` → `crew/`, `TimelineGrid` → `CrewGrid`, `useTimelineDnd` → `useCrewDnd`, `'timeline-event'` → `'crew-event'`, `'timeline-row'` → `'crew-row'`, `TIMELINE_*` → `CREW_*`.
+- Default view for new users: `Week`.
+- Mobile (<768px): `Day` forced (preserved).
+
+**Card information design — three-source rule** (applied uniformly across Day, Week, Month, Crew, popovers):
+| Slot | Source |
+|---|---|
+| Title (line 1) | `task.project?.title ?? task.customTitle ?? taskType.display` |
+| Subtitle | `task.customTitle ?? taskType.display` (when distinct) |
+| Body fill / border | `STATUS_COLORS[deriveTaskStatusKey(task)]` (status, not type) |
+| Left accent stripe | `TASK_TYPE_COLORS[deriveTaskType(task)].border` |
+| Type badge | `taskType.display` (Cake Mono Light, type colors) |
+| Time label | `HH:mm → HH:mm` mono tabular-nums (only when `allDay = false`) |
+| Crew avatars | `task.teamMemberIds[0..2]`, then `+N` |
+| Site address | hover popover only |
+
+**Status palette** (`TASK_STATUS_COLORS` in `calendar-constants.ts`) — earth-tone semantic translated to fill at low alpha:
+| Status | Hex | Body fill | Border | Source |
+|---|---|---|---|---|
+| `scheduled` (active, future) | `#9DB582` olive | `rgba(157,181,130,0.10)` | `rgba(157,181,130,0.30)` | stored: 'active' |
+| `in_progress` (start ≤ now ≤ end) | `#C4A868` tan | `rgba(196,168,104,0.12)` | `rgba(196,168,104,0.40)` | computed |
+| `completed` | `#6A6A6A` mute | `rgba(106,106,106,0.08)` | `rgba(106,106,106,0.25)` | stored |
+| `cancelled` | `#93321A` brick | `rgba(147,50,26,0.06)` | `rgba(147,50,26,0.40)` | stored |
+| `overdue` (active AND end < now) | `#B58289` rose | `rgba(181,130,137,0.12)` | `rgba(181,130,137,0.40)` | computed |
+
+`deriveTaskStatusKey()` in `calendar-utils.ts` does the computation. Production `project_tasks.status` only stores `'active' | 'completed' | 'cancelled'` — `in_progress` and `overdue` are derived from start/end vs `new Date()`.
+
+**Crescent border fix:** Replaced `box-shadow: inset 3px 0 0 0 ${color}` with absolutely-positioned 3px sibling div with matching `border-radius: 4px 0 0 4px`. Inset box-shadow doesn't respect border-radius and produces a "crescent moon" artifact at the corners. Sibling-div approach yields pixel-perfect curve continuity. Applied uniformly across month-event-bar, day-task-card, crew-task-block.
+
+**Today indicator (3 reinforcing signals):**
+1. Day-cell number — 24×24 rounded-square (radius 4) with solid `var(--ops-accent)` fill and black text. Cake Mono Light 13px. Squares (not circles) — circles read as cute / startup, squares read as tactical.
+2. Column accent line — `2px solid var(--ops-accent)` on the today column's `border-top` in Week, Crew, and Day header.
+3. Toolbar `[ TODAY ]` pill — JetBrains Mono 11px tabular-nums, accent border + text, fills accent + black text on hover. Disabled when current view already includes today.
+
+**Unscheduled tray promotion:**
+- Promoted out of `filter-sidebar.tsx` to a first-class `<UnscheduledTray>` component
+- Collapsed: 32px-wide vertical strip with rotated `// UNSCHEDULED [N]` label
+- Expanded: 280px wide with search, group-by (project / client / type / none), sort (created / title / project), grouped scrollable card list
+- **Day view: docks LEFT** (mirrors Jobber/Housecall convention). **Week / Month / Crew: docks RIGHT.**
+- State persisted in `calendar-store`: collapsed flag, group-by, sort. Search session-scoped.
+- `// UNSCHEDULED [N]` chip in calendar-toolbar toggles collapse.
+
+**Popover layering rule (T16/T17/T18):**
+- All floating UI portal-rendered to `document.body`
+- Hover popover: Radix HoverCard, glass-dense, `var(--z-dropdown)` (1000), 12px radius. Replaces inline `EventTooltip` portal pattern.
+- Context menu: Radix Popover with virtual anchor at right-click coords (preserves position-based API while gaining Radix focus / dismiss). Same z-layer + surface.
+- Inline editor: portaled via `createPortal`, fixed positioning, `var(--z-floating-ui)` (1500) — above dropdowns since it's a focused editing affordance.
+- Z-scale CSS custom properties added to globals.css and `.interface-design/colors_and_type.css`. See § 15 of 05_DESIGN_SYSTEM.md.
+
+**Architecture (post-rework):**
+
+The unified `InternalCalendarEvent` shape returned by `mapTaskToInternalEvent()` is the single source of truth. Consumers don't re-derive colors or titles. New fields:
+- `projectTitle: string | null`
+- `taskTitle: string`
+- `typeLabel: string`
+- `typeColors: { bg, border, text }` (TASK_TYPE_COLORS lookup)
+- `statusColors: { bg, border, text }` (TASK_STATUS_COLORS lookup)
+- `statusKey: TaskStatusKey`
+- `crewIds: string[]`
+- `address: string | null`
+- `startTime / endTime: string | null` (Phase 3 provisioned)
+- `allDay: boolean` (Phase 3 — currently always true; Phase 3 spec implements toggle)
+
+**Original 2026-03-02 build below (kept for history; some details — view names, file paths — were superseded by the 2026-04-27 rework above).**
+
+### Original Overhaul Notes (2026-03-02)
 
 ### Overview
 

@@ -1075,57 +1075,88 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 │ Sidebar  │     Calendar Grid           │ Panel    │
 │ (260px)  │     (flexible)              │ (400px)  │
 │          │                             │          │
-│ Filters  │  [Month|Week|Day|Team|Agenda]│ Event   │
-│ + Unsched│                             │ details  │
-│ Tasks    │                             │ + edit   │
+│ Filters  │  // DAY · WEEK · MONTH · CREW│ Event   │
+│ (only)   │                             │ details  │
 └──────────┴─────────────────────────────┴──────────┘
+                                              ↑
+                              Unscheduled tray (right rail,
+                              promoted out of filter sidebar
+                              in the 2026-04-27 Phase 1+2 rework;
+                              docks LEFT in Day view)
 ```
 
-**UI Elements:**
+**UI Elements (post 2026-04-27 Phase 1+2 visual + structural rework):**
 
-1. **CalendarHeader** — Date navigation (prev/next, Today), view switcher (Month|Week|Day|Team|Agenda), filter toggle with active count badge. View switcher and filter button hidden on mobile.
+1. **CalendarHeader** — Date navigation (prev/next), `[ TODAY ]` accent pill (disabled when current view already shows today), filter toggle, view switcher.
 
-2. **CalendarToolbar** — Event count, task type color legend, active filter chips. Legend hidden on mobile.
+   **View switcher labels:** `// DAY` · `// WEEK` · `// MONTH` · `// CREW` (Cake Mono Light). The previous `'timeline'` view is now `'crew'` — Zustand persist v2 migrate function rewrites stored values on read. Default view for new users is `Week`.
 
-3. **FilterSidebar** (left, 260px, collapsible) — Four filter sections (Team Members with avatars, Task Types with color dots, Projects with search, Status: upcoming/in-progress/past), each collapsible. Includes UnscheduledPanel at bottom. Clear All button. Hidden on mobile.
+2. **CalendarToolbar** — Includes a `// UNSCHEDULED [N]` chip (left of today/week stats) that toggles the unscheduled tray. Event count, task type color legend, active filter chips remain.
 
-4. **Calendar Grid** (center, 5 views):
-   - **Month**: traditional grid, event indicators, click date → Day view
-   - **Week**: 7-column hourly time grid (56px gutter), today highlight, auto-scroll to current hour
-   - **Day**: single-column hourly time grid, full event detail
-   - **Team**: Gantt-style rows per crew member (56px height, 180px name gutter, 80px/hour), availability heatmap (workload opacity), unassigned row
-   - **Agenda**: chronological list grouped by date, sticky headers, 14-day window (mobile default)
+3. **FilterSidebar** (left, 260px, collapsible) — Four filter sections only (Team Members, Task Types, Projects, Status). The UnscheduledPanel that previously lived inside has been promoted to a first-class `<UnscheduledTray>`.
 
-5. **EventBlock** (draggable + resizable) — @dnd-kit `useDraggable`, bottom-edge resize (6px, 15-min snap), visual states: normal / hover / selected (blue ring) / dragging (ghost) / conflict (red glow). Shows time, title, project, team.
+4. **UnscheduledTray** (right rail in Week/Month/Crew, **left rail in Day** — mirrors Jobber/Housecall convention):
+   - Collapsed: 32px-wide vertical strip with rotated `// UNSCHEDULED [N]` label + grip icon
+   - Expanded: 280px wide. Search, group-by (Project / Client / Type / None), sort (Created / Title / Project), scrollable card list with `// GROUP_NAME [N]` headers
+   - Drag source: dnd-kit `data: { type: 'unscheduled-task', task }` — same contract month-grid + week-grid + crew-grid already accept
+   - State persisted: collapsed flag, group-by, sort. Search session-scoped.
 
-6. **EventDetailPanel** (right Sheet) — Opens on click/Enter. Editable: title, start/end datetime, project link, type badge, team chips. Save + Delete actions.
+5. **Calendar Grid** (center, 4 views):
+   - **Day** — single-column scrollable card list (will switch to hourly mode in Phase 3 when timed events exist)
+   - **Week** — 7-column day stack (Mon–Sun, weekStartsOn: 1). All-day fallback now; hourly mode in Phase 3. Each column: header (weekday + date number) and a vertical stack of `<DayTaskCard>`s. Drag-drop per column.
+   - **Month** — traditional grid, event indicators (compact dots / standard bars / expanded cards), click date → Day view
+   - **Crew** — formerly "Timeline." Gantt-style swimlane rows per crew member, unassigned synthetic row. Drag tasks across days and rows; resize edges to extend duration.
 
-7. **EventQuickCreate** (Popover) — Opens on empty slot click, range drag, or keyboard C. Fields: title, datetime range, project search, task type.
+6. **Card information design (three-source rule, applied across Day, Week, Month, Crew, popovers):**
+   - **Title (line 1):** `task.project?.title ?? task.customTitle ?? taskType.display` — project first because that's how owners think about jobs
+   - **Subtitle:** `task.customTitle ?? taskType.display` (only when distinct from title)
+   - **Body fill / border:** `STATUS_COLORS[deriveTaskStatusKey(task)]` — earth-tone semantic (olive/tan/mute/brick/rose for scheduled/in_progress/completed/cancelled/overdue)
+   - **Left accent stripe:** `TASK_TYPE_COLORS[deriveTaskType(task)].border`, rendered as a 3px sibling div with matching `border-radius: 4px 0 0 4px` (NOT `box-shadow: inset` — the inset variant doesn't respect border-radius and produces a "crescent moon" artifact at the corners)
+   - **Type badge:** `taskType.display` (Cake Mono Light, type-color)
+   - **Crew avatars:** max 3 visible (UserAvatar with tooltip), then `+N` chip
+   - **Time label:** `HH:mm → HH:mm` JetBrains Mono tabular-nums, only rendered when `event.allDay === false` (Phase 3)
+   - **Address:** hover popover only (too dense for cards)
 
-8. **EventContextMenu** — Right-click: Edit, Duplicate, Delete. Keyboard-navigable.
+7. **Today indicator (3 reinforcing signals):**
+   - **Day-cell number** in Month / Week / Crew column header: 24×24 rounded-square (radius 4) with solid `var(--ops-accent)` fill and black text. Cake Mono Light 13px. Squares read as tactical (circles read as cute / startup).
+   - **Column accent line** in Week + Crew + Day header: `2px solid var(--ops-accent)` on the today column's `border-top`.
+   - **Toolbar `[ TODAY ]` pill** in calendar-header: JetBrains Mono 11px tabular-nums, accent border + text, fills accent + black text on hover. Disabled when current view already includes today (computed from view + currentDate vs `new Date()`).
+
+8. **Popover layering (T16/T17 portal rule):**
+   - All floating UI portal-rendered to `document.body`
+   - Hover popover: Radix HoverCard, `var(--z-dropdown)` (1000), glass-dense surface, 12px radius. Shows project title, task title, type+status badges, time range (Phase 3), date range, crew names, site address
+   - Context menu: Radix Popover with virtual anchor at the right-click coords. Same z-layer + surface
+   - Inline editor: portaled to body via `createPortal`, fixed positioning, `var(--z-floating-ui)` (1500) — above dropdowns since it's a focused editing affordance
+   - Z-scale exposed as CSS custom properties: `--z-content` 1, `--z-interactive` 100, `--z-nav` 500, `--z-dropdown` 1000, `--z-floating-ui` 1500, `--z-window` 2000, `--z-modal` 3000, `--z-map-controls` 5000, `--z-emergency` 9000
+
+**EventBlock states:** normal / hover (brightness 1.18) / selected (1px var(--ops-accent) outline) / dragging (50% opacity) / resizing.
+
+**EventQuickCreate (Popover)** — opens on empty slot click, range drag, or keyboard C. Unchanged.
 
 **Drag-and-Drop:**
 - `CalendarDndContext` wraps all grid content with `@dnd-kit/core`
 - `PointerSensor` with `distance: 8` activation
-- Ghost overlay with real-time time labels during drag
-- 15-minute snap grid via `snapToGrid()`
-- Axis-aware: Y-axis for week/day (`delta.y / 60px`), X-axis for team (`delta.x / 80px`)
-- Unscheduled task drop → creates calendar event linked to task
+- DnD data types per surface:
+  - `month-event` / `month-day` (month grid)
+  - `week-event` / `week-day` (week grid)
+  - `crew-event` / `crew-row` (crew swimlane)
+  - `unscheduled-task` (drag source from tray) — accepted by all three day-target types
 
 **Animations:**
 - View switching: horizontal slide (±40px, 300ms) via `AnimatePresence`
-- Event appear: scale 0.95→1 + fade (150ms)
-- All respect `prefers-reduced-motion` (opacity-only fallback)
+- Event appear: stagger fade-in (50ms per item)
+- Single easing curve `cubic-bezier(0.22, 1, 0.36, 1)` (EASE_SMOOTH). No spring, no bounce
+- All honor `prefers-reduced-motion` (opacity-only fallback). Radix HoverCard skips its own animation natively when the media query matches
 
 **Keyboard Shortcuts:**
-- D/W/M/T/A (views), ArrowLeft/Right (navigate), Y (today), C (create), E (edit), Tab (cycle events), Enter (open detail), Delete (delete selected), Escape (close)
+- D/W/M/C (views), ArrowLeft/Right (navigate), C (create), E (edit), Tab (cycle events), Enter (open detail), Delete (delete selected), Escape (close)
 
 **Responsive:**
-- Desktop (≥1200px): three-panel layout
-- Tablet (768–1199px): two-panel, sidebar available
-- Mobile (<768px): agenda forced, sidebar hidden, view switcher hidden
+- Desktop (≥1200px): three-panel layout (filter sidebar + grid + tray)
+- Tablet (768–1199px): two-panel, sidebar/tray available
+- Mobile (<768px): Day view forced, sidebar hidden, tray hidden
 
-**State:** `calendar-store.ts` (Zustand + persist → localStorage). Persisted: view, filters. Ephemeral: selection, panels, drag state.
+**State:** `calendar-store.ts` (Zustand + persist v2 → localStorage). Persisted: view, filters, unscheduled tray collapsed/group/sort. Ephemeral: selection, panels, drag state, search query.
 
 ---
 

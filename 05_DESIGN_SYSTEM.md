@@ -2585,8 +2585,34 @@ The OPS web app uses a defined z-index scale. Higher z-index = closer to the vie
 4. **Gaps between layers are intentional.** They absorb future additions without shifting existing values. The 100–500 gap between interactive and nav can hold a future sticky header, toast rail, etc.
 5. **Same z-index is fine for elements that never visually overlap.** The FAB and bug report button can share a layer because they occupy different screen corners.
 
+### CSS Custom Properties (added 2026-04-27)
+
+The z-scale is exposed as CSS custom properties so component code can reference layer names instead of magic numbers:
+
+```css
+:root {
+  --z-content:        1;
+  --z-interactive:    100;
+  --z-nav:            500;
+  --z-dropdown:       1000;
+  --z-floating-ui:    1500;
+  --z-window:         2000;
+  --z-modal:          3000;
+  --z-map-controls:   5000;
+  --z-emergency:      9000;
+}
+```
+
+Defined in both:
+- `.interface-design/colors_and_type.css` (canonical foundation)
+- `OPS-Web/src/styles/globals.css` (consumption — products import this)
+
+Plus utility classes in `globals.css` `@layer components`: `.z-content`, `.z-interactive`, `.z-nav`, `.z-dropdown`, `.z-floating-ui`, `.z-window`, `.z-modal`, `.z-map-controls`, `.z-emergency`. Use these on any portaled or fixed-position element instead of inline `z-index: 1000`.
+
 ### Where This Lives in Code
 
+- `.interface-design/colors_and_type.css` — canonical z-scale tokens (foundation)
+- `OPS-Web/src/styles/globals.css` — product token mirror + utility classes
 - `stores/window-store.ts` — `nextZIndex` starting value and per-type size overrides
 - `components/layouts/sidebar.tsx` — nav layer
 - `components/ops/floating-action-button.tsx` — floating-ui layer
@@ -2595,6 +2621,11 @@ The OPS web app uses a defined z-index scale. Higher z-index = closer to the vie
 ### Migration Notes
 
 The codebase was audited on 2026-03-23. Many existing components still use the old tight scale (sidebar at 45, FAB at 95, etc.). These should be migrated to the new scale as components are touched — no big-bang refactor needed. The old values still work correctly because their relative ordering is preserved.
+
+The 2026-04-27 calendar visual rework migrated:
+- `month-event-bar.tsx` — hardcoded `zIndex: 1000` → className `z-dropdown`
+- `inline-editor.tsx` — hardcoded `z-[100]` → className `z-floating-ui`
+- All new portaled UI (event-hover-popover, event-context-menu) uses the utility classes from day one.
 
 ---
 
