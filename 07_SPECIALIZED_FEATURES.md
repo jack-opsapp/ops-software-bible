@@ -3239,6 +3239,154 @@ resume mark those notifications `is_read=true` by matching the title
 
 ---
 
+### §14.9 Suppression manager + Audience builder (PR 5)
+
+**Added:** 2026-04-27. Two new admin tabs ship under `/admin/email`:
+**Suppressions** (browse / search / sort / paginate / bulk-add /
+bulk-remove / CSV import / CSV export the `email_suppressions` list from
+PR 1) and **Audience** (visual nested AND/OR predicate editor with a
+400ms-debounced live count and "Save as template"). Saved templates can
+be referenced from any campaign via `email_campaigns.audience_template_id`
+(FK added in migration 092).
+
+Migrations: **092** `email_audience_templates` table + FK +
+`increment_audience_template_usage` RPC. **093** `email_audience_filter`
++ `email_audience_count` RPCs (recursive AND/OR walker). **094**
+performance indexes for hot predicate paths.
+
+#### Suppression manager — routes
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/admin/email/suppressions` | Paginated list. Query: `limit`, `offset`, `reason`, `list`, `emailLike` (alias `email`) |
+| POST | `/api/admin/email/suppressions` | Add one (`email`) or many (`emails[]`, ≤1000) |
+| GET | `/api/admin/email/suppressions/[email]` | Single row by email + `?list=` |
+| DELETE | `/api/admin/email/suppressions/[email]` | Remove by email + `?list=` |
+| POST | `/api/admin/email/suppressions/bulk` | `{action:'add'\|'remove', emails[], list?, reason?}` |
+| GET | `/api/admin/email/suppressions/export` | Streamed CSV, 5k-row pages |
+| GET | `/api/admin/email/suppressions/lists` | Unique `list` values + counts |
+
+All routes wrapped in `withAdmin` + `requireAdmin`. CSV export streams
+in 5k batches — well under Supabase's 1MB cap. Above ~10k rows, swap to
+a paginated download UI (followup).
+
+UI: `suppressions-tab.tsx` (paginated 50/page, 300ms-debounced search,
+multi-select bulk remove), `suppression-detail-drawer.tsx` (right-edge
+slide-in, 400px, glass-dense, `z-3001`),
+`suppression-bulk-add-modal.tsx`, `suppression-import-modal.tsx` (CSV
+drag-drop, 100-row batches, live progress bar).
+
+#### Audience builder — filter grammar
+
+```
+node ::= leaf | group | combinator
+leaf ::= { field, op, value? }
+group ::= { group: <node> }                 -- explicit grouping
+combinator ::= { and: [<node>...] } | { or: [<node>...] }
+```
+
+Empty filter (`{}`) or empty combinator (`{and: []}`) matches all
+emailable users (active + email NOT NULL + not opted out).
+
+#### Allowlists
+
+| Allowlisted field | SQL column |
+|-------------------|------------|
+| `email`, `role`, `user_type`, `is_company_admin`, `is_active`, `removed_from_email_list`, `company_id`, `created_at` | `users.<column>` |
+| `plan` | `companies.subscription_plan` |
+| `subscription_status` | `companies.subscription_status` |
+| `trial_end_date` | `companies.trial_end_date` |
+
+| Allowlisted op | Notes |
+|----------------|-------|
+| `eq`, `neq`, `lt`, `gt`, `lte`, `gte` | Standard comparisons. `eq null` → `IS NULL`. |
+| `in`, `not_in` | Value must be a JSON array. |
+| `gte_days`, `lte_days` | Relative to `now()`. Value is integer days. |
+| `is_null`, `is_not_null` | No value. |
+| `like` | Wraps value in `%..%` and uses `ILIKE`. |
+
+Anything outside the allowlist raises `audience_clause: field X not in allowlist` (HTTP 400 from `/audience/preview`).
+
+#### Audience builder — RPCs (migration 093)
+
+- `email_audience_clause_to_sql(jsonb, ...) → text` — converts a single
+  leaf to a parameterised SQL expression. `IMMUTABLE`.
+- `email_audience_node_to_sql(jsonb, ...) → text` — recursive walker.
+  `IMMUTABLE`.
+- `email_audience_filter(jsonb) → TABLE(user_id uuid, email text)` —
+  `SECURITY DEFINER`. Builds the SELECT, executes via `EXECUTE`, returns
+  matched users. `service_role`-only.
+- `email_audience_count(jsonb) → int` — same shape but returns just the
+  count (cheap for the live preview).
+
+`SECURITY DEFINER` + the field/op allowlist are the SQL-injection fence
+— a malicious filter like `{field: "email; DROP TABLE users--", ...}`
+raises the allowlist exception before any SQL is constructed.
+
+#### Audience templates
+
+`email_audience_templates(id, name UNIQUE, description, filter jsonb,
+last_used_count int, last_resolved_at timestamptz, created_by_user_id,
+created_at, updated_at)`. FK from `email_campaigns.audience_template_id`
+with `ON DELETE SET NULL`.
+
+`increment_audience_template_usage(uuid)` — `SECURITY DEFINER`. Called
+by the dispatcher (`/api/cron/email/dispatcher`) when a campaign with
+`audience_template_id` is resolved.
+
+Indexes (094): `idx_users_active_emailable (is_active, removed_from_email_list) WHERE email IS NOT NULL`,
+`idx_users_role`, `idx_users_company_id`,
+`idx_companies_subscription_status`, `idx_companies_subscription_plan`.
+
+#### Audience builder — API routes
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/admin/email/audience/preview` | `{filter}` → `{count, sample[≤10]}` |
+| GET | `/api/admin/email/suppressions/templates` | List saved templates |
+| POST | `/api/admin/email/suppressions/templates` | Create `{name, description?, filter}` |
+| PATCH | `/api/admin/email/suppressions/templates/[id]` | Partial update |
+| DELETE | `/api/admin/email/suppressions/templates/[id]` | Remove |
+
+#### Audience builder — UI components
+
+- `audience-builder-tab.tsx` — combinator toggle (ALL / ANY), filter
+  rows, big-number recipient count (Cake Mono Light 28px, olive
+  `#9DB582`, `audienceCountVariants`), 10-row sample, saved-templates
+  list.
+- `audience-filter-row.tsx` — field/op/value editor backed by
+  `audience-filter-config.ts` (`FIELD_OPTIONS`, `OP_OPTIONS`).
+- `audience-save-template-modal.tsx` — name + description.
+- "USE IN CAMPAIGN" dispatches a
+  `CustomEvent('ops:audience-use-in-campaign')` with `{filter}`.
+  `ScheduledSendsTab` listens, opens `CampaignCreateModal` with
+  `audienceFilterOverride={filter}` — the modal swaps the segment
+  dropdown for a "[custom predicate from audience builder]" stub and
+  POSTs the predicate as `audienceFilter`.
+
+#### Dispatcher integration (`src/app/api/cron/email/dispatcher/route.ts`)
+
+When a campaign has `audience_template_id`, the dispatcher loads the
+template's `filter`, calls `increment_audience_template_usage`
+(errors logged, never throw), and dispatches via `resolveAudience` →
+`email_audience_filter` RPC. Legacy starter segments
+(`{segment: 'all_users' | 'trial_users' | 'active_subscribers'}`) still
+flow through the hardcoded resolvers in `audiences.ts`. `estimateAudience`
+uses the dedicated count RPC for predicate filters (cheaper than
+fetching rows).
+
+#### Tests
+
+- Unit: `tests/unit/email/audience-filter.test.ts` (filter shape, 5
+  tests), `tests/unit/email/suppressions-tab.test.tsx` (UI render, 3
+  tests).
+- Integration: `tests/integration/email-audience-rpc.test.ts` (live RPC,
+  gated by `RUN_DB_INTEGRATION=1`).
+- E2E: `tests/e2e/email-audience.spec.ts` (admin login fixture pending
+  — `describe.skip`).
+
+---
+
 ### §14.10 Campaign analytics (PR 6)
 
 `/admin/email` → **Campaign Analytics** tab (2nd tab, after Overview). Lists
