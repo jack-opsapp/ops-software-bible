@@ -7,6 +7,26 @@
 
 ---
 
+> ## ⚑ Source of Truth — Read This First
+>
+> **The OPS visual system foundation lives at `.interface-design/`** (in the root OPS directory). It is the single canonical home for the OPS aesthetic going forward — military tactical minimalist, monochrome canvas, glass + hairlines, steel-blue accent, three-font system (Mohave / JetBrains Mono / Cake Mono Light), earth-tone semantics.
+>
+> | Need | Location |
+> |---|---|
+> | OPS-Web canonical spec (v2, 2026-04-17) | `.interface-design/system.md` |
+> | Agent-facing brief + content fundamentals | `.interface-design/README.md` |
+> | CSS tokens (import first in any web work) | `.interface-design/colors_and_type.css` |
+> | Brand marks (SVG, `currentColor`) | `.interface-design/assets/` |
+> | Brand fonts (Cake Mono Light/Regular/Bold) | `.interface-design/fonts/` |
+> | Per-surface UI kits | `.interface-design/ui_kits/{ops-web, ops-site, opsapp}/` |
+> | Per-token preview cards | `.interface-design/preview/*.html` |
+> | Full spec with WCAG ratios + audit history | `docs/superpowers/specs/2026-04-15-ops-web-visual-system-design.md` |
+> | iOS source of truth | `OPS/OPS/Styles/OPSStyle.swift` (+ `Styles/Components/`) |
+>
+> **For any OPS-Web styling decision: defer to `.interface-design/`.** This bible chapter remains authoritative for cross-platform brand fundamentals and the iOS app's design system. Where the two overlap (color palette, typography roles, motion principles), `.interface-design/` is the more current source.
+
+---
+
 ## Table of Contents
 
 1. [Design Philosophy](#1-design-philosophy)
