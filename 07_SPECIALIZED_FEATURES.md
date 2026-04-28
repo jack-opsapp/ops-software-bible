@@ -2963,6 +2963,179 @@ filled it in.
 - Public confirmation page: `src/app/unsubscribe/page.tsx` (en + es).
 - Operator runbook: `OPS-Web/docs/email/compliance.md`.
 
+### §14.7 Email campaigns — dispatcher + worker pipeline (PR 3)
+
+The marketing/lifecycle campaign system. Two-stage pipeline: a **dispatcher**
+cron picks scheduled campaigns whose `scheduled_for` has passed, resolves
+the audience, and enqueues one `email_jobs` row per recipient. A separate
+**worker** cron atomically claims pending jobs (`FOR UPDATE SKIP LOCKED`),
+calls the registered template's `gatedSend` wrapper for each, and updates
+campaign counters via an allowlisted RPC. When all jobs for a campaign are
+terminal, the campaign flips to `completed` and a notification rail entry
+fires for the operator.
+
+#### Tables
+
+- `public.email_campaigns` (migration 086) — schema-of-record. One row per
+  send (or scheduled send). Counters live on the row and are mutated only
+  via the `increment_campaign_counter` RPC.
+- `public.email_jobs` (migration 087) — one row per recipient per campaign.
+  Idempotent unique constraint `(campaign_id, recipient_email)` (091, after
+  the original 087 expression-index was switched to a column-based UNIQUE
+  for PostgREST upsert compatibility — emails are pre-lowercased upstream).
+- `public.email_log.campaign_id` (migration 088) — set by `gatedSend` when
+  `campaignId` flows through. NULL for transactional sends. ON DELETE SET
+  NULL preserves the log when a campaign is hard-deleted.
+
+#### Enums
+
+- `email_campaign_status`: `draft | scheduled | in_flight | completed | failed | cancelled | paused`
+- `email_job_status`: `pending | dispatching | sent | bounced | failed | cancelled | skipped_suppressed`
+
+#### Campaign state machine
+
+```
+draft → scheduled → in_flight → completed
+                       │
+                       ├─ paused ─→ in_flight (resume)
+                       │
+                       └─ cancelled
+
+draft / scheduled / paused → cancelled
+in_flight → failed (terminal — dispatcher could not enqueue)
+```
+
+#### RPCs (service-role only)
+
+- `increment_campaign_counter(p_campaign_id, p_field, p_delta)` (migration 089)
+  — allowlisted field name (`sent_count | delivered_count | bounced_count |
+  opened_count | clicked_count | suppressed_skipped_count | failed_count`).
+  Avoids read-modify-write race when concurrent worker batches finalize.
+- `claim_email_jobs(p_limit)` (migration 090) — `FOR UPDATE SKIP LOCKED`
+  claim of up to `p_limit` pending jobs from in-flight campaigns; transitions
+  rows to `dispatching` so a parallel worker invocation skips them.
+
+#### Service module
+
+`OPS-Web/src/lib/email/campaigns.ts` — single TypeScript surface used by API
+routes and crons:
+
+- `createCampaign` / `scheduleCampaign` / `cancelCampaign` / `pauseCampaign` /
+  `resumeCampaign`: state-machine transitions with prior-status guards.
+- `enqueueCampaignJobs`: lowercases emails, calls `filterSuppressed`
+  (PR 1 §14.5), upserts `email_jobs` with `ignoreDuplicates`, and either
+  sets the campaign to `in_flight` or — when the audience is fully
+  suppressed — flips straight to `completed`.
+- `completeCampaignIfDone`: counts remaining `pending | dispatching` jobs;
+  if zero AND status is non-terminal, transitions to `completed`.
+
+#### Audience resolver (PR 3 starter — replaced by PR 5)
+
+`OPS-Web/src/lib/email/audiences.ts` — three hardcoded segments:
+
+- `all_users` — `is_active=true AND removed_from_email_list IS NOT TRUE`
+- `trial_users` — same + `companies.subscription_status='trial'`  *(verified — not 'trialing')*
+- `active_subscribers` — same + `companies.subscription_status IN ('active','grace')`
+
+PR 5 replaces this module with a saved-template predicate engine.
+
+#### Template registry
+
+`OPS-Web/src/lib/email/campaign-templates.ts` (registry) +
+`campaign-templates-bootstrap.ts` (idempotent wiring) — four starter
+template_ids:
+
+- `product_update` → `sendProductUpdate` (new sender + template)
+- `trial_expiry_campaign` → `sendTrialExpiryWarning` (existing PR β sender, now
+  campaign-aware)
+- `feature_announcement` → `sendFeatureAnnouncement` (new)
+- `reengagement` → `sendReengagement` (new — distinct from
+  `sendTrialExpiryReengagement` which targets post-trial wins)
+
+Every campaign sender accepts `campaignId` so `gatedSend` can write it to
+`email_log.campaign_id` and forward it as a SendGrid `customArgs.campaign_id`
+for webhook attribution (consumed by PR 6 engagement RPC).
+
+#### Crons (`vercel.json`, every 1 min — Pro tier)
+
+| Path | Schedule | Purpose |
+|------|----------|---------|
+| `/api/cron/email/dispatcher` | `*/1 * * * *` | Resolve audience + enqueue jobs for ready campaigns |
+| `/api/cron/email/worker` | `*/1 * * * *` | Claim batch of 200, gatedSend each, increment counters, complete + notify |
+
+Worker tunables: `BATCH_LIMIT=200`, `INTER_SEND_DELAY_MS=10`,
+`MAX_RETRIES=3`. Auth: `Authorization: Bearer ${CRON_SECRET}`.
+
+#### Admin API surface (all `withAdmin` + `requireAdmin`-gated)
+
+- `GET  /api/admin/email/campaigns` — paginated list with optional status filter
+- `POST /api/admin/email/campaigns` — create draft, returns campaign + estimated audience count
+- `GET  /api/admin/email/campaigns/[id]` — campaign + jobs slice (50 by default)
+- `POST /api/admin/email/campaigns/[id]/schedule` — set `scheduled_for`
+- `POST /api/admin/email/campaigns/[id]/cancel` — cancel + sweep pending jobs
+- `POST /api/admin/email/campaigns/[id]/pause` — `in_flight → paused`
+- `POST /api/admin/email/campaigns/[id]/resume` — `paused → in_flight`
+- `POST /api/admin/email/campaigns/audience-estimate` — recipient count for a filter
+
+All `[id]` routes use Next.js 15's `params: Promise<{...}>` shape.
+
+#### Admin UI
+
+- Tab: **Admin → Email → Scheduled Sends** (`scheduled-sends-tab.tsx`)
+- Components in `src/app/admin/email/_components/`:
+  - `campaign-status-pill.tsx` — 7 states, Cake Mono Light 11px, earth-tone palette
+  - `campaign-progress-bar.tsx` — segmented olive (sent) / rose (bounced) / brick (failed)
+  - `campaign-create-modal.tsx` — name, slug auto-suggest, template, segment, schedule datetime, live audience count
+  - `campaign-detail-modal.tsx` — 5s polling while `scheduled` or `in_flight`, counters animate on every value change, Pause/Resume/Cancel actions
+- All animations: `EASE_SMOOTH` (`[0.22, 1, 0.36, 1]`), reduced-motion fallbacks centralized in `src/lib/utils/motion.ts`.
+
+#### Notification rail
+
+When a campaign completes, the worker inserts a `notifications` row for the
+`created_by_user_id`:
+
+- `type: "campaign_done"`, `persistent: false`
+- `action_url: /admin/email?campaign=<id>`, `action_label: "VIEW CAMPAIGN"`
+- Body summarises sent / bounced / failed / suppressed for the final batch
+
+#### Gotchas
+
+- **Pause is best-effort in PR 3**: a paused campaign's already-claimed
+  batch still sends. Mid-batch the worker re-pends jobs whose campaign
+  flipped to paused. PR 4 introduces the killswitch state machine that
+  also gates `gatedSend` itself.
+- **Campaign template registry is in-memory + idempotent.** `bootstrapCampaignTemplates()`
+  is safe to call from every cron tick because workers run cold.
+- **Recipient email is lowercased upstream** (in `enqueueCampaignJobs`) —
+  the unique constraint is on the raw column. Don't insert mixed-case
+  emails directly via SQL or upserts will dupe.
+- **Audience filter is JSONB**. PR 3 supports the starter shape
+  `{segment: "all_users" | "trial_users" | "active_subscribers"}`.
+
+#### Source files
+
+- Migrations: `supabase/migrations/086_email_campaigns.sql`, `087_email_jobs.sql`,
+  `088_email_log_campaign_link.sql`, `089_increment_campaign_counter_rpc.sql`,
+  `090_claim_email_jobs_rpc.sql`, `091_email_jobs_unique_constraint.sql`.
+- Service: `OPS-Web/src/lib/email/campaigns.ts`.
+- Audience: `OPS-Web/src/lib/email/audiences.ts`.
+- Template registry: `OPS-Web/src/lib/email/campaign-templates.ts` +
+  `campaign-templates-bootstrap.ts`.
+- New senders: `OPS-Web/src/lib/email/sendgrid.tsx` (`sendProductUpdate`,
+  `sendFeatureAnnouncement`, `sendReengagement`) + corresponding React
+  Email templates in `src/lib/email/react/templates/`.
+- Crons: `src/app/api/cron/email/dispatcher/route.ts`, `src/app/api/cron/email/worker/route.ts`.
+- Admin API: `src/app/api/admin/email/campaigns/`.
+- Admin UI: `src/app/admin/email/_components/`.
+
+#### Tests
+
+- Unit: `tests/unit/email/campaigns.test.ts` (14 tests).
+- Integration: `tests/integration/email-dispatcher-cron.test.ts` (5 tests),
+  `tests/integration/email-worker-cron.test.ts` (4 tests).
+- E2E (skipped by default — needs staging admin + seeded audience):
+  `tests/e2e/email-campaign.spec.ts`.
+
 ---
 
 ## 15. Crew Location Tracking
