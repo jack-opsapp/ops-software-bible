@@ -3136,6 +3136,107 @@ When a campaign completes, the worker inserts a `notifications` row for the
 - E2E (skipped by default — needs staging admin + seeded audience):
   `tests/e2e/email-campaign.spec.ts`.
 
+### §14.8 Email killswitches — pause state + audit (PR 4)
+
+Operators can pause email at three scopes:
+
+| Scope | Notation |
+|-------|----------|
+| Global | `global` |
+| Sender bucket | `bucket:dispatch` / `bucket:gate` / `bucket:field_notes` / `bucket:portal` |
+| Per-campaign | `campaign:<uuid>` |
+
+Pause is the **first** check in `gatedSend` (before suppression). A paused
+send writes `email_log.status='paused_skipped'` and never calls SendGrid.
+
+#### Tables
+
+- `email_pause_state` (migration 092) — one row per scope. CHECK constraint
+  enforces the three scope shapes. Partial index `idx_email_pause_state_active`
+  serves the banner's "list all active pauses" query.
+- `email_pause_audit_log` (migration 093) — append-only. UPDATE/DELETE
+  revoked from `anon` and `authenticated`; service role bypasses these so
+  the pause/resume APIs can still write.
+- `email_log.status` (migration 094) — column comment updated to document
+  `paused_skipped` as a canonical value.
+
+#### Service module — `src/lib/email/pause.ts`
+
+| Function | Returns | Throws? |
+|----------|---------|---------|
+| `getActivePauseScope({kind, campaignId?})` | First active pause in `[global, bucket:<resolved>, campaign:<id>]` order | NEVER |
+| `getPauseState(scope)` | Single scope's row or null | NEVER |
+| `getActivePauses()` | All `is_paused=true` rows for the banner | NEVER |
+| `pause({scope, reason, pausedUntil?, actorUserId, actorEmail})` | Updated `PauseState` | YES — admin route surfaces failure |
+| `resume({scope, reason?, actorUserId, actorEmail})` | void | YES |
+| `autoResume(scope)` | void — used by cron | YES |
+| `listAuditLog({scope?, limit?, offset?})` | Audit rows | YES |
+
+Reads NEVER throw — `gatedSend` reads on every send; a transient DB
+failure must not crash a send. The trade-off is that a Supabase outage
+fails open (no pause). The audit log captures any sends during such a
+window.
+
+#### Bucket resolution
+
+`resolveEmailBucket(kind)` maps an email kind to its sender bucket:
+
+- `gate` — `password_reset`, `email_verification`, `email_change_confirmation`
+- `field_notes` — `field_notes_newsletter`, `blog_newsletter`
+- `portal` — `portal_*`
+- `dispatch` — everything else (default)
+
+Keep in lockstep with `src/lib/email/senders.ts`.
+
+#### Worker integration
+
+`/api/cron/email/worker` batch-fetches `getPauseState('campaign:<id>')` for
+every campaign in its claimed batch. Jobs whose campaign is paused are
+left in `pending` and reconsidered next minute. Pauses are reversible, so
+we never flip jobs to a terminal status from the killswitch path.
+
+#### Auto-resume cron
+
+`/api/cron/email/auto-resume` (every 5 min) selects rows where
+`is_paused=true AND paused_until < now()`, calls `autoResume()` on each.
+That writes the `auto_resume` audit row, clears the flag, and resolves
+any persistent rail notifications for that scope.
+
+#### Admin API
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/admin/email/pause` | Pause a scope (reason >= 3 chars; optional ISO `paused_until`) |
+| POST | `/api/admin/email/resume` | Resume a scope |
+| GET | `/api/admin/email/pauses` | Active pauses (`?audit=1` to include 100 most recent audit rows) |
+
+All three are `withAdmin(handler)` + `requireAdmin(req)`.
+
+#### UI
+
+- `/admin/email` → 8th tab `Killswitches`. Three sections: Global / Sender
+  Buckets / Campaigns (note pointing to Scheduled Sends for per-campaign).
+- `ActivePauseBanner` (sticky, top: 0, z: 30) is rendered above SubTabs and
+  shows whenever ANY scope is paused. Polls `/api/admin/email/pauses` every
+  10 seconds. olive `#9DB582` border + tan `#C4A868` eyebrow — never red.
+- `PauseConfirmationModal` (z-3000) requires reason and offers Indefinite /
+  In 1h / In 24h auto-resume. Brick `#93321A` outline on the destructive
+  PAUSE button.
+
+#### Notifications
+
+Every successful pause inserts a persistent `email_pause` notification for
+every admin (joined via `admins.email` → `users.email`). Resume / auto-
+resume mark those notifications `is_read=true` by matching the title
+`Email paused: <scope>`.
+
+#### Tests
+
+- Unit: `tests/unit/email/pause.test.ts` (4 tests — bucket resolver),
+  `tests/unit/email/killswitches-tab.test.tsx` (3 tests — UI render).
+- Integration: `tests/integration/email-pause-routes.test.ts`
+  (12 tests — pause/resume/pauses validation + service calls).
+
 ---
 
 ## 15. Crew Location Tracking
