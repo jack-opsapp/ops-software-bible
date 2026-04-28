@@ -4875,4 +4875,65 @@ Never flip Firebase `callbackUri` without first: (1) shipping the handler page t
 
 ---
 
+### §14.11 Email template preview + versioning (PR 7)
+
+Every typed email template carries a `// @template-version: X.Y.Z` comment as
+its first line plus an exported `previewProps` const. The build-time script
+`npm run email:sync-versions` (chained to `prebuild`) reads each template,
+computes sha256 of the source, and upserts to `email_template_versions`. If
+the same `(template_id, version)` already exists with a different hash, the
+build fails — bumping the version is required to ship a copy change.
+
+The script no-ops when `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` aren't
+present (logs a warning), so local builds work without touching the DB. CI /
+Vercel builds set `SYNC_REQUIRE_DB=1` along with the credentials to enforce
+the contract — missing env then exits 1.
+
+**Tables:**
+
+- `email_template_versions` — append-only registry. `(template_id, version)`
+  unique. Stores `content_hash`, `rendered_sample_html`, `preview_props`.
+  No UPDATE/DELETE for non-service-role roles.
+- `email_campaigns.template_version` — column added so analytics can compare
+  open/click rates between template versions.
+
+**Admin UI:**
+
+- `/admin/email/templates` — list of all 17 templates with current version
+  and version count.
+- `/admin/email/templates/[templateId]` — three sub-tabs:
+  - **Preview**: edit JSON props in a textarea, iframe re-renders 600ms
+    debounced via `POST /api/admin/email/templates/[id]/preview`.
+  - **Versions**: accordion timeline; each version's `rendered_sample_html`
+    is shown in an inline iframe.
+  - **Send Test**: send the rendered template to any recipient. Logged
+    with `email_log.metadata.is_test=true` and `metadata.via='admin_test'`.
+- A "Templates" sub-tab on `/admin/email` links into the registry.
+
+**Suppression:** test sends use the back-compat shim `sendTransactionalEmail`,
+which flows through `gatedSend`'s suppression check. Operators who need to
+send to a suppressed address must remove the suppression first via
+`DELETE /api/admin/email/suppressions/[email]`.
+
+**Key files:**
+
+| File | Role |
+|---|---|
+| `OPS-Web/supabase/migrations/102_email_template_versions.sql` | Append-only registry table |
+| `OPS-Web/supabase/migrations/103_email_campaigns_template_version.sql` | `email_campaigns.template_version` column |
+| `OPS-Web/src/lib/email/template-registry.ts` | 17-entry typed registry + `renderTemplate` |
+| `OPS-Web/scripts/email-template-version-sync.ts` | Build-time sync script |
+| `OPS-Web/src/lib/admin/email-template-queries.ts` | Server-side list/detail queries |
+| `OPS-Web/src/app/api/admin/email/templates/route.ts` | GET list |
+| `OPS-Web/src/app/api/admin/email/templates/[templateId]/route.ts` | GET detail |
+| `OPS-Web/src/app/api/admin/email/templates/[templateId]/preview/route.ts` | POST props → HTML |
+| `OPS-Web/src/app/api/admin/email/templates/[templateId]/send-test/route.ts` | POST recipient + props → SendGrid + log |
+| `OPS-Web/src/app/admin/email/templates/page.tsx` | List page |
+| `OPS-Web/src/app/admin/email/templates/[templateId]/page.tsx` | Detail page (3 sub-tabs) |
+| `OPS-Web/src/components/admin/email/template-preview-tab.tsx` | JSON editor + 600ms-debounced iframe |
+| `OPS-Web/src/components/admin/email/template-versions-tab.tsx` | Accordion of stored renders |
+| `OPS-Web/src/components/admin/email/template-send-test-tab.tsx` | Send-to-self with prop overrides |
+
+---
+
 **End of Document**
