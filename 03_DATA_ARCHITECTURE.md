@@ -535,10 +535,10 @@ final class Company {
     var subscriptionIdsJson: String?
     var trialStartDate: Date?
     var trialEndDate: Date?
-    var hasPrioritySupport: Bool = false
-    var dataSetupPurchased: Bool = false
-    var dataSetupCompleted: Bool = false
-    var dataSetupScheduledDate: Date?
+    var hasPrioritySupport: Bool = false       // Stripe-driven entitlement (Priority Support add-on)
+    var dataSetupPurchased: Bool = false       // Stripe-driven entitlement (Data Setup add-on, one-time)
+    var dataSetupCompleted: Bool = false       // Flipped by ops staff in admin once migration is done
+    var dataSetupScheduledDate: Date?          // Mirrors data_setup_requests.scheduled_at for the iOS read path
     var stripeCustomerId: String?
 
     // Phase 3 — Default work hours (added 2026-04-27)
@@ -1139,6 +1139,62 @@ enum CalendarUserEventStatus: String, Codable {
 **RLS Note**: The `calendar_user_events` table uses `CAST(auth.uid() AS TEXT)` in its RLS policies because `users.id` is a UUID type while `calendar_user_events.user_id` is a text column. Standard `auth.uid() = user_id` comparisons fail without the explicit cast.
 
 **Added**: 2026-03-02 (Schedule Tab Redesign)
+
+---
+
+## Subscription Add-ons — `data_setup_requests`
+
+**Added**: 2026-04-29 (Migration `20260429120000_data_setup_requests.sql`, applied to prod via Supabase MCP)
+**Purpose**: Operations queue behind the one-time Data Setup add-on. Each Stripe Checkout completion (`mode=payment`, price = `STRIPE_PRICE_DATA_SETUP`) creates a row here for ops to track from purchase through migration.
+
+### Source-of-truth split
+
+The `companies` row holds three Stripe-driven entitlement bits read by the rest of the app:
+
+- `companies.has_priority_support BOOLEAN` — flipped by `customer.subscription.created/updated/deleted` events when the line item is the priority-support price.
+- `companies.data_setup_purchased BOOLEAN` — flipped by `checkout.session.completed` when the line item is the data-setup price.
+- `companies.data_setup_completed BOOLEAN` + `companies.data_setup_scheduled TIMESTAMPTZ` — admin-managed; reflect the latest non-cancelled `data_setup_requests` row for the company.
+
+The `data_setup_requests` table is the operations log behind those flags. iOS / web reads the entitlement bits from `companies`; ops staff and the Subscription tab (status detail) read the request rows.
+
+### Table
+
+```sql
+CREATE TABLE data_setup_requests (
+  id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id                  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  requested_by                UUID NOT NULL REFERENCES users(id),
+  status                      TEXT NOT NULL DEFAULT 'pending'
+                                CHECK (status IN ('pending','scheduled','in_progress','completed','cancelled')),
+  scheduled_at                TIMESTAMPTZ,
+  completed_at                TIMESTAMPTZ,
+  notes                       TEXT,
+  stripe_payment_intent_id    TEXT,           -- unique partial index (defense in depth vs webhook replay)
+  amount_paid_cents           INTEGER,
+  source_software             TEXT,
+  contact_email               TEXT,
+  contact_phone               TEXT,
+  created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### RLS
+
+- `SELECT` — any user in the same company.
+- `INSERT` — any user in the same company; webhook bypasses RLS via service role.
+- `UPDATE` — admins only (`users.is_company_admin = TRUE`).
+- Auth identity matches the existing `/api/auth/join-company` pattern: `users.auth_id = auth.uid()::text` OR `users.firebase_uid = auth.uid()::text`.
+
+### Lifecycle
+
+`pending` → `scheduled` (when ops books a date) → `in_progress` → `completed` (flips `companies.data_setup_completed = true`). `cancelled` covers refunds and admin overrides.
+
+### Stripe price IDs
+
+- `STRIPE_PRICE_DATA_SETUP` — one-time charge, `mode=payment`.
+- `STRIPE_PRICE_PRIORITY_SUPPORT_MONTHLY` / `STRIPE_PRICE_PRIORITY_SUPPORT_ANNUAL` — recurring, `mode=subscription`.
+- Mapping helpers live in `OPS-Web/src/lib/stripe/subscription-mapping.ts`: `ADDON_PRICE_MAP`, `addonFromPriceId()`, `isPrioritySupportPrice()`. The webhook routes off these helpers.
 
 ---
 

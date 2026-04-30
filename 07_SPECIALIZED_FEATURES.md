@@ -5417,4 +5417,98 @@ wasted calls when the operator is on another tab.
 
 ---
 
+## Subscription Add-ons (Web)
+
+**Added**: 2026-04-29
+**Location**: `OPS-Web/src/components/settings/addons-section.tsx` + supporting endpoints, hooks, webhook branches.
+**Bugs closed**: `9bcdbe02-e13b-4cc8-9184-308e459cb9ac` (Data Setup), `c0eb2e2c-ca3d-461c-8efb-05fca08ab833` (Priority Support).
+
+### What it is
+
+Two paid add-ons sit alongside the base subscription, surfaced as cards in the Subscription tab below the plan list:
+
+| Add-on | Stripe mode | Entitlement column | Stripe price env var |
+|---|---|---|---|
+| Data Setup | `payment` (one-time) | `companies.data_setup_purchased` (+ `data_setup_requests` row) | `STRIPE_PRICE_DATA_SETUP` |
+| Priority Support — monthly | `subscription` | `companies.has_priority_support` | `STRIPE_PRICE_PRIORITY_SUPPORT_MONTHLY` |
+| Priority Support — annual | `subscription` | `companies.has_priority_support` | `STRIPE_PRICE_PRIORITY_SUPPORT_ANNUAL` |
+
+The fulfillment inbox is `ADDON_FULFILLMENT_EMAIL` (defaults to `jack@opsapp.co`). All three Stripe price IDs and the fulfillment address are environment variables — no hardcoded values.
+
+### Purchase flow — Data Setup
+
+```
+User clicks "Purchase" on the Data Setup card
+   → POST /api/stripe/addon/data-setup       (Bearer Firebase token)
+       → Creates Checkout Session, mode=payment, line_item=data_setup price
+       → Idempotency key: company-{id}-checkout-data-setup
+       → Returns { url }
+   → Browser hard-navigates to Stripe Checkout
+   → User pays → Stripe fires checkout.session.completed
+       → /api/webhooks/stripe handleDataSetupCheckout()
+           → companies.data_setup_purchased = true
+           → INSERT data_setup_requests (status=pending, payment_intent_id, amount, contact)
+           → DataSetupRequest email → ADDON_FULFILLMENT_EMAIL
+           → notifications insert (persistent: true) for every company admin
+   → Browser returns to /settings?tab=subscription&addon=data_setup&result=success
+       → Toast confirmation, query strip
+```
+
+### Purchase flow — Priority Support
+
+```
+User clicks "Purchase" on the Priority Support card (with monthly/annual toggle)
+   → POST /api/stripe/addon/priority-support  body: { period: 'monthly' | 'annual' }
+       → Creates Checkout Session, mode=subscription, price=monthly|annual
+       → Returns { url }
+   → Browser hard-navigates to Stripe Checkout
+   → User pays → Stripe fires:
+       1. checkout.session.completed
+            → handlePrioritySupportCheckout()
+                → companies.has_priority_support = true (belt-and-suspenders flip)
+                → PrioritySupportActivated email → buyer
+                → notifications insert (persistent: false) for company admins
+       2. customer.subscription.created/updated
+            → Routed via isPrioritySupportPrice(price) — does NOT clobber base plan columns
+            → companies.has_priority_support = entitled (active|trialing|past_due|paused)
+   → Browser returns to /settings?tab=subscription&addon=priority_support&result=success
+```
+
+### Cancellation
+
+`customer.subscription.updated` (status → canceled/incomplete_expired/unpaid) and `customer.subscription.deleted` flow through `isPrioritySupportPrice()` and flip `companies.has_priority_support = false`. Base-plan handlers are explicitly skipped for add-on subscriptions to avoid clobbering `subscription_status` / `subscription_plan` / `max_seats`.
+
+The "Manage in billing portal" link uses `/api/stripe/billing-portal` (Stripe Billing Portal session) — users cancel from there.
+
+### "Contact priority support" button
+
+Active-state-only mailto: `jack@opsapp.co?subject=[OPS Priority] {companyName}&body=...` with prefilled user name, company, plan period, and current page URL. No Intercom integration — the founder's inbox is the support queue while volume is low.
+
+### Notification rail entries
+
+Per `Section 14: Notifications`. Recipients = every user in the company with `is_company_admin = TRUE`.
+
+- **Data Setup** → `persistent: true`. Stays on the rail until ops marks the request `scheduled` / `completed`.
+- **Priority Support active** → `persistent: false` (standard dismissible).
+
+### Files
+
+| File | Role |
+|---|---|
+| `OPS-Web/supabase/migrations/20260429120000_data_setup_requests.sql` | New `data_setup_requests` table + RLS |
+| `OPS-Web/src/lib/stripe/subscription-mapping.ts` | `ADDON_PRICE_MAP`, `addonFromPriceId`, `isPrioritySupportPrice` |
+| `OPS-Web/src/lib/stripe/checkout-helpers.ts` | Shared customer-provisioning + return-URL builders |
+| `OPS-Web/src/app/api/stripe/addon/data-setup/route.ts` | Checkout session, mode=payment |
+| `OPS-Web/src/app/api/stripe/addon/priority-support/route.ts` | Checkout session, mode=subscription |
+| `OPS-Web/src/app/api/stripe/addon/prices/route.ts` | Server-side Stripe price fetch (1h edge cache) |
+| `OPS-Web/src/app/api/stripe/billing-portal/route.ts` | Billing portal session for cancellations |
+| `OPS-Web/src/app/api/webhooks/stripe/route.ts` | `checkout.session.completed` handler + add-on subscription routing |
+| `OPS-Web/src/lib/email/react/templates/DataSetupRequest.tsx` | React Email — ops fulfillment notification |
+| `OPS-Web/src/lib/email/react/templates/PrioritySupportActivated.tsx` | React Email — customer confirmation |
+| `OPS-Web/src/lib/email/sendgrid.tsx` | `sendDataSetupRequest` + `sendPrioritySupportActivated` (Dispatch sender) |
+| `OPS-Web/src/components/settings/addons-section.tsx` | Two-card UI mounted in the Subscription tab |
+| `OPS-Web/src/lib/hooks/use-addons.ts` | `useAddOns()` + `useAddOnPrices()` hooks (TanStack + Supabase realtime) |
+
+---
+
 **End of Document**
