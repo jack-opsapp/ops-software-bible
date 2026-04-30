@@ -536,6 +536,7 @@ final class Company {
     var trialStartDate: Date?
     var trialEndDate: Date?
     var hasPrioritySupport: Bool = false       // Stripe-driven entitlement (Priority Support add-on)
+    var prioritySupportPeriod: String?         // 'monthly' | 'annual' — billing cadence cache for the active Priority Support sub
     var dataSetupPurchased: Bool = false       // Stripe-driven entitlement (Data Setup add-on, one-time)
     var dataSetupCompleted: Bool = false       // Flipped by ops staff in admin once migration is done
     var dataSetupScheduledDate: Date?          // Mirrors data_setup_requests.scheduled_at for the iOS read path
