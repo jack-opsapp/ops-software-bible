@@ -129,14 +129,8 @@ final class Project: Identifiable {
     @Transient var coordinatorData: [String: Any]?
 
     // Project Workspace Modal columns (Supabase only — added 2026-05-06)
-    // scope            TEXT                         — one-paragraph scope summary; rendered on the workspace Details tab
-    // site_notes       TEXT                         — free-text site access notes (e.g. "Gate code 4820, dogs on property")
-    // gate_code        TEXT                         — gate/lockbox code; surfaced in the SITE card
-    // site_conditions  JSONB DEFAULT '{}'           — { parking, pets[], power, hazards[] } shown on the SITE card
-    // color            TEXT                         — user-picked accent color (hex or token name) for calendar/board surfaces
-    // visibility       TEXT DEFAULT 'all' CHECK ∈ {all, office, private} — portal exposure
+    // visibility       TEXT DEFAULT 'all' CHECK ∈ {all, office, private} — portal exposure; private projects do not appear in the client portal
     //   Partial index idx_projects_visibility WHERE visibility != 'all' speeds the office/private filter on company dashboards.
-    // buffer_days      SMALLINT DEFAULT 0 CHECK ∈ [0,14] — weather buffer days padded around start/end on the schedule strip
 }
 ```
 
@@ -1220,52 +1214,14 @@ CREATE TABLE data_setup_requests (
 
 ## Project Workspace Modal Tables (Web-Only)
 
-**Added**: 2026-05-06 (migrations `20260506120000_project_site_metadata` through `20260506120400_weather_forecasts`)
+**Added**: 2026-05-06 (migrations `20260506120000_project_site_metadata` through `20260506120400_weather_forecasts`, plus rollback `20260506140000_rollback_unused_project_fields`)
 **Purpose**: Schema additions powering the unified `ProjectWorkspace` modal in OPS-Web (replaces the legacy `project-detail-modal` / `project-detail-sheet` / `create-project-modal` / `edit-project-modal` / `project-detail-popover` / `[id]` route page surfaces). All additions are web-only and not mirrored in the iOS SwiftData store.
 
-### `projects` column additions (Migration `20260506120000`)
+> **Scope cut (2026-05-06 design review)** — `scope`, `site_notes`, `gate_code`, `site_conditions`, `color`, `buffer_days` columns and the `project_tags` / `project_tag_assignments` tables were dropped via migration `20260506140000_rollback_unused_project_fields.sql` after the design review collapsed the SITE card, the Context tab, and the user-picked color into status-driven chrome. Status hex drives all chrome (no `color`); buffer is a future derived value from task scheduling; `description` covers what `scope` was meant to. Re-add tags only when filter/saved-view features actually require them.
 
-Documented inline on the `Project` SwiftData model (Section 1) as Supabase-only columns. Summary:
+### `projects.visibility` (Migration `20260506120000`, only surviving column)
 
-- `scope TEXT` — Details tab summary
-- `site_notes TEXT` — site access notes
-- `gate_code TEXT` — surfaced in the SITE card
-- `site_conditions JSONB DEFAULT '{}'` — `{ parking, pets[], power, hazards[] }`
-- `color TEXT` — calendar/board accent
-- `visibility TEXT DEFAULT 'all' CHECK ∈ {all, office, private}` — portal exposure (partial index `idx_projects_visibility WHERE visibility != 'all'`)
-- `buffer_days SMALLINT DEFAULT 0 CHECK ∈ [0,14]` — weather buffer
-
-### `project_tags` (Migration `20260506120100`)
-
-Per-company tag library. Many-to-many to projects via `project_tag_assignments`.
-
-```sql
-CREATE TABLE project_tags (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  label       TEXT NOT NULL,
-  tone        TEXT NOT NULL DEFAULT 'neutral' CHECK (tone IN ('neutral','olive','tan','rose','accent')),
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE UNIQUE INDEX uniq_project_tags_company_label ON project_tags (company_id, lower(label));
-```
-
-**RLS** — canonical OPS pattern (`private.get_user_company_id()` for company isolation; write access piggybacks on `projects.edit` permission via `private.current_user_has_permission()`; `private.current_user_is_admin()` is the escape hatch). Four policies: SELECT, INSERT, UPDATE, DELETE.
-
-### `project_tag_assignments` (Migration `20260506120100`)
-
-```sql
-CREATE TABLE project_tag_assignments (
-  project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  tag_id      UUID NOT NULL REFERENCES project_tags(id) ON DELETE CASCADE,
-  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (project_id, tag_id)
-);
-CREATE INDEX idx_project_tag_assignments_project ON project_tag_assignments(project_id);
-CREATE INDEX idx_project_tag_assignments_tag     ON project_tag_assignments(tag_id);
-```
-
-**RLS** — three policies (SELECT, INSERT, DELETE). Reads require the user to see the underlying project via `projects.company_id = private.get_user_company_id()`. Writes also honor the `'assigned'` scope: a user with `private.current_user_scope_for('projects.edit') = 'assigned'` can attach/detach tags only on projects they're listed on (`private.current_user_in_project(project_id)`).
+- `visibility TEXT DEFAULT 'all' CHECK ∈ {all, office, private}` — portal exposure. `private` projects do not appear in the client portal. Partial index `idx_projects_visibility ON projects(visibility) WHERE visibility != 'all'` covers the office/private filter on company dashboards.
 
 ### `clients` / `opportunities` lat/lng (Migration `20260506120200`)
 
