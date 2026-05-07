@@ -351,7 +351,7 @@ All auto-advances record a `StageTransition` row. Users can manually drag to any
 
 ### `LineItem` (Supabase) — MODIFIED
 
-Add `type`, `taskTypeId`, and `estimatedHours`:
+Adds `type`, `taskTypeId`, `estimatedHours`, and the Phase 13 configuration-snapshot fields:
 
 ```typescript
 type LineItemType = 'LABOR' | 'MATERIAL' | 'OTHER'
@@ -370,10 +370,15 @@ interface LineItem {
   productId: string | null;  // optional link to product catalog
   displayOrder: number;
 
-  // --- NEW fields ---
+  // --- task-generation fields ---
   type: LineItemType;                  // LABOR | MATERIAL | OTHER
   taskTypeId: string | null;           // Bubble TaskType ID — LABOR items only
   estimatedHours: number | null;       // optional, for labor costing
+
+  // --- Phase 13 configuration snapshot ---
+  configuredOptions: jsonb | null;       // {option_id: option_value_id_or_int_or_bool}
+  resolvedUnitPrice: number | null;      // base + applicable modifiers, frozen at line creation
+  resolvedOptionsLabel: string | null;   // "TM · Black · Concrete · 4 corners"
 }
 ```
 
@@ -382,6 +387,25 @@ interface LineItem {
 - Only `LABOR` line items participate in task generation
 - `MATERIAL` and `OTHER` items are billing-only — no tasks created
 - `taskTypeId` is nullable: a LABOR item without a taskTypeId generates one generic task
+
+**Phase 13 snapshot semantics (line items as signed contracts):**
+
+When a line item is created — manually from the line-item editor or programmatically by the drawing→estimate adapter — `ProductConfigurationResolver` runs:
+
+1. Reads the chosen `Product`'s `ProductOption` rows + the user's choices.
+2. Walks `ProductPricingModifier` rows whose triggers match. Modifier kinds:
+   - `add_per_unit` → `unit_price += amount`
+   - `add_flat` → `unit_price += amount`
+   - `add_per_count` → `unit_price += amount * configured_options[option_id]`
+   - `multiply_unit_price` → `unit_price *= amount`
+3. Snapshots the resolved values to the line:
+   - `configured_options` (jsonb) — the user's choices keyed by option id
+   - `resolved_unit_price` — frozen final unit price
+   - `resolved_options_label` — printed-estimate-friendly summary
+
+Once written, these fields **never re-resolve**. Edits to the Product's options/modifiers/recipe after line creation do not retroactively change the estimate. This preserves the contract semantics of the estimate document.
+
+The `configured_options` jsonb is also the input that `RecipeResolver` reads at install task creation (see § Cut-List Materialization below).
 
 ---
 
@@ -585,33 +609,121 @@ interface Invoice {
 
 ---
 
-### `Product` (Supabase) — MODIFIED
+### `Product` (Supabase) — MODIFIED (Phase 13)
 
-Add type and task type linkage to enable catalog-driven task auto-fill:
+Phase 13 expanded the Product schema to support both barebones and configurable Products. See `09_FINANCIAL_SYSTEM.md` § Products & Services Catalog and `03_DATA_ARCHITECTURE.md` § 21 (Product) for the canonical schema.
 
-```typescript
-interface Product {
-  // --- existing fields ---
-  id: string;
-  companyId: string;
-  name: string;
-  description: string | null;
-  category: string | null;
-  defaultPrice: number;
-  unitCost: number | null;
-  unit: string | null;
-  taxable: boolean;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+Key Phase 13 additions:
+- `basePrice` (replaces `defaultPrice` as the primary unit price column; `default_price` mirrored via Postgres trigger until ops-web cuts over)
+- `pricingUnit` enum: `each` / `flat_rate` / `linear_foot` / `sqft` / `hour` / `day`
+- `kind` enum: `service` / `good`
+- `sku`, `isFavorite`, `minimumCharge`, `minimumQuantity`, `showBomOnEstimate`, `showInStorefront`, `tieredPricing` (jsonb)
+- `unitId` FK to `catalog_units.id`
+- Wire-field bug fixed — DTO no longer writes to non-existent `unit_price`/`cost_price` columns
 
-  // --- NEW fields ---
-  type: LineItemType;             // LABOR | MATERIAL | OTHER — auto-sets line item type
-  taskTypeId: string | null;      // Bubble TaskType ID — auto-sets task type on line item
-}
+Configurable Products carry zero-or-more rows in four extension tables: `product_options`, `product_option_values`, `product_pricing_modifiers`, `product_materials`. A "barebones" Product has zero rows in every layer and behaves identically to a flat product.
+
+**Catalog-driven task auto-fill** (preserved from earlier behavior): when a user adds a Product to an estimate, `product.type` and `product.taskTypeId` automatically populate the line item; the line item's resolved configuration is captured at creation by `ProductConfigurationResolver`.
+
+---
+
+### Cut-List Materialization (Phase 13)
+
+When a project transitions to `.inProgress` and install tasks are generated, recipes resolve to concrete `task_materials` rows pinned to specific `catalog_variants`. This is the canonical cut list the field crew works against.
+
+**Lifecycle:**
+
+```
+Estimate approved
+  └─ Project status → .accepted
+      └─ Tasks auto-generated from LABOR line items (existing flow)
+          ↓
+Project status → .inProgress (install begins)
+  └─ For each ProjectTask with sourceLineItemId:
+       1. Load line.configured_options snapshot
+       2. Walk ProductMaterial rows for line.productId:
+            - Variant-pinned (catalog_variant_id non-null) → use directly
+            - Family-pinned (catalog_item_id non-null) → resolve variant_selector against
+              configured_options, find the matching variant on that family
+       3. Multiply quantity_per_unit by line.quantity
+            (and by configured_options[scaled_by_option_id] if scaled_by_option_id set)
+       4. Insert task_materials rows pinned to specific catalog_variant_ids
 ```
 
-**Usage:** When a user adds a product from the catalog to an estimate, `product.type` and `product.taskTypeId` automatically populate the line item. Zero manual configuration per estimate.
+`CutListMaterializer` lives in `OPS/Network/Sync/`. Resolution is **idempotent** — re-running for the same task replaces the existing rows in a single transaction. This means an estimate edit (recipe change, option change) followed by a re-materialization gives the field crew the latest cut list without leaving stale rows behind.
+
+**Why install-time, not estimate-time?** The cut list must reflect the configuration the customer signed. Resolving at install creation means:
+- Pricing was already frozen on the line item — recipe re-resolution doesn't affect billing.
+- Stock state is fresh — variant SKUs that were active at estimate time but later marked inactive can be replaced by an admin before install.
+- Family-level recipe edits can flow into pending installs without rebuilding old estimates.
+
+`task_materials` rows write through the legacy `inventory_item_id` column too (null for new rows) — the field crew's view-layer is unchanged; only the FK column it reads has been swapped.
+
+---
+
+### Drawing → Estimate Adapter (Phase 13)
+
+The Deck Builder canvas can emit a fully-populated draft Estimate in one tap. This is the most consequential time-saver in the catalog redesign — hours of estimate writing collapse into a single button.
+
+**Entry point:** Deck Builder canvas → `GENERATE ESTIMATE` button.
+
+**Flow:**
+
+```
+User taps GENERATE ESTIMATE on Deck Builder
+   ↓
+Adapter walks deck_designs.drawing_data.components[]
+   ↓
+For each component with a populated component_type:
+   1. Look up company_default_products[component_type] → Product
+   2. For each ProductOption on Product:
+        - Read option_default_source ("$design.color")
+        - Pull value from drawing_data.<key>; fall back to default_value if missing
+   3. Compute quantity from geometry:
+        - railing → linear_feet (+ corners_count for scaled hardware)
+        - deck_board → sqft
+        - stair_set → tread_count
+        - gate / post_set → count
+   4. Apply matching ProductPricingModifier rows → resolved_unit_price
+   5. Snapshot to draft line_items row:
+        - configured_options (jsonb)
+        - resolved_unit_price
+        - resolved_options_label
+   ↓
+Emit draft Estimate with all line items pre-populated → user reviews
+```
+
+**Resilience:** missing `company_default_products[component_type]` mapping → log to `app_events.adapter_skip_component` and continue. The draft estimate appears with whatever components could be resolved; the user adds anything missing by hand. This is the **named follow-up coordination** with the Deck Builder agent (per spec § 7.1) — if the Deck Builder hasn't tagged components with a `component_type` and the agreed metadata keys, the adapter is a no-op for affected components, but everything else continues to work.
+
+**Reserved metadata keys per `component_type`:**
+
+| Component | Required keys |
+|---|---|
+| `railing` | `linear_feet`, `corners_count`, `color`, `mount_type`, `mount_surface` |
+| `deck_board` | `sqft`, `color`, `material` |
+| `stair_set` | `tread_count`, `width`, `color`, `mount_type` |
+| `gate` | `count`, `width`, `color`, `mount_type`, `mount_surface` |
+| `post_set` | `count`, `height`, `color`, `mount_type` |
+
+`ProductOption.optionDefaultSource` references these as `$design.<key>` — that's how the adapter knows where to pull each option's default from.
+
+**Position in the project lifecycle:**
+
+```
+Lead/inquiry → Opportunity created
+  ↓
+Site visit / scope captured
+  ↓
+Drawing produced in Deck Builder (component_type tagged on each component)
+  ↓
+USER TAPS GENERATE ESTIMATE  ← drawing→estimate adapter runs here
+  ↓
+Draft estimate appears with all line items snapshotted
+  ↓
+User reviews/edits → sends estimate
+  ↓
+Customer approves → project created → tasks generated → cut list materialized
+```
 
 ---
 

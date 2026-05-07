@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: 2026-05-06
+**Last Updated**: 2026-05-07
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -9,21 +9,35 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [SwiftData Models (25 Registered Entities)](#swiftdata-models-25-registered-entities)
+2. [SwiftData Models (48 Registered Entities)](#swiftdata-models-48-registered-entities)
 3. [Subscription Add-ons — `data_setup_requests`](#subscription-add-ons--data_setup_requests)
 4. [Project Workspace Modal Tables (Web-Only)](#project-workspace-modal-tables-web-only)
 5. [Permissions System Tables](#permissions-system-tables)
-6. [Inventory Models (5 Entities -- File-Only, Not in Schema)](#inventory-models-5-entities----file-only-not-in-schema)
-7. [Enums Reference](#enums-reference)
-8. [Relationship Map](#relationship-map)
-9. [BubbleFields Constants (Legacy/Deprecated)](#bubblefields-constants-legacydeprecated)
-10. [Data Transfer Objects (DTOs)](#data-transfer-objects-dtos)
-11. [Supabase DTOs](#supabase-dtos)
-12. [Soft Delete Strategy](#soft-delete-strategy)
-13. [Computed Properties & Business Logic](#computed-properties--business-logic)
-14. [Migration History](#migration-history)
-15. [Query Predicates & Filtering](#query-predicates--filtering)
-16. [Defensive Programming Patterns](#defensive-programming-patterns)
+6. [Catalog & Variant Model](#catalog--variant-model)
+7. [Bridge & Audit Tables](#bridge--audit-tables)
+8. [Enums Reference](#enums-reference)
+9. [Relationship Map](#relationship-map)
+10. [BubbleFields Constants (Legacy/Deprecated)](#bubblefields-constants-legacydeprecated)
+11. [Data Transfer Objects (DTOs)](#data-transfer-objects-dtos)
+12. [Supabase DTOs](#supabase-dtos)
+13. [Soft Delete Strategy](#soft-delete-strategy)
+14. [Computed Properties & Business Logic](#computed-properties--business-logic)
+15. [Migration History](#migration-history)
+16. [Query Predicates & Filtering](#query-predicates--filtering)
+17. [Defensive Programming Patterns](#defensive-programming-patterns)
+
+---
+
+## Phase 13 — Catalog & Variant Model (2026-05-07)
+
+This document was significantly refactored on 2026-05-07 as Phase 13 of `2026-05-06-ios-catalog-variant-model.md`. Key changes:
+
+- § 21 (Product) gained 9 new fields (`pricingUnit`, `basePrice`, `kind`, `sku`, `isFavorite`, `minimumCharge`, `minimumQuantity`, `showBomOnEstimate`, `showInStorefront`, `tieredPricingJSON`) and a Configurable Products subsection.
+- § Inventory Models (5 file-only entities) was replaced with § Catalog & Variant Model (14 registered catalog entities + 4 product extensions).
+- The wire-field bug in `ProductDTOs.swift` (writing `unit_price`/`cost_price` to non-existent columns) was fixed; DTOs now correctly map `base_price`/`unit_cost`.
+- DTO listings added for `CatalogDTOs.swift`, `ProductExtensionDTOs.swift`, `CompanyDefaultProductDTOs.swift`, `CatalogOrderDTOs.swift`, `TaskMaterialDTOs.swift`.
+- New § Bridge & Audit Tables documents `product_materials`, `task_materials`, `line_item_materials`, `inventory_deductions` (FK renamed to `catalog_variant_id`), `client_product_overrides`, `product_tax_rates`, `company_default_products`, `catalog_orders`, `catalog_order_items`.
+- Schema bumped V2 → V3. Total registered models: 25 → 48.
 
 ---
 
@@ -44,9 +58,9 @@ The OPS data layer follows a **three-tier architecture**:
 - **Type Safety**: DTOs handle field name mapping and type conversion
 - **Task-Based Scheduling**: Project dates are computed from task start/end dates (CalendarEvent entity has been removed)
 
-### The 25 Registered Schema Models
+### The 48 Registered Schema Models
 
-As defined in `OPSApp.swift` Schema:
+As defined in `OPSSchemaCommon.unchangedModels` (47 entries) + `WizardState` (per-version, schema V3 today). The schema container is built via `OPSSchemaV3` in `OPSApp.swift`.
 
 **Core Entities (11):**
 1. **User** -- Team member with role-based permissions
@@ -71,18 +85,51 @@ As defined in `OPSApp.swift` Schema:
 18. **Invoice** -- Billing document
 19. **InvoiceLineItem** -- Line item on an invoice
 20. **Payment** -- Payment record (insert-only)
-21. **Product** -- Service/product catalog item
+21. **Product** -- Billable line-item template (barebones or configurable; see § 21)
 22. **SiteVisit** -- Scope assessment visit
 23. **ProjectNote** -- Per-project message board note
 24. **PhotoAnnotation** -- Drawing overlay and text note for project photos
 25. **CalendarUserEvent** -- User-owned personal events and time-off requests
 
-**Not Registered in Schema (exist as files only):**
-- InventoryItem, InventorySnapshot, InventorySnapshotItem, InventoryTag, InventoryUnit (5 models)
+**Offline-First Sync Models (4):**
+26. **TimeEntry** -- Field crew time tracking
+27. **SignatureCapture** -- Stored signatures for estimates/invoices/job approvals
+28. **FormSubmission** -- Submitted forms (custom checklists)
+29. **LocalPhoto** -- Local photo cache pending S3 upload
+
+**Catalog Models (14) — replaces legacy Inventory* file-only models:**
+30. **CatalogCategory** -- Nested category for catalog items (parent_id self-FK)
+31. **CatalogItem** -- Variant family (name, default price/cost/threshold/unit)
+32. **CatalogVariant** -- The SKU (quantity, threshold, unit, sku, override prices)
+33. **CatalogOption** -- A variant axis on a family ("Color", "Mount Type")
+34. **CatalogOptionValue** -- A possible value for a CatalogOption
+35. **CatalogVariantOptionValue** -- Junction (variant ↔ option_value)
+36. **CatalogTag** -- Free-form FAMILY-level label
+37. **CatalogItemTag** -- Junction (family ↔ tag)
+38. **CatalogUnit** -- Unit of measure (replaces InventoryUnit; exposes dimension + abbreviation)
+39. **CatalogSnapshot** -- Variant-aware historical stock snapshot
+40. **CatalogSnapshotItem** -- One row per variant in a snapshot
+41. **CatalogOrder** -- Threshold-driven restock order (status: suggested / draft / sent / fulfilled / cancelled)
+42. **CatalogOrderItem** -- One line per variant on an order
+43. **CompanyDefaultProduct** -- (company_id, component_type) → product_id; drives drawing→estimate adapter
+
+**Configurable Product Extensions (4):**
+44. **ProductOption** -- A configurable knob on a Product (kind: select / integer / boolean)
+45. **ProductOptionValue** -- A possible value for a ProductOption
+46. **ProductPricingModifier** -- Price bump rule per option/value match
+47. **ProductMaterial** -- Recipe row (variant-pinned or family-pinned with selector)
+
+**Deck Builder (1):**
+48. **DeckDesign** -- Canvas drawing data for design components (railing, deck_board, stair_set, gate, post_set)
+
+**Per-Schema-Version (1):**
+- **WizardState** -- Onboarding wizard state (schema-versioned; appended in `OPSSchemaV3.models`)
+
+> Legacy note: `InventoryItem`, `InventorySnapshot`, `InventorySnapshotItem`, `InventoryTag`, `InventoryUnit` files remain on disk through the V2→V3 migration window for compile-time references but are NOT registered in `OPSSchemaCommon`. They are removed by Phase 4 of the catalog plan. SQL-side, the `inventory_*` tables are renamed to `catalog_*` by migration `2026-05-06-01-catalog-schema.sql`.
 
 ---
 
-## SwiftData Models (25 Registered Entities)
+## SwiftData Models (48 Registered Entities)
 
 ### 1. Project
 
@@ -979,7 +1026,9 @@ class Payment: Identifiable {
 ### 21. Product (Supabase-Backed)
 
 **File**: `DataModels/Supabase/Product.swift`
-**Purpose**: Service/product catalog item.
+**Purpose**: Billable line-item template (Stripe/Shopify "product"). Two tiers of richness:
+- **Barebones**: `name + basePrice + pricingUnit + taxable` is one form-fill away.
+- **Configurable**: carries `ProductOption`/`ProductOptionValue`/`ProductPricingModifier`/`ProductMaterial` rows that drive the iOS resolver (price snapshot) and `CutListMaterializer` (recipe → `task_materials`).
 
 **Properties**:
 
@@ -991,17 +1040,59 @@ class Product: Identifiable {
     var name: String
     var productDescription: String?
     var type: LineItemType
-    var defaultPrice: Double
+    var kind: ProductKind                  // .service | .good
+    var basePrice: Double                  // primary unit price column (was `default_price`)
     var unitCost: Double?
-    var unit: String?
+    var pricingUnit: ProductPricingUnit    // .each | .flatRate | .linearFoot | .sqft | .hour | .day
+    var unit: String?                      // legacy free-text unit (kept for back-compat)
+    var category: String?                  // legacy free-text category (separate from catalog_categories)
+    var sku: String?
     var taxable: Bool
     var isActive: Bool
+    var isFavorite: Bool
+    var minimumCharge: Double?
+    var minimumQuantity: Double?
+    var showBomOnEstimate: Bool
+    var showInStorefront: Bool
+    var tieredPricingJSON: String?         // raw jsonb passthrough
     var taskTypeId: String?
+    var taskTypeRef: String?
+    var unitId: String?                    // FK catalog_units.id
     var createdAt: Date
+}
+
+enum ProductPricingUnit: String, CaseIterable, Codable {
+    case each
+    case flatRate     = "flat_rate"
+    case linearFoot   = "linear_foot"
+    case sqft
+    case hour
+    case day
+}
+
+enum ProductKind: String, CaseIterable, Codable {
+    case service
+    case good
 }
 ```
 
-**Computed**: `marginPercent` -- `((defaultPrice - cost) / defaultPrice) * 100`.
+**Computed**: `marginPercent` -- `((basePrice - unitCost) / basePrice) * 100`.
+
+**Wire-field fix (Phase 3)**: earlier builds wrote `unit_price`/`cost_price` — columns that **do not exist** in Supabase. The DTO now correctly reads/writes `base_price`/`unit_cost`. `base_price` is the new primary column. The legacy `default_price` column is preserved and kept in sync via a Postgres trigger (migration `2026-05-06-02-catalog-views-triggers.sql`) until ops-web cuts over to `base_price`; the trigger and `default_price` are removed in that follow-up session.
+
+#### Configurable Products (NEW)
+
+Four extension models, all in `OPS/DataModels/Supabase/Catalog/`, drive the configurable layer. Each is empty by default — a "barebones" Product has zero rows in every layer and behaves identically to the original flat product.
+
+- **`ProductOption`** — a configuration knob (e.g., "Mount Type", "Color", "Corners"). Has `kind` ∈ {`select`, `integer`, `boolean`}, `affectsPrice`/`affectsRecipe` flags, optional `defaultValue`, and `optionDefaultSource` ("$design.color", "$design.mount_type", …) used by the drawing→estimate adapter.
+- **`ProductOptionValue`** — selectable values for `kind = .select` options.
+- **`ProductPricingModifier`** — bumps unit price when an option matches a trigger. `modifierKind` ∈ {`add_per_unit`, `add_flat`, `add_per_count`, `multiply_unit_price`}; trigger by `triggerValueId` (select) or `triggerIntMin`/`triggerIntMax` (integer).
+- **`ProductMaterial`** — recipe row. Either pinned to a `catalogVariantId` (specific SKU) or pinned to a `catalogItemId` (family head) with a `variantSelectorJSON` like `{"color":"$option.color","mount":"$option.mount_type"}`. `quantityPerUnit` is per Product's `pricingUnit`; `scaledByOptionId` lets a row scale by an integer-kind option (e.g., corner hardware kits scaled by Corners count). Family pins and variant pins are mutually exclusive (CHECK constraint).
+
+Resolver flow:
+
+1. **Estimate-line creation** — `ProductConfigurationResolver` reads the product's options + modifiers + the user's choices, computes `resolved_unit_price`, snapshots `configured_options` jsonb + `resolved_options_label` to the line item. Pricing is frozen at this moment.
+2. **Install-task creation** — `RecipeResolver` walks `product_materials`, applies `configured_options` to family-pinned rows via `variantSelectorJSON`, multiplies by quantity (and `scaledByOptionId` if present), emits `task_materials` rows pinned to specific `catalog_variants`. The cut list materializes here, not at estimate time.
 
 ---
 
@@ -1649,32 +1740,43 @@ When building any feature with user actions, gate with `<PermissionGate>` or `ca
 
 ---
 
-## Inventory Models (5 Entities -- File-Only, Not in Schema)
+## Catalog & Variant Model
 
-These models exist as SwiftData files but are **NOT registered in the OPSApp.swift Schema array**. They are referenced via Company relationships.
+The Catalog domain replaces the legacy file-only `Inventory*` models with a fully registered, variant-aware schema. Stockable SKUs (variants) and billable templates (Products) are separate concerns bridged by `ProductMaterial` recipe rows. All 14 catalog entities + 4 product extensions live in `OPS/DataModels/Supabase/Catalog/` and are registered in `OPSSchemaCommon.unchangedModels`.
 
-### InventoryItem
+```
+catalog_categories (nested via parent_id, 2-level UI)
+  └─ catalog_items (variant family)
+        ├─ catalog_options (variant axis: "Color", "Mount Type")
+        │     └─ catalog_option_values (selectable values)
+        ├─ catalog_variants (the SKU — has quantity, threshold, unit)
+        │     └─ catalog_variant_option_values (M2M: variant ↔ option_value combo)
+        └─ catalog_item_tags ─→ catalog_tags (FAMILY-level free-form labels)
 
-**File**: `DataModels/InventoryItem.swift`
+catalog_units (renamed from inventory_units)
+catalog_snapshots / catalog_snapshot_items (variant-aware point-in-time)
+catalog_orders / catalog_order_items (threshold-driven restock — NEW)
+company_default_products (component_type → product_id mapping — NEW)
+```
+
+**IMPORTANT change from legacy:** tags now apply at the **family** level, not the variant level. A "Corner" family carries tags like `discontinued`; not each variant separately. The legacy threshold columns on `catalog_tags` are preserved in storage but no longer surfaced in the iOS UI — effective-threshold compute now flows variant-override → family-default → category-default.
+
+### CatalogCategory
+
+**File**: `DataModels/Supabase/Catalog/CatalogCategory.swift`
+**Purpose**: Nested category for catalog items. 2-level max in UI; cycle-prevention enforced by Postgres trigger.
 
 ```swift
 @Model
-final class InventoryItem: Identifiable {
-    var id: String
-    var name: String
-    var itemDescription: String?
-    var quantity: Double
-    var unitId: String?
+final class CatalogCategory: Identifiable {
+    @Attribute(.unique) var id: String
     var companyId: String
-    var sku: String?
-    var notes: String?
-    var imageUrl: String?
-    var tagIds: [String] = []
-    var warningThreshold: Double?
-    var criticalThreshold: Double?
-
-    @Relationship(deleteRule: .nullify) var unit: InventoryUnit?
-    @Relationship(deleteRule: .nullify) var tags: [InventoryTag] = []
+    var name: String
+    var parentId: String?                 // self-FK (nested)
+    var sortOrder: Int
+    var colorHex: String?
+    var defaultWarningThreshold: Double?  // cascades to family/variant when null at lower levels
+    var defaultCriticalThreshold: Double?
 
     var lastSyncedAt: Date?
     var needsSync: Bool = false
@@ -1682,103 +1784,536 @@ final class InventoryItem: Identifiable {
 }
 ```
 
-**ThresholdStatus Enum**: `.normal`, `.warning`, `.critical` -- used for low-stock alerts.
+**RLS**: company_isolation. **Indexes**: `(company_id, parent_id)`, `(company_id, deleted_at)`.
 
-**Key Computed**: `quantityDisplay`, `thresholdStatus`, `effectiveThresholdStatus()` (considers tag thresholds), `isLowStock`.
+### CatalogItem
 
-### InventorySnapshot
-
-**File**: `DataModels/InventorySnapshot.swift`
+**File**: `DataModels/Supabase/Catalog/CatalogItem.swift`
+**Purpose**: Variant family — one row per logical product (e.g., "Corner") that may have N variants differing by option values. Carries default price/cost/threshold; variants override per-SKU.
 
 ```swift
 @Model
-final class InventorySnapshot: Identifiable {
-    var id: String
+final class CatalogItem: Identifiable {
+    @Attribute(.unique) var id: String
     var companyId: String
-    var createdAt: Date
+    var categoryId: String?
+    var name: String
+    var itemDescription: String?
+    var defaultPrice: Double?
+    var defaultUnitCost: Double?
+    var defaultWarningThreshold: Double?
+    var defaultCriticalThreshold: Double?
+    var defaultUnitId: String?            // FK catalog_units.id
+    var imageUrl: String?
+    var notes: String?
+    var isActive: Bool
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+    var deletedAt: Date?
+}
+```
+
+**RLS**: company_isolation. **Indexes**: `(company_id, category_id, deleted_at)`.
+
+### CatalogVariant
+
+**File**: `DataModels/Supabase/Catalog/CatalogVariant.swift`
+**Purpose**: The concrete SKU. Belongs to a `CatalogItem` (family) and references one `CatalogOptionValue` per `CatalogOption` on that family via `CatalogVariantOptionValue` rows.
+
+```swift
+@Model
+final class CatalogVariant: Identifiable {
+    @Attribute(.unique) var id: String
+    var companyId: String
+    var catalogItemId: String
+    var sku: String?
+    var quantity: Double
+    var priceOverride: Double?            // falls back to family default_price
+    var unitCostOverride: Double?         // falls back to family default_unit_cost
+    var warningThreshold: Double?         // fallback chain: variant → family → category
+    var criticalThreshold: Double?        // same fallback chain
+    var unitId: String?                   // FK catalog_units.id; falls back to family default
+    var isActive: Bool
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+    var deletedAt: Date?
+}
+```
+
+**Threshold fallback** (canonical): variant override → family default → category default → null. **Indexes**: `(catalog_item_id, deleted_at)`, `(sku) WHERE deleted_at IS NULL`. **RLS**: company_isolation joined via `catalog_items.company_id`.
+
+`ThresholdStatus` enum (`.normal`, `.warning`, `.critical`) currently lives in `InventoryItem.swift` for backward source compatibility; will move to `DataModels/Enums/ThresholdStatus.swift` when the legacy file is deleted.
+
+### CatalogOption
+
+**File**: `DataModels/Supabase/Catalog/CatalogOption.swift`
+**Purpose**: A variant axis on a `CatalogItem` (e.g., "Color" or "Mount Type"). Distinct from `ProductOption` — that lives on `Product`, this lives on the variant family.
+
+```swift
+@Model
+final class CatalogOption: Identifiable {
+    @Attribute(.unique) var id: String
+    var catalogItemId: String
+    var name: String
+    var sortOrder: Int
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+}
+```
+
+### CatalogOptionValue
+
+**File**: `DataModels/Supabase/Catalog/CatalogOptionValue.swift`
+**Purpose**: A possible value for a `CatalogOption` (e.g., "Black" on Color).
+
+```swift
+@Model
+final class CatalogOptionValue: Identifiable {
+    @Attribute(.unique) var id: String
+    var optionId: String
+    var value: String
+    var sortOrder: Int
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+}
+```
+
+UNIQUE constraint on `(option_id, value)`.
+
+### CatalogVariantOptionValue
+
+**File**: `DataModels/Supabase/Catalog/CatalogVariantOptionValue.swift`
+**Purpose**: Junction — `CatalogVariant` ↔ `CatalogOptionValue`. Each variant has exactly one row per `CatalogOption` on its family.
+
+```swift
+@Model
+final class CatalogVariantOptionValue {
+    var variantId: String
+    var optionValueId: String
+
+    var lastSyncedAt: Date?
+}
+```
+
+PRIMARY KEY `(variant_id, option_value_id)`.
+
+### CatalogTag
+
+**File**: `DataModels/Supabase/Catalog/CatalogTag.swift`
+**Purpose**: Free-form label applied at FAMILY level. The legacy threshold columns are preserved in storage but the UI no longer reads them; they will be dropped in a future session once we confirm zero callers.
+
+```swift
+@Model
+final class CatalogTag: Identifiable {
+    @Attribute(.unique) var id: String
+    var companyId: String
+    var name: String
+    var warningThreshold: Double?         // legacy, no longer surfaced
+    var criticalThreshold: Double?        // legacy, no longer surfaced
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+    var deletedAt: Date?
+}
+```
+
+### CatalogItemTag
+
+**File**: `DataModels/Supabase/Catalog/CatalogItemTag.swift`
+**Purpose**: Junction — `CatalogItem` (family) ↔ `CatalogTag`. NOT variant-level. **This is a deliberate change from the legacy `inventory_item_tags` model.**
+
+```swift
+@Model
+final class CatalogItemTag {
+    @Attribute(.unique) var id: String
+    var catalogItemId: String
+    var tagId: String
+
+    var lastSyncedAt: Date?
+}
+```
+
+### CatalogUnit
+
+**File**: `DataModels/Supabase/Catalog/CatalogUnit.swift`
+**Purpose**: Unit of measure. Renamed from `inventory_units`. Today's iOS DTO bug — which silently dropped `dimension` and `abbreviation` — is fixed: both now flow through.
+
+```swift
+@Model
+final class CatalogUnit: Identifiable {
+    @Attribute(.unique) var id: String
+    var companyId: String
+    var display: String                   // e.g., "ea", "box", "ft"
+    var abbreviation: String?
+    var dimension: String                 // 'count' | 'length' | 'area' | 'volume' | 'mass' | 'time'
+    var isDefault: Bool
+    var sortOrder: Int
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+    var deletedAt: Date?
+}
+```
+
+### CatalogSnapshot
+
+**File**: `DataModels/Supabase/Catalog/CatalogSnapshot.swift`
+**Purpose**: Variant-aware historical snapshot of stock at a point in time. The legacy `inventory_snapshots` shape is preserved; only the items it captures are now variant-keyed.
+
+```swift
+@Model
+final class CatalogSnapshot: Identifiable {
+    @Attribute(.unique) var id: String
+    var companyId: String
     var createdById: String?
     var isAutomatic: Bool
     var itemCount: Int
     var notes: String?
-
-    @Relationship(deleteRule: .cascade, inverse: \InventorySnapshotItem.snapshot)
-    var items: [InventorySnapshotItem]?
+    var createdAt: Date
 
     var lastSyncedAt: Date?
     var needsSync: Bool = false
 }
 ```
 
-### InventorySnapshotItem
+### CatalogSnapshotItem
 
-**File**: `DataModels/InventorySnapshotItem.swift`
+**File**: `DataModels/Supabase/Catalog/CatalogSnapshotItem.swift`
+**Purpose**: One row per variant captured in a snapshot. Carries denormalized `familyName` + `variantLabel` ("Black · Topmount") so historical snapshots survive even after a family/variant is renamed or soft-deleted.
 
 ```swift
 @Model
-final class InventorySnapshotItem: Identifiable {
-    var id: String
+final class CatalogSnapshotItem: Identifiable {
+    @Attribute(.unique) var id: String
     var snapshotId: String
-    var originalItemId: String
-    var name: String
+    var originalVariantId: String?
+    var familyName: String                // denormalized
+    var variantLabel: String?             // e.g., "Black · Topmount"
     var quantity: Double
     var unitDisplay: String?
     var sku: String?
-    var tagsString: String = ""
     var itemDescription: String?
 
-    @Relationship(deleteRule: .nullify) var snapshot: InventorySnapshot?
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+}
+```
+
+### CatalogOrder (NEW)
+
+**File**: `DataModels/Supabase/Catalog/CatalogOrder.swift`
+**Purpose**: Threshold-driven restock order. Closes Bug `e08c63a2`. Suggested orders are computed on demand (variants where `quantity < effective_warning_threshold`) until the user opens the Orders sheet — at which point a `.suggested` row may be drafted into `.draft`.
+
+```swift
+enum CatalogOrderStatus: String, CaseIterable, Codable {
+    case suggested
+    case draft
+    case sent
+    case fulfilled
+    case cancelled
+}
+
+@Model
+final class CatalogOrder: Identifiable {
+    @Attribute(.unique) var id: String
+    var companyId: String
+    var status: CatalogOrderStatus
+    var title: String?
+    var supplierName: String?
+    var supplierContact: String?
+    var expectedDeliveryDate: Date?
+    var notes: String?
+    var createdById: String?
+    var createdAt: Date
+    var updatedAt: Date
+    var sentAt: Date?
+    var fulfilledAt: Date?
+    var cancelledAt: Date?
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+    var deletedAt: Date?
+}
+```
+
+**RLS**: company_isolation.
+
+### CatalogOrderItem
+
+**File**: `DataModels/Supabase/Catalog/CatalogOrderItem.swift`
+**Purpose**: One line per variant on an order. `costPerUnit` is snapshotted at order creation so later cost edits don't mutate the order's history.
+
+```swift
+@Model
+final class CatalogOrderItem: Identifiable {
+    @Attribute(.unique) var id: String
+    var orderId: String
+    var catalogVariantId: String
+    var quantityRequested: Double
+    var costPerUnit: Double?
+    var notes: String?
 
     var lastSyncedAt: Date?
     var needsSync: Bool = false
 }
 ```
 
-### InventoryTag
+### CompanyDefaultProduct (NEW)
 
-**File**: `DataModels/InventoryTag.swift`
+**File**: `DataModels/Supabase/Catalog/CompanyDefaultProduct.swift`
+**Purpose**: Per-company default `Product` per Deck Builder `component_type`. Drives the one-click drawing→estimate adapter (see `07_SPECIALIZED_FEATURES.md` § Catalog Management → Drawing→Estimate adapter).
 
 ```swift
+enum DesignComponentType: String, CaseIterable, Codable {
+    case railing
+    case deckBoard = "deck_board"
+    case stairSet  = "stair_set"
+    case gate
+    case postSet   = "post_set"
+}
+
 @Model
-final class InventoryTag: Identifiable {
-    var id: String
+final class CompanyDefaultProduct {
+    var companyId: String
+    var componentType: DesignComponentType
+    var productId: String
+    var createdAt: Date
+    var updatedAt: Date
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+}
+```
+
+PRIMARY KEY `(company_id, component_type)`.
+
+### Configurable Product extensions
+
+The four Product-side extensions live alongside the catalog models in `DataModels/Supabase/Catalog/`. See § 21 (Product) → "Configurable Products (NEW)" for resolver flow and worked examples.
+
+**`ProductOption`** — knob the user configures on a line item. Affects price, recipe, or both.
+
+```swift
+enum ProductOptionKind: String, CaseIterable, Codable {
+    case select
+    case integer
+    case boolean
+}
+
+@Model
+final class ProductOption: Identifiable {
+    @Attribute(.unique) var id: String
+    var productId: String
     var name: String
-    var warningThreshold: Double?
-    var criticalThreshold: Double?
-    var companyId: String
-
-    @Relationship(deleteRule: .nullify, inverse: \InventoryItem.tags)
-    var items: [InventoryItem] = []
+    var kind: ProductOptionKind
+    var affectsPrice: Bool
+    var affectsRecipe: Bool
+    var required: Bool
+    var defaultValue: String?
+    var optionDefaultSource: String?      // e.g. "$design.color" — read by drawing adapter
+    var sortOrder: Int
 
     var lastSyncedAt: Date?
     var needsSync: Bool = false
-    var deletedAt: Date?
 }
 ```
 
-### InventoryUnit
-
-**File**: `DataModels/InventoryUnit.swift`
+**`ProductOptionValue`** — selectable values for `kind = .select`.
 
 ```swift
 @Model
-final class InventoryUnit: Identifiable {
-    var id: String
-    var display: String                      // e.g. "ea", "box", "ft"
-    var companyId: String
-    var isDefault: Bool
-    var sortOrder: Int = 0
-
-    @Relationship(deleteRule: .nullify, inverse: \InventoryItem.unit)
-    var items: [InventoryItem] = []
-
-    @Relationship(deleteRule: .cascade, inverse: \Company.inventoryUnits)  // via Company
-    // (inverse managed through Company.inventoryUnits)
+final class ProductOptionValue: Identifiable {
+    @Attribute(.unique) var id: String
+    var optionId: String
+    var value: String
+    var sortOrder: Int
 
     var lastSyncedAt: Date?
     var needsSync: Bool = false
-    var deletedAt: Date?
 }
 ```
+
+**`ProductPricingModifier`** — bumps unit price when an option matches a trigger.
+
+```swift
+enum PricingModifierKind: String, CaseIterable, Codable {
+    case addPerUnit         = "add_per_unit"
+    case addFlat            = "add_flat"
+    case addPerCount        = "add_per_count"
+    case multiplyUnitPrice  = "multiply_unit_price"
+}
+
+@Model
+final class ProductPricingModifier: Identifiable {
+    @Attribute(.unique) var id: String
+    var productId: String
+    var optionId: String
+    var triggerValueId: String?           // for kind = .select
+    var triggerIntMin: Int?               // for kind = .integer
+    var triggerIntMax: Int?
+    var modifierKind: PricingModifierKind
+    var amount: Double
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+}
+```
+
+**`ProductMaterial`** — recipe row. Family-pinned + selector OR variant-pinned (mutually exclusive).
+
+```swift
+@Model
+final class ProductMaterial: Identifiable {
+    @Attribute(.unique) var id: String
+    var productId: String
+    var catalogVariantId: String?         // pinned variant
+    var catalogItemId: String?            // family head — resolved via selector
+    var variantSelectorJSON: String?      // jsonb — {"color":"$option.color","mount":"$option.mount_type"}
+    var quantityPerUnit: Double           // per Product's pricing_unit
+    var scaledByOptionId: String?         // multiply by line.configured_options[this option]
+    var unitId: String?                   // FK catalog_units.id (expression unit)
+    var notes: String?
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+}
+```
+
+CHECK: `(catalog_variant_id IS NOT NULL) <> (catalog_item_id IS NOT NULL)`.
+
+> **Legacy note:** the older `Inventory*` SwiftData files (`InventoryItem`, `InventorySnapshot`, `InventorySnapshotItem`, `InventoryTag`, `InventoryUnit`) remain on disk for compile-time references during the V2→V3 migration window but are **no longer registered in `OPSSchemaCommon`**. They are removed by Phase 4 of plan `2026-05-06-ios-catalog-variant-model.md`. SQL-side, the `inventory_*` tables are renamed to `catalog_*` by migration `2026-05-06-01-catalog-schema.sql`.
+
+---
+
+## Bridge & Audit Tables
+
+These tables sit between the Product domain and the Catalog domain, capture audit trails for stock movement, or hold per-relationship overrides. None map 1:1 to a SwiftData model registered in `OPSSchemaCommon` — they are accessed through DTOs, repository helpers, or as side-effect rows.
+
+### `product_materials`
+
+**Purpose**: Recipe row. Resolves "how much of which catalog variant a Product consumes per unit."
+**SwiftData**: `ProductMaterial` (registered).
+**Schema**:
+
+```sql
+product_materials
+  id                    uuid PK
+  product_id            uuid FK products(id)
+  catalog_variant_id    uuid FK catalog_variants(id) NULL
+  catalog_item_id       uuid FK catalog_items(id)    NULL
+  variant_selector      jsonb                        NULL  -- e.g. {"color":"$option.color"}
+  quantity_per_unit     numeric NOT NULL
+  scaled_by_option_id   uuid FK product_options(id)  NULL
+  unit_id               uuid FK catalog_units(id)    NULL
+  notes                 text                         NULL
+  CHECK ((catalog_variant_id IS NOT NULL) <> (catalog_item_id IS NOT NULL))
+```
+
+**RLS**: company_isolation joined via `products.company_id`. **Resolution**: variant-pinned rows resolve immediately; family-pinned rows resolve at install task creation by walking `variant_selector` against `line_items.configured_options`.
+
+### `task_materials`
+
+**Purpose**: Cut-list row. Inserted at install task creation by `CutListMaterializer`. This is what the field crew sees on the task — pinned to specific variants, ready to deduct from stock when consumed.
+**SwiftData**: not stored locally as a registered model — written via `CreateTaskMaterialDTO`, read via `TaskMaterialDTO`.
+**Schema**:
+
+```sql
+task_materials
+  id                  uuid PK (default gen_random_uuid())
+  task_id             uuid FK project_tasks(id)
+  inventory_item_id   uuid                                   -- legacy column, nullable for pre-catalog rows
+  quantity            double precision NOT NULL
+  source              text NOT NULL DEFAULT 'stock'
+  catalog_variant_id  uuid FK catalog_variants(id) NULL      -- new rows always populate this
+```
+
+**RLS**: company_isolation joined via `project_tasks → projects.company_id`. The legacy `inventory_item_id` column is preserved for back-compat — it is null on all new rows.
+
+### `line_item_materials`
+
+**Purpose**: Optional per-line-item materials snapshot. Used by line items that need a frozen materials list distinct from the recipe template (e.g., a one-off custom build where the user manually overrode the BOM).
+**Verification**: this table exists in `Network/Supabase/Repositories/EstimatesRepository.swift` queries; no dedicated SwiftData model. If the catalog/variant work later requires it, a DTO will be added.
+
+### `inventory_deductions`
+
+**Purpose**: Audit trail of stock movement. Insert-only.
+**SwiftData**: not registered (audit-only table).
+**Schema** (post-rename):
+
+```sql
+inventory_deductions
+  id                  uuid PK
+  catalog_variant_id  uuid FK catalog_variants(id) NOT NULL  -- renamed from inventory_item_id
+  task_id             uuid FK project_tasks(id) NULL
+  quantity            numeric NOT NULL                       -- positive = deducted, negative = returned
+  reason              text                                   -- 'consumed' | 'returned' | 'manual_adjust' | 'snapshot'
+  created_by_id       uuid FK users(id)
+  created_at          timestamptz NOT NULL
+  notes               text
+```
+
+**RLS**: company_isolation joined via `catalog_variants → catalog_items.company_id`. **Migration note**: the table is empty as of the catalog migration (0 rows globally), so the FK rename + re-FK to `catalog_variants` carries no data risk.
+
+### `client_product_overrides`
+
+**Purpose**: Per-client price override for a Product. Used when a recurring client has negotiated rates.
+**Schema**:
+
+```sql
+client_product_overrides
+  id              uuid PK
+  client_id       uuid FK clients(id) NOT NULL
+  product_id      uuid FK products(id) NOT NULL
+  price_override  numeric NOT NULL
+  notes           text
+  created_at      timestamptz NOT NULL
+  updated_at      timestamptz NOT NULL
+  UNIQUE (client_id, product_id)
+```
+
+**RLS**: company_isolation joined via `clients.company_id`. Override is applied at line-item creation time by ops-web's price resolver; iOS reads it via `ProductRepository.fetchOverridesForClient()` when adding a line item.
+
+### `product_tax_rates`
+
+**Purpose**: Junction between Products and tax rates. A Product can have N applicable tax rates (e.g., GST + PST in BC).
+**Schema**:
+
+```sql
+product_tax_rates
+  product_id   uuid FK products(id)
+  tax_rate_id  uuid FK tax_rates(id)
+  PRIMARY KEY (product_id, tax_rate_id)
+```
+
+**RLS**: company_isolation joined via `products.company_id`. Tax computation at line-item time pulls every row for the line's product and applies all matching rates against the line subtotal.
+
+### `company_default_products`
+
+**Purpose**: Per-company mapping from Deck Builder `component_type` to default `Product`. Drives the one-click drawing→estimate adapter.
+**SwiftData**: `CompanyDefaultProduct` (registered).
+**Schema**:
+
+```sql
+company_default_products
+  company_id      uuid FK companies(id) NOT NULL
+  component_type  text NOT NULL                  -- 'railing' | 'deck_board' | 'stair_set' | 'gate' | 'post_set'
+  product_id      uuid FK products(id) NOT NULL
+  created_at      timestamptz NOT NULL
+  updated_at      timestamptz NOT NULL
+  PRIMARY KEY (company_id, component_type)
+```
+
+**RLS**: company_isolation. Only one default per (company, component_type). Missing mapping → adapter logs to `app_events.adapter_skip_component` and continues.
+
+### `catalog_orders` and `catalog_order_items`
+
+**Purpose**: Threshold-driven restock orders. See § "Catalog & Variant Model" → `CatalogOrder` / `CatalogOrderItem` for SwiftData declarations.
+**Lifecycle**: `suggested` (computed on demand from variants below warning threshold) → `draft` (user opened the suggestion sheet and committed) → `sent` (PO emitted to supplier) → `fulfilled` (stock arrived; quantity is added back to `catalog_variants`) → `cancelled`.
+**RLS**: company_isolation on both tables.
 
 ---
 
@@ -2035,11 +2570,66 @@ Extension methods `toModel()` on each DTO. Key deviations documented in code com
 
 ### ProductDTOs.swift
 
+DTOs for the `products` table. The wire-field bug from earlier builds — DTOs mapping `unit_price`/`cost_price` to columns that don't exist — is fixed: `base_price` and `unit_cost` are the canonical column names. ops-web continues to read `default_price` while the Postgres mirror trigger is in place; iOS reads/writes `base_price`.
+
 | DTO | Purpose |
 |-----|---------|
-| `ProductDTO` | Read; `toModel() -> Product` |
-| `CreateProductDTO` | Create |
-| `UpdateProductDTO` | Partial update |
+| `ProductDTO` | Read with all 18 fields including `kind`, `pricingUnit`, `sku`, `isFavorite`, `minimumCharge`, `minimumQuantity`, `showBomOnEstimate`, `showInStorefront`, `tieredPricing`, `unitId`. `toModel() -> Product` |
+| `CreateProductDTO` | Create — `companyId`, `name`, `basePrice`, `pricingUnit`, etc. |
+| `UpdateProductDTO` | Partial update — supports the same fields plus `isActive`, `isFavorite` |
+| `RawJSONColumn` | Type-erased jsonb passthrough used by `tieredPricing` |
+
+### CatalogDTOs.swift
+
+DTOs for the 12 catalog tables and the variant ↔ option-value join. All include snake_case `CodingKeys` for Supabase column mapping.
+
+| DTO | Purpose |
+|-----|---------|
+| `CatalogCategoryDTO` / `CreateCatalogCategoryDTO` / `UpdateCatalogCategoryDTO` | `catalog_categories` |
+| `CatalogItemDTO` / `CreateCatalogItemDTO` / `UpdateCatalogItemDTO` | `catalog_items` |
+| `CatalogVariantDTO` / `CreateCatalogVariantDTO` / `UpdateCatalogVariantDTO` | `catalog_variants` |
+| `CatalogOptionDTO` / `CreateCatalogOptionDTO` | `catalog_options` |
+| `CatalogOptionValueDTO` / `CreateCatalogOptionValueDTO` | `catalog_option_values` |
+| `CatalogVariantOptionValueDTO` / `CreateCatalogVariantOptionValueDTO` | `catalog_variant_option_values` (M2M join) |
+| `CatalogTagDTO` / `CreateCatalogTagDTO` / `UpdateCatalogTagDTO` | `catalog_tags` |
+| `CatalogItemTagDTO` / `CreateCatalogItemTagDTO` | `catalog_item_tags` (M2M join) |
+| `CatalogUnitDTO` / `CreateCatalogUnitDTO` / `UpdateCatalogUnitDTO` | `catalog_units` — exposes `dimension` and `abbreviation` (was a bug pre-V3) |
+| `CatalogSnapshotDTO` / `CreateCatalogSnapshotDTO` | `catalog_snapshots` |
+| `CatalogSnapshotItemDTO` / `CreateCatalogSnapshotItemDTO` | `catalog_snapshot_items` (variant-aware) |
+
+### ProductExtensionDTOs.swift
+
+DTOs for the four Product-extension tables that drive Configurable Products.
+
+| DTO | Purpose |
+|-----|---------|
+| `ProductOptionDTO` / `CreateProductOptionDTO` | `product_options` — knob definitions |
+| `ProductOptionValueDTO` / `CreateProductOptionValueDTO` | `product_option_values` — `kind=select` selectable values |
+| `ProductPricingModifierDTO` / `CreateProductPricingModifierDTO` | `product_pricing_modifiers` — price bumps per option/value |
+| `ProductMaterialDTO` / `CreateProductMaterialDTO` / `UpdateProductMaterialDTO` | `product_materials` — recipe rows (variant-pinned or family-pinned) |
+
+### CompanyDefaultProductDTOs.swift
+
+| DTO | Purpose |
+|-----|---------|
+| `CompanyDefaultProductDTO` | Read; `toModel() -> CompanyDefaultProduct` |
+| `UpsertCompanyDefaultProductDTO` | Insert/update for `(company_id, component_type) → product_id` mapping |
+
+### CatalogOrderDTOs.swift
+
+| DTO | Purpose |
+|-----|---------|
+| `CatalogOrderDTO` / `CreateCatalogOrderDTO` / `UpdateCatalogOrderDTO` | `catalog_orders` (status: suggested / draft / sent / fulfilled / cancelled) |
+| `CatalogOrderItemDTO` / `CreateCatalogOrderItemDTO` | `catalog_order_items` (variant-pinned) |
+
+### TaskMaterialDTOs.swift
+
+DTOs for the cut-list rows materialized at install task creation time. The `inventory_item_id` column is preserved for legacy material rows; new rows go through `catalog_variant_id`.
+
+| DTO | Purpose |
+|-----|---------|
+| `TaskMaterialDTO` | Read |
+| `CreateTaskMaterialDTO` | Insert — defaults `source = 'stock'` |
 
 ### ExpenseDTOs.swift
 
@@ -2057,24 +2647,9 @@ Extension methods `toModel()` on each DTO. Key deviations documented in code com
 | `AccountingCategoryMappingDTO` | Read accounting category mapping (QB/Sage) |
 | `CreateAccountingCategoryMappingDTO` | Create/upsert mapping |
 
-### InventoryDTOs.swift
+### InventoryDTOs.swift (LEGACY — being removed)
 
-| DTO | Purpose |
-|-----|---------|
-| `InventoryUnitReadDTO` | Read; `toModel() -> InventoryUnit` |
-| `InventoryTagReadDTO` | Read; `toModel() -> InventoryTag` |
-| `InventoryItemReadDTO` | Read; `toModel() -> InventoryItem` |
-| `InventoryItemTagReadDTO` | Junction table read (item_id, tag_id) |
-| `InventorySnapshotReadDTO` | Read; `toModel() -> InventorySnapshot` |
-| `InventorySnapshotItemReadDTO` | Read; `toModel() -> InventorySnapshotItem` |
-| `CreateInventoryUnitDTO` | Create |
-| `CreateInventoryTagDTO` | Create |
-| `CreateInventoryItemDTO` | Create |
-| `CreateInventorySnapshotDTO` | Create |
-| `CreateInventorySnapshotItemDTO` | Create |
-| `UpdateInventoryItemDTO` | Partial update |
-| `UpdateInventoryTagDTO` | Partial update |
-| `UpdateInventoryUnitDTO` | Partial update |
+These DTOs targeted the now-renamed `inventory_*` tables. They are retained for compile-time references during the V2→V3 migration window and are deleted by Phase 4 of plan `2026-05-06-ios-catalog-variant-model.md`. **Do not write new code against them — use `CatalogDTOs.swift` instead.**
 
 ### ProjectNoteDTOs.swift
 

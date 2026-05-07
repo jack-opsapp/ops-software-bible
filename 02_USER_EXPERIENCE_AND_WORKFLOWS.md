@@ -40,15 +40,15 @@ With Pipeline permission (pipeline.view):
 │ Home │ Pipeline │  Board │ Schedule │ Settings │
 └──────┴──────────┴────────┴──────────┴──────────┘
 
-With Inventory permission (inventory.view):
-┌──────┬────────┬───────────┬──────────┬──────────┐
-│ Home │  Board │ Inventory │ Schedule │ Settings │
-└──────┴────────┴───────────┴──────────┴──────────┘
+With Catalog permission (catalog.view):
+┌──────┬────────┬─────────┬──────────┬──────────┐
+│ Home │  Board │ Catalog │ Schedule │ Settings │
+└──────┴────────┴─────────┴──────────┴──────────┘
 
-Maximum (Pipeline + Inventory):
-┌──────┬──────────┬────────┬───────────┬──────────┬──────────┐
-│ Home │ Pipeline │  Board │ Inventory │ Schedule │ Settings │
-└──────┴──────────┴────────┴───────────┴──────────┴──────────┘
+Maximum (Pipeline + Catalog):
+┌──────┬──────────┬────────┬─────────┬──────────┬──────────┐
+│ Home │ Pipeline │  Board │ Catalog │ Schedule │ Settings │
+└──────┴──────────┴────────┴─────────┴──────────┴──────────┘
 ```
 
 **Tab Items (in insertion order):**
@@ -69,11 +69,11 @@ Maximum (Pipeline + Inventory):
    - Search and filter
    - Crew role: assigned projects only (scope = `assigned`)
 
-4. **Inventory** (`shippingbox.fill` icon) — **Conditional**: shown if user has `inventory.view` permission
-   - Material and supply tracking
-   - Tag-based organization
-   - Quantity management
-   - Admin, Owner, and Office roles have this by default
+4. **Catalog** (`shippingbox.fill` icon) — **Conditional**: shown if user has `catalog.view` permission
+   - **STOCK** segment: variant-aware stock list with LIST / GRID / TABLE view modes, threshold banner for undersupplied variants, sort by category/tag/threshold, FAB for new variant / new family / spreadsheet import
+   - **PRODUCTS** segment: billable templates (barebones + configurable), search by type/kind/has-recipe, FAB for quick-add (3 fields, ~8s) or full setup on web
+   - Kebab menu (grouped): STOCK (Snapshots · Categories · Tags · Units · Thresholds), ORDERS (Suggested · Drafts · Sent), SETUP (Defaults · Import · Export)
+   - Admin, Owner, and Office roles have `catalog.view` and `catalog.manage` by default; `catalog.products.manage` and `catalog.orders.manage` available for fine-grained admin/operations splits
 
 5. **Schedule** (`calendar` icon) — Always shown
    - Week/Month views
@@ -87,7 +87,7 @@ Maximum (Pipeline + Inventory):
    - PIN management
    - Tutorial access
 
-**Legacy note**: The iOS app currently uses `specialPermissions.contains("pipeline")` and `inventoryAccess == true` for tab visibility. These are being migrated to `can("pipeline.view")` and `can("inventory.view")` as part of the permissions system rollout.
+**Legacy note**: The iOS app's tab visibility uses `can("pipeline.view")` and `can("catalog.view")`. The pre-Phase 13 permission keys (`inventory.view` / `inventory.manage` / `inventory.import`) were renamed to `catalog.*` by migration `2026-05-06-04-permission-rename.sql`; the legacy `user.inventoryAccess` property is no longer authoritative.
 
 **Important:** There is no standalone Map tab. Map/navigation functionality is accessed from within Project Details ("Get Directions") and is not a top-level tab.
 
@@ -166,20 +166,38 @@ Root
 │   │       ├── → Project Details (push)
 │   │       └── No form sheets
 │   │
-│   ├── Inventory Tab (conditional — requires user.inventoryAccess == true)
-│   │   ├── InventoryView
-│   │   │   ├── Search bar + tag filter chips
-│   │   │   ├── Sort modes (Tag, Name, Quantity, Threshold)
-│   │   │   ├── Inventory item cards (pinch-to-zoom scalable)
-│   │   │   │   ├── Selection mode (long press → bulk actions)
-│   │   │   │   ├── → InventoryFormSheet (edit, modal)
-│   │   │   │   └── → QuantityAdjustmentSheet (modal)
-│   │   │   ├── → InventoryFormSheet (new item, modal via FAB)
-│   │   │   ├── → SpreadsheetImportSheet (import items)
-│   │   │   ├── → SnapshotListView (view snapshots)
-│   │   │   ├── → BulkQuantityAdjustmentSheet (bulk adjust)
-│   │   │   ├── → BulkTagsSheet (bulk tag)
-│   │   │   └── → InventoryManageTagsSheet (manage tags)
+│   ├── Catalog Tab (conditional — requires can("catalog.view"))
+│   │   ├── CatalogView (segmented control: STOCK | PRODUCTS, kebab ⋮)
+│   │   │   ├── STOCK segment
+│   │   │   │   ├── Threshold banner (when items below warning) → CatalogOrdersSheet
+│   │   │   │   ├── View mode: LIST | GRID | TABLE (TABLE is NEW per Bug 217c3d1f)
+│   │   │   │   ├── Search bar + category/tag filter chips
+│   │   │   │   ├── Sort modes (Category, Name, Quantity, Threshold)
+│   │   │   │   ├── CatalogVariant cards (variant-aware; family + variant label)
+│   │   │   │   │   ├── Long press → action sheet (Adjust, Edit, Delete, Move to Order)
+│   │   │   │   │   ├── → CatalogVariantFormSheet (edit, modal)
+│   │   │   │   │   └── → QuantityAdjustmentSheet (modal)
+│   │   │   │   ├── → CatalogVariantFormSheet (new variant, modal via FAB)
+│   │   │   │   └── → CatalogFamilyFormSheet (new family, modal)
+│   │   │   ├── PRODUCTS segment
+│   │   │   │   ├── Filter chips: type · kind · has-recipe
+│   │   │   │   ├── Product list (price summary, option count, recipe row count)
+│   │   │   │   ├── → ProductDetailView (push) — view + light edits, options/modifiers/recipe read-only
+│   │   │   │   ├── → ProductQuickAddSheet (FAB → "+ quick add", 3 fields)
+│   │   │   │   └── → Web (FAB → "+ full setup") — configurable Product authoring lives on web
+│   │   │   └── ⋮ menu
+│   │   │       ├── STOCK group: Snapshots · Categories · Tags · Units · Thresholds
+│   │   │       │   ├── → CatalogSnapshotListView
+│   │   │       │   ├── → CatalogCategoriesSheet
+│   │   │       │   ├── → CatalogTagsSheet
+│   │   │       │   ├── → CatalogUnitsSheet
+│   │   │       │   └── → CatalogThresholdsSheet
+│   │   │       ├── ORDERS group: Suggested · Drafts · Sent
+│   │   │       │   └── → CatalogOrdersSheet (3-tab)
+│   │   │       └── SETUP group: Defaults · Import · Export
+│   │   │           ├── → CompanyDefaultProductsSheet (component_type → product mapping)
+│   │   │           ├── → SpreadsheetImportSheet (variant-aware)
+│   │   │           └── → SpreadsheetExportSheet
 │   │
 │   ├── Schedule Tab (always — renamed from "Calendar")
 │   │   ├── Schedule Screen (ScheduleView)
@@ -685,44 +703,56 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 
 ---
 
-### Inventory Journey: Track Materials and Supplies
+### Catalog Journey: Manage Stock + Products
 
-**Goal:** Manage inventory items, track quantities, organize with tags, and create snapshots.
+**Goal:** Manage variant-aware stock, author Products, draft restock orders, and emit one-click estimates from drawings.
 
-**Prerequisites:** User must have `inventoryAccess == true`.
+**Prerequisites:** User must have `can("catalog.view")`. Stock edits require `catalog.manage`; Product edits require `catalog.products.manage`; orders require `catalog.orders.manage`.
 
-**Steps:**
+**STOCK Steps:**
 
-1. **Start Point:** Inventory tab → InventoryView
-2. **Action:** Tap FAB (+) → InventoryFormSheet opens
-3. **Action:** Enter item name, SKU, description, unit, initial quantity, threshold values
-4. **Action:** Tap "Save" → Item appears in inventory list
-5. **Action:** Apply tags to organize — tap item → InventoryFormSheet → add tag names
-6. **Observation:** Items grouped/sorted by tag when sort mode is TAG
-7. **Action:** Tap item card → QuantityAdjustmentSheet → adjust quantity up or down
-8. **Observation:** Threshold badges appear on cards:
-   - Items at/below low threshold show warning badge
-   - Items at zero show critical/out badge
-9. **Action (Bulk operations):** Long press item → "Select" → enters selection mode
-10. **Action:** Select multiple items (tap cards, or use tag/keyword selection filter)
-11. **Action:** Tap bulk action: Adjust Quantity, Adjust Tags, or Delete
-12. **Action (Import):** Tap import button → SpreadsheetImportSheet → select file → map columns → import items
-13. **Action (Snapshots):** Access SnapshotListView to view historical inventory snapshots (automatic and manual)
-14. **End Point:** Inventory organized, quantities tracked, thresholds alerting
+1. **Start Point:** Catalog tab → STOCK segment
+2. **Observation:** If any variants are below their effective warning threshold, a banner appears: `// N ITEMS BELOW THRESHOLD [REVIEW →]`. Tap → opens CatalogOrdersSheet (Suggested view)
+3. **Action:** Choose view mode (LIST · GRID · TABLE). TABLE shows a per-variant grid with family attribute columns (NEW per Bug 217c3d1f)
+4. **Action:** Tap FAB (+) → choose "+ add variant" or "+ add family"
+   - Variant flow: pick family (or deep-link to create one), pick option-value combinations, set quantity, unit, SKU. Effective threshold previews based on family/category fallback
+   - Family flow: name, category, default price/cost, default unit, default thresholds
+5. **Action:** Tap variant card → QuantityAdjustmentSheet → adjust quantity (quick-adjust pills, haptic feedback)
+6. **Observation:** Threshold badges colored by status; family-level tags visible on card
+7. **Action (Bulk):** Long press → "Select" → multi-select; bulk adjust quantity, bulk tag, bulk delete
 
-**Time to Complete:** ~1 minute per item, seconds for quantity adjustments
+**PRODUCTS Steps:**
+
+8. **Action:** Switch to PRODUCTS segment
+9. **Action:** FAB → "+ quick add" → 3 fields (Name, Price, Unit) → save (~8s for a barebones Product like "PICKET RAIL · $2500 · flat")
+10. **Action:** Tap a Product → ProductDetailView. Edit name/price/unit/tax/active inline. Options/modifiers/recipe sections render read-only (authoring lives on web)
+11. **Observation:** Configurable Products show option count and recipe row count next to the price summary
+
+**ORDERS Steps:**
+
+12. **Action:** Tap kebab ⋮ → ORDERS → Suggested → see grouped suggestions
+13. **Action:** "Draft all" → status `.suggested` → `.draft`. Edit lines, send (status `.sent`)
+14. **Action:** When stock arrives → mark fulfilled → `catalog_variants.quantity` increments by `quantity_requested`
+
+**SNAPSHOTS Steps:**
+
+15. **Action:** Kebab → Snapshots → CatalogSnapshotListView. Detail view shows family name + variant label per row.
+
+**End Point:** Stock variant-tracked, Products authored, orders flowing, snapshots captured.
+
+**Time to Complete:** ~30s per variant, ~8s per quick-add Product, seconds for quantity adjustments
 
 **Gestures:**
-- Pinch-to-zoom on inventory list to scale card size (0.8x-1.5x, persisted)
-- Long press for context menu (Select, Edit, Delete)
-- Tap for quick quantity adjustment
+- Pinch-to-zoom on stock grid mode (0.8x-1.5x, persisted via `@AppStorage("catalogCardScale")`)
+- Long press for context menu
+- Tap for quick adjustment / detail
 
 **Pain Points Addressed:**
-- Pinch-to-zoom lets users see more items at a glance or zoom in for detail
-- Bulk operations save time for large inventories
-- Tag-based organization flexible enough for any trade
-- Threshold badges provide visual early warning for low stock
-- Spreadsheet import for migrating existing inventory data
+- Variant model handles "Corner — Black" vs "Corner — White" without forcing two separate items
+- TABLE view lets a user audit every Bracket SKU across Color × Mount Type at a glance
+- Threshold cascade (variant → family → category) means setting one number on a category covers every child SKU that hasn't overridden it
+- Suggested orders surface undersupplied stock without manual auditing
+- Configurable Products + drawing→estimate adapter compress hours of estimate writing into one tap
 
 ---
 
@@ -1377,42 +1407,52 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 ---
 
-### InventoryView (Inventory Tab)
+### CatalogView (Catalog Tab)
 
-**Purpose:** Main inventory management screen for tracking materials and supplies.
+**Purpose:** Variant-aware catalog management — STOCK and PRODUCTS in a single segmented surface, with kebab-grouped advanced operations and an integrated drawing→estimate adapter entrypoint.
 
-**Source:** `Views/Inventory/InventoryView.swift`
+**Source:** `Views/Catalog/CatalogView.swift`
 
 **UI Elements:**
 
-1. **Search Bar** — search by item name, SKU, or description
-2. **Tag Filter Chips** — horizontal scrollable tag-based filter
-3. **Sort Controls** — sort by TAG | NAME | QUANTITY | THRESHOLD
-4. **Inventory Item Cards** (via InventoryListView) — scalable cards with:
-   - Item name (uppercase)
-   - Tags (shown at scale >= 0.9)
-   - SKU and metadata (shown at scale >= 1.0)
-   - Quantity display with threshold status coloring (normal/low/critical/out)
-   - Unit display
-5. **Selection Mode** — long press activates multi-select with:
-   - Selection stripe (accent color bar on left edge of selected cards)
-   - Bulk actions toolbar: Adjust Quantity, Adjust Tags, Delete
-   - Selection filters (by tag or keyword)
-6. **FAB** (+) — new item → InventoryFormSheet
+1. **Segmented control** — STOCK | PRODUCTS
+2. **Kebab menu (⋮)** — STOCK group (Snapshots, Categories, Tags, Units, Thresholds), ORDERS group (Suggested, Drafts, Sent), SETUP group (Defaults, Import, Export)
+3. **Threshold banner** — `// N ITEMS BELOW THRESHOLD [REVIEW →]` when applicable; tap → CatalogOrdersSheet
+4. **STOCK segment**
+   - Search bar + category/tag filter chips
+   - View mode picker: LIST · GRID · TABLE (TABLE rows=variants, columns=family attributes)
+   - Sort controls: Category, Name, Quantity, Threshold
+   - CatalogVariant cards: family name, variant label ("Black · Topmount"), quantity colored by effective-threshold status, unit, SKU, family-level tags
+   - Selection mode (long press) — bulk adjust, bulk tag, bulk delete
+   - FAB: + add variant · + add family · + import
+5. **PRODUCTS segment**
+   - Filter chips: type · kind · has-recipe
+   - Search
+   - Product list — name, price summary, option count, recipe row count
+   - FAB: + quick add (3 fields) · + full setup (web)
 
 **Gestures:**
-- **Pinch-to-zoom** — scales inventory cards between 0.8x-1.5x (persisted via `@AppStorage`)
-- **Long press** on item card → action sheet (Select, Edit, Delete)
-- **Tap** item card → opens QuantityAdjustmentSheet (or toggles selection in selection mode)
+- **Pinch-to-zoom** — scales GRID variant cards between 0.8x-1.5x (persisted via `@AppStorage("catalogCardScale")`)
+- **Long press** on variant card → action sheet (Adjust, Edit, Delete, Move to Order)
+- **Tap** variant card → QuantityAdjustmentSheet (or toggles selection in selection mode)
+- **Tap** Product row → ProductDetailView
 
 **Related Sheets:**
-- InventoryFormSheet (create/edit item)
-- QuantityAdjustmentSheet (adjust single item quantity)
-- BulkQuantityAdjustmentSheet (adjust quantity for multiple selected items)
-- BulkTagsSheet (add/remove tags for multiple items)
-- InventoryManageTagsSheet (rename/delete tags)
-- SpreadsheetImportSheet (import items from spreadsheet with column mapping)
-- SnapshotListView (view historical inventory snapshots — automatic and manual)
+- CatalogVariantFormSheet (create/edit variant — option-value selectors per family option)
+- CatalogFamilyFormSheet (create/edit family — name, category, defaults)
+- QuantityAdjustmentSheet (single-variant quick adjust)
+- BulkQuantityAdjustmentSheet (bulk adjust selected variants)
+- BulkTagsSheet (add/remove family-level tags across selected variants' families)
+- CatalogTagsSheet (rename/delete tags globally)
+- CatalogCategoriesSheet (manage nested categories)
+- CatalogUnitsSheet (manage `catalog_units`)
+- CatalogThresholdsSheet (set category-level defaults)
+- CatalogOrdersSheet (Suggested · Drafts · Sent)
+- CompanyDefaultProductsSheet (component_type → product mapping for drawing adapter)
+- SpreadsheetImportSheet (variant-aware import wizard)
+- CatalogSnapshotListView (variant-aware historical snapshots)
+- ProductDetailView (Product detail — view + light edits; options/modifiers/recipe read-only)
+- ProductQuickAddSheet (3-field FAB flow for barebones Products)
 
 ---
 
@@ -1591,7 +1631,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 ### Pull to Refresh
 
-**Location:** All list screens (home, job board, schedule, estimates, invoices, accounting, inventory)
+**Location:** All list screens (home, job board, schedule, estimates, invoices, accounting, catalog)
 
 **Gesture:**
 - Pull down from top of scroll view
@@ -1620,7 +1660,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 ### Long Press
 
-**Location:** Inventory item cards
+**Location:** Catalog variant cards
 
 **Gesture:**
 - Press and hold on card (minimum 0.3 seconds)
@@ -1629,21 +1669,22 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 **Action:**
 - Opens action sheet with options:
   - Select (enters selection mode)
-  - Edit (opens InventoryFormSheet)
+  - Edit (opens CatalogVariantFormSheet)
   - Delete (destructive, with confirmation dialog)
+  - Move to Order (deep-link into CatalogOrdersSheet draft flow)
 
 ---
 
 ### Pinch to Zoom
 
-**Location:** Navigation view (via Project Details "Get Directions"), image gallery, inventory list
+**Location:** Navigation view (via Project Details "Get Directions"), image gallery, Catalog STOCK grid mode
 
 **Gesture:**
 - Two-finger pinch in/out
 
 **Action:**
 - Navigation/gallery: Zoom in/out on map or image
-- Inventory: Scale inventory item cards between 0.8x and 1.5x. At smaller scales, tags and metadata are progressively hidden for a denser view. Scale is persisted via `@AppStorage("inventoryCardScale")`.
+- Catalog grid: Scale CatalogVariant cards between 0.8x and 1.5x. At smaller scales, tags and metadata are progressively hidden for a denser view. Scale is persisted via `@AppStorage("catalogCardScale")`.
 
 ---
 
@@ -1742,7 +1783,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 **All permissions granted with scope `all`.** Full system control including billing and role assignment.
 
-- All tabs visible (Pipeline, Inventory included)
+- All tabs visible (Pipeline, Catalog included)
 - All form sheets accessible
 - Floating action buttons on all applicable screens
 - Can create, edit, delete all entities
@@ -1750,7 +1791,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 - Can manage company settings and subscription
 - Job Board: All sections visible
 - Pipeline: Full access to CRM, estimates, invoices, accounting
-- Inventory: Full management access
+- Catalog: Full STOCK + PRODUCTS + ORDERS management (`catalog.view`, `catalog.manage`, `catalog.import`, `catalog.products.manage`, `catalog.orders.manage`)
 - **Unique**: Only role with `team.assign_roles` and `settings.billing` by default
 
 ---
@@ -1759,7 +1800,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 **All permissions except `team.assign_roles` and `settings.billing`.**
 
-- All tabs visible (Pipeline, Inventory included)
+- All tabs visible (Pipeline, Catalog included)
 - All form sheets accessible
 - Floating action buttons on all applicable screens
 - Can create, edit, delete all entities
@@ -1768,7 +1809,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 - Cannot manage subscription/billing
 - Job Board: All sections visible
 - Pipeline: Full access
-- Inventory: Full access
+- Catalog: Full STOCK + PRODUCTS + ORDERS access
 
 ---
 
@@ -1776,7 +1817,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 **Full project and financial access. No company settings or role management.**
 
-- All tabs visible (Pipeline, Inventory included)
+- All tabs visible (Pipeline, Catalog included)
 - All form sheets accessible (except company settings)
 - Floating action buttons on applicable screens
 - Can create, edit projects/tasks/clients (no project delete)
@@ -1784,7 +1825,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 - Cannot manage company settings, billing, or roles
 - Job Board: All sections visible
 - Pipeline: Full access (view + manage, no stage configuration)
-- Inventory: Full management access
+- Catalog: STOCK + PRODUCTS + ORDERS management access
 
 ---
 
@@ -1793,7 +1834,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 **Lead tech — creates projects/estimates, edits assigned work. Scoped access.**
 
 - Pipeline tab: NOT shown (no `pipeline.view` permission)
-- Inventory tab: NOT shown (no `inventory.view` permission)
+- Catalog tab: NOT shown (no `catalog.view` permission)
 - Floating action buttons on applicable screens
 - Can create projects/tasks/clients/estimates
 - Can edit only assigned projects and tasks (scope = `assigned`)
@@ -1811,7 +1852,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 **Field-only access. Views and edits assigned work, creates expenses.**
 
 - Pipeline tab: NOT shown
-- Inventory tab: NOT shown
+- Catalog tab: NOT shown
 - Floating action button visible on Schedule tab only
 - Cannot create projects, tasks, or clients
 - Can edit and change status of assigned tasks (scope = `assigned`)

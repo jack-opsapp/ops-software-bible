@@ -20,7 +20,7 @@
 10. [Advanced UI Patterns](#10-advanced-ui-patterns)
 11. [Project Notes System (OPS Web)](#11-project-notes-system-ops-web)
 12. [Photo Annotations](#12-photo-annotations)
-13. [Inventory Management](#13-inventory-management)
+13. [Catalog Management](#13-catalog-management)
 14. [Notification System](#14-notification-system)
 15. [Crew Location Tracking](#15-crew-location-tracking)
 16. [Schedule Tab Redesign](#16-schedule-tab-redesign)
@@ -2618,111 +2618,273 @@ struct UpsertPhotoAnnotationDTO: Codable {
 
 ---
 
-## 13. Inventory Management
+## 13. Catalog Management
 
 ### Overview
-Materials and supplies tracking system with items, tags, units, quantity thresholds, snapshots, bulk operations, and spreadsheet import. Uses a tactical minimalist design with pinch-to-zoom card scaling.
+
+The CATALOG tab replaces the legacy Inventory tab. It is variant-aware, recipe-aware, and integrates the drawing→estimate adapter and threshold-driven order suggestions. The IA splits into two segments — **STOCK** (variants and quantities) and **PRODUCTS** (billable templates) — with all advanced operations grouped under a kebab menu. SwiftData models live in `OPS/DataModels/Supabase/Catalog/`; see `03_DATA_ARCHITECTURE.md` § Catalog & Variant Model for full schema.
+
+### IA — CATALOG tab
+
+```
+CATALOG
+─────────────────────────────────────────────
+[ STOCK ]  [ PRODUCTS ]                     ⋮
+─────────────────────────────────────────────
+
+STOCK
+  ├─ Banner (when applicable):
+  │     "// 6 ITEMS BELOW THRESHOLD [REVIEW →]"
+  │     ↳ tap opens Orders sheet (Suggested view)
+  ├─ View mode:  [ LIST ] [ GRID ] [ TABLE ]
+  │   LIST  = variant-aware list (cards)
+  │   GRID  = pinch-to-zoom grid
+  │   TABLE = NEW (Bug 217c3d1f) — rows=variants, columns=family attributes
+  ├─ Sort/filter: category · tags · threshold · search
+  ├─ Category sections (collapsible, nested 2-level):
+  │     // HARDWARE
+  │       ▸ HARDWARE LEVEL
+  │         • Corner — Black · 288
+  │         • Corner — White · 70
+  │       ▸ HARDWARE STAIR
+  │     // FASTENERS
+  │       • 2" Screw — Black · 3000
+  └─ FAB: + add variant · + add family · + import
+
+PRODUCTS
+  ├─ Filter: type · kind · "has recipe"
+  ├─ Search
+  ├─ List
+  │     • PICKET RAIL · $2500 · flat
+  │     • Custom Composite Railing · $48/ft · 4 options · 7 recipe rows
+  │     • Service Call · $150/hr · service
+  └─ FAB: + quick add (3 fields) · + full setup (web)
+
+⋮ menu (grouped):
+  ── STOCK ──     Snapshots · Categories… · Tags… · Units… · Thresholds…
+  ── ORDERS ──    Suggested · Drafts · Sent
+  ── SETUP ──     Defaults (component_type → product_id) · Import… · Export…
+```
+
+### Variant-Aware View Modes
+
+**LIST** (default) — `CatalogVariantCard` per row. Renders family name, variant label ("Black · Topmount"), quantity colored by threshold status, unit, SKU. Long-press → action sheet (Adjust, Edit, Delete, Move to Order).
+
+**GRID** — pinch-to-zoom grid. `@AppStorage("catalogCardScale")` range 0.8–1.5. Same progressive-disclosure rules as legacy Inventory: at scale ≥ 0.9 show family tags; at scale ≥ 1.0 show SKU + threshold badge.
+
+**TABLE** (NEW per Bug 217c3d1f) — rows are variants, columns are family attributes (Family · Option 1 · Option 2 · … · Quantity · Threshold · Unit · SKU). Designed for fast bulk audits where a user wants to compare every "Bracket" SKU across Color × Mount Type. Horizontal scroll for families with 5+ option values; column truncation deferred to interface-design pass.
+
+### Threshold-Driven Order Suggestions (NEW per Bug e08c63a2)
+
+Variants where `quantity < effective_warning_threshold` (variant override → family default → category default) are surfaced via:
+
+1. **Banner** at top of STOCK list — `// N ITEMS BELOW THRESHOLD [REVIEW →]`. Tap opens the Orders sheet on the Suggested tab.
+2. **Suggested orders sheet** — groups undersupplied variants by a heuristic (preferred-supplier convention from `catalog_tags` if present, else single combined order). Each row shows variant label, current quantity, effective threshold, restock target (default: 2× warning threshold).
+3. **Persistent notification rail** entry — when first computed, the rail surfaces a `persistent: true` notification "// 6 items below threshold — review orders" with `actionUrl` deep-linking to the Orders sheet. Resolved when the user drafts/sends the order.
+
+`CatalogOrder` lifecycle: `suggested` (computed on demand) → `draft` (user committed from Suggested sheet) → `sent` (PO emitted to supplier) → `fulfilled` (stock arrives; `catalog_variants.quantity` increments by `quantity_requested`) → `cancelled`.
+
+### Drawing → Estimate Adapter (NEW)
+
+**Entry point**: Deck Builder canvas → `GENERATE ESTIMATE` button.
+
+**Flow**:
+
+1. Walk every component in `deck_designs.drawing_data` with a populated `component_type` ∈ `{railing, deck_board, stair_set, gate, post_set}`.
+2. For each component, look up `company_default_products[component_type]` to find the default `Product`.
+3. For each `ProductOption` on that product, read `option_default_source` (e.g. `$design.color`) and pull the matching value from `drawing_data.<key>`. Fall back to `default_value` if missing.
+4. Compute quantity from geometry: `linear_feet` for railing, `sqft` for deck_board, `count`/`tread_count` for others.
+5. Apply `ProductPricingModifier` rows whose triggers match the resolved options. Compute `resolved_unit_price`.
+6. Snapshot `configured_options` (jsonb) + `resolved_unit_price` + `resolved_options_label` ("TM · Black · Concrete · 4 corners") to a draft `line_items` row.
+7. Repeat per component → emit a draft `Estimate` with all line items pre-populated.
+
+**Resilience**: missing `company_default_products` mapping → log to `app_events.adapter_skip_component` and continue. The draft estimate appears with whatever components could be resolved; the user adds anything missing by hand.
+
+### Cut-List Materialization (NEW)
+
+Recipes resolve at install-task creation, **not** at estimate creation. When a project transitions to `.inProgress` and install tasks are generated:
+
+1. For each `ProjectTask` with a `sourceLineItemId`, load the line's `configured_options` snapshot.
+2. Walk every `ProductMaterial` row for the line's product:
+   - Variant-pinned (`catalog_variant_id` non-null) → emit one `task_materials` row with that variant.
+   - Family-pinned (`catalog_item_id` non-null) → resolve `variant_selector` against `configured_options`, find the matching `catalog_variant`, emit one `task_materials` row.
+3. Multiply `quantity_per_unit` by line `quantity` (and by `configured_options[scaled_by_option_id]` if `scaled_by_option_id` is non-null).
+4. Insert `task_materials` rows in a single transaction. The field crew sees the cut list pinned to specific SKUs ready for stock deduction.
+
+`CutListMaterializer` lives in `OPS/Network/Sync/`. The flow is idempotent — re-running the materializer for the same task replaces the existing rows.
 
 ### Architecture Components
 
-#### InventoryView (iOS)
-**Location:** `OPS/OPS/Views/Inventory/InventoryView.swift`
+#### CatalogView (iOS)
+**Location:** `OPS/OPS/Views/Catalog/CatalogView.swift`
 
-Main inventory view with:
-- **Search** -- text-based item search
-- **Tag filtering** -- filter by selected tags
-- **Sort modes** -- TAG, NAME, QUANTITY, THRESHOLD
-- **Selection mode** -- multi-select for bulk operations
-- **Pinch-to-zoom** -- `@AppStorage("inventoryCardScale")` with range 0.8 to 1.5, persisted
-- **Import** -- spreadsheet import button
-- **Manage tags** -- global tag rename/delete
+Top-level container hosting the STOCK / PRODUCTS segmented control + kebab menu. Drives the threshold banner + persistent notification.
 
-**Bulk operations (selection mode):**
-- **Bulk quantity adjustment** -- apply +/- amount to all selected items
-- **Bulk tag editing** -- add/remove tags from all selected items
-- **Bulk delete** -- soft delete multiple items with confirmation
+#### CatalogStockListView / CatalogStockGridView / CatalogStockTableView (iOS)
+**Location:** `OPS/OPS/Views/Catalog/Stock/`
 
-#### InventoryListView (iOS)
-**Location:** `OPS/OPS/Views/Inventory/InventoryListView.swift`
+Three view modes for the variant list. Share `CatalogStockViewModel` for sort/filter/search state; differ in row rendering. TABLE mode uses `Grid` with horizontal scroll for wide families.
 
-LazyVStack of `InventoryItemCard` components with:
-- **Progressive disclosure via scale:**
-  - Scale >= 0.9: show tag badges (up to 4 visible, "+N" for overflow)
-  - Scale >= 1.0: show metadata (SKU) and full threshold badge with unit display
-- **Quantity display** -- large Mohave font, colored by threshold status
-- **Threshold badges** -- "LOW", "CRITICAL" labels with colored pill background
-- **Long press** -- confirmation dialog with Edit, Select, Delete options
-- **Item count footer** -- "[ N ITEMS ]"
+#### CatalogVariantFormSheet (iOS)
+**Location:** `OPS/OPS/Views/Catalog/Stock/CatalogVariantFormSheet.swift`
 
-#### InventoryFormSheet (iOS)
-**Location:** `OPS/OPS/Views/Inventory/InventoryFormSheet.swift`
+Form for creating/editing a variant. Sections:
+- **Variant Details** (always expanded): family picker (`CatalogItem`), option-value selectors per option on the family, quantity, unit, SKU.
+- **Pricing & Thresholds** (collapsible): price override, unit cost override, warning/critical threshold (with effective-threshold preview from family/category fallback).
+- **Notes**.
 
-Form for creating and editing inventory items with:
-- **Item Details section** (always expanded): Name, Quantity + Unit picker, Tags (with inline add, predictive suggestions, and existing tag pills)
-- **Additional Details section** (collapsible): Description, SKU/Part Number, Notes, Quantity Thresholds (warning + critical levels with colored indicators)
-- **Tag creation:** Tags are created in Supabase first to obtain server IDs, then linked locally. `findOrCreateTag()` handles both sync and local creation.
-- **Tag junction sync:** `repo.setItemTags(itemId:tagIds:)` syncs the item-to-tag relationship
+Family creation deep-link: tap "+ add family" within the family picker to open `CatalogFamilyFormSheet`.
 
-#### QuantityAdjustmentSheet (iOS)
-**Location:** `OPS/OPS/Views/Inventory/QuantityAdjustmentSheet.swift`
+#### CatalogProductsListView (iOS)
+**Location:** `OPS/OPS/Views/Catalog/Products/CatalogProductsListView.swift`
 
-Quick quantity adjustment with:
-- Large Mohave-Bold (56pt) quantity display, tappable for direct text entry
-- Horizontal scroll of quick-adjust pills: [-100, -50, -10, -1, +1, +10, +50, +100] (configurable via `AdjustmentSettings`)
-- Change indicator showing `current -> new` with color coding (green for increase, red for decrease)
-- Auto-scroll to center pill on appear
-- Haptic feedback on each adjustment
+List of `Product` rows showing pricing summary ($X / unit), option count, recipe row count. Filters by type / kind / "has recipe". Tap row → `ProductDetailView`.
 
-#### BulkQuantityAdjustmentSheet (iOS)
-**Location:** `OPS/OPS/Views/Inventory/BulkQuantityAdjustmentSheet.swift`
+#### ProductDetailView (iOS — view + light edits)
+**Location:** `OPS/OPS/Views/Catalog/Products/ProductDetailView.swift`
 
-Applies the same +/- adjustment to all selected items:
-- Same quick-adjust pills as single-item sheet
-- Preview toggle to show/hide affected items with current-to-new quantities
-- Syncs each item individually to Supabase, reports failures
+iOS exposes light edits only — full configurable-Product authoring lives on web. Quick-edit fields: name, base_price, pricing_unit, type, taxable, active. Read-only sections (collapsed if empty): Options · Pricing modifiers · Recipe. Recipe rows are tappable → drill to the linked `CatalogVariant` or family selector.
 
-#### BulkTagsSheet (iOS)
-**Location:** `OPS/OPS/Views/Inventory/BulkTagsSheet.swift`
+#### ProductQuickAddSheet (iOS)
+**Location:** `OPS/OPS/Views/Catalog/Products/ProductQuickAddSheet.swift`
 
-Add/remove tags from multiple selected items:
-- **Pending changes section** -- shows tags to add ("+") and tags to remove ("-") as badges
-- **Create new tag** -- inline text field to create and add a new tag
-- **Add existing tags** -- pills for all available company tags not yet on all items
-- **Remove tags** -- pills for tags currently on any selected items, with item count
-- Creates new tags in Supabase, syncs junction table for each item
+The friction-floor flow for barebones Products — three required fields:
+- Name
+- Price
+- Unit (radio: flat / each / ft / sqft / hour)
+- Taxable (checkbox)
 
-#### InventoryManageTagsSheet (iOS)
-**Location:** `OPS/OPS/Views/Inventory/InventoryManageTagsSheet.swift`
+Defaults: `pricing_unit = flat_rate`, `type = OTHER`, `kind = service`, `is_active = true`. Total time: ~8s. An "Advanced ▾" disclosure exposes type/kind/category/sku for the user who wants them; default-collapsed.
 
-Global tag management:
-- Search/filter tags
-- Status bar showing total tags and total items tagged
-- Per-tag row with rename (alert dialog) and delete (confirmation) actions
-- Rename applies across all items; delete removes from all items
+#### CatalogOrdersSheet (iOS)
+**Location:** `OPS/OPS/Views/Catalog/Orders/CatalogOrdersSheet.swift`
 
-#### SnapshotListView (iOS)
-**Location:** `OPS/OPS/Views/Inventory/SnapshotListView.swift`
+Three-tab sheet: Suggested · Drafts · Sent.
+- **Suggested** — variants below threshold, grouped by supplier heuristic. Bulk action: "Draft all" → creates a `catalog_orders` row with status `.draft`.
+- **Drafts** — editable orders not yet sent. Per-order actions: edit lines, send (status → `.sent`), cancel.
+- **Sent** — read-only history. Per-order action: mark fulfilled (status → `.fulfilled`, increment `catalog_variants.quantity` by each `quantity_requested`).
 
-Point-in-time inventory snapshots:
-- List of snapshots with date, item count, and type (Automatic/Manual)
-- Detail view with summary card and itemized list (quantity, unit, name, SKU)
-- Fetched from Supabase via `repo.fetchSnapshots()` and `repo.fetchSnapshotItems(snapshotId:)`
+#### CatalogSnapshotListView (iOS)
+**Location:** `OPS/OPS/Views/Catalog/Snapshots/CatalogSnapshotListView.swift`
+
+Variant-aware snapshot history. Detail view shows family name + variant label per row.
 
 #### Spreadsheet Import (iOS)
-**Location:** `OPS/OPS/Views/Inventory/Import/SpreadsheetImportSheet.swift`
+**Location:** `OPS/OPS/Views/Catalog/Import/SpreadsheetImportSheet.swift`
 
-Multi-step import wizard:
-1. **Select File** -- file picker for CSV or XLSX via `fileImporter`
-2. **Configure** -- orientation (rows-are-items or columns-are-items), import mode (multiple items, single item, or variations)
-3. **Map Fields** -- interactive column-to-field mapping (`ColumnMappingView`)
-4. **Preview** -- parsed items with validation, duplicate detection, selection, inline editing (`ImportPreviewView`)
-5. **Importing** -- progress bar, syncs each item to Supabase with tags
-6. **Complete** -- results summary (created, skipped, failed)
+Multi-step import wizard adapted for variants:
+1. **Select File** — CSV or XLSX via `fileImporter`.
+2. **Configure** — orientation (rows-are-variants or columns-are-variants), import mode (multiple variants under one family, single variant, or variation matrix).
+3. **Map Fields** — column→field mapping including `catalog_item_id` (family), option-value columns, quantity, unit, SKU, threshold.
+4. **Preview** — parsed variants with validation, duplicate detection, inline editing.
+5. **Importing** — progress bar; syncs families + options + variants in dependency order.
+6. **Complete** — results summary.
 
-Supporting files:
-- `OPS/OPS/Views/Inventory/Import/ImportConfigView.swift` -- orientation and mode selection
-- `OPS/OPS/Views/Inventory/Import/ColumnMappingView.swift` -- column-to-field mapping
-- `OPS/OPS/Views/Inventory/Import/ImportPreviewView.swift` -- preview with editing and filtering
+### Permissions
+
+| Old | New | Purpose |
+|---|---|---|
+| `inventory.view` | `catalog.view` | Gate the CATALOG tab |
+| `inventory.manage` | `catalog.manage` | Adjust quantity, edit variants, manage categories/tags/units |
+| `inventory.import` | `catalog.import` | Bulk import |
+| — | `catalog.products.manage` | NEW — author/edit Products (options, modifiers, recipes). Rich admin |
+| — | `catalog.orders.manage` | NEW — draft/send/fulfill orders. Operational role |
+
+Permission rename SQL is in migration `2026-05-06-04-permission-rename.sql`. iOS callers (`PermissionStore`) and ops-web (`auth-store`) both updated; no alias layer.
+
+---
+
+## 13a. Configurable Products & Recipes
+
+### Overview
+
+A Product carries optional layers, each `0..N`. A "barebones" Product has zero rows in every optional layer and behaves identically to today's flat product (name + base_price + pricing_unit + tax). A "configurable" Product expresses option-driven pricing, modifier rules, and recipe templates that materialize into cut lists at install time.
+
+```
+Product (always)
+  ├─ ProductOption                          (0..N — knobs the user configures)
+  │     ├─ kind ∈ {select, integer, boolean}
+  │     ├─ affects_price · affects_recipe   (flags)
+  │     ├─ option_default_source            ("$design.color" → drawing adapter)
+  │     └─ ProductOptionValue (0..N)        (when kind=select)
+  ├─ ProductPricingModifier                 (0..N)
+  │     └─ kind ∈ {add_per_unit, add_flat, add_per_count, multiply_unit_price}
+  └─ ProductMaterial                        (0..N — recipe rows)
+        ├─ catalog_variant_id (pinned)  XOR  catalog_item_id + variant_selector
+        ├─ quantity_per_unit              (per Product's pricing_unit)
+        └─ scaled_by_option_id            (multiply by integer-kind option count)
+```
+
+### Resolver Semantics
+
+**`ProductConfigurationResolver`** runs at line-item creation (or on every option change in the line-item editor). Given a Product and the user's `configured_options` choices, it computes:
+
+1. Start with `product.base_price`.
+2. For each `ProductPricingModifier` whose trigger matches:
+   - `add_per_unit` → `unit_price += amount`
+   - `add_flat` → `unit_price += amount` (single-shot, doesn't multiply by quantity downstream)
+   - `add_per_count` → `unit_price += amount * configured_options[option_id]` (integer kind)
+   - `multiply_unit_price` → `unit_price *= amount`
+3. Snapshot `unit_price` to `line_items.resolved_unit_price`. Snapshot the chosen options to `line_items.configured_options` (jsonb). Render a printed-estimate-friendly summary into `line_items.resolved_options_label` ("TM · Black · Concrete · 4 corners").
+
+**`RecipeResolver`** runs at install task creation (not estimate creation). Given a line item with snapshot options, it walks the product's `ProductMaterial` rows:
+
+- Variant-pinned (`catalog_variant_id` non-null) → emit `task_materials` row with that variant directly.
+- Family-pinned (`catalog_item_id` non-null) → resolve `variant_selector` against `configured_options` (`{"color":"$option.color"}` → look up `configured_options.color` → find the variant on that family with that color option-value).
+- Multiply `quantity_per_unit` by the line's `quantity` (and `configured_options[scaled_by_option_id]` if set).
+
+### Worked Example
+
+Canpro's "Custom Composite Railing" Product:
+
+```
+Product:
+  pricing_unit = linear_foot
+  base_price   = $48.00
+
+Options:
+  Mount Type     select   affects_price=false  affects_recipe=true
+                 source=$design.mount_type     default=Topmount
+                 values: Topmount, Sidemount
+  Mount Surface  select   affects_price=true   affects_recipe=false
+                 source=$design.mount_surface  default=Surface
+                 values: Surface, Concrete
+  Color          select   affects_price=false  affects_recipe=true
+                 source=$design.color          default=Black
+                 values: Black, White
+  Corners        integer  affects_price=false  affects_recipe=true
+                 source=$design.corners_count  default=0
+
+Pricing modifiers:
+  (Mount Surface = Concrete)  →  add_per_unit  +$5.00
+
+Recipe:
+  family=Composite Board     selector={color:$color}                   qty=1.05/ft
+  family=Bracket             selector={color:$color, mount:$mount_type} qty=2.5/ft
+  family=Picket              selector={color:$color}                   qty=4.0/ft
+  family=Top Rail            selector={color:$color, mount:$mount_type} qty=1.0/ft
+  family=Screws              selector={color:$color}                   qty=18/ft
+  family=Corner Hardware Kit selector={color:$color, mount:$mount_type} qty=1   scaled_by=Corners
+  variant=Galvanized Anchor  pinned                                    qty=4   scaled_by=Corners
+```
+
+A 24 ft / 4 corners / Topmount / Black / Concrete configuration resolves to:
+- **Unit price**: $48 + $5 (Concrete) = $53/ft → 24 × $53 = $1,272 (frozen on the line item)
+- **Cut list** (rendered into `task_materials` at install task creation):
+
+| Variant | Qty |
+|---|---|
+| Composite Board — Black | 25.2 ft |
+| Bracket — Black — Topmount | 60 |
+| Picket — Black | 96 |
+| Top Rail — Black — Topmount | 24 ft |
+| Screws — Black | 432 |
+| Corner Hardware Kit — Black — Topmount | 4 |
+| Galvanized Anchor (pinned) | 16 |
+
+### Recipe Authoring Lives on Web
+
+iOS exposes options/modifiers/recipe rows as **read-only** in `ProductDetailView`. Authoring requires the rich tabular editor — that experience is delivered in the next ops-web session. The named follow-up is in plan `2026-05-06-ios-catalog-variant-model.md` § 6.3 step 4.
 
 ---
 

@@ -501,29 +501,104 @@ interface Payment {
 
 ## Products & Services Catalog
 
-### Product Entity
+The catalog supports two tiers of richness:
+
+- **Barebones Products** — name + base_price + pricing_unit + tax. Behave like the original flat Product model. A "PICKET RAIL" Product at $2500 flat is one form-fill away (~8s in `ProductQuickAddSheet`).
+- **Configurable Products** — carry options, pricing modifiers, and recipe rules. Used for cases like Canpro's "Custom Composite Railing" where a single Product expresses per-foot pricing, modifiers (Concrete +$5/ft), recipe templates (Color cascades through every BOM row), and quantity-scaling counts (Corners → corner hardware kits).
+
+See `03_DATA_ARCHITECTURE.md` § 21 (Product) for the full SwiftData model with all 18 fields, and `07_SPECIALIZED_FEATURES.md` § 13a for resolver semantics and the worked Canpro example.
+
+### Product Entity (post-Phase 13)
 
 ```typescript
+type ProductPricingUnit =
+  | 'each' | 'flat_rate' | 'linear_foot' | 'sqft' | 'hour' | 'day';
+
+type ProductKind = 'service' | 'good';
+
+type LineItemType = 'LABOR' | 'MATERIAL' | 'OTHER';
+
 interface Product {
   id: string;
   companyId: string;
   name: string;
   description: string | null;
-  defaultPrice: number;
-  unitCost: number | null;        // For profit margin tracking
-  unit: string;                   // "each" | "hour" | "sqft" | "linear ft" | "day" | "flat rate"
-  category: string | null;        // Custom grouping
-  isTaxable: boolean;
+
+  type: LineItemType;
+  kind: ProductKind;
+
+  basePrice: number;              // primary unit price (replaces default_price)
+  unitCost: number | null;        // for margin tracking
+  pricingUnit: ProductPricingUnit;
+
+  unit: string | null;            // legacy free-text unit (kept for back-compat)
+  category: string | null;        // legacy free-text category (separate from catalog_categories)
+  sku: string | null;
+
+  taxable: boolean;
   isActive: boolean;
+  isFavorite: boolean;
+
+  minimumCharge: number | null;
+  minimumQuantity: number | null;
+  showBomOnEstimate: boolean;
+  showInStorefront: boolean;
+  tieredPricing: jsonb | null;    // power-user passthrough
+
+  taskTypeId: string | null;
+  taskTypeRef: string | null;
+  unitId: string | null;          // FK catalog_units.id
+
   createdAt: Date | null;
   updatedAt: Date | null;
   deletedAt: Date | null;
 }
 ```
 
-Products are soft-deleted. `ProductService.fetchProducts(companyId, activeOnly=true)` returns only active, non-deleted products by default.
+**Wire-field fix**: earlier builds wrote `unit_price`/`cost_price` — columns that do not exist in Supabase. The DTO now correctly maps `base_price`/`unit_cost`. The legacy `default_price` column is preserved with a Postgres trigger mirroring `base_price` ↔ `default_price` (see `migrations/2026-05-06-02-catalog-views-triggers.sql`) until ops-web cuts over to `base_price`.
 
-Line items can reference a product via `productId`. When a product is selected from the catalog, it pre-fills the line item name, description, unit price, unit cost, unit, and taxable flag.
+Products are soft-deleted. `ProductService.fetchProducts(companyId, activeOnly=true)` returns only active, non-deleted products by default. Line items reference a product via `productId`. When a product is added to an estimate, it pre-fills the line item name, description, `resolved_unit_price`, unit cost, unit, taxable flag, type, and `taskTypeId`.
+
+### Line Item Snapshot (NEW post-Phase 13)
+
+`line_items` gained three columns to capture per-line configuration at the moment of creation. Estimates and invoices are signed contracts — once a line is written, later edits to the Product must not retroactively change the historical estimate.
+
+```sql
+ALTER TABLE line_items
+  ADD COLUMN configured_options       jsonb        NULL,
+  ADD COLUMN resolved_unit_price      numeric      NULL,
+  ADD COLUMN resolved_options_label   text         NULL;
+```
+
+| Column | Purpose |
+|---|---|
+| `configured_options` | Per-line jsonb of `{option_id: option_value_id_or_int_or_bool}`. Captured at line creation. Read by `RecipeResolver` at install task creation to materialize the cut list. |
+| `resolved_unit_price` | Snapshot of `base_price + applicable modifiers`. Frozen at line creation; never re-resolves. |
+| `resolved_options_label` | Printed-estimate-friendly summary ("TM · Black · Concrete · 4 corners"). |
+
+**Pricing freeze**: pricing modifiers are evaluated and folded into `resolved_unit_price` at line-item creation. Modifying the Product after the estimate is sent does not change the estimate's totals.
+
+**Recipe lazy-resolution**: recipes do **not** resolve at estimate creation. They resolve at install task creation by reading `configured_options` and walking `product_materials`. This is intentional — the cut list must reflect the configuration the customer signed, not whatever the Product looks like today.
+
+### Recipe Semantics
+
+`product_materials` rows are either:
+
+- **Variant-pinned** — `catalog_variant_id` non-null, `catalog_item_id` null. The recipe always pulls this exact SKU regardless of options.
+- **Family-pinned with selector** — `catalog_item_id` non-null, `catalog_variant_id` null, `variant_selector` jsonb populated. The selector references option keys (`{"color":"$option.color","mount":"$option.mount_type"}`) — at resolution time, the resolver walks the line's `configured_options`, matches values, and finds the variant on that family with those option-value combos.
+
+CHECK constraint `(catalog_variant_id IS NOT NULL) <> (catalog_item_id IS NOT NULL)` enforces mutual exclusion.
+
+`scaled_by_option_id` lets a recipe row scale by an integer-kind option's value. Example: a "Corner Hardware Kit" row with `scaled_by_option_id = corners_count` and `quantity_per_unit = 1` yields 4 kits when the line specifies 4 corners.
+
+### Resolution Timing
+
+| Event | What runs | Output |
+|---|---|---|
+| Line item created (manually or via adapter) | `ProductConfigurationResolver` | `configured_options`, `resolved_unit_price`, `resolved_options_label` |
+| Estimate sent / approved | (no-op for catalog) | — |
+| Project transitions to `.inProgress` and install tasks generated | `CutListMaterializer` per task → `RecipeResolver` per line | `task_materials` rows pinned to specific `catalog_variants` |
+| Cut-list materialization is idempotent | re-running replaces the existing rows | — |
 
 ---
 

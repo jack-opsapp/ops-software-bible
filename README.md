@@ -60,18 +60,18 @@ Start with the Executive Summary to understand the business context, then procee
 ### 🗄️ [03_DATA_ARCHITECTURE.md](03_DATA_ARCHITECTURE.md)
 **Complete data model reference**
 
-- All 24 SwiftData models (11 core + 13 Supabase-backed) with full property lists
-- Entity relationships and cardinality
-- BubbleFields.swift constants (byte-perfect API mappings)
-- All DTOs with conversion logic
+- All 48 SwiftData models (11 core + 14 Supabase-backed + 4 offline-sync + 14 catalog + 4 product extensions + DeckDesign + WizardState) with full property lists
+- Catalog & Variant Model — `catalog_*` tables, `Product` extensions (options, modifiers, recipes), `CompanyDefaultProduct` adapter mapping, `CatalogOrder` lifecycle
+- Bridge & Audit Tables — `product_materials`, `task_materials`, `inventory_deductions`, `client_product_overrides`, `product_tax_rates`
+- All DTOs with conversion logic — `CatalogDTOs.swift`, `ProductExtensionDTOs.swift`, `CompanyDefaultProductDTOs.swift`, `CatalogOrderDTOs.swift`, `TaskMaterialDTOs.swift`
 - Soft delete strategy (30-day window)
 - Computed properties and business logic
-- Migration history (Scheduled→Booked, task-only calendar)
+- Migration history (V1→V2→V3 with Phase 13 catalog model)
 - Query predicates and filtering patterns
 
-**Start here for:** Implementing the data layer
+**Start here for:** Implementing the data layer, understanding catalog/variant/recipe semantics
 
-**Lines:** ~1,200 | **Models:** 24 | **DTOs:** 8+
+**Lines:** ~2,800 | **Models:** 48 | **DTOs:** 12+
 
 ---
 
@@ -285,9 +285,9 @@ Start with the Executive Summary to understand the business context, then procee
 ## Documentation Statistics
 
 - **Total Documents:** 12 (including this README)
-- **Total Lines:** ~9,100+ lines of documentation
-- **Total Code Examples:** 120+ code snippets
-- **Coverage:** 437 Swift files, 24 SwiftData models, 30 Supabase tables, 15 repositories, 50+ UI components, full financial system, complete job lifecycle, project notes system, client portal, inventory system, photo annotations, in-app notifications
+- **Total Lines:** ~10,000+ lines of documentation
+- **Total Code Examples:** 130+ code snippets
+- **Coverage:** 437+ Swift files, 48 SwiftData models, 50+ Supabase tables, 18+ repositories, 50+ UI components, full financial system, complete job lifecycle, project notes system, client portal, **catalog & variant model with configurable Products + recipes + drawing→estimate adapter (Phase 13, 2026-05-07)**, photo annotations, in-app notifications
 
 ---
 
@@ -347,11 +347,11 @@ See `C:\OPS\android-plan-v2\` for the complete Android conversion plan.
 
 ## Maintenance
 
-**Last Updated:** February 28, 2026
+**Last Updated:** May 7, 2026 (Phase 13 — Catalog & Variant Model)
 
-**iOS App Version:** 437 Swift files, 24 SwiftData models, iOS 17+, Supabase primary backend
+**iOS App Version:** 437+ Swift files, 48 SwiftData models (Schema V3), iOS 17+, Supabase primary backend
 
-**Web App Version:** Next.js, Supabase (30 tables, 13 migrations), Pipeline/Estimates/Invoices/Project Notes/Inventory/Notifications/Client Portal live
+**Web App Version:** Next.js, Supabase (50+ tables, includes catalog migrations 01-04), Pipeline/Estimates/Invoices/Project Notes/Catalog/Notifications/Client Portal live; configurable Product authoring is the named follow-up session
 
 **Ecosystem:** ops-site (marketing website), ops-learn (learning platform), try-ops (interactive tutorial/demo)
 

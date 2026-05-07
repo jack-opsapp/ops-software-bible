@@ -1162,16 +1162,45 @@ SyncEngine guards against concurrent syncs via the `syncInProgress` boolean. All
 | `expense_settings` | Per-company expense policy configuration |
 | `expense_batches` | Grouped expenses for batch review |
 
-### Inventory Tables
+### Catalog Tables
 
-| Table | Purpose |
-|-------|---------|
-| `inventory_items` | Physical inventory items |
-| `inventory_units` | Measurement units (ea, box, ft, etc.) |
-| `inventory_tags` | Categorization tags |
-| `inventory_item_tags` | Item-tag junction (many-to-many) |
-| `inventory_snapshots` | Point-in-time inventory records |
-| `inventory_snapshot_items` | Items captured in a snapshot |
+The Catalog domain replaces the legacy `inventory_*` tables. Variant families (`catalog_items`) carry default price/cost/threshold; SKUs (`catalog_variants`) override per-variant. Recipes (`product_materials`) bridge billable Products to stockable variants. Tags now apply at the FAMILY level. Migration `2026-05-06-01-catalog-schema.sql` (RENAME inventory_* → catalog_*) and `2026-05-06-02-catalog-views-triggers.sql` (cycle-prevention trigger, base_price ↔ default_price mirror).
+
+| Table | Purpose | RLS | Common reads/writes |
+|-------|---------|-----|---------------------|
+| `catalog_categories` | Nested category (parent_id self-FK, 2-level UI). `default_warning_threshold` / `default_critical_threshold` cascade to families/variants. | company_isolation | List on Catalog tab; create/edit via Categories sheet |
+| `catalog_items` | Variant family — name, description, image, default price/cost/threshold, default unit. | company_isolation | List in CATALOG tab; FAB creates new family; recipe rows reference via `catalog_item_id` |
+| `catalog_options` | Variant axis on a family ("Color", "Mount Type"). | via `catalog_items.company_id` | Authored at family creation; rarely edited after |
+| `catalog_option_values` | Selectable values for a CatalogOption. | via parent option | Same as above |
+| `catalog_variants` | The SKU — `catalog_item_id` + quantity + price/unit_cost overrides + threshold overrides + `unit_id` + sku. | via `catalog_items.company_id` | Quantity adjusts on stock changes; threshold reads cascade to family/category |
+| `catalog_variant_option_values` | M2M variant ↔ option_value combo. | via parent variant | Insert at variant creation; immutable after |
+| `catalog_tags` | Free-form FAMILY-level label. Legacy threshold columns preserved but unused. | company_isolation | List in tag picker; CRUD via Tags sheet |
+| `catalog_item_tags` | Junction family ↔ tag. | via `catalog_items.company_id` | Insert/delete on tag-edit |
+| `catalog_units` | Unit of measure (ea, ft, sqft, hour, …). Exposes `dimension` and `abbreviation`. | company_isolation | Read by family/variant editors and pricing |
+| `catalog_snapshots` | Variant-aware historical stock snapshot — header. | company_isolation | Insert on manual snapshot, daily auto-snapshot |
+| `catalog_snapshot_items` | One row per variant in a snapshot, denormalized `family_name` + `variant_label`. | via parent snapshot | Insert with snapshot; never edit |
+| `catalog_orders` | Threshold-driven restock order. Status: `suggested` / `draft` / `sent` / `fulfilled` / `cancelled`. | company_isolation | Compute `suggested` on demand; user drafts/sends; fulfillment increments variant qty |
+| `catalog_order_items` | One line per variant on an order; cost snapshotted at creation. | via parent order | Insert with order; rare edits |
+
+### Bridge & Audit Tables
+
+| Table | Purpose | RLS | Common reads/writes |
+|-------|---------|-----|---------------------|
+| `product_materials` | Recipe row — variant-pinned OR family-pinned with `variant_selector` jsonb. `quantity_per_unit` per Product's `pricing_unit`. `scaled_by_option_id` for integer-kind option scaling. | via `products.company_id` | Authored on web (Product detail); read by `RecipeResolver` at install task creation |
+| `task_materials` | Cut-list row pinned to a `catalog_variant_id`, written at install task creation. Carries legacy `inventory_item_id` for back-compat (null on new rows). | via `project_tasks → projects.company_id` | Insert by `CutListMaterializer`; read by task material list; deductions audit on consumption |
+| `line_item_materials` | Optional per-line-item materials snapshot for one-off custom builds. | via `line_items → estimates/invoices` | Rare — manual override path only |
+| `inventory_deductions` | Audit trail of stock movement. Insert-only. FK column renamed `inventory_item_id` → `catalog_variant_id`. | via `catalog_variants → catalog_items.company_id` | Insert on stock consumption / return / manual adjust / snapshot |
+| `client_product_overrides` | Per-client price override for a Product. | via `clients.company_id` | Read at line-item creation when client has overrides |
+| `product_tax_rates` | M2M Products ↔ tax rates (multiple jurisdictions). | via `products.company_id` | Read at line-item tax computation |
+| `company_default_products` | (company_id, component_type) → product_id. Drives drawing→estimate adapter. | company_isolation | Authored once per company; read on every "Generate Estimate" action |
+
+### Configurable Product Extensions
+
+| Table | Purpose | RLS | Common reads/writes |
+|-------|---------|-----|---------------------|
+| `product_options` | Knob on a Product. `kind` ∈ `select` / `integer` / `boolean`. `affects_price` / `affects_recipe` flags. `option_default_source` (e.g. `$design.color`) read by drawing adapter. | via `products.company_id` | Authored on web; read by line-item editor + adapter |
+| `product_option_values` | Selectable values for `kind=select`. | via parent option | Authored on web |
+| `product_pricing_modifiers` | Price bump rule per option/value match. `modifier_kind` ∈ `add_per_unit` / `add_flat` / `add_per_count` / `multiply_unit_price`. | via parent option | Authored on web; read by `ProductConfigurationResolver` |
 
 ### Calendar Tables
 
