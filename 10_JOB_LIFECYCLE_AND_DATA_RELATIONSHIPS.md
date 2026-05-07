@@ -663,49 +663,101 @@ Project status → .inProgress (install begins)
 
 ### Drawing → Estimate Adapter (Phase 13)
 
-The Deck Builder canvas can emit a fully-populated draft Estimate in one tap. This is the most consequential time-saver in the catalog redesign — hours of estimate writing collapse into a single button.
+The Deck Builder canvas can emit a fully-populated draft Estimate in one tap. This is the most consequential time-saver in the catalog redesign — hours of estimate writing collapse into a single button. The deck side closed the loop in 2026-05-07: `ComponentEmitter` projects geometry into the catalog's `components[]` vocabulary on every save, the adapter resolves Products + options, and the merge layer reconciles the result with the legacy geometry-driven path.
 
-**Entry point:** Deck Builder canvas → `GENERATE ESTIMATE` button.
+**Entry point:** Deck Builder canvas → toolbar `Estimate` button → `EstimatePreviewSheet` → "Create Estimate". One button, one flow — the merge layer routes adapter-vs-legacy per component_type based on company state. (UX decision per the deck-catalog spec § 7 — single entrypoint avoids parallel surfaces.)
 
-**Flow:**
+**End-to-end flow** — drawing → components → adapter → line_items → task_materials:
 
 ```
-User taps GENERATE ESTIMATE on Deck Builder
+User taps Estimate button on Deck Builder
    ↓
-Adapter walks deck_designs.drawing_data.components[]
+DeckBuilderViewModel.save()
+   ├─ DeckDrawingData.toJSON() runs
+   │     └─ ComponentEmitter.emit(self) populates `components[]` from
+   │        canonical geometry — one row per railing / post_set /
+   │        stair_set / deck_board / gate. Per-edge linear_feet is
+   │        net of stair span and gate widths; deck_board sqft is
+   │        per-detected-face; multi-level connection stairs carry
+   │        level_id pinned to the upper level.
+   └─ drawingDataJSON written with up-to-date components projection
    ↓
-For each component with a populated component_type:
-   1. Look up company_default_products[component_type] → Product
-   2. For each ProductOption on Product:
-        - Read option_default_source ("$design.color")
-        - Pull value from drawing_data.<key>; fall back to default_value if missing
-   3. Compute quantity from geometry:
-        - railing → linear_feet (+ corners_count for scaled hardware)
-        - deck_board → sqft
-        - stair_set → tread_count
-        - gate / post_set → count
-   4. Apply matching ProductPricingModifier rows → resolved_unit_price
-   5. Snapshot to draft line_items row:
-        - configured_options (jsonb)
-        - resolved_unit_price
-        - resolved_options_label
+DeckBuilderViewModel.mergedCatalogLineItems()
+   ├─ DesignToEstimateAdapter.generate(design, companyId, modelContext)
+   │     ├─ Parse drawing_data → walk components[]
+   │     ├─ For each component:
+   │     │    1. Look up company_default_products[component_type] → Product
+   │     │    2. For each ProductOption: pull $design.<key> from metadata,
+   │     │       fall back to default_value if missing
+   │     │    3. Compute quantity from pricing_unit + metadata
+   │     │       (linear_feet, sqft, count, tread_count, etc.)
+   │     │    4. Apply ProductPricingModifier rows → resolved_unit_price
+   │     │    5. Snapshot configured_options + resolved_unit_price +
+   │     │       resolved_options_label
+   │     └─ Emit GeneratedLineItem carrying componentType + snapshot
+   │
+   └─ EstimateGeneratorService.generateLineItems(drawingData)
+         └─ Walks vertices/edges/surfaces/connections — emits flat
+            rows with categories Surface / Substructure / Railing /
+            Stairs / Connecting Stairs / Other, plus warnings (missing
+            elevation, AR accuracy notes, multi-level narrative)
    ↓
-Emit draft Estimate with all line items pre-populated → user reviews
+CatalogEstimateMerger.merge(adapterItems, legacyItems, defaultsCovered)
+   ├─ Adapter rows kept (sorted first)
+   ├─ Legacy rows in covered categories dropped:
+   │     railing or post_set → drop "Railing"
+   │     stair_set            → drop "Stairs", "Connecting Stairs"
+   │     deck_board           → drop "Surface"
+   │     gate                 → drop nothing
+   ├─ Legacy rows in uncovered categories pass through
+   └─ Warning rows always pass through
+   ↓
+DeckBuilderViewModel.generateEstimate() persists
+   ├─ CatalogEstimateMerger.groupByTaskType(merged, taskTypes)
+   ├─ For each group:
+   │     - parent CreateLineItemDTO (LABOR / OTHER)
+   │     - per child:
+   │         * configuredOptions (RawJSONColumn) ← adapter-only
+   │         * resolvedUnitPrice                ← adapter-only
+   │         * resolvedOptionsLabel             ← adapter-only
+   │         * (legacy children leave those fields nil)
+   └─ line_items rows persist via EstimateRepository
+   ↓
+[Project transitions to .accepted → tasks auto-generate from LABOR rows]
+   ↓
+[Project transitions to .inProgress]
+   ↓
+CutListMaterializer.materialize(forLineItem:projectTaskId:)
+   ├─ Reads line.configured_options snapshot
+   ├─ RecipeResolver.resolve(materials, configuredOptions, ...)
+   │     - Variant-pinned recipe rows → use directly
+   │     - Family-pinned + variant_selector → resolve $option.<name>
+   │       to a CatalogOptionValue, match candidate variants
+   │     - Scale by configuredOptions[scaledByOptionId] when set
+   └─ TaskMaterialRepository.createMaterials([CreateTaskMaterialDTO])
+   ↓
+task_materials rows pinned to concrete catalog_variant_ids
+   = the cut list the field crew works against
 ```
 
-**Resilience:** missing `company_default_products[component_type]` mapping → log to `app_events.adapter_skip_component` and continue. The draft estimate appears with whatever components could be resolved; the user adds anything missing by hand. This is the **named follow-up coordination** with the Deck Builder agent (per spec § 7.1) — if the Deck Builder hasn't tagged components with a `component_type` and the agreed metadata keys, the adapter is a no-op for affected components, but everything else continues to work.
+**Resilience at every hop:**
 
-**Reserved metadata keys per `component_type`:**
+- `components[]` missing on legacy `drawing_data` JSON → `DeckBuilderViewModel.init` backfills via `ComponentEmitter.emit` so the adapter sees a populated projection on first load. Designs the user never reopens stay legacy on disk; adapter no-ops on them.
+- `company_default_products[component_type]` missing → adapter skips the component silently. Merger then falls through to legacy for that category.
+- Line items without `configured_options` (legacy rows or barebones flat products) → `CutListMaterializer.materialize` returns 0 rows (no recipe to resolve); install task carries no `task_materials` and the field crew works from the line item directly.
+- ops-web round-trips the same `drawingDataJSON`. The components key is forward-compatible (web ignores keys it doesn't recognize). If web strips the key on save, iOS backfills again on next load.
 
-| Component | Required keys |
+**Reserved metadata keys per `component_type`** — emitted by `ComponentEmitter`, consumed by the adapter via `option_default_source = "$design.<key>"`:
+
+| Component | Metadata keys |
 |---|---|
-| `railing` | `linear_feet`, `corners_count`, `color`, `mount_type`, `mount_surface` |
-| `deck_board` | `sqft`, `color`, `material` |
-| `stair_set` | `tread_count`, `width`, `color`, `mount_type` |
-| `gate` | `count`, `width`, `color`, `mount_type`, `mount_surface` |
-| `post_set` | `count`, `height`, `color`, `mount_type` |
+| `railing` | `linear_feet`, `corners_count`, `color`, `mount_type`, `mount_surface`, `edge_id`, optional `level_id` |
+| `post_set` | `count`, `height`, `color`, `mount_type`, `edge_id`, optional `level_id` |
+| `stair_set` | `tread_count`, `width`, `color`, `mount_type`, `edge_id` OR `connection_id`, `level_id` (multi-level) |
+| `deck_board` | `sqft`, `color`, `material`, `surface_id`, optional `level_id` |
+| `gate` | `count`, `width`, `color`, `mount_type`, `mount_surface`, `edge_id`, optional `level_id` |
 
-`ProductOption.optionDefaultSource` references these as `$design.<key>` — that's how the adapter knows where to pull each option's default from.
+Adding new metadata keys is fine; renaming or removing breaks the adapter contract — see `OPS/DataModels/Supabase/Catalog/CompanyDefaultProduct.swift` (`DesignComponentType` enum) and `OPS/Services/DesignToEstimateAdapter.swift:148-173` (`computeQuantity`).
 
 **Position in the project lifecycle:**
 

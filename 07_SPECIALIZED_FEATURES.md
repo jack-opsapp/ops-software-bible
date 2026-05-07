@@ -2686,19 +2686,66 @@ Variants where `quantity < effective_warning_threshold` (variant override → fa
 
 ### Drawing → Estimate Adapter (NEW)
 
-**Entry point**: Deck Builder canvas → `GENERATE ESTIMATE` button.
+**Entry point**: Deck Builder canvas → toolbar `Estimate` button → `EstimatePreviewSheet` → "Create Estimate". Same single button drives both adapter-aware and legacy-only companies; the merge logic below decides which path actually fires per row. (UX decision per spec § 7 — no second button, no parallel surface.)
 
-**Flow**:
+**Pipeline**:
 
-1. Walk every component in `deck_designs.drawing_data` with a populated `component_type` ∈ `{railing, deck_board, stair_set, gate, post_set}`.
+```
+DeckBuilderViewModel.save()                      (writes drawingDataJSON
+            ↓                                     including up-to-date components[])
+DeckBuilderViewModel.mergedCatalogLineItems()
+            ↓
+   ┌────────┴────────┐
+   ▼                 ▼
+DesignToEstimateAdapter   EstimateGeneratorService
+(adapter pass)            (legacy pass — geometry only,
+                           no Product/options/recipe)
+   ▼                 ▼
+       CatalogEstimateMerger.merge(...)
+            ↓
+   [CatalogEstimateMerger.LineItem]
+            ↓
+EstimatePreviewSheet (display)   →   generateEstimate() (persist)
+                                              ↓
+                                     parent + child line_items rows
+                                     with configured_options +
+                                     resolved_unit_price +
+                                     resolved_options_label snapshotted
+```
+
+**Adapter pass** (`OPS/Services/DesignToEstimateAdapter.swift`):
+
+1. Parse `deck_designs.drawing_data` → walk the `components[]` projection (one row per visible railing / deck_board / stair_set / gate / post_set, emitted by `ComponentEmitter` on every save).
 2. For each component, look up `company_default_products[component_type]` to find the default `Product`.
-3. For each `ProductOption` on that product, read `option_default_source` (e.g. `$design.color`) and pull the matching value from `drawing_data.<key>`. Fall back to `default_value` if missing.
+3. For each `ProductOption` on that product, read `option_default_source` (e.g. `$design.color`) and pull the matching value from the component's `metadata`. Fall back to `default_value` if missing.
 4. Compute quantity from geometry: `linear_feet` for railing, `sqft` for deck_board, `count`/`tread_count` for others.
 5. Apply `ProductPricingModifier` rows whose triggers match the resolved options. Compute `resolved_unit_price`.
-6. Snapshot `configured_options` (jsonb) + `resolved_unit_price` + `resolved_options_label` ("TM · Black · Concrete · 4 corners") to a draft `line_items` row.
-7. Repeat per component → emit a draft `Estimate` with all line items pre-populated.
+6. Emit `DesignToEstimateAdapter.GeneratedLineItem` carrying the snapshot (`productId`, `componentType`, `quantity`, `configuredOptions`, `resolvedUnitPrice`, `resolvedOptionsLabel`, `lineTotal`).
 
-**Resilience**: missing `company_default_products` mapping → log to `app_events.adapter_skip_component` and continue. The draft estimate appears with whatever components could be resolved; the user adds anything missing by hand.
+Missing `company_default_products` mapping → adapter skips the component silently. Empty result is the no-op signal; the merger then falls through to legacy.
+
+**Legacy pass** (`OPS/DeckBuilder/Engine/EstimateGeneratorService.swift`):
+
+Walks the same drawing geometry (vertices/edges/surfaces/levels/connections) and emits flat `GeneratedLineItem` rows with categories `Surface`, `Substructure`, `Railing`, `Stairs`, `Connecting Stairs`, `Other`. Carries warning rows the adapter cannot produce (missing elevation, AR accuracy notes, multi-level connection narratives).
+
+**Merge** (`OPS/Services/CatalogEstimateMerger.swift`):
+
+For each `component_type` covered by an adapter row, the merger drops the corresponding legacy categories:
+
+| Adapter component_type covered | Legacy categories dropped |
+|---|---|
+| `railing` or `post_set` | `Railing` |
+| `stair_set` | `Stairs`, `Connecting Stairs` |
+| `deck_board` | `Surface` |
+| `gate` | none (gates have no dedicated legacy category) |
+
+Uncovered types → legacy passes through. Warning rows always pass through regardless of category drop. Adapter rows always sort first; sort_order is contiguous.
+
+**Persistence** (`DeckBuilderViewModel.generateEstimate()`):
+
+Groups merged rows by `taskTypeId` via `CatalogEstimateMerger.groupByTaskType` (mirrors the legacy `EstimateGeneratorService.groupByTaskType` shape so the parent/child structure is identical between paths). For each child, `CreateLineItemDTO` flows the snapshot fields through to `line_items.configured_options` (jsonb) / `resolved_unit_price` / `resolved_options_label` so `CutListMaterializer` can resolve recipes at install time.
+
+**Backwards compatibility**: companies without any `CompanyDefaultProduct` rows see the legacy preview unchanged — adapter returns `[]`, merger passes legacy through, persistence path is identical to pre-catalog behavior.
 
 ### Cut-List Materialization (NEW)
 
@@ -3956,7 +4003,7 @@ The 22-task rework lives in `docs/superpowers/specs/2026-04-27-calendar-visual-s
 - Hover popover: Radix HoverCard, glass-dense, `var(--z-dropdown)` (1000), 12px radius. Replaces inline `EventTooltip` portal pattern.
 - Context menu: Radix Popover with virtual anchor at right-click coords (preserves position-based API while gaining Radix focus / dismiss). Same z-layer + surface.
 - Inline editor: portaled via `createPortal`, fixed positioning, `var(--z-floating-ui)` (1500) — above dropdowns since it's a focused editing affordance.
-- Z-scale CSS custom properties added to globals.css and `.interface-design/colors_and_type.css`. See § 15 of 05_DESIGN_SYSTEM.md.
+- Z-scale CSS custom properties added to globals.css and `ops-design-system/project/colors_and_type.css`. See § 15 of 05_DESIGN_SYSTEM.md.
 
 **Architecture (post-rework):**
 

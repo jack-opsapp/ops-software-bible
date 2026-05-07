@@ -2218,6 +2218,126 @@ CHECK: `(catalog_variant_id IS NOT NULL) <> (catalog_item_id IS NOT NULL)`.
 
 ---
 
+## DeckDesign — drawing data and components projection
+
+**File**: `OPS/DataModels/DeckDesign.swift` (SwiftData model)
+**Drawing data Codable struct**: `OPS/DeckBuilder/Models/DeckGeometry.swift` (`DeckDrawingData`)
+**Emitter**: `OPS/DeckBuilder/Engine/ComponentEmitter.swift`
+**Adapter contract (consumer)**: `OPS/Services/DesignToEstimateAdapter.swift`
+
+### SwiftData row
+
+```swift
+@Model
+final class DeckDesign: Identifiable {
+    @Attribute(.unique) var id: String
+    var companyId: String
+    var projectId: String?           // nil for standalone sketches
+    var title: String
+    var drawingDataJSON: String      // DeckDrawingData serialized as JSON (jsonb on Supabase)
+    var thumbnailURL: String?        // S3 URL of rendered PNG
+    var localThumbnailPath: String?
+    var version: Int
+    var createdBy: String?
+
+    // Sync fields
+    var needsSync: Bool
+    var lastSyncedAt: Date?
+    var syncPriority: Int
+    var deletedAt: Date?
+
+    var createdAt: Date
+    var updatedAt: Date?
+}
+```
+
+### `drawingDataJSON` schema
+
+`drawingDataJSON` is the serialized form of `DeckDrawingData`. The catalog-relevant subset is:
+
+```jsonc
+{
+  "vertices":         [ ... ],
+  "edges":            [ ... ],
+  "footprint":        { ... },
+  "surfaces":         [ ... ],
+  "config":           { ... },
+  "scaleFactor":      <Double>,
+  "overallElevation": <Double>,
+  "levels":           [ ... ],          // multi-level only
+  "levelConnections": [ ... ],          // multi-level only
+
+  // CATALOG PROJECTION — derived from geometry on every save by
+  // ComponentEmitter.emit(self). One row per visible component.
+  // Forward-compatible: clients that don't recognize the key
+  // ignore it; legacy JSON without the key decodes with
+  // `components == nil` and the iOS load path backfills it.
+  "components": [
+    { "component_type": "railing",   "metadata": { ... } },
+    { "component_type": "post_set",  "metadata": { ... } },
+    { "component_type": "stair_set", "metadata": { ... } },
+    { "component_type": "deck_board","metadata": { ... } },
+    { "component_type": "gate",      "metadata": { ... } }
+  ]
+}
+```
+
+### `components[]` projection — per-type metadata schema
+
+`component_type` matches `DesignComponentType` raw values exactly. Adding new component_type strings is fine; renaming is a contract break with `DesignToEstimateAdapter`. Metadata keys map 1:1 to the keys the adapter reads via `option_default_source = "$design.<key>"` and via `computeQuantity(unit:metadata:)`.
+
+| `component_type` | Source in geometry | Required metadata keys |
+|---|---|---|
+| `railing` | One per `DeckEdge` with `railingConfig` | `linear_feet` (Double, edge length minus stair span minus all gate widths), `corners_count` (Int — currently always 0; corners live at vertex boundaries, not inside edges, so per-edge attribution would double-count), `color` (String, `RailingConfig.color`), `mount_type` (String, `RailingConfig.mountType`), `mount_surface` (String, `RailingConfig.mountSurface`), `edge_id` (String), optional `level_id` (String) |
+| `post_set` | One per railing — co-emitted alongside the railing component | `count` (Int, `DimensionEngine.postCount`), `height` (Double inches, `RailingConfig.postHeight`), `color` (mirrors railing), `mount_type` (mirrors railing), `edge_id`, optional `level_id` |
+| `stair_set` | One per `DeckEdge` with `stairConfig`, plus one per `LevelConnection` (multi-level) | `tread_count` (Int, `StairConfig.calculateTreadCount` or override), `width` (Double inches, `StairConfig.width`), `color` (String, `StairConfig.color`), `mount_type` (String — vocabulary `Surface | Top | Side`, distinct from railing), `edge_id` OR `connection_id` + `level_id` (upper level) |
+| `deck_board` | One per `DeckSurface` with a detected face match (per-face area), or one per legacy footprint when surfaces empty | `sqft` (Double, `PolygonMath.realWorldArea(face) / 144.0`), `color` (String, `DeckSurface.color`), `material` (String, `DeckSurface.boardMaterial`), `surface_id` (String — the persisted DeckSurface id, or sentinel `"footprint"` for the legacy fallback), optional `level_id` |
+| `gate` | One per `isGate=true` AssignedItem on an edge | `count` (Int — 1 per row), `width` (Double inches — default 36), `color` / `mount_type` / `mount_surface` (mirror parent railing or fall back to defaults Black / Topmount / Surface), `edge_id`, optional `level_id` |
+
+Default vocabulary on partially-configured drawings — emitter still fires so a barebones design produces line items via the company's `CompanyDefaultProduct` mapping:
+
+| Field | Default | Rationale |
+|---|---|---|
+| `color` | "Black" (railing/stair) / "Brown" (deck board) | Most common single-color systems. |
+| `mount_type` (railing) | "Topmount" | Most common deck attachment. |
+| `mount_surface` (railing) | "Surface" | Wood-frame assumption; user overrides for concrete. |
+| `mount_type` (stair) | "Surface" | Stairs land on grade in the typical case. |
+| `material` (deck board) | "composite" | Most common new-construction. |
+| `post_height` | 36.0 inches | IRC R312 minimum. |
+
+### Recompute discipline
+
+- Every `DeckDrawingData.toJSON()` invocation recomputes `components` from `ComponentEmitter.emit(self)` — never read for rendering, only read by the adapter. This keeps the projection in sync with whatever geometry is about to be persisted.
+- `DeckBuilderViewModel.init(...)` backfills `components` on legacy designs (JSON saved before the catalog vocabulary landed). The next save persists the projection; designs the user never reopens stay legacy on disk forever (the adapter no-ops on them).
+- ops-web round-trips the same `drawingDataJSON` and ignores keys it doesn't recognize, so the components key is forward-compatible. iOS backfills on load if web has stripped the key on round-trip.
+
+### Typed metadata fields on geometry structs
+
+These are the user-facing knobs the projection reads. All non-optional fields default to a sensible per-type value so existing JSON round-trips through custom `init(from:)` decoders that use `decodeIfPresent` for the new fields:
+
+```swift
+// RailingConfig (additions)
+var color: String = "Black"
+var mountType: String = "Topmount"      // Topmount | Sidemount | Surface
+var mountSurface: String = "Surface"    // Surface | Concrete | other
+var postHeight: Double = 36.0           // inches
+
+// StairConfig (additions)
+var color: String = "Black"
+var mountType: String = "Surface"       // Surface | Top | Side
+
+// DeckSurface (additions)
+var color: String = "Brown"
+var boardMaterial: String = "composite" // composite | pvc | cedar | treated | other
+
+// AssignedItem (additions)
+var isGate: Bool = false                // drives gate component emission
+```
+
+Free-text strings, not enums, because companies author option values per Product (`product_option_values.value`). The assignment sheet renders a Picker over the matching axis when the company default Product exposes one bound to `$design.<key>`; otherwise free-text.
+
+---
+
 ## Bridge & Audit Tables
 
 These tables sit between the Product domain and the Catalog domain, capture audit trails for stock movement, or hold per-relationship overrides. None map 1:1 to a SwiftData model registered in `OPSSchemaCommon` — they are accessed through DTOs, repository helpers, or as side-effect rows.
