@@ -1356,6 +1356,35 @@ CREATE INDEX idx_weather_retrieved_at ON weather_forecasts(retrieved_at);
 
 **RLS** — `SELECT` scoped to the requesting company via `private.get_user_company_id()`. Writes (`INSERT`/`UPDATE`/`DELETE`) require `auth.role() = 'service_role'` — only the Next.js weather route handler (using `SUPABASE_SERVICE_ROLE_KEY`) can refresh the cache. Service role bypasses RLS, but the explicit `service_role` policies are kept for intent clarity if the role surface ever changes.
 
+### `project_pipeline_summary(p_project_id UUID)` RPC (Migration `20260506130000`)
+
+Single-call aggregate that powers the workspace ACCOUNTING tab's 4-cell pipeline. Returns one row with:
+
+| Column | Type | Source |
+|---|---|---|
+| `quoted_total` | NUMERIC | `SUM(estimates.total)` where `status = 'approved'` |
+| `quoted_record_id` | TEXT | latest approved estimate's `estimate_number` |
+| `invoiced_total` | NUMERIC | `SUM(invoices.total)` where `status NOT IN ('void','draft')` |
+| `invoiced_record_id` | TEXT | latest non-void/draft invoice's `invoice_number` |
+| `change_orders_count` | INT | invoices with `estimate_id IS NOT NULL` created after the project's first invoice |
+| `received_total` | NUMERIC | `SUM(payments.amount)` for non-voided payments on this project's invoices |
+| `received_record_id` | TEXT | latest non-voided payment's `reference_number` (NULL when blank) |
+| `deposit_pct` | INT | `ROUND(received / invoiced * 100)` — NULL when invoiced = 0 |
+| `outstanding_total` | NUMERIC | `GREATEST(invoiced - received, 0)` |
+| `outstanding_due_date` | DATE | `MIN(due_date)` of invoices with `status NOT IN ('void','paid','draft')` |
+| `days_aged` | INT | `EXTRACT(DAY FROM NOW() - MIN(due_date))` of invoices with `status = 'past_due'` — NULL when none |
+
+**Schema notes (load-bearing — required because of mixed UUID/TEXT FKs):**
+
+- `projects.id` is `uuid`. `invoices.project_id` is `uuid` (1:1 type match).
+- `estimates.project_id` is `text` (legacy from a prior migration). The RPC casts `p_project_id::TEXT` for the estimates lookup; do not remove this cast.
+- `payments` has no `project_id` column — the join goes through `invoices.id`.
+- `payments` has no number column. The RPC surfaces `reference_number` as the user-visible identifier; UI should fall back to a generic "Payment" label when null.
+
+**Security** — `LANGUAGE SQL STABLE`, `SECURITY INVOKER` (default), `SET search_path = public, pg_temp`. The function relies on table-level RLS for company scoping — any user that can already `SELECT` from estimates / invoices / payments has the rows it aggregates. `EXECUTE` granted to `authenticated`.
+
+**Soft-deletes** — every CTE filters `deleted_at IS NULL` so soft-deleted records do not contribute to totals.
+
 ---
 
 ## Permissions System Tables
