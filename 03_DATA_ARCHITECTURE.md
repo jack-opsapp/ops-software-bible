@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: March 19, 2026
+**Last Updated**: 2026-05-06
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -9,18 +9,21 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [SwiftData Models (24 Registered Entities)](#swiftdata-models-24-registered-entities)
-3. [Inventory Models (5 Entities -- File-Only, Not in Schema)](#inventory-models-5-entities----file-only-not-in-schema)
-4. [Enums Reference](#enums-reference)
-5. [Relationship Map](#relationship-map)
-6. [BubbleFields Constants (Legacy/Deprecated)](#bubblefields-constants-legacydeprecated)
-7. [Data Transfer Objects (DTOs)](#data-transfer-objects-dtos)
-8. [Supabase DTOs](#supabase-dtos)
-9. [Soft Delete Strategy](#soft-delete-strategy)
-10. [Computed Properties & Business Logic](#computed-properties--business-logic)
-11. [Migration History](#migration-history)
-12. [Query Predicates & Filtering](#query-predicates--filtering)
-13. [Defensive Programming Patterns](#defensive-programming-patterns)
+2. [SwiftData Models (25 Registered Entities)](#swiftdata-models-25-registered-entities)
+3. [Subscription Add-ons — `data_setup_requests`](#subscription-add-ons--data_setup_requests)
+4. [Project Workspace Modal Tables (Web-Only)](#project-workspace-modal-tables-web-only)
+5. [Permissions System Tables](#permissions-system-tables)
+6. [Inventory Models (5 Entities -- File-Only, Not in Schema)](#inventory-models-5-entities----file-only-not-in-schema)
+7. [Enums Reference](#enums-reference)
+8. [Relationship Map](#relationship-map)
+9. [BubbleFields Constants (Legacy/Deprecated)](#bubblefields-constants-legacydeprecated)
+10. [Data Transfer Objects (DTOs)](#data-transfer-objects-dtos)
+11. [Supabase DTOs](#supabase-dtos)
+12. [Soft Delete Strategy](#soft-delete-strategy)
+13. [Computed Properties & Business Logic](#computed-properties--business-logic)
+14. [Migration History](#migration-history)
+15. [Query Predicates & Filtering](#query-predicates--filtering)
+16. [Defensive Programming Patterns](#defensive-programming-patterns)
 
 ---
 
@@ -124,6 +127,16 @@ final class Project: Identifiable {
     // Transient
     @Transient var lastTapped: Date?
     @Transient var coordinatorData: [String: Any]?
+
+    // Project Workspace Modal columns (Supabase only — added 2026-05-06)
+    // scope            TEXT                         — one-paragraph scope summary; rendered on the workspace Details tab
+    // site_notes       TEXT                         — free-text site access notes (e.g. "Gate code 4820, dogs on property")
+    // gate_code        TEXT                         — gate/lockbox code; surfaced in the SITE card
+    // site_conditions  JSONB DEFAULT '{}'           — { parking, pets[], power, hazards[] } shown on the SITE card
+    // color            TEXT                         — user-picked accent color (hex or token name) for calendar/board surfaces
+    // visibility       TEXT DEFAULT 'all' CHECK ∈ {all, office, private} — portal exposure
+    //   Partial index idx_projects_visibility WHERE visibility != 'all' speeds the office/private filter on company dashboards.
+    // buffer_days      SMALLINT DEFAULT 0 CHECK ∈ [0,14] — weather buffer days padded around start/end on the schedule strip
 }
 ```
 
@@ -750,6 +763,12 @@ class Activity: Identifiable {
     // direction       TEXT CHECK ∈ {inbound, outbound} — only meaningful for call/email
     // outcome         TEXT                         — free-form result of the activity
     // duration_minutes INT                          — only meaningful for call/meeting
+
+    // Project Workspace Modal column (Supabase only — added 2026-05-06)
+    // attachment_ids  UUID[] DEFAULT ARRAY[]::UUID[] — references to project_photos.id for activity entries with photo attachments.
+    //   Distinct from the legacy `attachments` text[] column (free-form URLs/keys). The workspace timeline reads attachment_ids
+    //   to resolve thumbnails + URLs reliably without parsing free-form strings. GIN partial index idx_activities_attachments
+    //   WHERE array_length(attachment_ids, 1) > 0 covers the populated case.
 }
 ```
 
@@ -1196,6 +1215,99 @@ CREATE TABLE data_setup_requests (
 - `STRIPE_PRICE_DATA_SETUP` — one-time charge, `mode=payment`.
 - `STRIPE_PRICE_PRIORITY_SUPPORT_MONTHLY` / `STRIPE_PRICE_PRIORITY_SUPPORT_ANNUAL` — recurring, `mode=subscription`.
 - Mapping helpers live in `OPS-Web/src/lib/stripe/subscription-mapping.ts`: `ADDON_PRICE_MAP`, `addonFromPriceId()`, `isPrioritySupportPrice()`. The webhook routes off these helpers.
+
+---
+
+## Project Workspace Modal Tables (Web-Only)
+
+**Added**: 2026-05-06 (migrations `20260506120000_project_site_metadata` through `20260506120400_weather_forecasts`)
+**Purpose**: Schema additions powering the unified `ProjectWorkspace` modal in OPS-Web (replaces the legacy `project-detail-modal` / `project-detail-sheet` / `create-project-modal` / `edit-project-modal` / `project-detail-popover` / `[id]` route page surfaces). All additions are web-only and not mirrored in the iOS SwiftData store.
+
+### `projects` column additions (Migration `20260506120000`)
+
+Documented inline on the `Project` SwiftData model (Section 1) as Supabase-only columns. Summary:
+
+- `scope TEXT` — Details tab summary
+- `site_notes TEXT` — site access notes
+- `gate_code TEXT` — surfaced in the SITE card
+- `site_conditions JSONB DEFAULT '{}'` — `{ parking, pets[], power, hazards[] }`
+- `color TEXT` — calendar/board accent
+- `visibility TEXT DEFAULT 'all' CHECK ∈ {all, office, private}` — portal exposure (partial index `idx_projects_visibility WHERE visibility != 'all'`)
+- `buffer_days SMALLINT DEFAULT 0 CHECK ∈ [0,14]` — weather buffer
+
+### `project_tags` (Migration `20260506120100`)
+
+Per-company tag library. Many-to-many to projects via `project_tag_assignments`.
+
+```sql
+CREATE TABLE project_tags (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  label       TEXT NOT NULL,
+  tone        TEXT NOT NULL DEFAULT 'neutral' CHECK (tone IN ('neutral','olive','tan','rose','accent')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX uniq_project_tags_company_label ON project_tags (company_id, lower(label));
+```
+
+**RLS** — canonical OPS pattern (`private.get_user_company_id()` for company isolation; write access piggybacks on `projects.edit` permission via `private.current_user_has_permission()`; `private.current_user_is_admin()` is the escape hatch). Four policies: SELECT, INSERT, UPDATE, DELETE.
+
+### `project_tag_assignments` (Migration `20260506120100`)
+
+```sql
+CREATE TABLE project_tag_assignments (
+  project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  tag_id      UUID NOT NULL REFERENCES project_tags(id) ON DELETE CASCADE,
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (project_id, tag_id)
+);
+CREATE INDEX idx_project_tag_assignments_project ON project_tag_assignments(project_id);
+CREATE INDEX idx_project_tag_assignments_tag     ON project_tag_assignments(tag_id);
+```
+
+**RLS** — three policies (SELECT, INSERT, DELETE). Reads require the user to see the underlying project via `projects.company_id = private.get_user_company_id()`. Writes also honor the `'assigned'` scope: a user with `private.current_user_scope_for('projects.edit') = 'assigned'` can attach/detach tags only on projects they're listed on (`private.current_user_in_project(project_id)`).
+
+### `clients` / `opportunities` lat/lng (Migration `20260506120200`)
+
+```sql
+ALTER TABLE clients       ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION, ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION, ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+CREATE INDEX idx_clients_geo       ON clients       (latitude, longitude) WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
+CREATE INDEX idx_opportunities_geo ON opportunities (latitude, longitude) WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
+```
+
+`clients` already had these columns in production — the `IF NOT EXISTS` guards make the migration a safe no-op there. `opportunities` gains lat/lng for the first time so the workspace map can fall back to opportunity coordinates when a project lacks them. Mapbox Geocoding populates both on address change.
+
+### `activities.attachment_ids` (Migration `20260506120300`)
+
+Documented inline on the `Activity` SwiftData model (Section 13) as a Supabase-only column. Distinct from the legacy `attachments` text[] column. GIN partial index covers populated entries.
+
+### `weather_forecasts` (Migration `20260506120400`)
+
+Cached Open-Meteo forecasts per project. Refreshed via the weather route handler when entries age past 12h. Attribution to Open-Meteo.com is required by their courtesy policy and embedded in the table comment.
+
+```sql
+CREATE TABLE weather_forecasts (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  forecast_date   DATE NOT NULL,
+  temp_high_c     NUMERIC(4,1),
+  temp_low_c      NUMERIC(4,1),
+  temp_current_c  NUMERIC(4,1),
+  precipitation_mm           NUMERIC(5,2),
+  precipitation_probability  SMALLINT CHECK (precipitation_probability BETWEEN 0 AND 100),
+  wind_speed_kmh  NUMERIC(5,1),
+  conditions      TEXT,
+  retrieved_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  source          TEXT NOT NULL DEFAULT 'open-meteo',
+  UNIQUE (project_id, forecast_date)
+);
+CREATE INDEX idx_weather_project_date ON weather_forecasts(project_id, forecast_date);
+CREATE INDEX idx_weather_retrieved_at ON weather_forecasts(retrieved_at);
+```
+
+**RLS** — `SELECT` scoped to the requesting company via `private.get_user_company_id()`. Writes (`INSERT`/`UPDATE`/`DELETE`) require `auth.role() = 'service_role'` — only the Next.js weather route handler (using `SUPABASE_SERVICE_ROLE_KEY`) can refresh the cache. Service role bypasses RLS, but the explicit `service_role` policies are kept for intent clarity if the role surface ever changes.
 
 ---
 
