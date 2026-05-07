@@ -1356,6 +1356,43 @@ CREATE INDEX idx_weather_retrieved_at ON weather_forecasts(retrieved_at);
 
 **RLS** — `SELECT` scoped to the requesting company via `private.get_user_company_id()`. Writes (`INSERT`/`UPDATE`/`DELETE`) require `auth.role() = 'service_role'` — only the Next.js weather route handler (using `SUPABASE_SERVICE_ROLE_KEY`) can refresh the cache. Service role bypasses RLS, but the explicit `service_role` policies are kept for intent clarity if the role surface ever changes.
 
+### `project_notes.event_kind` + `project_notes.content_metadata` (Migration `20260507130000_project_notes_event_kind`)
+
+Inverts the unified-timeline consolidation direction. Originally the workspace was going to migrate `project_notes` rows into the `activities` table; that direction would have required iOS schema changes that break sync between App Store releases. Instead, `project_notes` becomes the iOS-canonical timeline source for the workspace's Activity tab — system events written by web (status changes, estimate sent, payment received, photo uploaded, etc.) are inserted as `project_notes` rows tagged with `event_kind`, alongside user-authored notes (where `event_kind IS NULL`).
+
+```sql
+ALTER TABLE project_notes
+  ADD COLUMN IF NOT EXISTS event_kind TEXT,
+  ADD COLUMN IF NOT EXISTS content_metadata JSONB;
+
+CREATE INDEX idx_project_notes_event_kind
+  ON project_notes(project_id, event_kind, created_at DESC)
+  WHERE event_kind IS NOT NULL;
+```
+
+**iOS-additive contract** — both columns are nullable, no `CHECK`, default `NULL`. Existing rows are untouched. The current iOS Codable types decode unknown columns gracefully, and rows with `event_kind` set still have a populated `content` field, so they render on iOS as plain notes (slightly weird visually, fixed in the next iOS release). No iOS schema migration is required during the workspace rollout.
+
+**`event_kind` discriminator values** — `status_change`, `estimate_sent`, `estimate_approved`, `estimate_declined`, `invoice_sent`, `payment_received`, `expense_logged`, `photo_uploaded`, `project_created`, `project_archived`, `task_completed`. `NULL` = user-authored note (default). The web `useProjectActivity` hook maps `NULL` to the `kind: 'note'` enum branch and uses non-null values to dispatch icon / color / dot styling on the timeline.
+
+**`content_metadata` payload shapes** — JSONB blob keyed by event kind. Examples:
+
+| Event kind | Payload |
+|---|---|
+| `status_change` | `{ "from": "Accepted", "to": "InProgress" }` |
+| `estimate_sent` | `{ "estimateId": "<uuid>", "estimateNumber": "EST-00128", "total": 12450 }` |
+| `estimate_approved` | `{ "estimateId": "<uuid>", "estimateNumber": "EST-00128" }` |
+| `payment_received` | `{ "paymentId": "<uuid>", "amount": 5000, "method": "etransfer" }` |
+| `invoice_sent` | `{ "invoiceId": "<uuid>", "invoiceNumber": "INV-00284", "total": 9800 }` |
+| `expense_logged` | `{ "expenseId": "<uuid>", "amount": 184.5, "vendor": "..." }` |
+| `photo_uploaded` | `{ "photoId": "<uuid>", "url": "..." }` |
+| `project_created` | `{}` |
+| `project_archived` | `{}` |
+| `task_completed` | `{ "taskId": "<uuid>", "title": "..." }` |
+
+**Write paths** — `ProjectLifecycleService.onProjectStageChange` writes `status_change` rows with the `{from, to}` payload. The workspace `useProjectMutations` hook writes `project_created`, `project_archived`, and `photo_uploaded` rows. Estimate / invoice / payment / expense writes happen inside their respective services as those features are wired into the workspace timeline (later phases).
+
+**Read path** — `useProjectActivity` selects `id, content, content_metadata, event_kind, created_at, attachments, mentioned_user_ids, author_id` from `project_notes` ordered by `created_at DESC`, hydrates authors via a follow-up `users` join, and maps each row to a `ProjectActivityEntry` with `kind = event_kind ?? 'note'`. The legacy `activities` table is no longer the primary read source for the workspace timeline.
+
 ### `project_pipeline_summary(p_project_id UUID)` RPC (Migration `20260506130000`)
 
 Single-call aggregate that powers the workspace ACCOUNTING tab's 4-cell pipeline. Returns one row with:
