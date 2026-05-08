@@ -2757,6 +2757,62 @@ so the dashboard and settings read consistently.
 
 ---
 
+## 19. Project Workspace Window (Web)
+
+A single mode-aware floating window replaces five legacy project surfaces in OPS-Web (project-detail-modal, project-detail-sheet, create-project-modal, edit-project-modal, project-detail-popover). The same shell renders in three modes — `viewing` / `editing` / `creating` — switched live without remounting.
+
+### Location
+
+- Implementation: `src/components/ops/projects/workspace/`
+- Token-level visual spec: `OPS-Web/.interface-design/system.md` (canonical OPS-Web design system)
+- Open API: `useWindowStore.openProjectWindow({ projectId, mode, onProjectCreated? })` from `src/stores/window-store.ts`
+- Mounted inside `<FloatingWindows>` in `dashboard-layout.tsx` via `<ProjectWorkspaceContainer windowId={win.id} />`
+
+### Mode-aware footer pattern
+
+Each mode supplies a `ModeFooterConfig` object that drives which buttons render and where:
+
+```ts
+{ destructive?: BtnSpec, meta?: ReactNode, spacer?: true,
+  secondary?: BtnSpec[], ghost?: BtnSpec, primary?: BtnSpec }
+```
+
+One `primary` per footer maximum. The shared `<WorkspaceFooter>` reads the config and lays out destructive (left) → meta → spacer → secondary → ghost → primary (right). Adding a new mode means adding a new config — the shell does not change.
+
+### Persistence
+
+Window position and size persist to `localStorage` keyed by `opsWin:project-{projectId}`. New projects use the in-memory window default until a project is created, then the key flips to the new ID. Default size 1080×760, min 780×600.
+
+### Status hex drives chrome
+
+`PROJECT_STATUS_COLORS` from `src/lib/types/models` maps each project status to a single hex value. That hex bleeds into:
+
+- Map pin glow (radial gradient on the pin badge)
+- Schedule strip today-tick
+- Active-task highlight in the schedule list
+- Sidebar status chip stripe
+
+The `withAlpha(hex, percent)` utility (`src/lib/utils/color.ts`) is used in place of hex-with-alpha-suffix so the source value remains the canonical six-digit hex.
+
+### Map
+
+Mapbox GL JS via `<ProjectMap>` (compact 220px) and `<MapHero>` (expanded full-body). Style is `dark-v11`. Token: `NEXT_PUBLIC_MAPBOX_TOKEN` (Mapbox public access token; required). Free tier covers 50k map loads + 100k geocoding requests / month. Geocoding populates `projects.latitude` / `longitude` on address change.
+
+### Activity timeline
+
+Backed by `project_notes` (the iOS-canonical timeline source — see `03_DATA_ARCHITECTURE.md` § `project_notes.event_kind`). User notes have `event_kind IS NULL`; system events use a discriminator (`status_change`, `project_created`, `project_archived`, `photo_uploaded`, etc.) with a JSONB `content_metadata` payload. Read via `useProjectActivity`; write via `useProjectMutations` and event-specific dispatchers.
+
+### Sanctioned shadow exception
+
+Floating windows and stacked modals (the workspace shell, the workspace-scoped `ConfirmModal`, and the dropdown popovers anchored to them) use the `--shadow-window` and `--shadow-dropdown` CSS custom properties. These are **sanctioned exceptions** to the spec v2 "no box-shadows on dark backgrounds" rule, added 2026-05-07 because windows that float over arbitrary content require shadow-based depth perception that hairline borders cannot supply alone. The exception is scoped — do not introduce shadows elsewhere; flat surfaces that sit in their own frame still use borders only.
+
+### See also
+
+- `OPS-Web/.interface-design/system.md` § "Project Workspace Patterns" — token-level spec including the mode pill, footer config grammar, and the destructive `ConfirmModal` variant
+- `07_SPECIALIZED_FEATURES.md` § "Project Workspace as a Reusable Pattern" — the architectural pattern as a template for future entity workspaces
+
+---
+
 **End of Design System Documentation**
 
 This document serves as the complete design system reference for OPS iOS, Android, and Web implementations. All code must conform to these standards to maintain brand consistency and field-first usability.
