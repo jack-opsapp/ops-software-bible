@@ -5758,4 +5758,52 @@ Per `Section 14: Notifications`. Recipients = every user in the company with `is
 
 ---
 
+## Project Workspace as a Reusable Pattern
+
+The unified `ProjectWorkspaceWindow` (shipped on `feature/project-workspace-modal`, 2026-05-08) is the template for every future entity workspace — client workspace, estimate workspace, invoice workspace. The shell is mode-aware so a single floating window handles `viewing`, `editing`, and `creating` for one entity, replacing the legacy pattern of separate detail / create / edit modals per entity.
+
+### Why this is a pattern, not a one-off
+
+The project rebuild collapsed five surfaces (`project-detail-modal`, `project-detail-sheet`, `create-project-modal`, `edit-project-modal`, `project-detail-popover`) into one. The same collapse applies to clients (where today there is a separate detail sheet, edit modal, and create modal) and to estimates / invoices (where the detail page is a full route and editing is a separate flow). The win is consistency: the operator sees the same chrome, the same mode pill, the same footer grammar regardless of entity.
+
+### Reusable building blocks
+
+When implementing the next entity workspace, reuse rather than re-derive:
+
+| Building block | Lives at | What it gives the next workspace |
+|---|---|---|
+| Phase 5 atom kit | `OPS-Web/src/components/ops/projects/workspace/atoms/` | Token-bound primitives — `Mono`, `Cake`, `Body`, `Stack`, `Inline`, `Hairline`, `Btn`, `IconBtn`, `Chip`, `Section`, `Field`, `FieldRow`, `TextInput`, `TextArea`, `Select`, `Segmented`. Lift to `OPS-Web/src/components/ops/workspace/atoms/` when reused. |
+| Window shell | `OPS-Web/src/components/ops/projects/workspace/project-workspace-window.tsx` | Generic floating-window shell — drag, 8-direction resize, traffic lights, mode pill, persistence keying. Genericize to `EntityWorkspaceWindow` on second clone. |
+| `ConfirmModal` (destructive variant) | `OPS-Web/src/components/ops/projects/workspace/confirm-modal.tsx` | Workspace-scoped destructive confirm — glass-dense, rose accent stripe, sanctioned `--shadow-window` exception. Reusable for delete / revert / cancel flows on any entity. |
+| Mode-aware footer config | shape: `ModeFooterConfig = { destructive | meta | spacer | secondary[] | ghost | primary }` | One primary per footer, declarative per-mode config drives layout. Shell reads config; new modes are config-only. |
+| Activity timeline pattern | `project_notes` + nullable `event_kind` discriminator | One canonical table per entity (notes / events combined) is iOS-additive and avoids the unified-`activities`-table direction that breaks iOS sync. Apply the same shape for client_notes, estimate_notes, invoice_notes if needed. |
+| Notification dispatcher pattern | `OPS-Web/src/lib/notifications/notification-dispatch.ts` | One helper per event kind (`dispatchProjectStatusChange`, `dispatchProjectArchived`, …). Single preference key per category. Replicate per entity. |
+
+### Phase progression for the next entity workspace
+
+The project rebuild ran 16 phases. The next entity workspace should follow the same skeleton — most phases stay identical, only the entity-specific bodies change:
+
+1. **Schema** — add nullable columns / discriminator; iOS-additive contract holds
+2. **Types** — entity TypeScript types + `EntityActivityEntry` discriminated union
+3. **Hooks** — `useEntity`, `useEntityActivity`, `useEntityMutations`
+4. **Primitives** — only if the atom kit needs a new shape; otherwise skip
+5. **Atoms** — verify the kit covers the new entity; extract any new atom into the shared kit
+6. **Shell** — mount `EntityWorkspaceWindow` with mode-aware footer config
+7. **Bodies** — viewing dossier, editing tabs, creating tabs (entity-specific)
+8. **Wiring** — open via `useWindowStore.openEntityWindow`, mount in `FloatingWindows`
+9. **Deletion of legacy** — remove the old detail-modal / create-modal / edit-modal / route page surfaces; redirect any deep links to the new window
+10. **Notifications** — one dispatcher per event kind; deep-link to `/?openEntity={id}&mode=view`
+11. **Polish** — status-driven chrome (per-entity status colors), reduced-motion, keyboard
+12. **Copy** — i18n dictionary `entity-workspace.json` (en + es)
+13. **Tests** — unit (atoms + hooks), integration (mode switch, persistence, notification dispatch)
+14. **Test gate** — type-check, lint, vitest green
+15. **Docs** — bible `03`, `05`, `07` updates; OPS-Web `CLAUDE.md`; `.interface-design/system.md` patterns
+16. **Verification** — manual visual walkthrough; PR
+
+### Anti-pattern: don't fork the shell
+
+If an entity needs a fundamentally different layout (e.g. estimate line-item editor or invoice ledger), the right move is **extending** the shell with a new mode (e.g. `editing-line-items`) and a new mode-aware footer config — not forking the shell into a parallel `EstimateWorkspaceWindow`. The shell is generic precisely so each new entity rides the same drag / resize / persistence / accessibility code path.
+
+---
+
 **End of Document**
