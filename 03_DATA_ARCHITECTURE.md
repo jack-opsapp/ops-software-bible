@@ -1410,6 +1410,25 @@ CREATE INDEX idx_project_notes_event_kind
 
 **Read path** — `useProjectActivity` selects `id, content, content_metadata, event_kind, created_at, attachments, mentioned_user_ids, author_id` from `project_notes` ordered by `created_at DESC`, hydrates authors via a follow-up `users` join, and maps each row to a `ProjectActivityEntry` with `kind = event_kind ?? 'note'`. The legacy `activities` table is no longer the primary read source for the workspace timeline.
 
+### `projects.trade` (Migration `20260507140000_projects_trade`)
+
+Adds an optional trade category enum-as-text to projects so the workspace IdentityTab can scope workflow defaults (task templates, weather alert thresholds, default work hours) to the trade.
+
+```sql
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS trade TEXT;
+
+ALTER TABLE projects
+  ADD CONSTRAINT projects_trade_check
+  CHECK (trade IS NULL OR trade IN ('roofing', 'hvac', 'plumbing'));
+```
+
+**iOS-additive contract** — nullable column, no default, no `NOT NULL`. Existing rows are untouched. iOS `Codable` decoders ignore unknown columns so the prior App Store release continues to sync without modification. iOS will surface the field in a future release.
+
+**Encoding choice — `text + CHECK` rather than `CREATE TYPE`** — extending a Postgres enum requires `ALTER TYPE` which is a stronger schema change. CHECK constraints evolve more cheaply as the trade catalogue grows. Lowercase values match the OPS DB convention (project status, visibility, employee role all follow the same pattern). The workspace UI uppercases for display ("ROOFING" / "HVAC" / "PLUMBING").
+
+**NULL semantics** — `NULL` = unset (legacy projects created before this migration). The IdentityTab leaves the field optional in editing mode for them, required when creating a new project.
+
 ### `project_pipeline_summary(p_project_id UUID)` RPC (Migration `20260506130000`)
 
 Single-call aggregate that powers the workspace ACCOUNTING tab's 4-cell pipeline. Returns one row with:
