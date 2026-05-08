@@ -2256,6 +2256,46 @@ CHECK: `(catalog_variant_id IS NOT NULL) <> (catalog_item_id IS NOT NULL)`.
 
 > **Legacy note:** the older `Inventory*` SwiftData files (`InventoryItem`, `InventorySnapshot`, `InventorySnapshotItem`, `InventoryTag`, `InventoryUnit`) remain on disk for compile-time references during the V2→V3 migration window but are **no longer registered in `OPSSchemaCommon`**. They are removed by Phase 4 of plan `2026-05-06-ios-catalog-variant-model.md`. SQL-side, the `inventory_*` tables are renamed to `catalog_*` by migration `2026-05-06-01-catalog-schema.sql`.
 
+### Catalog Import RPCs (added 2026-05-08)
+
+Two SECURITY DEFINER plpgsql functions on the `public` schema power the iOS bulk-CSV import flow. SQL lives at `OPS/OPS/Migrations/2026-05-08-catalog-import-rpc.sql` (also documented in `OPS/OPS/Migrations/2026-05-08-catalog-import-rpc.md`); the iOS client calls them through `CatalogImportRepository`.
+
+| Function | Behaviour |
+|---|---|
+| `public.catalog_import_validate(p_company_id uuid, p_payload jsonb) RETURNS jsonb` | Pure validator — runs every per-row check, returns success/failure shape, never INSERTs. |
+| `public.catalog_import_apply(p_company_id uuid, p_payload jsonb) RETURNS jsonb` | Runs the same validation; on success, INSERTs every family + variant in a single transaction. ROLLBACK on any failure. |
+
+Both are gated by `private.get_user_company_id() = p_company_id`. `EXECUTE` granted to `authenticated`.
+
+**Payload shape**:
+
+```json
+{
+  "families": [{"row_index":0,"name":"...","category_id":null,"default_unit_id":null,"default_price":null,...}],
+  "variants": [{"row_index":0,"family_row_index":0,"sku":"...","quantity":12,...}]
+}
+```
+
+`row_index` is 0-based and unique within its array. Variants reference their parent family by `family_row_index`; the `apply` RPC resolves that index to the freshly INSERTed family uuid and returns both maps in `created_family_ids` / `created_variant_ids`.
+
+**Result shape**:
+
+- Success: `{"success": true, "created_family_ids": {...}, "created_variant_ids": {...}, "totals": {"families": N, "variants": M}}`
+- Failure: `{"success": false, "errors": [{"scope":"family|variant|payload","row_index":N,"field":"...","reason":"..."}]}`
+
+**Validation rules** (single source of truth — both RPCs share the same plpgsql block):
+
+- Caller's `private.get_user_company_id()` must equal `p_company_id`.
+- `families` array non-empty; `name` required + non-blank.
+- `category_id` / `default_unit_id` / variant `unit_id` (if set) must reference active rows in the same company.
+- All numeric fields >= 0.
+- Variant `quantity` required + numeric; `family_row_index` must reference a family in the same payload.
+- Non-empty `sku` cannot collide with an existing active variant in the company (DB has no unique constraint on SKU — the RPC enforces it).
+
+**Atomicity**: both functions return normally on validation failure (returning the failure object), so the implicit transaction does NOT commit when a failure path is taken. The `apply` function's INSERT statements run only inside the success path; any error during INSERT raises and rolls back the transaction. The client never sees partial state.
+
+**No update path**: import is INSERT-only. Re-importing the same CSV creates duplicate families. Use Snapshots (kebab Setup → Snapshots) to roll back a bad import.
+
 ---
 
 ## DeckDesign — drawing data and components projection

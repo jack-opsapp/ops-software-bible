@@ -2816,16 +2816,46 @@ Three-tab sheet: Suggested · Drafts · Sent.
 
 Variant-aware snapshot history. Detail view shows family name + variant label per row.
 
-#### Spreadsheet Import (iOS)
-**Location:** `OPS/OPS/Views/Catalog/Import/SpreadsheetImportSheet.swift`
+#### Catalog CSV Import (iOS — added 2026-05-08)
+**Locations:**
+- Sheet: `OPS/OPS/Views/Catalog/Import/CatalogImportSheet.swift`
+- Parser: `OPS/OPS/Services/CSVParser.swift`
+- Mapper: `OPS/OPS/Services/CatalogCSVMapper.swift`
+- DTOs: `OPS/OPS/Network/Supabase/DTOs/CatalogImportDTOs.swift`
+- Repository: `OPS/OPS/Network/Supabase/Repositories/CatalogImportRepository.swift`
+- RPC SQL: `OPS/OPS/Migrations/2026-05-08-catalog-import-rpc.sql`
 
-Multi-step import wizard adapted for variants:
-1. **Select File** — CSV or XLSX via `fileImporter`.
-2. **Configure** — orientation (rows-are-variants or columns-are-variants), import mode (multiple variants under one family, single variant, or variation matrix).
-3. **Map Fields** — column→field mapping including `catalog_item_id` (family), option-value columns, quantity, unit, SKU, threshold.
-4. **Preview** — parsed variants with validation, duplicate detection, inline editing.
-5. **Importing** — progress bar; syncs families + options + variants in dependency order.
-6. **Complete** — results summary.
+Atomic CSV import of catalog families + variants. Replaces the prior `CatalogImportStub` placeholder. Entry points: catalog FAB "Import" action and catalog kebab "Setup → Import…" — both gated on `catalog.import`.
+
+Four-step flow, single sheet, large detent:
+1. **PICK** — `.fileImporter` for `.csv` files (single file at a time). UTF-8 / ASCII decoding.
+2. **MAP** — column-mapping. Auto-suggests bindings from header names (fuzzy match). Required: `family_name`, `quantity`. Optional family-level: description, category, default unit, default price, default unit cost. Optional variant-level: SKU, variant unit, price/cost overrides, warning/critical thresholds.
+3. **PREVIEW** — calls `catalog_import_validate` (the dry-run RPC). Shows per-row errors with line numbers + the offending field, or a green totals card on success. **Never writes.** "FIX & RETRY" returns to MAP; "APPLY" advances to step 4.
+4. **APPLY** — calls `catalog_import_apply`. Atomic: validates + INSERTs every family + variant in a single transaction. Success haptic + dismiss-to-Done; failure shows error with RETRY (safe — same payload either re-fails or lands).
+
+**RPC contract** (`OPS/Migrations/2026-05-08-catalog-import-rpc.sql`):
+
+- `public.catalog_import_validate(p_company_id uuid, p_payload jsonb) -> jsonb` — pure validator, never INSERTs.
+- `public.catalog_import_apply(p_company_id uuid, p_payload jsonb) -> jsonb` — runs the same validation, then INSERTs in one transaction. Both SECURITY DEFINER, GRANT EXECUTE TO authenticated, guarded by `private.get_user_company_id() = p_company_id`.
+
+Payload schema: `{families: [{row_index, name, description?, category_id?, default_unit_id?, default_price?, ...}], variants: [{row_index, family_row_index, sku?, quantity, price_override?, ...}]}`. Variants reference families by `family_row_index`; the apply RPC resolves that index to the new family uuid post-INSERT and returns both maps in `created_family_ids` / `created_variant_ids`.
+
+Result schema: success → `{success: true, created_family_ids, created_variant_ids, totals}`; failure → `{success: false, errors: [{scope, row_index, field, reason}, ...]}`. Scopes: `family` | `variant` | `payload` | `mapping` (mapping errors are local-only; never returned by the server).
+
+**Validation rules** (enforced by both RPCs):
+- Family `name` non-empty after trim; `category_id` / `default_unit_id` (if set) must resolve to active rows in the same company; numeric fields >= 0.
+- Variant `quantity` required, numeric, >= 0; `family_row_index` must reference a family in the same payload; `sku` collisions against active variants in the company are a hard error (DB has no unique constraint on SKU — the RPC enforces it).
+
+**SKU collision policy**: any non-empty SKU that matches an existing active variant in the company is rejected. Fix the CSV (or remove the SKU column from the mapping) and retry. Revisit when we have a duplicate-SKU policy.
+
+**What gets created**: one `catalog_items` row per unique `family_name` (case-insensitive after trim) + one `catalog_variants` row per CSV data row, pointing at the new family. Family-level fields are taken from the FIRST CSV row that introduces a given family_name; later rows for the same family contribute additional variants only.
+
+**What gets skipped**: the import never modifies existing rows — only INSERTs. There is no upsert path. Re-importing the same CSV creates duplicate families (each with their own new uuid). The kebab Snapshots feature is the right path to roll back a bad import.
+
+#### Spreadsheet Import — legacy (iOS)
+**Location:** `OPS/OPS/Views/Inventory/Import/SpreadsheetImportSheet.swift`
+
+Older multi-step wizard from the inventory era — supports CSV or XLSX, row/column orientation, variation-matrix import. Still in the codebase but no longer wired into the FAB or kebab as of 2026-05-08; superseded by the simpler atomic CSV flow above. Kept for reference only.
 
 ### Permissions
 
