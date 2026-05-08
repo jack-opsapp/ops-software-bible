@@ -1045,7 +1045,8 @@ class Product: Identifiable {
     var unitCost: Double?
     var pricingUnit: ProductPricingUnit    // .each | .flatRate | .linearFoot | .sqft | .hour | .day
     var unit: String?                      // legacy free-text unit (kept for back-compat)
-    var category: String?                  // legacy free-text category (separate from catalog_categories)
+    var category: String?                  // legacy free-text category (kept for back-compat)
+    var categoryId: String?                // FK catalog_categories.id; authoritative going forward
     var sku: String?
     var taxable: Bool
     var isActive: Bool
@@ -1079,6 +1080,8 @@ enum ProductKind: String, CaseIterable, Codable {
 **Computed**: `marginPercent` -- `((basePrice - unitCost) / basePrice) * 100`.
 
 **Wire-field fix (Phase 3)**: earlier builds wrote `unit_price`/`cost_price` — columns that **do not exist** in Supabase. The DTO now correctly reads/writes `base_price`/`unit_cost`. `base_price` is the new primary column. The legacy `default_price` column is preserved and kept in sync via a Postgres trigger (migration `2026-05-06-02-catalog-views-triggers.sql`) until ops-web cuts over to `base_price`; the trigger and `default_price` are removed in that follow-up session.
+
+**Catalog FKs (added 2026-05-08)**: `unit_id uuid REFERENCES catalog_units(id) ON DELETE SET NULL` and `category_id uuid REFERENCES catalog_categories(id) ON DELETE SET NULL` link Products into the same catalog backbone Stock uses. The legacy `unit` and `category` text columns stay in place for backwards compat — new writes (both create and edit, on iOS and ops-web) populate the FK **and** the legacy text column so reads from either path see the same vocabulary. An iOS-only backfill (`OPS/Migrations/2026-05-08-backfill-products-category-id.sql`) walks existing rows and sets `category_id` from the matching `catalog_categories` row by case-insensitive name within the same company.
 
 #### Configurable Products (NEW)
 
@@ -2400,6 +2403,8 @@ product_materials
 ```
 
 **RLS**: company_isolation joined via `products.company_id`. **Resolution**: variant-pinned rows resolve immediately; family-pinned rows resolve at install task creation by walking `variant_selector` against `line_items.configured_options`.
+
+**iOS recipe authoring (added 2026-05-08)**: `RecipeManageSheet` (entered from `ProductDetailView`'s recipe section EDIT button when the operator has `catalog.products.manage`) lists every existing `product_materials` row and lets the user add new variant-pinned rows via `AddProductMaterialSheet` — pick a `catalog_items` family, pick a variant, set `quantity_per_unit` and notes. iOS authoring writes variant-pinned rows only; family-pinned rows with `variant_selector` jsonb mapping options to variant attributes remain web-only. No row-edit on iOS yet — to change a quantity, delete and re-add. Repository: `ProductRichnessRepository.createMaterial` / `deleteMaterial`. The full advanced authoring (family-pinned recipes, scaled-by-option rows, custom selectors) stays on ops-web.
 
 ### `task_materials`
 
