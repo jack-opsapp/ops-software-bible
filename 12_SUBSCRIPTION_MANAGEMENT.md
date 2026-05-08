@@ -164,7 +164,20 @@ The single source of truth for interpretation is `ops-web/src/lib/subscription.t
 1. `subscription_expired` — `subscription_status` ∈ `{expired, cancelled}` or trial countdown ≤ 0
 2. `unseated` — user is not in `seated_employee_ids` and not in `admin_ids`
 
-**Realtime gate**: `components/ops/lockout-overlay.tsx` subscribes to `companies` row changes via Supabase Realtime and re-evaluates `getLockoutReason()` on every update. Non-admin unseated users see the lockout modal; admin unseated users get a self-service link to `/team`.
+**Realtime gate**: `components/ops/lockout-overlay.tsx` keeps the backdrop, `AnimatePresence`, and `pathname`-based route exemptions, then delegates content to `components/lockout/lockout-resolver.tsx`. The resolver:
+
+1. Reads `company` + `currentUser` from `useAuthStore`.
+2. Computes `getLockoutReason(company, userId)` (this file unchanged).
+3. Picks one of four state modules under `components/lockout/states/`:
+   - `expired-admin.tsx` — pricing row + reactivation CTAs (recommended tier highlighted, no ribbon, no checkmarks)
+   - `expired-member.tsx` — admin tag + request reactivation (24h cooldown via `useRequestCooldown`)
+   - `unseated-admin.tsx` — `/team` self-service link
+   - `unseated-member.tsx` — admin tag + request access
+4. Wraps the chosen module in `LockoutShell` (top rail / heading / body / divider / state slot / footer + fingerprint).
+
+The same resolver also drives the standalone `/locked` page — page mode redirects to `/dashboard` when `getLockoutReason` returns `null` (fixes a prior bug where the page rendered admin-expired pricing regardless of state). Realtime company-row subscription lives in `components/lockout/hooks/use-realtime-company.ts` and patches `subscription_status`, `subscription_plan`, `subscription_end`, `trial_end_date`, `max_seats`, `seated_employee_ids`, and `admin_ids` in the auth store.
+
+Design rationale and visual contract: `OPS-Web/docs/superpowers/specs/2026-05-07-lockout-redesign-design.md`.
 
 **Trial countdown**: `subscription.ts:113-142` reads `trial_end_date` and computes `daysRemaining`. If `trial_end_date` is null, countdown is broken (was historically true before the 2026-04 fix).
 

@@ -3728,6 +3728,12 @@ All use `EASE_SMOOTH` (`[0.22, 1, 0.36, 1]`).
 - Integration: `tests/integration/campaign-engagement-route.test.ts`
   (3 tests — UUID validation, 404 on missing, 200 + 60s Cache-Control).
 
+### Lockout-driven request flow (added 2026-05-07)
+
+When a member triggers a "Request reactivation" or "Request access" CTA on the lockout surface, `components/lockout/request-button.tsx` inserts one row per admin into `notifications` with `type='role_needed'`, `persistent=true`, and `action_url='/settings?tab=subscription'` (reactivation) or `'/team'` (seat). The 24h cooldown lives in `localStorage` under `ops-lockout-request-${userId}` (preserved across the 2026-05-07 redesign — extracted to `components/lockout/hooks/use-request-cooldown.ts`). Schema unchanged.
+
+Design spec: `OPS-Web/docs/superpowers/specs/2026-05-07-lockout-redesign-design.md`.
+
 ---
 
 ## 15. Crew Location Tracking
