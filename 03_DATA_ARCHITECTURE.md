@@ -2296,6 +2296,72 @@ Both are gated by `private.get_user_company_id() = p_company_id`. `EXECUTE` gran
 
 **No update path**: import is INSERT-only. Re-importing the same CSV creates duplicate families. Use Snapshots (kebab Setup → Snapshots) to roll back a bad import.
 
+### Products Import RPCs (added 2026-05-08)
+
+Sibling to the catalog import RPCs above. Drives the second tab (`PRODUCTS`) in the iOS `CatalogImportSheet` — bulk-creates rows in the `products` table (services + goods). SQL lives at `OPS/OPS/Migrations/2026-05-08-products-import-rpc.sql` (also documented in `OPS/OPS/Migrations/2026-05-08-products-import-rpc.md`); the iOS client calls them through `ProductsImportRepository`. Same `SECURITY DEFINER`, same `EXECUTE TO authenticated`, same caller-vs-`p_company_id` guard.
+
+| Function | Behaviour |
+|---|---|
+| `public.products_import_validate(p_company_id uuid, p_payload jsonb) RETURNS jsonb` | Pure validator — runs every per-row check, returns success/failure shape, never INSERTs. |
+| `public.products_import_apply(p_company_id uuid, p_payload jsonb) RETURNS jsonb` | Runs the same validation; on success, INSERTs every product row in a single transaction. ROLLBACK on any failure. |
+
+**Payload shape**:
+
+```json
+{
+  "products": [
+    {
+      "row_index": 0,
+      "name": "Composite deck install",
+      "description": "...",
+      "base_price": 25.00,
+      "unit_cost": 12.00,
+      "category_id": "uuid-or-null",
+      "unit_id": "uuid-or-null",
+      "category": "Hardware",
+      "unit": "sqft",
+      "pricing_unit": "sqft",
+      "sku": "DECK-INST",
+      "kind": "service",
+      "type": "LABOR",
+      "is_taxable": true
+    }
+  ]
+}
+```
+
+`row_index` is 0-based and unique within `products`. The `apply` RPC returns the row_index → uuid mapping under `created_product_ids`.
+
+**Result shape**:
+
+- Success: `{"success": true, "created_product_ids": {...}, "totals": {"products": N}}`
+- Failure: `{"success": false, "errors": [{"scope":"product|payload","row_index":N,"field":"...","reason":"..."}]}`
+
+**Validation rules** (single source of truth):
+
+- Caller's `private.get_user_company_id()` must equal `p_company_id`.
+- `products` array non-empty.
+- `name` required + non-blank; `base_price` required, numeric, >= 0.
+- `unit_cost` optional; if present must be numeric and >= 0.
+- `category_id` / `unit_id` (if set) must reference active rows in the same company.
+- `kind` if set must be `'service'` or `'good'` (table NOT NULL default `'service'`).
+- `type` if set must be `'LABOR'`, `'MATERIAL'`, or `'OTHER'` (table NOT NULL default `'LABOR'`).
+- `pricing_unit` accepted as free text (table NOT NULL default `'each'`).
+- `sku` is **not** uniqueness-checked — `products` has no unique constraint on SKU and the import explicitly opts out of a soft-fail.
+
+**Atomicity**: same model as the catalog import — failure path returns the error object normally (no commit), success path runs all INSERTs inside the implicit transaction. The mirror of `base_price` → `default_price` is handled by an existing Postgres trigger on the table, so the RPC writes only `base_price`.
+
+**No update path**: INSERT-only. Re-importing the same CSV creates duplicate product rows.
+
+### CatalogImportSheet UI (iOS)
+
+`OPS/Views/Catalog/Import/CatalogImportSheet.swift` is a single sheet hosting both flows. A tab strip at the top of the sheet (`STOCK | PRODUCTS`) selects the target; each tab uses its own column-mapping struct, parser/mapper, repository, and apply notification:
+
+- `STOCK` → `CatalogCSVMapper` + `CatalogImportRepository` → posts `CatalogImportApplied` with `{families, variants}` on success.
+- `PRODUCTS` → `ProductsCSVMapper` + `ProductsImportRepository` → posts `ProductsImportApplied` with `{products}` on success.
+
+Both tabs share the same four-step flow (PICK → MAP → PREVIEW → APPLY) and the same atomic preview/apply contract — the user never sees half-imported state on either tab.
+
 ---
 
 ## DeckDesign — drawing data and components projection
