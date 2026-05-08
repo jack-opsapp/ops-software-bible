@@ -1097,6 +1097,20 @@ Resolver flow:
 1. **Estimate-line creation** — `ProductConfigurationResolver` reads the product's options + modifiers + the user's choices, computes `resolved_unit_price`, snapshots `configured_options` jsonb + `resolved_options_label` to the line item. Pricing is frozen at this moment.
 2. **Install-task creation** — `RecipeResolver` walks `product_materials`, applies `configured_options` to family-pinned rows via `variantSelectorJSON`, multiplies by quantity (and `scaledByOptionId` if present), emits `task_materials` rows pinned to specific `catalog_variants`. The cut list materializes here, not at estimate time.
 
+#### Authoring surface (Web)
+
+The configurable layer is read-only on iOS. Authoring lives in OPS-Web at:
+
+- **Route**: `/products/[id]/options` (deep-link from the product list and product edit modal)
+- **Permission**: `products.manage`
+- **Sections**:
+  - **Options** — list of `product_options` rows with drag-reorder (`sort_order`), inline edit, hard delete with confirmation. Modal handles create/edit including the `kind`/`affectsPrice`/`affectsRecipe`/`required`/`defaultValue`/`optionDefaultSource` fields. For `kind = select`, the modal also exposes the nested `product_option_values` editor (add / rename / drag-reorder / delete).
+  - **Pricing modifiers** — list of `product_pricing_modifiers` rendered as humanized rules (e.g. "When Color = Red → +$5.00 per unit"). Modal handles create/edit with an option picker, kind-aware trigger (value picker, integer min/max range, or implicit-when-true for boolean), modifier-kind segmented control, and amount input with live preview.
+- **Services**: `ProductOptionsService` and `ProductPricingModifiersService` in `src/lib/api/services/`. RLS enforces company isolation through the parent product (existing policies — no new RLS).
+- **Hooks**: `useProductOptions`, `useProductOptionValues`, `useProductPricingModifiers` and the matching `useCreate*` / `useUpdate*` / `useDelete*` / `useReorder*` mutations in `src/lib/hooks/`.
+
+The iOS QuickAddProductSheet footer ("Need product options or pricing modifiers? Edit on web after saving.") points at this surface; once a product is created on iOS, the operator opens it on web to author the configurable layer.
+
 ---
 
 ### 22. SiteVisit (Supabase-Backed)
