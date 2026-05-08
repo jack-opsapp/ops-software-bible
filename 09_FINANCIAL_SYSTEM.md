@@ -631,14 +631,27 @@ Company-configurable via `expense_settings`:
 
 ### Batch Review Workflow
 
-Expenses accumulate and are grouped into batches at a company-configured frequency:
-- **Per Job**: Batched on submission (project-scoped)
-- **Weekly**: Batched every Monday
-- **Biweekly**: Batched on 1st and 15th of month
-- **Monthly**: Batched on 1st of month
-- **Quarterly**: Batched on 1st of Jan/Apr/Jul/Oct
+**Always-bundle on submit (post-2026-05-08).** Every submitted expense is attached to an open batch (`expense_batches.status = 'pending_review'`) at the moment of submission. The `review_frequency` setting controls how the open batch is *scoped*:
 
-The `accounting-batch-create` Edge Function runs daily and creates batches based on each company's `review_frequency` setting.
+| Frequency | Batch scope | Period window |
+|---|---|---|
+| `per_job` | One batch per `(submitted_by, scope_project_id)` — multi-allocation forbidden in the form for these companies | Single-day (`expense_date` to `expense_date`) |
+| `weekly` | One batch per `(submitted_by, week)` | Mon–Sun containing `expense_date` |
+| `biweekly` | One batch per `(submitted_by, half-month)` | 1–14 or 15–end-of-month containing `expense_date` |
+| `monthly` | One batch per `(submitted_by, month)` | First-to-last day of the month containing `expense_date` |
+| `quarterly` | One batch per `(submitted_by, quarter)` | First-to-last day of the quarter containing `expense_date` |
+
+Subsequent expenses by the same user falling into the same scope accumulate into the same open batch until an admin acts on it (approve / send back / reject). At that point the batch is closed and a new submission opens a fresh one.
+
+**Atomic get-or-create.** iOS submits via the `public.get_or_create_open_batch(p_company_id, p_submitted_by, p_period_start, p_period_end, p_scope_project_id)` RPC. A partial unique index on `(company_id, submitted_by, period_start, period_end, scope_project_id) WHERE status='pending_review' AND amendment_number=0` (NULLS NOT DISTINCT) makes concurrent submissions safe.
+
+**Per-expense auto-approve preserved.** If `amount < expense_settings.auto_approve_threshold`, the expense bypasses the batch entirely: `draft → approved` directly with `approvedBy = 'auto'` and immediate `accounting-sync-expense` call. No notification, no batch, matching the pre-existing semantics.
+
+**Notification dispatch.** On above-threshold submission, recipients are looked up via `public.users_with_permission(company_id, 'expenses.approve')` — never by `users.role`. Sites that previously filtered by role (`AppState.swift`, `ExpenseViewModel.swift`, `TimeOffRequestSheet.swift`, `QuantityAdjustmentSheet.swift`) now use this permission-gated lookup, honoring custom roles and per-user overrides.
+
+**Orphan recovery.** Pre-fix client versions can leave expenses in `submitted` status with `batch_id = NULL`. `ExpensesListView` shows an orphan-recovery banner whenever any exist for the company; tapping `BUNDLE` re-runs always-bundle for each orphan, attaching it to the appropriate open batch (one notification per resulting batch, not per expense).
+
+**`accounting-batch-create` Edge Function** *(deprecated 2026-05-08)* — the cron-driven lazy batcher is no longer the source of truth. The function had a latent bug in production (references to nonexistent column `expense_count` and table `accounting_sync_log` made every invocation fail silently — verified zero batches with `status='pending'` ever existed). With always-bundle, lazy batching is unnecessary. The function should be removed via the Supabase dashboard.
 
 ### Receipt OCR (Apple Vision)
 
@@ -652,19 +665,34 @@ On-device OCR using Apple's Vision framework (`VNRecognizeTextRequest` with `.ac
 
 Expenses can be attributed to zero or more projects via `expense_project_allocations`:
 - Each allocation has an `expense_id`, `project_id`, and `percentage` (0-100)
-- Percentages must sum to 100% if any allocations exist
+- Percentages must sum to 100% if any allocations exist (validated client-side in `ExpenseFormSheet.validate`)
 - Project assignment is optional (company-configurable via `require_project_assignment`)
+- **`per_job` companies allow exactly one allocation per expense** — the form blocks the "ADD PROJECT" button after the first project is selected, since per-job batches are project-scoped
+
+### Currency Handling
+
+`expenses.currency` (text, default `'USD'`) stores the ISO 4217 code. The form's currency picker defaults from `Locale.current.currency?.identifier` (locale-aware) and is overridable per-expense. Canadian crews logging CAD receipts in a USD-default world were silently mis-recording before 2026-05-08 — this fix surfaces currency in the form and persists it through `CreateExpenseDTO`/`UpdateExpenseDTO`.
 
 ### Supabase Tables (6)
 
 | Table | Purpose |
 |---|---|
-| `expenses` | Core expense records (amount, merchant, status, receipt URL, OCR data) |
+| `expenses` | Core expense records (amount, merchant, status, receipt URL, OCR data, **currency**) |
 | `expense_project_allocations` | Many-to-many linking expenses to projects with percentage split |
 | `expense_categories` | Company-configurable categories with icons (9 defaults seeded) |
 | `expense_settings` | Per-company settings (review frequency, thresholds, policy toggles) |
-| `expense_batches` | Groups of expenses for batch review by office/admin |
+| `expense_batches` | Groups of expenses for batch review by office/admin. **`scope_project_id` (nullable uuid)** identifies per-job batches; NULL for period batches |
 | `accounting_category_mappings` | Maps OPS categories to external chart of accounts (QB/Sage) |
+
+### Supabase Functions (expense-related)
+
+| Function | Purpose |
+|---|---|
+| `public.users_with_permission(p_company_id, p_permission, p_required_scope)` | Returns user IDs in a company holding a permission. Honors role grants, per-user overrides, and the `is_company_admin`/`account_holder_id`/`admin_ids` escape hatches. **Use for all recipient lookups — never filter by `users.role`.** |
+| `public.get_or_create_open_batch(p_company_id, p_submitted_by, p_period_start, p_period_end, p_scope_project_id)` | Always-bundle helper — returns the user's open batch matching the scope or creates one atomically (race-safe via partial unique index + on-conflict re-select). |
+| `public.recalculate_expense_batch_total(p_batch_id)` | Recomputes and persists `expense_batches.total_amount` from non-deleted attached expenses. Called after attaching expenses on submission. |
+| `public.has_permission(p_user_id, p_permission, p_required_scope)` | Single-user permission check. Note: does NOT currently apply `user_permission_overrides` — only `user_roles → role_permissions` plus the admin escape hatches. iOS `PermissionService.fetchPermissions` applies overrides client-side. (Latent inconsistency — flagged for follow-up.) |
+| `public.get_next_expense_batch_number(p_company_id)` | Returns next sequential batch number, format `EXP-BATCH-NNNN`. |
 
 ### Default Expense Categories (9)
 

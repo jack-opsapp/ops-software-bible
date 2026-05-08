@@ -3090,6 +3090,8 @@ The web app surfaces notifications via a right-edge vertical drawer, triggered b
 
 **Integration:** any feature that produces a user-facing event inserts a row into the `notifications` table. The drawer picks it up automatically via TanStack Query's `useNotifications()` hook.
 
+**Recipient lookup — permission, never role.** Server-side dispatch (iOS in-app + push, Web in-app) MUST resolve recipients via `public.users_with_permission(p_company_id, p_permission, p_required_scope)`, not by filtering `users.role`. The RPC honors role grants, per-user overrides (`user_permission_overrides`), and the company-admin escape hatches (`users.is_company_admin`, `companies.account_holder_id`, `companies.admin_ids`). Hardcoding role strings ignores custom roles, skips overrides, and silently excludes users whom the operator company has explicitly granted approval rights. Permission keys live in `role_permissions.permission` — examples: `expenses.approve`, `inventory.manage`, `time_off.approve`, `invoices.record_payment`. iOS callers wrap the RPC via `RecipientLookupService.usersWithPermission(companyId:permission:requiredScope:)`.
+
 **`schedule_change` notification (Phase 3 — 2026-04-27):**
 - Emitted by `useUpdateTask` when the union of (`startDate`, `endDate`, `startTime`, `endTime`, `allDay`) changes on a task. Recipients = union of prior + new `team_member_ids` so removed crew also see the move.
 - Emitted by `/api/cron/recurrence-generate` for each newly-materialized occurrence — one row per assigned crew member.
