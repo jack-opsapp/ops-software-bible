@@ -171,6 +171,12 @@ final class Project: Identifiable {
     var syncPriority: Int = 1
     var deletedAt: Date?
 
+    // Audit — added 2026-05-10 (bug 9d5c2535) to power the "start from
+    // recent" suggestions strip on the project form. Nil for projects
+    // synced down before the column existed.
+    var createdAt: Date?
+    var createdBy: String?
+
     // Transient
     @Transient var lastTapped: Date?
     @Transient var coordinatorData: [String: Any]?
@@ -178,6 +184,10 @@ final class Project: Identifiable {
     // Project Workspace Modal columns (Supabase only — added 2026-05-06)
     // visibility       TEXT DEFAULT 'all' CHECK ∈ {all, office, private} — portal exposure; private projects do not appear in the client portal
     //   Partial index idx_projects_visibility WHERE visibility != 'all' speeds the office/private filter on company dashboards.
+
+    // Audit columns (Supabase) — also surfaced as SwiftData properties
+    // created_at       TIMESTAMPTZ — auto-populated by Supabase default
+    // created_by       UUID FK → auth.users(id) — populated by iOS on insert; index idx_projects_created_by_created_at (created_by, created_at DESC) WHERE deleted_at IS NULL speeds the recency strip query.
 }
 ```
 
@@ -252,6 +262,11 @@ final class ProjectTask {
     var lastSyncedAt: Date?
     var needsSync: Bool = false
     var deletedAt: Date?
+
+    // Audit — added 2026-05-10 (bug 9d5c2535). Powers the recency-sorted
+    // task type and team-member pickers on the task form. Prefers
+    // task.createdAt; falls back to lastSyncedAt for pre-migration rows.
+    var createdAt: Date?
 }
 ```
 
@@ -2854,8 +2869,8 @@ Contains DTOs for the 9 core entities migrated from Bubble:
 | `SupabaseClientDTO` | `Client` | `phone_number` (not `phone`), `profile_image_url` |
 | `SupabaseSubClientDTO` | `SubClient` | `client_id`, `phone_number`; exposes `parentClientId` for relationship wiring |
 | `SupabaseTaskTypeDTO` | `TaskType` | Table is `task_types_v2`; column is `display` (not `name`) |
-| `SupabaseProjectDTO` | `Project` | `team_member_ids`, `project_images` as arrays; `opportunity_id` |
-| `SupabaseProjectTaskDTO` | `ProjectTask` | `task_type_id`, `custom_title`, `task_notes`, `source_line_item_id`, `source_estimate_id`, `start_date`, `end_date` |
+| `SupabaseProjectDTO` | `Project` | `team_member_ids`, `project_images` as arrays; `opportunity_id`; `created_at` + `created_by` round-trip the new audit columns (added 2026-05-10, bug 9d5c2535). Client sets both on insert; never updated on edit. |
+| `SupabaseProjectTaskDTO` | `ProjectTask` | `task_type_id`, `custom_title`, `task_notes`, `source_line_item_id`, `source_estimate_id`, `start_date`, `end_date`; `created_at` round-tripped for recency-sorted pickers (added 2026-05-10). |
 | `SupabaseOpsContactDTO` | `OpsContact` | `bubble_id` |
 
 ### CoreEntityConverters.swift
@@ -3783,6 +3798,25 @@ ALTER TABLE activities
   ADD COLUMN classified_at timestamptz,
   ADD COLUMN classifier_version text;
 ```
+
+### Column addition: `activities.draft_history_id` (migration 20260508120000)
+
+Links an activity row (a sent email) back to the `ai_draft_history` entry that produced it, so the inbox UI can render an AI-edit diff toggle on AI-authored outbound bubbles. Populated by `/api/integrations/email/send` from `pending_auto_sends.draft_history_id` when an auto-send actually fires.
+
+```sql
+ALTER TABLE activities
+  ADD COLUMN IF NOT EXISTS draft_history_id UUID
+  REFERENCES ai_draft_history(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_activities_draft_history
+  ON activities(draft_history_id)
+  WHERE draft_history_id IS NOT NULL;
+```
+
+- **Additive only:** nullable column, no destructive changes — safe under the iOS App Store sync constraint (no breakage for users still on the prior iOS build).
+- **`ON DELETE SET NULL`:** if the draft history row is purged for cleanup, the activity stays but loses its diff capability.
+- **Partial index:** only indexes rows with a non-null FK (the vast majority of activities are inbound or non-AI outbound, so the index stays small).
+- **UI consumer:** `MessageBubble.originalAiBody` prop. When the activity has a `draft_history_id`, the renderer joins to `ai_draft_history.original_draft` and passes it down. The bubble shows a `DIFF` toggle that opens an inline word-diff (deletions strikethrough, insertions white on lavender highlight — preserving the rule that lavender = Claude-authored, white = operator).
 
 ### Phase C category autonomy (JSONB on email_connections — no new columns)
 
