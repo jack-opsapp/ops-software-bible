@@ -58,9 +58,9 @@ The OPS data layer follows a **three-tier architecture**:
 - **Type Safety**: DTOs handle field name mapping and type conversion
 - **Task-Based Scheduling**: Project dates are computed from task start/end dates (CalendarEvent entity has been removed)
 
-### The 48 Registered Schema Models
+### The 49 Registered Schema Models
 
-As defined in `OPSSchemaCommon.unchangedModels` (47 entries) + `WizardState` (per-version, schema V3 today). The schema container is built via `OPSSchemaV3` in `OPSApp.swift`.
+As defined in `OPSSchemaCommon.unchangedModels` (48 entries) + `WizardState` (per-version, schema V3 today). The schema container is built via `OPSSchemaV3` in `OPSApp.swift`.
 
 **Core Entities (11):**
 1. **User** -- Team member with role-based permissions
@@ -71,6 +71,7 @@ As defined in `OPSSchemaCommon.unchangedModels` (47 entries) + `WizardState` (pe
 6. **SubClient** -- Additional client contacts
 7. **ProjectTask** -- Task-based scheduling within projects
 8. **TaskType** -- Reusable task templates per company
+8a. **TaskTemplate** -- Sub-task scaffolding under a TaskType (renders one ProjectTask per row at estimate-approval)
 9. **TaskStatusOption** -- Company-customizable task status colors
 10. **SyncOperation** -- Queued offline sync operations
 11. **OpsContact** -- OPS support contact information
@@ -118,9 +119,10 @@ As defined in `OPSSchemaCommon.unchangedModels` (47 entries) + `WizardState` (pe
 45. **ProductOptionValue** -- A possible value for a ProductOption
 46. **ProductPricingModifier** -- Price bump rule per option/value match
 47. **ProductMaterial** -- Recipe row (variant-pinned or family-pinned with selector)
+48. **ProductBundleItem** -- Child row of a bundle product (kind=package); enumerates bundle composition with per-row quantity + display order. See `product_bundle_items` table.
 
 **Deck Builder (1):**
-48. **DeckDesign** -- Canvas drawing data for design components (railing, deck_board, stair_set, gate, post_set)
+49. **DeckDesign** -- Canvas drawing data for design components (railing, deck_board, stair_set, gate, post_set)
 
 **Per-Schema-Version (1):**
 - **WizardState** -- Onboarding wizard state (schema-versioned; appended in `OPSSchemaV3.models`)
@@ -253,6 +255,14 @@ final class ProjectTask {
 
     var teamMemberIdsString: String = ""
 
+    // Dependency overrides (per-task override of taskType.dependencies)
+    var dependencyOverridesJSON: String?
+
+    // Pair linkage — added 2026-05-11 (bug f4bbd11c)
+    var pairedFromTaskId: String?        // Predecessor task that auto-spawned this one
+    var scheduleLocked: Bool = false     // True once user manually edits startDate;
+                                         // cascade ignores locked tasks
+
     // Relationships
     @Relationship(deleteRule: .nullify) var project: Project?
     @Relationship(deleteRule: .nullify) var taskType: TaskType?
@@ -269,6 +279,21 @@ final class ProjectTask {
     var createdAt: Date?
 }
 ```
+
+**Pair-linkage semantics** (added 2026-05-11):
+- `paired_from_task_id` populated when this task was spawned by `TaskPairSpawner`
+  on creation of a predecessor task whose type was the target of an `auto_create`
+  dependency. NULL for manually-created tasks.
+- Hard delete / soft delete / cancel of the predecessor cascades to all paired
+  descendants via `pairedFromTaskId` lookup (one-way; deleting a paired task does
+  not affect its predecessor).
+- `schedule_locked` is set to `true` automatically by `DataController.updateTaskSchedule`
+  whenever `manualEdit: true` (the default) is passed. System-driven shifts
+  (cascade application, auto-schedule placement, undo cascade) pass `manualEdit: false`
+  to preserve auto-tracking.
+- `SchedulingEngine.calculateCascade()` skips tasks where `schedulingLocked == true`
+  — predecessor movements no longer auto-shift them. The lock is reset only by
+  deleting & recreating the paired task (no UI to unlock manually).
 
 **Phase 3 — Time precision semantics** (added 2026-04-27):
 - `allDay = true` → the task is treated as a date-only block. `startTime` and `endTime` are stored but ignored by the calendar grid, conflict detection, and notifications. Pre-Phase-3 rows default to `true` regardless of the historical `08:00–17:00` time values.
@@ -411,7 +436,8 @@ CREATE TABLE task_recurrence_exceptions (
 ### 3. TaskType
 
 **File**: `DataModels/TaskType.swift`
-**Purpose**: Reusable task templates with visual identity.
+**Purpose**: Reusable task templates with visual identity. Carries scheduling
+dependencies and pair-spawning rules in `dependenciesJSON`.
 
 **Properties**:
 
@@ -426,6 +452,9 @@ final class TaskType: Identifiable {
     var companyId: String
     var displayOrder: Int = 0
     var defaultTeamMemberIdsString: String = "" // Default crew user IDs
+    var dependenciesJSON: String = "[]"      // JSON array of TaskTypeDependency objects
+    var isWeatherDependent: Bool = false     // Stub for future weather-aware scheduling
+    var defaultDuration: Int = 1             // Default duration (days) for spawned tasks of this type
 
     @Relationship(deleteRule: .nullify, inverse: \ProjectTask.taskType)
     var tasks: [ProjectTask] = []
@@ -439,6 +468,85 @@ final class TaskType: Identifiable {
 **NOTE**: The display property is `display`, NOT `name`.
 
 **Default Task Types**: Site Estimate, Quote/Proposal, Material Order, Installation, Inspection, Completion.
+
+**Supabase mapping**: Table is `task_types` (not `task_types_v2` — that name appears
+elsewhere in this document but is outdated). The `dependencies` JSONB column on
+`task_types` stores an array of `TaskTypeDependency` structs (see below).
+
+#### TaskTypeDependency (JSONB schema)
+
+```swift
+struct TaskTypeDependency: Codable {
+    // Scheduling
+    let dependsOnTaskTypeId: String          // Predecessor task type
+    let overlapPercentage: Int               // 0–100, used when overlapMode == "percentage"
+    let overlapMode: String                  // "percentage" | "constant" | "after_end"
+    let overlapConstantDays: Double          // Used when overlapMode == "constant"
+    let minGapDaysAfterEnd: Int              // Used when overlapMode == "after_end" — days after pred end
+    let weekdayConstraint: Int?              // ISO 1=Mon…7=Sun, nil = any day (after_end only)
+
+    // Pair behavior — added 2026-05-10 (bug f4bbd11c)
+    let autoCreate: Bool                     // When predecessor is created, auto-spawn this task
+    let inheritCrew: Bool                    // Copy predecessor's team_member_ids onto the spawn
+}
+```
+
+JSON keys are snake_case (`depends_on_task_type_id`, `overlap_mode`, `auto_create`, etc.).
+Backward-compatible decoder applies safe defaults for older payloads missing the new fields.
+
+The `after_end` mode + `weekdayConstraint` together expresses rules like
+"glass panels installed first Wednesday on or after 1 week after glass rail ends" —
+the predecessor's end date is computed, the gap is added, then the result is rounded
+UP to the next occurrence of the target weekday.
+
+#### Catalog interlink surfaces on iOS (2026-05-11 — bug 4dadd96c)
+
+The TaskType ↔ Product ↔ TaskTemplate triangle is now bidirectionally exposed
+in iOS. Previously the FKs existed (`products.task_type_ref`, the `task_templates`
+table) but no UI surfaced them, so operators who set up either side first had
+to retroactively edit the other.
+
+- **`Product.taskTypeRef`** — Service-category products (`type = LABOR`) now
+  surface a required Task Type picker in `QuickAddProductSheet` and
+  `ProductDetailView`. The picker writes both `task_type_ref` (uuid FK) and
+  `task_type_id` (legacy text mirror) in lockstep so legacy reads and new
+  reads land on the same parent. Material and Fee products show the same
+  picker as optional — they don't participate in task generation but can
+  still group on the schedule. Picker source: `TaskTypePickerSheet.swift`
+  (Views/Catalog/Products/) with inline `+ NEW TASK TYPE` that pushes
+  `TaskTypeSheet` in create mode and auto-selects the result.
+
+- **`TaskType` → linked products section** — `TaskTypeSheet` (edit mode)
+  now lists every Product whose `task_type_ref` points at this type, with
+  two affordances:
+  - `ATTACH EXISTING` → opens `LinkedProductsAttachSheet`, which lists
+    LABOR-type products not currently pinned here. Reassigning a product
+    that already points at another task type surfaces a confirm dialog
+    (`REASSIGN PRODUCT?`). The line-item snapshot semantics still hold —
+    existing estimate line items carry their own frozen `task_type_id`.
+  - `NEW PRODUCT` → opens `NewLinkedProductSheet`, a 3-field mini-form
+    (name + price + unit) that creates a LABOR/service Product
+    pre-bound to this task type.
+
+- **`task_templates` (sub-task scaffolding)** — `TaskTypeSheet` now also
+  exposes the `DEFAULT SUB-TASKS` section, which lists `task_templates`
+  rows for this task type. Operators can add/edit/delete templates inline
+  via `TaskTemplateEditSheet`. When an estimate's LABOR line item is
+  approved, one `project_tasks` row is generated per template (per the
+  task-generation logic in `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md`).
+  Soft-delete via `deleted_at`. iOS model lives at
+  `DataModels/Supabase/TaskTemplate.swift`; DTO at
+  `Network/Supabase/DTOs/TaskTemplateDTOs.swift`; repository at
+  `Network/Supabase/Repositories/TaskTemplateRepository.swift`.
+
+- **Merge propagation** — `TaskTypeMergeSheet` now re-pins all linked
+  products and sub-task templates to the merge target before soft-deleting
+  the source. Previously products and templates were silently orphaned
+  on the source row.
+
+No schema changes. All work is additive over already-shipped FKs and
+existing tables (`products.task_type_ref` exists since Phase 13; the
+`task_templates` table already exists).
 
 ---
 
@@ -1054,8 +1162,8 @@ class Product: Identifiable {
     var companyId: String
     var name: String
     var productDescription: String?
-    var type: LineItemType
-    var kind: ProductKind                  // .service | .good
+    var type: LineItemType                 // LABOR | MATERIAL | OTHER (load-bearing classifier)
+    var kind: ProductKind                  // .service | .good | .package
     var basePrice: Double                  // primary unit price column (was `default_price`)
     var unitCost: Double?
     var pricingUnit: ProductPricingUnit    // .each | .flatRate | .linearFoot | .sqft | .hour | .day
@@ -1074,7 +1182,14 @@ class Product: Identifiable {
     var taskTypeId: String?
     var taskTypeRef: String?
     var unitId: String?                    // FK catalog_units.id
+    var linkedCatalogItemId: String?       // FK catalog_items.id (added 2026-05-10, bug 164e0595)
+    var bundlePricingMode: String?         // 'auto' | 'override' | nil — only set when kind=.package (added 2026-05-10, bugs e0229b57/41d6f2b4)
     var createdAt: Date
+
+    /// Derived user-facing 4-way taxonomy.
+    var category3Way: ProductCategory {
+        ProductCategory.from(type: type, kind: kind)
+    }
 }
 
 enum ProductPricingUnit: String, CaseIterable, Codable {
@@ -1088,7 +1203,19 @@ enum ProductPricingUnit: String, CaseIterable, Codable {
 
 enum ProductKind: String, CaseIterable, Codable {
     case service
-    case good
+    case good     // wire value "material" — Swift case is legacy
+    case package  // surfaces as user-facing "Bundle"
+}
+
+/// User-facing 4-way taxonomy (added 2026-05-10, bug 164e0595). Replaces
+/// the iOS two-axis confusion of Kind + LineItemType on entry forms. Save
+/// derives both legacy columns from this so old App Store iOS builds and
+/// the web app keep reading sensible values.
+enum ProductCategory: String, CaseIterable, Codable, Identifiable {
+    case service      // wire: kind=service, type=LABOR    — labor / time / expertise
+    case material     // wire: kind=material, type=MATERIAL — physical product
+    case fee          // wire: kind=service, type=OTHER    — permit / disposal / passthrough
+    case bundle       // wire: kind=package, type=OTHER    — services + goods sold as one
 }
 ```
 
@@ -1097,6 +1224,18 @@ enum ProductKind: String, CaseIterable, Codable {
 **Wire-field fix (Phase 3)**: earlier builds wrote `unit_price`/`cost_price` — columns that **do not exist** in Supabase. The DTO now correctly reads/writes `base_price`/`unit_cost`. `base_price` is the new primary column. The legacy `default_price` column is preserved and kept in sync via a Postgres trigger (migration `2026-05-06-02-catalog-views-triggers.sql`) until ops-web cuts over to `base_price`; the trigger and `default_price` are removed in that follow-up session.
 
 **Catalog FKs (added 2026-05-08)**: `unit_id uuid REFERENCES catalog_units(id) ON DELETE SET NULL` and `category_id uuid REFERENCES catalog_categories(id) ON DELETE SET NULL` link Products into the same catalog backbone Stock uses. The legacy `unit` and `category` text columns stay in place for backwards compat — new writes (both create and edit, on iOS and ops-web) populate the FK **and** the legacy text column so reads from either path see the same vocabulary. An iOS-only backfill (`OPS/Migrations/2026-05-08-backfill-products-category-id.sql`) walks existing rows and sets `category_id` from the matching `catalog_categories` row by case-insensitive name within the same company.
+
+**Stock link FK (added 2026-05-10, bug 164e0595)**: `linked_catalog_item_id uuid REFERENCES catalog_items(id) ON DELETE SET NULL` ties a Material-category Product to a stock-tracked inventory family. Set from the iOS New Product sheet's `// SHOW IN STOCK` toggle, which either picks an existing `catalog_items` row or auto-creates one (plus a default `catalog_variants` row) via `CatalogRepository.createDefaultItemForProduct`. **Auto-deduction on sale is not yet wired** — that's P1-28's scope. The column is present so P1-28 can deliver it without further iOS work. Old App Store iOS builds neither read nor write the column, so back-compat is preserved.
+
+**Taxonomy redesign on the New Product sheet (added 2026-05-10, bug 164e0595)**: the legacy iOS form forced two overlapping pickers — `Kind` (Service/Good) and `Line item type` (Labor/Material/Other). Live data showed the pair was always redundant (`service+LABOR` or `material+MATERIAL`) and defaults disagreed (`kind=service` but `type=other`). The new form replaces both with a single 4-way `ProductCategory` picker (Service / Material / Fee / Bundle). Save derives `kind` + `type` from the choice per the mapping above. The legacy iOS columns and the web app continue to read sensible values without any client-side change.
+
+**Kind-first create flow (added 2026-05-10, bugs e0229b57 / 41d6f2b4)**: a follow-up redesign of the same surface replaced the single `QuickAddProductSheet` with a **kind-first flow** — the PRODUCTS-segment FAB now opens `ProductKindPickerSheet` (three cards: SERVICE / GOOD / BUNDLE), which routes to one of three kind-tailored sheets:
+
+- `NewServiceSheet` — kind locked to `.service`, default pricing unit `.hour`, no unit cost / no margin / no thumbnail
+- `NewGoodSheet` — kind locked to `.good` (DB `material`), default `.each`, unit cost + live margin + thumbnail + SHOW IN STOCK toggle
+- `NewBundleSheet` — kind locked to `.package`, inline child picker drawer + selected-children stepper list + AUTO/OVERRIDE pricing
+
+`QuickAddProductSheet.swift` is **deleted**. Shared form components extracted to `OPS/Views/Catalog/Products/Shared/` (CategoryPickerField, UnitPickerField, ThumbnailPickerField). See `OPS/Views/Catalog/Products/{ProductKindPickerSheet,NewServiceSheet,NewGoodSheet,NewBundleSheet}.swift`.
 
 #### Configurable Products (NEW)
 
@@ -1124,7 +1263,58 @@ The configurable layer is read-only on iOS. Authoring lives in OPS-Web at:
 - **Services**: `ProductOptionsService` and `ProductPricingModifiersService` in `src/lib/api/services/`. RLS enforces company isolation through the parent product (existing policies — no new RLS).
 - **Hooks**: `useProductOptions`, `useProductOptionValues`, `useProductPricingModifiers` and the matching `useCreate*` / `useUpdate*` / `useDelete*` / `useReorder*` mutations in `src/lib/hooks/`.
 
-The iOS QuickAddProductSheet footer ("Need product options or pricing modifiers? Edit on web after saving.") points at this surface; once a product is created on iOS, the operator opens it on web to author the configurable layer.
+The iOS new-product sheets (NewServiceSheet / NewGoodSheet) include a footer pointing users to the web for Options + Pricing modifiers; once a product is created on iOS, the operator opens it on web to author the configurable layer.
+
+#### Bundles (added 2026-05-10, bugs e0229b57 / 41d6f2b4)
+
+A **bundle** is a product with `kind='package'` (the third value of the existing `products_kind_check` CHECK constraint, which already accepted `service | material | package`). A bundle composes other products (services + goods) into a single sellable line item with one of two pricing modes.
+
+**Composition table — `product_bundle_items`**:
+
+```sql
+CREATE TABLE public.product_bundle_items (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id          uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  bundle_product_id   uuid NOT NULL REFERENCES products(id)  ON DELETE CASCADE,
+  child_product_id    uuid NOT NULL REFERENCES products(id)  ON DELETE RESTRICT,
+  quantity            numeric NOT NULL DEFAULT 1 CHECK (quantity > 0),
+  display_order       int     NOT NULL DEFAULT 0,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  deleted_at          timestamptz NULL,
+  CONSTRAINT no_self_reference CHECK (bundle_product_id <> child_product_id)
+);
+```
+
+Indexes on `bundle_product_id`, `child_product_id`, `company_id` (all partial `WHERE deleted_at IS NULL`). RLS: single `company_isolation` policy matching the existing pattern on `products` / `product_materials` — `company_id = (SELECT private.get_user_company_id())`. Permission gating (`catalog.products.manage`) lives in iOS/web permission_store before mutation, not in RLS.
+
+**Pricing mode — `products.bundle_pricing_mode`**:
+
+Nullable text column on `products`, CHECK `bundle_pricing_mode IS NULL OR bundle_pricing_mode IN ('auto', 'override')`. NULL for non-bundles.
+
+- `auto` — bundle's `base_price` is rewritten on save as `Σ(child.base_price × quantity)`. The UI shows the rolled total read-only.
+- `override` — bundle's `base_price` is whatever the user typed; the rolled sum and a live margin percent ((override − rolled) / override × 100) are shown alongside for awareness but don't overwrite.
+
+**Constraints**:
+- `no_self_reference` CHECK: a bundle cannot include itself as a child.
+- **Bundle nesting (bundles whose children include another bundle) is disallowed for v1 in the iOS UI** — the child picker drawer filters out `kind='package'` products. Not enforced at the DB; defer to v2 if a real need emerges.
+
+**iOS surfaces**:
+- `ProductBundleItem` SwiftData @Model (`DataModels/Supabase/Catalog/ProductBundleItem.swift`) — local cache with `lastSyncedAt` + `needsSync` per the standard sync pattern.
+- `ProductBundleItemRepository` — fetch / create / update / soft-delete.
+- `NewBundleSheet` — full create flow (V4 hybrid layout: inline child picker drawer + selected-children list with integer steppers + AUTO/OVERRIDE pricing segmented control).
+- `BundleCompositionEditSheet` — diff-based edit of an existing bundle's children.
+- `BundleCompositionReadOnlyView` — embedded in `ProductDetailView` when `kind == .package`, replaces the recipe section.
+- `InboundProcessor.syncProductBundleItems` — pulls server rows, preserves pending local edits via `needsSync` guard, reconciles deletions scoped to the company's product space.
+- `SyncEntityType.productBundleItem` — priority 13, alongside other product-richness tables.
+
+**Old-iOS degradation**: pre-bundle App Store builds decode `kind='package'` via the existing `?? .service` fallback in `ProductDTO.toModel()` (line 81). They render bundles as regular service products — billable on estimates as a single line item, but the composition is invisible. `UpdateProductDTO` is sparse and the iOS detail view never exposes a `kind` picker, so old clients cannot clobber `kind='package'` on edit. Verified by reading the codebase at spec time; documented in `docs/superpowers/specs/2026-05-10-products-services-bundles-design.md`.
+
+**Coupling (deferred — tracked as P1-22 follow-up)**:
+- Estimate / Invoice bundle expansion on the line item (uses existing `show_bom_on_estimate` flag — web concern).
+- `CutListMaterializer` recursive expansion when a task is linked to a bundle product.
+
+**Reverse stock→product link (added 2026-05-10, same bugs)**: `VariantDetailView` (Stock segment) now shows a **USED IN** section listing every product whose recipe (`product_materials`) references this variant **or** whose `linked_catalog_item_id` points at the variant's family. Each row taps through to `ProductDetailView`. Closes the discoverability gap that previously left the stock→product relationship one-way.
 
 ---
 
@@ -2868,7 +3058,7 @@ Contains DTOs for the 9 core entities migrated from Bubble:
 | `SupabaseUserDTO` | `User` | `first_name`, `last_name`, `profile_image_url`, `user_color`, `is_company_admin`, `special_permissions` |
 | `SupabaseClientDTO` | `Client` | `phone_number` (not `phone`), `profile_image_url` |
 | `SupabaseSubClientDTO` | `SubClient` | `client_id`, `phone_number`; exposes `parentClientId` for relationship wiring |
-| `SupabaseTaskTypeDTO` | `TaskType` | Table is `task_types_v2`; column is `display` (not `name`) |
+| `SupabaseTaskTypeDTO` | `TaskType` | Table is `task_types`; column is `display` (not `name`) |
 | `SupabaseProjectDTO` | `Project` | `team_member_ids`, `project_images` as arrays; `opportunity_id`; `created_at` + `created_by` round-trip the new audit columns (added 2026-05-10, bug 9d5c2535). Client sets both on insert; never updated on edit. |
 | `SupabaseProjectTaskDTO` | `ProjectTask` | `task_type_id`, `custom_title`, `task_notes`, `source_line_item_id`, `source_estimate_id`, `start_date`, `end_date`; `created_at` round-tripped for recency-sorted pickers (added 2026-05-10). |
 | `SupabaseOpsContactDTO` | `OpsContact` | `bubble_id` |
@@ -3099,6 +3289,27 @@ Project team members are computed from task team members via `updateTeamMembersF
 ---
 
 ## Migration History
+
+### Project / Task Recency Audit (2026-05-10, bug 9d5c2535)
+
+Additive migration to support the "start from recent" suggestions strip on
+the project form and the recency-sorted task type + team-member pickers on
+the task form.
+
+- `projects.created_by` (uuid, nullable, FK → `auth.users.id`) — populated by
+  the iOS client on insert. `NULL` for projects created before 2026-05-10.
+  Indexed by `idx_projects_created_by_created_at (created_by, created_at DESC) WHERE deleted_at IS NULL`.
+- `Project.createdAt` / `Project.createdBy` — new SwiftData properties
+  round-tripped through `SupabaseProjectDTO`.
+- `ProjectTask.createdAt` — new SwiftData property round-tripped through
+  `SupabaseProjectTaskDTO`. The Supabase column already existed; the iOS
+  side now mirrors it so the recency-sorted pickers have a stable signal
+  that doesn't drift on every edit-sync.
+- Recency helpers live on `DataController` (`DataController+Recency.swift`):
+  `recentlyCreatedProjects(by:from:limit:)`, `recentTeamMemberIds(forTaskType:companyId:)`, `recentTaskTypeIds(companyId:)`.
+
+Safe per the iOS-sync constraint — every change is a new nullable column.
+Older app versions ignore the new fields (Codable optionals).
 
 ### CalendarEvent Removal (February 2026)
 
@@ -3903,5 +4114,113 @@ ALTER TABLE agent_writing_profiles ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Company-scoped writing profiles"
   ON agent_writing_profiles FOR ALL USING (company_id = auth.jwt()->>'company_id');
 ```
+
+---
+
+### 26. TaskTypeReminder (Supabase-Backed) — bug 4f00c2d7
+
+**File**: `DataModels/TaskTypeReminder.swift`
+**Purpose**: Reminder template attached to a TaskType. Materialized server-side via triggers into per-task `TaskReminder` rows whenever a `project_tasks` row is created or the template is added/edited on an open task.
+
+**Properties**:
+
+```swift
+@Model
+final class TaskTypeReminder: Identifiable {
+    @Attribute(.unique) var id: String
+    var taskTypeId: String
+    var companyId: String
+    var label: String
+    var leadTimeDays: Int
+    var fireTimeLocalSeconds: Int     // 0..86399, in companies.timezone
+    var requiresAck: Bool
+    var recipientModeRaw: String      // 'task_crew'|'admins'|'permission'|'users'
+    var recipientConfigJSON: String   // encoded ReminderRecipientConfig
+    var displayOrder: Int
+    var lastSyncedAt: Date?
+    var needsSync: Bool
+    var deletedAt: Date?
+    @Relationship(deleteRule: .nullify) var taskType: TaskType?
+}
+```
+
+Inverse on `TaskType.reminderTemplates: [TaskTypeReminder]` (cascade delete).
+
+**Computed**: `recipientMode`, `recipientConfig`, `fireTimeOfDay`, `leadTimeDisplay`.
+
+Postgres table: `public.task_type_reminders` — see `07_SPECIALIZED_FEATURES.md` §24 for the full schema and triggers. RLS scoped to `private.get_user_company_id()`.
+
+---
+
+### 27. TaskReminder (Supabase-Backed) — bug 4f00c2d7
+
+**File**: `DataModels/TaskReminder.swift`
+**Purpose**: Per-ProjectTask reminder instance. Carries a snapshot of the template that materialized it (live-linked while the parent task is open and the reminder is unacknowledged) plus per-instance state — `fires_at`, `acknowledged_at`, `acknowledged_by`, `dismissed_at`, `notified_at`.
+
+**Properties**:
+
+```swift
+@Model
+final class TaskReminder: Identifiable {
+    @Attribute(.unique) var id: String
+    var taskId: String
+    var companyId: String
+    var sourceTemplateId: String?
+    var label: String
+    var leadTimeDays: Int
+    var fireTimeLocalSeconds: Int
+    var requiresAck: Bool
+    var recipientModeRaw: String
+    var recipientConfigJSON: String
+    var firesAt: Date?
+    var acknowledgedAt: Date?
+    var acknowledgedBy: String?
+    var dismissedAt: Date?
+    var notifiedAt: Date?
+    var lastSyncedAt: Date?
+    var needsSync: Bool
+    var deletedAt: Date?
+    @Relationship(deleteRule: .nullify) var task: ProjectTask?
+}
+```
+
+Inverse on `ProjectTask.reminders: [TaskReminder]` (cascade delete).
+
+**Computed**: `isAcknowledged`, `isDismissed`, `isCleared`, `leadTimeDisplay`, `dueDisplay`.
+
+Postgres table: `public.task_reminders`. Live-link / freeze / soft-delete propagation via the triggers documented in `07_SPECIALIZED_FEATURES.md` §24. Cron dispatcher `fire_due_task_reminders()` writes one `notifications` row per resolved recipient when `fires_at <= now()`.
+
+### 28. CalendarMirrorMap (iOS Client-Local) — bug 68123654
+
+**File**: `DataModels/CalendarMirrorMap.swift`
+**Purpose**: Side-table powering the iPhone Calendar Mirror feature. Maps OPS row IDs (`CalendarUserEvent.id`, `ProjectTask.id`) to the EventKit `EKEvent.eventIdentifier` written into the user's iPhone Calendar's dedicated "OPS" calendar.
+
+**Storage:** SwiftData `@Model`, additive in `OPSSchemaV3` (lightweight migration from V2). **Never synced to Supabase.** Wiped on logout, company switch, or feature disable. No Postgres counterpart — this is purely a client-local mapping that lets the reconciler perform O(1) lookups instead of scanning the calendar.
+
+**Properties**:
+
+```swift
+@Model
+final class CalendarMirrorMap {
+    @Attribute(.unique) var opsId: String         // CalendarUserEvent.id or ProjectTask.id
+    var ekEventIdentifier: String                 // EKEvent.eventIdentifier (stable across edits)
+    var sourceType: String                        // MirrorSource.rawValue
+    var contentHash: String                       // SHA-256 of "title|start|end|notes|allDay"
+    var lastMirroredAt: Date
+}
+```
+
+Companion enum (lives in the same file):
+
+```swift
+enum MirrorSource: String, Codable {
+    case calendarUserEvent
+    case projectTask
+}
+```
+
+The `contentHash` field doubles as drift detection — on reconcile, a mismatch between the stored hash and the live row's hash means "user edited the EKEvent in iOS Calendar" and triggers a silent revert (one-way mirror invariant).
+
+Related: see `07_SPECIALIZED_FEATURES.md` §26 "iPhone Calendar Mirror".
 
 **End of Data Architecture Documentation**
