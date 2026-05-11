@@ -1019,6 +1019,25 @@ For each LABOR lineItem in approved estimate:
     })
 ```
 
+**iOS authoring (2026-05-11 — bug 4dadd96c)**: `TaskTemplate` rows are
+authored from inside `TaskTypeSheet`'s `DEFAULT SUB-TASKS` section
+(edit-mode only — the parent task type id must exist before templates
+can pin to it). Each template carries `task_type_ref` (uuid FK) and
+`task_type_id` (legacy text mirror) so legacy reads and new reads land
+on the same parent. Sub-tasks are managed by `TaskTemplateEditSheet`
+(create / edit / soft-delete) and synced via
+`TaskTemplateRepository`. The Supabase table is `task_templates` —
+schema unchanged from the original Bubble-era design.
+
+**Related iOS surfaces for the catalog interlink** (same bug):
+- Product create / edit forms now expose `task_type_ref` via a required
+  picker for LABOR products (optional for Material / Fee). See bible
+  section `03_DATA_ARCHITECTURE.md` § 3 → "Catalog interlink surfaces
+  on iOS" for the full set of surfaces and component file paths.
+- `TaskTypeMergeSheet` now re-pins linked products and templates onto
+  the merge target so neither is silently orphaned on the deleted
+  source row.
+
 ---
 
 ### `ActivityComment` (Supabase) — NEW
@@ -2251,19 +2270,42 @@ PATCH /obj/project/:id           (add opportunityId field)
 PATCH /obj/calendarevent/:id     (add eventType, opportunityId, siteVisitId fields)
 ```
 
-### New Supabase Tables Needed
+### Supabase Tables — status (corrected 2026-05-10)
+
+The list below was originally written as "tables needed." A live audit on 2026-05-10 found `project_photos` already exists in production — schema and use documented below. Other tables in this list may also be stale; a full audit is a separate follow-up.
 
 ```sql
--- activity_comments
--- site_visits
--- project_photos
--- email_connections (renamed from gmail_connections)
--- opportunity_email_threads
--- admin_feature_overrides
--- agent_memories (feature-gated)
--- agent_knowledge_graph (feature-gated)
--- agent_writing_profiles (feature-gated)
--- company_settings (or alter existing if table exists)
+-- activity_comments               (status TBD)
+-- site_visits                     (status TBD)
+-- project_photos                  EXISTS IN PROD — see schema below
+-- email_connections               (renamed from gmail_connections, status TBD)
+-- opportunity_email_threads       (status TBD)
+-- admin_feature_overrides         (status TBD)
+-- agent_memories                  (feature-gated, status TBD)
+-- agent_knowledge_graph           (feature-gated, status TBD)
+-- agent_writing_profiles          (feature-gated, status TBD)
+-- company_settings                (status TBD — alter if table exists)
+```
+
+**`project_photos` actual schema (verified live 2026-05-10):**
+
+| Column | Type | Nullable | Default |
+|---|---|---|---|
+| `id` | uuid | NO | `gen_random_uuid()` |
+| `project_id` | text | NO | — |
+| `company_id` | text | NO | — |
+| `url` | text | NO | — |
+| `thumbnail_url` | text | YES | — |
+| `source` | enum `photo_source` (`site_visit`, `in_progress`, `completion`, `other`, `measurement`) | NO | `'other'` |
+| `site_visit_id` | uuid | YES | — |
+| `uploaded_by` | text | NO | — |
+| `taken_at` | timestamptz | YES | — |
+| `caption` | text | YES | — |
+| `is_client_visible` | boolean | NO | `false` |
+| `created_at` | timestamptz | YES | `now()` |
+| `deleted_at` | timestamptz | YES | — |
+
+`source = 'measurement'` is used by LiDAR Dimensioned Photo Capture (see §07 Section 23) — added 2026-05-10 alongside the spec.
 
 -- Alter existing tables:
 ALTER TABLE line_items ADD COLUMN type text DEFAULT 'LABOR';

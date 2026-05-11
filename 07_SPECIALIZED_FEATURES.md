@@ -30,6 +30,11 @@
 20. [Mobile Wizard System](#20-mobile-wizard-system)
 21. [Blog & Content Marketing Pipeline](#21-blog--content-marketing-pipeline)
 22. [Social Media Generation & Publishing](#22-social-media-generation--publishing)
+23. [Quick Add Task Suggestions (iOS)](#23-quick-add-task-suggestions-ios-2026-05-10)
+24. [Task Reminders](#24-task-reminders-2026-05-10)
+25. [Task Pairs — Auto-Create](#25-task-pairs--auto-create-2026-05-11)
+26. [iPhone Calendar Mirror (iOS)](#26-iphone-calendar-mirror-ios-2026-05-11--bug-68123654)
+27. [LiDAR Dimensioned Photo Capture (iOS)](#27-lidar-dimensioned-photo-capture)
 
 ---
 
@@ -3122,6 +3127,40 @@ The web app surfaces notifications via a right-edge vertical drawer, triggered b
 
 **Recipient lookup — permission, never role.** Server-side dispatch (iOS in-app + push, Web in-app) MUST resolve recipients via `public.users_with_permission(p_company_id, p_permission, p_required_scope)`, not by filtering `users.role`. The RPC honors role grants, per-user overrides (`user_permission_overrides`), and the company-admin escape hatches (`users.is_company_admin`, `companies.account_holder_id`, `companies.admin_ids`). Hardcoding role strings ignores custom roles, skips overrides, and silently excludes users whom the operator company has explicitly granted approval rights. Permission keys live in `role_permissions.permission` — examples: `expenses.approve`, `inventory.manage`, `time_off.approve`, `invoices.record_payment`. iOS callers wrap the RPC via `RecipientLookupService.usersWithPermission(companyId:permission:requiredScope:)`.
 
+### §14.3.1 Standardized Notification Spec (2026-05-10)
+
+Every notification inserted into the `notifications` table MUST satisfy this contract so the in-app rail (web + iOS) routes it correctly and the user has a clear next action. Added in response to bb63c37e — earlier code shipped `type: "mention"` for an "Email sync complete" event with a body of bare counts and no useful deep link.
+
+**Required fields:**
+
+| Field | Rule |
+|-------|------|
+| `type` | Specific event type (e.g. `expense_submitted`, `email_sync_complete`, `projects_needing_tasks`) — NOT a catch-all like `"mention"` or `"update"`. Must exist in `NOTIF_TYPE_META` (web) and the `notificationIcon(for:)` switch (iOS). |
+| `title` | ≤ 32 chars, sentence case for content / UPPERCASE for authority (matches OPS voice). Names what happened, not the system that did it. |
+| `body` | ≤ 140 chars. Includes at least one **concrete reference** the user can act on: a sender name, a count + unit, an amount, a deadline, an entity name. Never bare counts ("3 new"). |
+| `deep_link_type` | Required when the action is anything other than "mark read". Free-form short identifier — both clients route on it. Current values: `subscription` / `trial_expiry` / `paymentReview` / `taskReview` / `unscheduledReview` / `photoStorage` / `catalogOrders` / `expense` / `invoice` / `inbox` / `projectsNeedingTasks` / `email_sync_complete`. |
+| `action_url` | Web URL or `ops://` deep link. Web reads it directly, iOS uses it as supplementary info (e.g. `?tab=...` query strings). |
+| `action_label` | UPPERCASE imperative verb phrase (e.g. `REVIEW`, `VIEW PLAN`, `PLAN THE WORK`). The action button label. |
+| `persistent` | `true` only for long-running operations the user is waiting on (scans, imports, threshold rail entries that auto-clear). `false` (dismissible) for everything else. |
+| Entity FKs | Set `project_id` / `expense_id` / `batch_id` / `note_id` whenever the underlying object exists. Routing fallbacks use these (e.g. an `expense_submitted` row with no `deep_link_type` still resolves to the expense list). |
+
+**iOS routing order (NotificationListView.handleNotificationTap):**
+1. `deep_link_type` switch — first-class routing.
+2. Falls through to a `notification.type` switch — covers legacy rows inserted before `deep_link_type` existed.
+3. Final fallback: `project_id` → `viewProjectDetailsById`.
+
+**iOS push routing (AppDelegate):** mirrors the in-app switch by posting `NotificationCenter` events (`OpenExpenses`, `OpenInvoices`, `OpenJobBoard`, etc.). Every posted event MUST have a corresponding listener mounted on `MainTabView` — a post with no listener is a dead deep link (the original 8ed0d2ed bug).
+
+**When adding a new notification type:**
+1. Pick an explicit `type` string and add it to:
+   - `OPS-Web/src/lib/api/services/notification-service.ts` (`NotificationType` union)
+   - `OPS-Web/src/lib/notifications/notification-meta.ts` (`NOTIF_TYPE_META` registry)
+   - `OPS/OPS/Views/Notifications/NotificationListView.swift` (`notificationIcon(for:)` switch)
+2. If it has a deep link, pick a `deep_link_type` and add a routing case to:
+   - `OPS/OPS/Views/Notifications/NotificationListView.swift` (`handleNotificationTap`)
+   - `OPS/OPS/AppDelegate.swift` (push handler) — only if you also fire pushes for it
+3. Document the type + deep_link in the table above.
+
 **`schedule_change` notification (Phase 3 — 2026-04-27):**
 - Emitted by `useUpdateTask` when the union of (`startDate`, `endDate`, `startTime`, `endTime`, `allDay`) changes on a task. Recipients = union of prior + new `team_member_ids` so removed crew also see the move.
 - Emitted by `/api/cron/recurrence-generate` for each newly-materialized occurrence — one row per assigned crew member.
@@ -5803,6 +5842,490 @@ The project rebuild ran 16 phases. The next entity workspace should follow the s
 ### Anti-pattern: don't fork the shell
 
 If an entity needs a fundamentally different layout (e.g. estimate line-item editor or invoice ledger), the right move is **extending** the shell with a new mode (e.g. `editing-line-items`) and a new mode-aware footer config — not forking the shell into a parallel `EstimateWorkspaceWindow`. The shell is generic precisely so each new entity rides the same drag / resize / persistence / accessibility code path.
+
+---
+
+## 23. Quick Add Task Suggestions (iOS, 2026-05-10)
+
+**Surface:** the TASKS section card on Project Details → Details tab.
+
+**Source bug:** `e3996ac3-4180-4bdf-9423-f1d3b0c7b6de` — "Create suggested actions (like if user commonly adds 'rail install' task with Jake Strickler assigned, then allow user to add that with one tap)".
+
+### Behavior
+
+A horizontal scrollable chip rail sits inside the TASKS section card, between the last existing task row and the ADD TASK button. Each chip represents a `(taskTypeId, sortedTeamMemberIds)` combination the company uses frequently and recently.
+
+- **Tap a chip** → creates a new `ProjectTask` on the current project immediately. No sheet, no confirm. Medium impact haptic. Status `active`, no dates, no notes. `taskType.color` becomes the task's color. Sync queued via `DataController.createTask(dto:)`.
+- **Long-press chip → "Edit Before Adding"** → opens `TaskFormSheet(mode: .create)` with the task type + team members preselected via two new optional init params (`prefilledTaskTypeId`, `prefilledTeamMemberIds`).
+- **Long-press chip → "Dismiss Suggestion"** → suppresses just this chip for just this project. Stored locally in `UserDefaults` under `quickadd.dismissed.<projectId>` as an array of SHA-256 base64 hashes. Never synced. Dismissal is per-project scope: a chip dismissed on Project A still surfaces on Project B.
+
+### Signal model
+
+- **Source set:** `project_tasks WHERE company_id = current AND deleted_at IS NULL`. No status filter — cancelled tasks count, since "rail install with Jake" being cancelled doesn't mean the setup isn't a habit.
+- **Window:** 60 days, measured by `lastSyncedAt` on the local `ProjectTask` row. (When `ProjectTask.createdAt` lands via the parallel `recency-suggestions` work, swap the read site in `TaskSuggestionEngine` to prefer `createdAt`.)
+- **Suggestion key:** `(taskTypeId, sortedTeamMemberIds.joined(","))`. Two tasks count as the same suggestion only if they share both task type AND the exact crew composition (order-insensitive).
+- **Threshold:** ≥ 2 occurrences within the window.
+- **Ranking:** `score = sum(exp(-daysAgo / 30))` across all occurrences in the window. Tiebreak by most-recent occurrence desc, then alphabetical task-type display.
+- **Cap:** top 3 suggestions after dedup.
+- **Dedup against current project:** drop any suggestion whose key already exists on the current project's tasks (ignoring status).
+
+### Files
+
+| File | Role |
+|------|------|
+| `OPS/Utilities/TaskSuggestionEngine.swift` | Pure SwiftData read. `TaskSuggestion` struct + `suggestions(context:companyId:for:)` static method + dismissal storage helpers. Uses `CryptoKit.SHA256` for the per-project dismiss key. |
+| `OPS/Views/Components/Project/QuickAddSuggestionsRail.swift` | The chip rail view. `@Query`s `[TaskType]` + `[User]` for chip rendering, builds the DTO + enqueues sync on commit. |
+| `OPS/Views/Components/Project/Tabs/DetailsTabView.swift` | Inserts the rail in `TaskListSection.body` above the ADD TASK row, gated by `canEdit`. |
+| `OPS/Views/JobBoard/TaskFormSheet.swift` | Init gains `prefilledTaskTypeId`, `prefilledTeamMemberIds` optionals for the long-press path. |
+
+### Gates (no rail rendered)
+
+- `canEdit == false` (read-only role).
+- `tutorialMode == true` (tutorial uses scripted demo data; recency would surface the wrong cards).
+- Engine returns `[]` (no qualifying suggestions, or all dismissed, or all already on this project).
+- Task-type lookup misses for all candidates (orphaned `task_type_id`s).
+
+### Design tokens
+
+- Chip frame: 168 × 56pt, `OPSStyle.Colors.cardBackground` fill, `OPSStyle.Colors.cardBorder` 1pt stroke, `OPSStyle.Layout.cardCornerRadius` (10pt).
+- 3pt colored left bar uses `taskType.color` to anchor the chip to its task type.
+- Rail header `QUICK ADD` — `OPSStyle.Typography.smallCaption`, `tertiaryText`. Subdued — chips compete with neither the task rows above nor the ADD TASK button below.
+- Animation: `OPSStyle.Animation.fast` for chip removals (dismiss / commit). Scale + opacity transition on enter/exit.
+
+### Why on-device
+
+`project_tasks` is already synced to SwiftData. Compute is cheap (a single fetch + a 60-day filter + an aggregation over a few hundred rows max for a typical trades company). Works offline. No new Supabase tables, no edge functions, no server-side suggestion API. The trade-off — every device computes the same suggestions independently — is acceptable for v1; consolidating to a server view is a follow-up if the row count grows large or per-user personalization becomes required.
+
+---
+
+## 24. Task Reminders (2026-05-10)
+
+### Purpose
+
+Pre-task prep work — "order vinyl," "order glass," "buy paint" — used to live in human memory and sticky notes. Reminders attach configurable lead-time pings to a TaskType (template) and materialize per-task instances every time a ProjectTask of that type is scheduled. Instances surface in the OPS notification rail and as a checklist on the project detail view. Bug 4f00c2d7.
+
+### Decisions
+
+1. Reminders attach to **tasks** via the TaskType template — set once on the TaskType, inherited to every task of that type.
+2. `requires_ack` is **per-template configurable**. Non-ack reminders are informational pings, dismissible without a tick.
+3. Recipients are **per-template configurable**: `task_crew | admins | permission | users`. Per CLAUDE.md, recipient resolution never filters by `users.role` — uses `users_with_permission` RPC + `is_company_admin` escape hatches.
+4. **Shared checkbox.** One `acknowledged_at` + `acknowledged_by` per instance. First person to tick it clears it for everyone.
+5. **Template-only.** No ad-hoc per-task reminders. One-off items live in `project_tasks.task_notes`.
+6. **Live link** propagation: edits to a TaskType reminder template flow to every unacknowledged reminder on every open (non-completed, non-cancelled) task of that type. Completed/cancelled tasks freeze.
+
+### Schema (Postgres)
+
+**`task_type_reminders`** — template, attached to a TaskType
+```sql
+id                uuid PK
+task_type_id      uuid FK → task_types(id) ON DELETE CASCADE
+company_id        uuid
+label             text                           -- e.g. "Order vinyl"
+lead_time_days    int  DEFAULT 1 CHECK (>= 0)
+fire_time_local   time DEFAULT '09:00:00'        -- in companies.timezone
+requires_ack      boolean DEFAULT true
+recipient_mode    text  CHECK IN ('task_crew','admins','permission','users')
+recipient_config  jsonb DEFAULT '{}'             -- {permission:"k"} | {user_ids:[uuid]}
+display_order     int  DEFAULT 0
+created_at, updated_at, deleted_at
+```
+
+**`task_reminders`** — per-task instance
+```sql
+id                  uuid PK
+task_id             uuid FK → project_tasks(id) ON DELETE CASCADE
+company_id          uuid
+source_template_id  uuid FK → task_type_reminders(id) ON DELETE SET NULL
+-- snapshotted from template (live-linked while task is open + unack'd):
+label, lead_time_days, fire_time_local, requires_ack, recipient_mode, recipient_config
+-- state:
+fires_at            timestamptz   -- computed via compute_reminder_fires_at()
+acknowledged_at, acknowledged_by, dismissed_at, notified_at
+created_at, updated_at, deleted_at
+```
+
+Indexes: `(task_id) WHERE deleted_at IS NULL`, `(fires_at) WHERE not-yet-acked-or-notified`, `(source_template_id) WHERE deleted_at IS NULL`, `(company_id)`. RLS scoped to `private.get_user_company_id()`.
+
+### Triggers (live-link propagation)
+
+| Trigger | When | Effect |
+|---|---|---|
+| `trg_project_tasks_after_insert_reminders` | AFTER INSERT on `project_tasks` | Materialize one `task_reminders` row per active `task_type_reminders` row for that task's type. |
+| `trg_project_tasks_after_update_reminders` | AFTER UPDATE on `project_tasks` when `start_date`/`start_time` changes | Recompute `fires_at` for unacked reminders on open tasks. Reset `notified_at` if new time > now. Freeze on completed/cancelled. |
+| `trg_task_type_reminders_after_insert` | AFTER INSERT on `task_type_reminders` | Materialize an instance for every open task of that type. |
+| `trg_task_type_reminders_after_update` | AFTER UPDATE on `task_type_reminders` (deleted_at NULL) | Re-snapshot template fields to all unacked reminders on open tasks. Recompute `fires_at` if lead-time or fire-time changed. |
+| `trg_task_type_reminders_after_soft_delete` | AFTER UPDATE when deleted_at transitions NULL → NOT NULL | Soft-delete unacked instances on open tasks. Acked rows stay as history. |
+
+### Helper functions
+
+- **`compute_reminder_fires_at(start_date, lead_time_days, fire_time_local, company_id)`** — STABLE. Converts task start to company-local date, subtracts lead days, combines with fire time, converts back to timestamptz via `companies.timezone`. Returns NULL when `start_date IS NULL` (dormant reminder).
+- **`resolve_task_reminder_recipients(company_id, task_team_members, recipient_mode, recipient_config)`** — SECURITY DEFINER. Returns `SETOF uuid` resolved per mode. Used only by the cron dispatcher.
+
+### Cron dispatch — `fire_due_task_reminders()`
+
+SECURITY DEFINER function returning `int`. Scans for rows where `fires_at <= now() AND notified_at IS NULL AND acknowledged_at IS NULL AND dismissed_at IS NULL AND deleted_at IS NULL` and the parent task is not completed/cancelled. For each, resolves recipients and inserts one `notifications` row per recipient:
+
+```
+type           = 'task_reminder'
+title          = label
+body           = "{lead_days}d before {task_type_display} — {project_title}"
+project_id     = project_id (text)
+deep_link_type = 'project_task_reminder'
+action_url     = '/projects/{project_id}?task={task_id}&reminder={reminder_id}'
+action_label   = 'CONFIRM' (requires_ack) | 'OPEN TASK'
+persistent     = requires_ack
+```
+
+Then stamps `notified_at = now()`. Wrapped in `FOR UPDATE … SKIP LOCKED` so parallel cron invocations don't double-fire.
+
+Scheduled via pg_cron every 5 min if extension present; web cron endpoint can call the function directly otherwise.
+
+### iOS implementation
+
+- **SwiftData V4** — `OPSSchemaV4` adds `TaskTypeReminder` + `TaskReminder` @Model classes; lightweight migration from V3. Inverse relationships: `TaskType.reminderTemplates: [TaskTypeReminder]`, `ProjectTask.reminders: [TaskReminder]`.
+- **DTOs** in `Network/Supabase/DTOs/TaskReminderDTOs.swift` — `TaskTypeReminderDTO`, `TaskReminderDTO`, `CreateTaskTypeReminderDTO`, `UpdateTaskTypeReminderDTO`, `AcknowledgeReminderDTO`, `DismissReminderDTO`, `SoftDeleteDTO`. Time-of-day encoded as `HH:mm:ss` over the wire, seconds-since-midnight in SwiftData (`fireTimeLocalSeconds`). `recipient_config` jsonb decoded into typed `ReminderRecipientConfig`.
+- **Repository** — `TaskReminderRepository.shared` exposes `fetchTemplates(companyId:since:)`, `createTemplate`, `updateTemplate`, `softDeleteTemplate`, `fetchInstances(companyId:since:)`, `fetchInstancesForTask`, `acknowledge(id:userId:)`, `unacknowledge`, `dismiss`.
+- **Sync** — `SyncEntityType` gained `.taskTypeReminder` (priority 5) and `.taskReminder` (priority 7). Both `InboundProcessor` and `DataActor` implement the merge path. After every reminder pull, `NotificationManager.refreshTaskReminderSchedules(context:)` is called to reschedule on-device pushes.
+- **Local notifications** — `NotificationCategory.taskReminder = "TASK_REMINDER_NOTIFICATION"` with an `OPEN TASK` action. `NotificationManager.refreshTaskReminderSchedules` enumerates open reminders, filters to those targeting the current user (via on-device `reminderTargets(...)` mirror of the server-side resolution), schedules `UNCalendarNotificationTrigger` at `fires_at`, and cancels stale identifiers. `cancelTaskReminder(id)` removes the pending schedule on acknowledge/dismiss. Tap routes through `userNotificationCenter(_:didReceive:)` and posts `.openTaskReminder`.
+
+### iOS UI
+
+- **Template editor** — `TaskTypeReminderListSection` embedded in `TaskTypeDetailSheet` shows existing templates with edit/delete affordances and an ADD button. `TaskTypeReminderEditorSheet` is the per-template form: label, lead-time stepper with 1D/2D/3D/1W/2W presets, fire-time DatePicker, requires-ack toggle, recipient picker (segmented: task crew / admins / permission / users) with config field that varies by mode.
+- **Checklist** — `ProjectReminderChecklist` embedded in `DetailsTabView` between Tasks and Description. Groups reminders by parent task (open tasks only); each row shows label + lead-time + due-date subhead. `requires_ack` rows render as a square checkbox (tap to confirm); non-ack rows show a circle + DISMISS button. Optimistic local writes with revert-on-server-failure via `refreshFromServer()`. Haptics on every interaction. Section auto-hides when no open reminders exist for the project.
+
+### Edge cases
+
+| Case | Behavior |
+|------|----------|
+| `project_tasks.start_date IS NULL` | `fires_at` = NULL. Dormant. Populated by reschedule trigger when the task gets a start date. |
+| `fires_at` is already in the past at materialization | `notified_at` stays NULL — cron picks it up on next pass, fires immediately. |
+| Task rescheduled into the past | Same as above. |
+| Already-acked reminder, template lead-time edited | Acked rows are immutable. Template edit skips them. |
+| Recipient `users` mode + user deactivated | They never resolve into the recipient set; no rail row inserted for them. |
+| Recipient `permission` mode + zero users hold the permission | Zero rail rows inserted; reminder still visible to anyone reading the project. |
+
+### Files
+
+| Path | Purpose |
+|------|---------|
+| migration `task_reminders_schema` | Tables, indexes, triggers, helper + cron functions |
+| `OPS/OPS/DataModels/TaskTypeReminder.swift` | Template @Model |
+| `OPS/OPS/DataModels/TaskReminder.swift` | Instance @Model |
+| `OPS/OPS/DataModels/Migrations/OPSSchemaV4.swift` | Schema bump |
+| `OPS/OPS/Network/Supabase/DTOs/TaskReminderDTOs.swift` | Wire format |
+| `OPS/OPS/Network/Supabase/Repositories/TaskReminderRepository.swift` | CRUD + ack/dismiss |
+| `OPS/OPS/Views/JobBoard/TaskTypeReminderEditorSheet.swift` | Admin template editor surfaces |
+| `OPS/OPS/Views/Components/Project/ProjectReminderChecklist.swift` | Crew-facing checklist |
+| spec `docs/superpowers/specs/2026-05-10-task-reminders-design.md` | Approved design |
+
+### Out of scope (follow-ups)
+
+- Web admin UI for template editing (admins use iOS today; web tabular editor can land later).
+- Recurring reminders (every X days, repeats) — single-shot only.
+- Per-reminder snooze in the rail.
+- User picker UI for `recipient_mode = 'users'` (current iOS surface is a comma-separated id field; web-side picker is the proper home).
+
+---
+
+## 25. Task Pairs — Auto-Create (2026-05-11)
+
+### Overview
+
+Configure pairs of task types so that creating one auto-creates the other on the
+same project, with rich scheduling rules. Motivating example: "Glass Panel install
+is auto-scheduled the first Wednesday on or after 1 week after Glass Rail install
+ends, with the same crew."
+
+Spec: `docs/superpowers/specs/2026-05-10-task-pairs-auto-create-design.md`.
+Triggering bug: `f4bbd11c-7e79-482f-843d-b286052f3477`.
+
+### Configuration
+
+Pair behavior is configured at the **task type level** — never per-instance.
+Reuses the existing `TaskTypeDependency` model in `TaskType.dependenciesJSON`,
+extended with four new fields:
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `auto_create` | bool | false | When the predecessor is created, auto-spawn this task |
+| `inherit_crew` | bool | true | Spawn copies predecessor's `team_member_ids` |
+| `min_gap_days_after_end` | int | 0 | Days after predecessor's end date before this task starts (`after_end` mode) |
+| `weekday_constraint` | int? | nil | ISO 1=Mon…7=Sun; round up to next occurrence after the gap |
+
+The existing `overlap_mode` enum gains a third value `after_end` alongside the
+unchanged `percentage` and `constant` modes. Set on the **dependent** type's
+dependency entry (the relationship is stored backward in the model — "Glass
+Panel depends on Glass Rail with auto_create=true").
+
+### Scheduling Rule Evaluation (`after_end`)
+
+```
+predEnd      = predecessorStart + (predecessorDuration - 1) days
+dayAfterEnd  = predEnd + 1 day
+gappedStart  = dayAfterEnd + max(min_gap_days_after_end, 0) days
+result       = roundUpToWeekday(gappedStart, weekday_constraint)
+```
+
+`roundUpToWeekday` advances 0–6 days until it hits the target ISO weekday.
+nil constraint returns the gapped date unchanged.
+
+### Spawning Pipeline
+
+`TaskPairSpawner.spawnPairs(forPredecessor:in:companyId:)`:
+
+1. Fetch all non-deleted task types for the company.
+2. Filter to types whose `dependencies` contain an entry with
+   `dependsOnTaskTypeId == predecessor.taskTypeId && autoCreate`.
+3. For each candidate, skip if:
+   - A task with `pairedFromTaskId == predecessor.id && taskTypeId == candidate.id`
+     already exists on the project (idempotency).
+   - `SchedulingEngine.wouldCreateCycle` would create a loop.
+4. Compute crew (inherit if requested + non-empty; else type's `defaultTeamMemberIds`).
+5. Compute dates via `dep.earliestStart()` if predecessor has dates; else nil.
+6. Insert the spawn with `paired_from_task_id` set and emit a sync op.
+
+Spawner is invoked from **outbound** task creation paths only:
+- `DataController.createTask(task:)`
+- `DataController.createTask(dto:)` (the single source of truth for UI)
+
+Spawner is **never** invoked from `InboundProcessor` — inbound tasks have
+already been spawned on the source client and arrive via normal sync.
+
+### Cascade Behavior
+
+`SchedulingEngine.calculateCascade` was extended to skip tasks where
+`schedulingLocked == true`. The lock is set automatically by
+`DataController.updateTaskSchedule(... manualEdit: true)` (the default for
+user-driven calls). System-driven calls — `pushTaskWithCascade` for affected
+dependents, `undoCascade` for reverted tasks, `autoScheduleProject` for system
+placements — pass `manualEdit: false` to preserve auto-tracking.
+
+Once a paired task is locked, predecessor moves no longer auto-shift it.
+The lock is only cleared by deleting and re-spawning.
+
+### Delete / Cancel Cascade
+
+One-way cascade from predecessor to paired descendants (matched by
+`pairedFromTaskId`):
+
+- `DataController.deleteTask(_:)` (hard delete) → soft-delete cascading children first
+- `DataController.deleteTask(taskId:)` (soft delete) → soft-delete cascading children
+- `DataController.updateTaskStatus(... to: .cancelled)` → cancel cascading children
+
+Deleting / cancelling a paired task does NOT affect its predecessor.
+
+### Notifications
+
+On every successful spawn, `spawnPairsForPredecessor` creates an in-app
+notification of type `task_pair_spawned` for each crew member assigned to the
+spawn:
+
+```
+// NEW TASK
+Auto-scheduled GLASS PANEL INSTALL for Wed Mar 11 — paired from Glass Rail install
+```
+
+Deep-links to the project details screen.
+
+### UX — `TaskTypeSheet`
+
+The existing dependency editor was extended:
+
+- **3-way mode toggle**: `PERCENTAGE · CONSTANT · AFTER END` (sliding underline tabs).
+- **After-End controls**: snap slider for gap days (presets `0, 1, 3, 7, 14, 21, 28`)
+  + 8-segment weekday picker (`ANY · M · T · W · TH · F · SA · SU`).
+- **Pair Behavior section** (always visible in edit mode):
+  - `AUTO-CREATE THIS TASK WHEN [predecessor] IS CREATED` — toggle.
+  - `INHERIT CREW FROM [predecessor]` — toggle, disabled while auto-create is off.
+- **Auto-create badge** in view mode: `// AUTO-CREATED FROM [predecessor]`.
+- **Visualization bars**: `after_end` mode renders predecessor → dashed gap line
+  with `+Nd` label → dependent (with weekday prefix if constrained).
+
+### Files Touched
+
+| File | Change |
+|------|--------|
+| `OPS/DataModels/TaskTypeDependency.swift` | +4 fields, `after_end` case in `earliestStart`, `roundUpToWeekday` helper |
+| `OPS/DataModels/ProjectTask.swift` | +`pairedFromTaskId`, `scheduleLocked`, `schedulingLocked` (protocol) |
+| `OPS/DataModels/TaskType.swift` | +`defaultDuration` |
+| `OPS/Utilities/SchedulingEngine.swift` | `SchedulableTask.schedulingLocked` + cascade guard |
+| `OPS/Utilities/TaskPairSpawner.swift` | NEW |
+| `OPS/Utilities/DataController.swift` | `spawnPairsForPredecessor`, `cascadeSoftDeleteToPaired`, `cascadeCancelToPaired`, `updateTaskSchedule(... manualEdit:)` |
+| `OPS/Network/Supabase/DTOs/CoreEntityDTOs.swift` | DTO fields |
+| `OPS/Network/Supabase/DTOs/CoreEntityConverters.swift` | DTO → model round-trip |
+| `OPS/Views/JobBoard/TaskTypeSheet.swift` | 3-way mode toggle, after-end controls, pair toggles, after-end bars, description text |
+| Migration `task_pairs_auto_create` | Adds `project_tasks.paired_from_task_id`, `project_tasks.schedule_locked`, `task_types.default_duration` |
+| `docs/superpowers/specs/2026-05-10-task-pairs-auto-create-design.md` | Spec |
+
+### Out of scope (follow-ups)
+
+- OPS-Web parity for the pair-config UI (web reads/respects pair behavior via sync
+  but the edit surface is iOS-only in this iteration).
+- Multi-weekday rules ("M/W/F") — single weekday only.
+- Time-of-day component to the rule (existing `startTime/endTime` defaults apply).
+- Reactivating a cancelled predecessor auto-reactivating cancelled paired tasks
+  (one-way cascade by design; user must reactivate manually).
+
+---
+
+## 26. iPhone Calendar Mirror (iOS, 2026-05-11) — Bug 68123654
+
+One-way mirror from OPS schedule rows to a dedicated `OPS` calendar in the user's iPhone Calendar app. Powered by `EventKit` + `BGTaskScheduler` + a SwiftData side-table.
+
+### Scope (current)
+
+- `CalendarUserEvent` (personal events, time off — **any status**; title prefix reflects status)
+- `ProjectTask` where the current user is in `schedulingTeamMemberIds`
+
+### Excluded
+
+- `SiteVisit` — iOS model is unwired (no DTO, no repository, no sync wiring; 0 production rows). Re-add as a follow-up once SiteVisit sync ships.
+- Two-way sync — researched and deferred; the spec at `ops-ios/docs/superpowers/specs/2026-05-10-iphone-calendar-mirror-design.md` documents the rejected design space.
+
+### Sync direction
+
+One-way (OPS → device). Edits the user makes inside iPhone Calendar are **silently reverted** on next reconcile (reconcile-and-revert pattern). `EKCalendar.allowsContentModifications` is a read-only reflection of the source's capability — Apple offers no public API to mark our calendar read-only to the user, so we enforce the invariant by reconciling.
+
+### Calendar destination
+
+Dedicated `OPS` calendar, iCloud (CalDAV) source preferred; falls back to local source when no iCloud account. Calendar is recreated automatically if the user deletes it from iOS Calendar. Color: `OPSStyle.Colors.opsAccent` (#6F94B0 steel blue — iCloud may normalize slightly).
+
+### Permission API
+
+`EKEventStore.requestFullAccessToEvents()` (iOS 17+). Info.plist key: `NSCalendarsFullAccessUsageDescription`. **Full access** (not write-only) is required so the reconciler can read back its own events — write-only access blocks event reads, breaking reconciliation.
+
+### Mirror window
+
+Past 30 days → future 12 months from `Date()`. Prevents history dumps. Outside-window rows are excluded on backfill and pruned on reconcile.
+
+### Architecture
+
+| Component | Path |
+|---|---|
+| Singleton service (`@MainActor`-isolated, holds `EKEventStore`) | `OPS/Services/CalendarMirrorService.swift` |
+| Pure title/body/hash builder | `OPS/Services/CalendarMirror/CalendarMirrorContent.swift` |
+| Eligibility predicates (window + membership) | `OPS/Services/CalendarMirror/CalendarMirrorEligibility.swift` |
+| Bridge for non-View access to ModelContainer | `OPS/Services/CalendarMirror/ModelContainerHolder.swift` |
+| First-event-save permission sheet | `OPS/Views/CalendarMirror/CalendarMirrorPromptSheet.swift` |
+| Settings toggle (integration card) | `OPS/Views/Settings/IntegrationsSettingsView.swift` (CALENDAR section) |
+| Dismissable "mirror disabled" banner | `OPS/Views/ScheduleView.swift` |
+| Side-table model | `OPS/DataModels/CalendarMirrorMap.swift` (see `03_DATA_ARCHITECTURE.md` §28) |
+
+### Triggers
+
+Mirror writes are fired from:
+
+1. `CalendarUserEventRepository` — after successful `create`, `updateStatus`, `updateEvent`, `softDelete`, `softDeleteSeries`, `softDeleteSeriesFromDate`.
+2. `DataController.updateTaskSchedule` — after schedule change.
+3. `DataController.updateTaskTeamMembers` — after team change (may add/remove current-user eligibility).
+4. `DataController.deleteTask` and cascaded soft-deletes — fires `unmirrorEvent`.
+5. `RealtimeProcessor` — after applying remote `project_tasks` changes. For `calendar_user_events` realtime, the branch triggers a full `reconcileAll()` because the local SwiftData write happens later via fetcher.
+
+Reconcile runs on app launch, `UIApplication.didBecomeActiveNotification`, `.EKEventStoreChanged` (debounced 1s via Combine), Supabase realtime for `calendar_user_events`, and opportunistic `BGAppRefreshTask` registered as `com.ops.calendar.mirror.refresh` (Info.plist `BGTaskSchedulerPermittedIdentifiers`).
+
+### Reconcile-and-revert algorithm
+
+1. Verify OPS calendar still exists (`EKEventStore.calendar(withIdentifier:)`). If nil, recreate and full backfill.
+2. Iterate every `CalendarMirrorMap` row:
+   - Source row still eligible? Compare EKEvent fields to source-of-truth. On drift, overwrite with source values. On hash change, update + bump hash.
+   - Source row missing / soft-deleted / out of window / user no longer eligible? Delete EKEvent, delete map row.
+   - EKEvent missing (user deleted in iOS Calendar)? Recreate from source.
+3. Backfill any eligible source row that has no map entry.
+4. Orphan sweep: events in OPS calendar with no map entry. Try to recover by parsing `EKEvent.url` (`ops://event/<id>`). If unrecoverable, delete.
+
+The `contentHash` (SHA-256 of canonical "title|start|end|notes|allDay") makes idempotent reconcile near-free.
+
+### Event title format
+
+| Source | Title format | Example |
+|---|---|---|
+| `CalendarUserEvent.personal` | `{title}` | `Dentist` |
+| `CalendarUserEvent.timeOff` (approved) | `Time Off — {title}` | `Time Off — Cottage` |
+| `CalendarUserEvent.timeOff` (pending) | `[Pending] {title}` | `[Pending] Cottage` |
+| `CalendarUserEvent.timeOff` (denied) | `[Denied] {title}` | `[Denied] Cottage` |
+| `ProjectTask` | `{project.title} — {taskType.display}` | `Smith Deck — Plumbing rough-in` |
+
+`EKEvent.url` = `ops://event/<calendarUserEventId>` or `ops://projects/<projectId>/tasks/<taskId>` — doubles as deep-link tap-through and reconciler recovery anchor.
+
+### Deep link
+
+`ops://event/<calendarUserEventId>` routes through `AppDelegate.handleDeepLink` (new `event` entity case), posts `Notification.Name("OpenCalendarUserEvent")` with `eventId` in `userInfo`. Project task mirror uses the existing `ops://projects/<projectId>/tasks/<taskId>` form.
+
+### Permission UX
+
+1. **First-event-save prompt** — after the user taps Save on their first `CalendarUserEvent` post-update, gated on `ops.calendar.mirror.hasShownPrompt` UserDefault. Modal sheet (`CalendarMirrorPromptSheet`).
+2. **Settings toggle** — `IntegrationsSettingsView` CALENDAR section. Confirm-alert on disconnect.
+3. **Dismissable banner** — `ScheduleView`, shows when `hasShownPrompt && !isEnabled && status != .denied && dismissCount < 2`. Tap → enable.
+
+### Logout / company switch
+
+`CalendarMirrorService.handleLogout()` deletes the entire `OPS` calendar from EventKit (cascades to all mirrored events) and clears `CalendarMirrorMap`. Wired into `DataController.logout()`.
+
+### Schema migration
+
+`OPSSchemaV3` (`OPSSchemaCommon.unchangedModels + [WizardState, CalendarMirrorMap]`). Lightweight migration from V2 (purely additive).
+
+### Side-table
+
+See `03_DATA_ARCHITECTURE.md` §28 for the full `CalendarMirrorMap` shape.
+
+### Background refresh
+
+`BGAppRefreshTask` registered as `com.ops.calendar.mirror.refresh` in `AppDelegate.application(_:didFinishLaunchingWithOptions:)`. Opportunistic top-up only — primary path is foreground reconcile.
+
+---
+
+## 27. LiDAR Dimensioned Photo Capture
+
+**Spec:** `ops-software-bible/specs/2026-05-10-lidar-dimensioned-photo-capture-design.md`
+**Implementation plan:** `ops-software-bible/specs/plans/2026-05-10-lidar-dimensioned-photo-capture-plan.md`
+**Status (2026-05-10):** Phase A foundation complete (Supabase migrations applied, SwiftData model extended, `DimensionsData` schema added, Info.plist updated). Phases B–H pending implementation per plan.
+
+### Summary
+
+iOS-only feature. Tap **MEASURE** from `ProjectActionBar` on an active project → live AR view → shutter triggers AVFoundation+LiDAR synchronized capture (48 MP photo + 768×576 depth map + camera intrinsics) → opens `DimensionedAnnotationView` for tap-to-measure or auto-detected dimensions on classified windows/doors. Optional **reference-object precision mode** upgrades accuracy from `±1″ LIDAR` to `±5 MM CALIBRATED`. Output: PNG with burned-in Hover-style external-leader labels (2048 long-edge); optional PDF via PDFKit; structured `dimensions jsonb` row in `project_photo_annotations`.
+
+### Wedge (why this exists)
+
+Every other LiDAR measurement app forces a full room scan (Magicplan, Polycam), manual line-drawing per dimension (CompanyCam), or 8–12 guided cloud-processed photos (Hover). OPS is the only **one-shot snap → quote-ready dimensioned image in 5 seconds** flow for trades quoting.
+
+### Architecture
+
+| Component | File | Responsibility |
+|---|---|---|
+| Live aim phase | `ARWorldTrackingConfiguration` w/ `.smoothedSceneDepth` + `.meshWithClassification` | Mesh overlay + opening detection |
+| Shutter handoff | `LiDARCaptureCoordinator` (5-step ARKit→AVCapture sequence) | Pause ARKit, snapshot anchors, activate AVCapture |
+| Capture | `AVCaptureDevice.builtInLiDARDepthCamera` + `AVCaptureSynchronizedDataCollection` | 48 MP photo + 768×576 FP32 disparity + intrinsics |
+| Measurement engine | `DepthRaycaster` + `OpeningClassifier` + `ReferenceObjectCalibrator` + custom DLT `PnPSolver` | World-point extraction + auto-detection + scale calibration |
+| Rendering | `DimensionsRenderer` (Hover-style external leaders) | 2048 long-edge PNG burn + on-screen overlay |
+| Persistence | `DimensionedPhotoSyncManager` via existing `PresignedURLUploadService` | HEIC+depth → `project_photos.url`, sidecar JSON + raw depth → S3 |
+| UI | `DimensionedCaptureView` + `DimensionedAnnotationView` | SwiftUI views with 6-tool toolbar, calibrate flow, accuracy badge |
+
+### Data model
+
+- New `dimensions jsonb` column on `project_photo_annotations` (additive, NULL on legacy rows). Schema in spec §4.1.
+- New `'measurement'` value in `photo_source` enum.
+- SwiftData `PhotoAnnotation` extended with `dimensionsData: Data?` (synced) + `localDepthMapPath`, `localSidecarPath`, `localCaptureFinishedAt` (local-only working state).
+
+### Device fallback ladder
+
+| Tier | Accuracy | UX |
+|---|---|---|
+| LiDAR (iPhone 12 Pro+, iPad Pro 2020+) | ±1″ uncalibrated, ±5 MM calibrated | Full pipeline + auto-detect + reference-object option |
+| Non-LiDAR with ARKit | ±2″ in-plane only | Manual measurement only (no auto-detect); reference-object option is in-plane-only with `COPLANAR ONLY` badge |
+| No AR support | Estimate only | Manual scale tool — user marks known length, app proportions |
+
+### Feature flag
+
+`feature.measurement.dimensioned_capture` — default OFF in initial release, flips ON after 48 hrs of crash-free operation post-launch.
+
+### Out of scope (v1)
+
+Multi-photo stitching, volume/3D measurement, third-party AR markers, web-side editing of measurements, voice annotations on dimensioned photos, auto-detection beyond windows/doors/wall-sections.
+
+### Pre-existing security follow-up
+
+`project_photo_annotations` RLS is wide open (all 3 policies evaluate to `true`). This spec inherits the gap but does NOT widen it. Tracked as separate ticket `RLS HARDENING - P1-1` — must complete before flipping the feature flag ON for production traffic.
 
 ---
 
