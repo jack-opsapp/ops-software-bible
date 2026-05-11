@@ -131,6 +131,8 @@ interface Opportunity {
 }
 ```
 
+**iOS parity (2026-05, BOOKS tab Phase 1):** The iOS `Opportunity` SwiftData model (`OPS/DataModels/Supabase/Opportunity.swift`) now models the full opportunity schema additively. All 47 columns are now read-side on iOS; AI/location/images fields (`aiSummary`, `aiStageConfidence`, `aiStageSignals`, `detectedValue`, `latitude`, `longitude`, lead image set) remain deferred to a later phase. Implementing commit: `9047b4b` in ops-ios.
+
 ### Pipeline Board UI
 
 **Component**: `src/app/(dashboard)/pipeline/_components/pipeline-board.tsx`
@@ -186,6 +188,8 @@ interface StageTransition {
 }
 ```
 
+**iOS parity (2026-05, BOOKS tab Phase 1):** iOS now writes `stage_transitions` rows on every stage move via the new `move_opportunity_stage` Postgres RPC. The RPC atomically updates `stage`, `stage_entered_at`, `stage_manually_set`, and INSERTs the transition row in a single transaction — eliminating the prior risk of a stage update landing without a paired transition record on partial network failure. RPC source: `ops-software-bible/migrations/2026-05-07-01-move-opportunity-stage-rpc.sql` (committed `b8db1aa`). iOS calling code: `OpportunityRepository.moveToStage(opportunityId:to:userId:)` (commit `bf26423`).
+
 ### OpportunityService
 
 Located at `src/lib/api/services/opportunity-service.ts` (wired from `2742b60` commit):
@@ -197,6 +201,23 @@ Located at `src/lib/api/services/opportunity-service.ts` (wired from `2742b60` c
 - `moveToStage(id, newStage, userId)` — wraps updateOpportunity, records transition
 - `markWon(id, actualValue, projectId?)` — sets Won + actualCloseDate
 - `markLost(id, lostReason, lostNotes?)` — sets Lost + actualCloseDate
+
+**iOS equivalence (2026-05, BOOKS tab Phase 1):** `OpportunityRepository` (`OPS/Network/Supabase/Repositories/OpportunityRepository.swift`, rebuilt in commit `bf26423`) mirrors the web service surface:
+
+| iOS `OpportunityRepository` | Web `opportunity-service` | Notes |
+|---|---|---|
+| `fetchAll()` | `fetchOpportunities` | iOS pulls all non-deleted; client-side stage filtering |
+| `fetchOne(_:)` | `fetchOpportunity` | iOS hydrates activities / follow-ups / transitions via separate fetchers below |
+| `create(_:)` | `createOpportunity` | iOS sends explicit `title` when available; DB `trg_opportunities_default_title` still backfills empty titles |
+| `update(_:fields:)` | `updateOpportunity` | Diff-PATCH (sparse field set) |
+| `softDelete(_:)` | `deleteOpportunity` | Both implementations soft-delete via `deleted_at` |
+| `moveToStage(opportunityId:to:userId:)` | `moveToStage` | iOS calls the `move_opportunity_stage` RPC; web still does updateOpportunity + records transition client-side |
+| `markWon(opportunityId:actualValue:projectId:userId:)` | `markWon` | — |
+| `markLost(opportunityId:reason:notes:userId:)` | `markLost` | — |
+| `archive(_:)` / `unarchive(_:)` | — | **iOS-only.** No web equivalent yet — flag for future web parity. |
+| `fetchActivities(opportunityId:)` | (included in `fetchOpportunity`) | iOS reads via direct Supabase query against `activities` |
+| `fetchFollowUps(opportunityId:)` | (included in `fetchOpportunity`) | iOS reads via direct Supabase query against `follow_ups` |
+| `fetchStageTransitions(opportunityId:)` | (included in `fetchOpportunity`) | iOS reads via direct Supabase query against `stage_transitions` |
 
 ---
 
@@ -514,9 +535,16 @@ See `03_DATA_ARCHITECTURE.md` § 21 (Product) for the full SwiftData model with 
 type ProductPricingUnit =
   | 'each' | 'flat_rate' | 'linear_foot' | 'sqft' | 'hour' | 'day';
 
-type ProductKind = 'service' | 'good';
+// On the wire: 'service' | 'material' | 'package'. The Swift enum case
+// names `.good` and `.package` map to the wire values `material` and
+// `package` respectively (`.good` is legacy — kept for source stability).
+type ProductKind = 'service' | 'material' | 'package';
 
 type LineItemType = 'LABOR' | 'MATERIAL' | 'OTHER';
+
+// User-facing iOS taxonomy (added 2026-05-10, bug 164e0595). Derives
+// kind + type on save. See § Catalog UI below for the mapping table.
+type ProductCategory = 'service' | 'material' | 'fee' | 'bundle';
 
 interface Product {
   id: string;
@@ -547,7 +575,8 @@ interface Product {
 
   taskTypeId: string | null;
   taskTypeRef: string | null;
-  unitId: string | null;          // FK catalog_units.id
+  unitId: string | null;                // FK catalog_units.id
+  linkedCatalogItemId: string | null;   // FK catalog_items.id (added 2026-05-10, bug 164e0595)
 
   createdAt: Date | null;
   updatedAt: Date | null;
@@ -556,6 +585,26 @@ interface Product {
 ```
 
 **Wire-field fix**: earlier builds wrote `unit_price`/`cost_price` — columns that do not exist in Supabase. The DTO now correctly maps `base_price`/`unit_cost`. The legacy `default_price` column is preserved with a Postgres trigger mirroring `base_price` ↔ `default_price` (see `migrations/2026-05-06-02-catalog-views-triggers.sql`) until ops-web cuts over to `base_price`.
+
+### iOS Catalog UI — New Product Sheet (post bug 164e0595)
+
+The legacy iOS New Product sheet forced two overlapping pickers (`Kind` Service/Good + `Line item type` Labor/Material/Other). The 2026-05-10 redesign collapses these into a single 4-way `ProductCategory` picker. The form derives `kind` + `type` on save so old App Store builds and the web app keep reading sensible values without any client-side change.
+
+| User picks | wire `kind` | wire `type` | Default `taxable` | Task type | Components | Stock link |
+|---|---|---|---|---|---|---|
+| Service  | `service`  | `LABOR`    | `true`  | required | optional | — |
+| Material | `material` | `MATERIAL` | `true`  | — | — | optional |
+| Fee      | `service`  | `OTHER`    | `false` | — | — | — |
+| Bundle   | `package`  | `OTHER`    | `true`  | required | optional | — |
+
+Per-category form affordances:
+- **Service / Bundle**: required `Task Type` picker writes `task_type_ref`. Optional `// COMPONENTS` disclosure stages recipe rows (variant-pinned only) via `AddProductMaterialSheet` in draft mode; rows commit to `product_materials` after Product create.
+- **Material**: optional `// SHOW IN STOCK` toggle. When ON, the operator either picks an existing `catalog_items` row or creates one (plus a default `catalog_variants` row) via `CatalogRepository.createDefaultItemForProduct`. The chosen id is written to `linked_catalog_item_id`.
+- **Fee**: no extras — minimises the form so a permit / passthrough entry stays an 8-second flow.
+
+The `Taxable` toggle pre-defaults per category (Service/Material/Bundle → ON, Fee → OFF). Once the operator flips it manually, the override sticks across category switches (`taxableUserOverridden` flag in the form's view-state).
+
+**Inventory deduction on sale is not yet wired** — see § P1-28 scope for `inventory_deductions` integration. The `linked_catalog_item_id` column is present so that work can land without further iOS changes.
 
 Products are soft-deleted. `ProductService.fetchProducts(companyId, activeOnly=true)` returns only active, non-deleted products by default. Line items reference a product via `productId`. When a product is added to an estimate, it pre-fills the line item name, description, `resolved_unit_price`, unit cost, unit, taxable flag, type, and `taskTypeId`.
 
@@ -1371,6 +1420,34 @@ protocol ExpenseOCRServiceProtocol {
 **OCRResult** struct: `merchantName`, `date`, `total`, `subtotal`, `taxAmount`, `paymentMethod`, `rawText`, `confidenceScores` (per-field confidence 0-1).
 
 **AppleVisionOCRService**: Uses `VNRecognizeTextRequest` with `.accurate` recognition level. Processes all recognized text through `ReceiptParser` which uses regex patterns and heuristics to extract structured fields from raw OCR text.
+
+### iOS BOOKS Tab (Phase 1, May 2026)
+
+The BOOKS tab is an iOS hub that combines Pipeline + Estimates + Invoices + Expenses behind a single adaptive entry point, with a financial dashboard at the top. It replaces the previous mislabeled "Pipeline" tab slot.
+
+**Surface:**
+- Lives at iOS `MainTabView.swift:223` rendering `BooksTabView` (commit `dd705a1`).
+- Header uses a new `AppHeader.HeaderType.books` case (title "BOOKS").
+- Top of hub: extended `MoneyDashboardHeader` with the `SmartStatCarousel` showing financial stats plus new pipeline stats — active leads, weighted forecast, stale count, next follow-up (commit `bf23031`).
+- Segmented control routes to Pipeline / Estimates / Invoices / Expenses sub-views (each reused in `embedded: true` mode where applicable).
+
+**Permission gating:**
+- Tab is visible when the operator has **ANY** of `pipeline.view` / `finances.view` / `estimates.view` / `expenses.view`.
+- Segments inside the hub hide individually based on the matching permission.
+- **Auto-skip behavior:** if an operator has only **one** of the four segment permissions, the hub UI is bypassed and the tab routes directly to that segment's list view (commit `06bfbea`). Crew users with `expenses.view` only land on `MyExpensesView` directly.
+
+**Pipeline section (the new surface):**
+- Uses a **Stage-Pager** pattern (Pipedrive-validated for single-owner mobile use) — a horizontal stage strip + full-width lead cards + bottom-sheet action menu. Implementing commits: `c951d3a` (root + `BooksSection` enum), `54c9b2f` (`LeadDetailView`), `461f243` (`LeadActionSheet`).
+- Add Lead, Edit Lead, Add Follow-Up, Lost Reason, and AR Aging detail sheets land in commits `abd2817`, `4a82d79`, `e753f74`, `f76f457`, `2333e38`.
+
+**FAB integration:**
+- Add Lead is surfaced via the global FAB's MONEY group, with segment-aware ordering so the matching create action floats to the top of the group based on the active BOOKS segment (commit `9799991`).
+
+**Spec & plan:**
+- Spec: `ops-ios/docs/superpowers/specs/2026-05-07-books-tab-design.md`
+- Implementation plan: `ops-ios/docs/superpowers/plans/2026-05-07-books-tab-implementation.md`
+
+**Phase 2 follow-ups** (tracked in spec §16): `InvoiceFormSheet` + `RecordPaymentSheet` to replace FAB MONEY-group TODOs; segment-scoped universal search; AI-generated lead fields on iOS (`aiSummary`, `aiStageConfidence`, etc.); lead images + lat/long; import contacts → leads; per-company `pipeline_stage_configs` parity (Phase 3, drift register #15).
 
 ---
 
