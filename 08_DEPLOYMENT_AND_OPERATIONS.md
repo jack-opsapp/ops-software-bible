@@ -1357,6 +1357,21 @@ OPS-Web is the primary web application — the admin dashboard, management porta
 - **Security headers:** Applied to all routes. Prevents MIME-sniffing, restricts referrer/opener policies, and allows framing only by `app.opsapp.co` itself plus the public OPS site (`opsapp.co` / `www.opsapp.co`) for approved embeds.
 - **Framework detection:** Explicitly set to `nextjs`.
 
+### Node.js Runtime Pin
+
+**File:** `OPS-Web/package.json`
+```json
+{
+  "engines": {
+    "node": "22.x"
+  }
+}
+```
+
+OPS-Web pins Node.js `22.x` in source control. Do not rely on the Vercel project-level default for this app. App Router API routes are customer-facing production infrastructure (`/api/auth/sync-user`, feature flags, email, Stripe, cron, and webhooks); a Vercel default runtime change can alter every serverless function on the next deployment even when application code did not change.
+
+The `engines.node` value is mirrored in `package-lock.json` and must stay there. Per Vercel's Node runtime behavior, `package.json#engines.node` overrides the Project Settings Node version for new deployments, which makes the runtime deterministic across production, preview, and restored deployments.
+
 ### Next.js Configuration
 
 **File:** `OPS-Web/next.config.ts`
@@ -1509,6 +1524,7 @@ rm .env.verify.production
 
 ```json
 {
+  "engines": { "node": "22.x" },
   "dev": "next dev --turbopack",
   "build": "next build",
   "start": "next start",
