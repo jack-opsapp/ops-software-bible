@@ -1,7 +1,7 @@
 # 08 - Deployment and Operations
 
-**Document Version:** 1.1
-**Last Updated:** February 28, 2026
+**Document Version:** 1.2
+**Last Updated:** May 12, 2026
 **Status:** Production Reference
 
 ---
@@ -1371,6 +1371,21 @@ OPS-Web is the primary web application — the admin dashboard, management porta
 OPS-Web pins Node.js `22.x` in source control. Do not rely on the Vercel project-level default for this app. App Router API routes are customer-facing production infrastructure (`/api/auth/sync-user`, feature flags, email, Stripe, cron, and webhooks); a Vercel default runtime change can alter every serverless function on the next deployment even when application code did not change.
 
 The `engines.node` value is mirrored in `package-lock.json` and must stay there. Per Vercel's Node runtime behavior, `package.json#engines.node` overrides the Project Settings Node version for new deployments, which makes the runtime deterministic across production, preview, and restored deployments.
+
+### Next.js App Router Route Shape Rules
+
+App Router dynamic segment names are part of the compiled server route table. Never keep two routes with the same URL shape but different parameter names under the same parent path.
+
+Example of a production-breaking collision:
+
+```text
+src/app/api/admin/email/templates/[templateId]/versions/compare/route.ts
+src/app/api/admin/email/templates/[type]/versions/compare/route.ts
+```
+
+Both compile to `/api/admin/email/templates/:param/versions/compare`. Next.js throws at runtime with `You cannot use different slug names for the same dynamic path`, which can prevent unrelated API routes from responding because the serverless route table fails before the target handler runs. The production symptom is broad API requests hanging or timing out while page routes still render.
+
+Canonical rule: keep one parameter name for each route shape and delete/rename the duplicate path before deploying. For email template version comparison, the canonical route is `[templateId]`; the retired `[type]` duplicate must not be restored.
 
 ### Next.js Configuration
 
