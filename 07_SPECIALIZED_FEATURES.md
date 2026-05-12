@@ -6320,7 +6320,7 @@ See `03_DATA_ARCHITECTURE.md` §28 for the full `CalendarMirrorMap` shape.
 
 **Spec:** `ops-software-bible/specs/2026-05-10-lidar-dimensioned-photo-capture-design.md`
 **Implementation plan:** `ops-software-bible/specs/plans/2026-05-10-lidar-dimensioned-photo-capture-plan.md`
-**Status (2026-05-10):** Phase A foundation complete (Supabase migrations applied, SwiftData model extended, `DimensionsData` schema added, Info.plist updated). Phases B–H pending implementation per plan.
+**Status (2026-05-12):** Phases A–G complete. Phase H (acceptance testing) pending hardware validation against the §10.2 9-criterion table on iPhone 15 Pro + iPhone SE 3rd gen + iPad Pro M4. Feature flag `feature.measurement.dimensioned_capture` ships default **OFF**; flips ON after the §10.2 table goes green and 48 hrs of crash-free operation per §10.3. Phase F (`DimensionedPhotoSyncManager` / P3-1) is the parallel sibling and must merge before Phase G's PR can build green.
 
 ### Summary
 
