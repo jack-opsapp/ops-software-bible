@@ -3138,7 +3138,7 @@ Every notification inserted into the `notifications` table MUST satisfy this con
 | `type` | Specific event type (e.g. `expense_submitted`, `email_sync_complete`, `projects_needing_tasks`) — NOT a catch-all like `"mention"` or `"update"`. Must exist in `NOTIF_TYPE_META` (web) and the `notificationIcon(for:)` switch (iOS). |
 | `title` | ≤ 32 chars, sentence case for content / UPPERCASE for authority (matches OPS voice). Names what happened, not the system that did it. |
 | `body` | ≤ 140 chars. Includes at least one **concrete reference** the user can act on: a sender name, a count + unit, an amount, a deadline, an entity name. Never bare counts ("3 new"). |
-| `deep_link_type` | Required when the action is anything other than "mark read". Free-form short identifier — both clients route on it. Current values: `subscription` / `trial_expiry` / `paymentReview` / `taskReview` / `unscheduledReview` / `photoStorage` / `catalogOrders` / `expense` / `invoice` / `inbox` / `projectsNeedingTasks` / `email_sync_complete`. |
+| `deep_link_type` | Required when the action is anything other than "mark read". Free-form short identifier — both clients route on it. Current values: `subscription` / `trial_expiry` / `paymentReview` / `taskReview` / `unscheduledReview` / `photoStorage` / `catalogOrders` / `expense` / `invoice` / `inbox` / `projectsNeedingTasks` / `email_sync_complete` / `cashflow_forecast`. |
 | `action_url` | Web URL or `ops://` deep link. Web reads it directly, iOS uses it as supplementary info (e.g. `?tab=...` query strings). |
 | `action_label` | UPPERCASE imperative verb phrase (e.g. `REVIEW`, `VIEW PLAN`, `PLAN THE WORK`). The action button label. |
 | `persistent` | `true` only for long-running operations the user is waiting on (scans, imports, threshold rail entries that auto-clear). `false` (dismissible) for everything else. |
@@ -3160,6 +3160,47 @@ Every notification inserted into the `notifications` table MUST satisfy this con
    - `OPS/OPS/Views/Notifications/NotificationListView.swift` (`handleNotificationTap`)
    - `OPS/OPS/AppDelegate.swift` (push handler) — only if you also fire pushes for it
 3. Document the type + deep_link in the table above.
+
+### §14.3.2 Forecast Dip Notification (2026-05-11)
+
+Persistent notification fired when the Cashflow Forecast (Card 6 of the BOOKS hero carousel — see `09_FINANCIAL_SYSTEM.md § Cashflow Forecast`) projects any week below zero.
+
+**Notification shape:**
+
+| Field | Value |
+|-------|-------|
+| `type` | `forecast_dip` (persistent) — and `forecast_cleared` (non-persistent, one-shot) |
+| `deep_link_type` | `cashflow_forecast` |
+| `title` | `// CASH DIP PROJECTED` |
+| `body` | `Balance drops to $X the week of MMM D.` (concrete amount + week reference) |
+| `action_url` | iOS deep link → `CashflowForecastScreen`. Web ships a placeholder route at `/money/cashflow` initially. |
+| `action_label` | `REVIEW FORECAST` |
+| `persistent` | `true` for `forecast_dip`; `false` for the one-shot `forecast_cleared` follow-up |
+
+**Trigger:**
+
+Inserted by `ForecastNotificationDispatcher` (iOS) on every forecast recompute when:
+1. The newly-computed `ForecastResult.state == .danger` (any week's running balance < 0), AND
+2. Anti-spam rules permit re-fire (see below).
+
+Forecast recomputes are triggered on app foreground (after >5 min in background) and on any data mutation that changes inflow/outflow timing: invoice sent/paid, estimate approved/converted, payment_milestone added/edited, recurring_expense added/edited/deleted, starting balance updated.
+
+**Anti-spam rules** — backed by the per-company `forecast_alerts` ledger (`company_id` PK, columns: `last_dip_notified_at`, `last_dip_min_balance`, `last_dip_min_week_start`, `last_cleared_at`, `dismissed_until_balance`):
+
+1. **First dip** — fire if no prior `last_dip_notified_at`, OR if `last_cleared_at > last_dip_notified_at` (dip cleared and a new one started).
+2. **Worsening dip** — re-fire only if `now() - last_dip_notified_at > 24h` AND `new_min_balance < last_dip_min_balance × 0.9` (10% worse or more).
+3. **Dip cleared** — when state transitions from `.danger` to `.healthy` or `.lowWater`, fire a one-shot **non-persistent** `forecast_cleared` notification and set `last_cleared_at = now()`. The existing persistent `forecast_dip` row stays in the rail until the user dismisses it (it will not refire for the same dip event).
+4. **"Don't show again"** — when the user dismisses the persistent row with "don't show again", set `dismissed_until_balance = current_min`. Suppresses re-fire while subsequent `min_balance ≥ dismissed_until_balance × 0.9`. A genuinely new / materially worse dip clears the dismissal.
+
+**Recipients:**
+
+Looked up via `public.users_with_permission(p_company_id, 'finances.view')` — never filter by `users.role`. One row inserted per recipient user (notifications.user_id is a single FK); the dedup ledger is keyed by `company_id` so all users in a company see the same dip event at the same trigger.
+
+**Where the recompute runs:**
+
+iOS-only for v1. The engine + dispatcher live on-device; the dispatcher writes to the `notifications` table directly via the Supabase client. Edge-Function-based recompute is a v2 consideration when OPS-Web parity lands.
+
+---
 
 **`schedule_change` notification (Phase 3 — 2026-04-27):**
 - Emitted by `useUpdateTask` when the union of (`startDate`, `endDate`, `startTime`, `endTime`, `allDay`) changes on a task. Recipients = union of prior + new `team_member_ids` so removed crew also see the move.

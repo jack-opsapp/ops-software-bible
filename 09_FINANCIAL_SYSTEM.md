@@ -1465,12 +1465,95 @@ protocol ExpenseOCRServiceProtocol {
 **Phase 1 historical record:** the 4-segment hub (Pipeline + Estimates + Invoices + Expenses), `MoneyDashboardHeader`, `SmartStatCarousel`, `FinancialHealthBar`, `PeriodToggle` were the shipped shape from 2026-05-07 until 2026-05-11. All four Money components were deleted in the Phase 2 cleanup; the May 7 spec is marked superseded.
 
 **Future work (not in scope of Phase 2):**
-- Forward cashflow projection (Card 6) — spawned as `CASHFLOW FORECAST - P1-1`.
 - Smart-default card surfacing (open most-urgent card by data condition) — Books v2.
 - Full-screen reports drilled from Card 2 (Avg/wk, Days) and Card 5 (Profitable, Losers) tiles — currently stubbed.
 
 ---
 
-**Last Updated**: February 28, 2026
-**Document Version**: 1.3
-**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `OPS/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`
+## Cashflow Forecast (Card 6 — 2026-05-11)
+
+**Status:** Initiative `CASHFLOW FORECAST - P1` — design and additive Supabase schema landed 2026-05-11; iOS engine + UI in flight. Card 6 of the BOOKS hero carousel. Forward-looking complement to the retrospective Pipeline Forecast (Card 4).
+
+**The question this card answers:** "Given the jobs I already have on the books — sent invoices, approved estimates, weighted pipeline — what does my cash position look like over the next 13 weeks?"
+
+### Surface
+
+- **Card preview** (`CashflowForecastCard`) — sits at slot 6 of the BOOKS hero carousel. Shows end-of-horizon balance, sparkline of running balance, lowest projected point, state badge (`ON TRACK` / `WATCH` / `DIP DETECTED`).
+- **Full screen** (`CashflowForecastScreen`) — opens on tap. 13-week running-balance line chart, layer toggles, 4w/13w horizon zoom, drill-into-week sheet.
+- **Bottom sheet** (`WeekBreakdownSheet`) — tap any data point. Lists every contributing invoice / milestone / recurring expense / opportunity for that week, grouped by inflow/outflow. Each row deep-links to its source entity.
+- **Settings sheet** (`ForecastSettingsSheet`) — gear icon on the full screen. CRUD on recurring expenses + low-water threshold + current-balance refresh.
+
+### Algorithm (summary)
+
+For each week `i ∈ [0, 13)`, compute weekly net = inflows − outflows; running balance starts at the manually-entered `forecast_current_balance`.
+
+Inflows (toggleable layers):
+- **Committed** — sent / partially-paid invoices projected onto (`invoices.due_date + company avgDaysToPayment`).
+- **Contracted** — non-paid `payment_milestones` projected onto (`expected_date + avgDaysToPayment`); estimates without milestones lump on (project end + 30d + avgDaysToPayment).
+- **Pipeline** — weighted opportunities: `estimated_value × win_probability ÷ 100`, projected onto (`expected_close_date + avgDaysToPayment`).
+
+Outflows (toggleable layer):
+- **Recurring** — `recurring_expenses` iterated via cadence (weekly / biweekly / monthly / quarterly / annually) within horizon, respecting `end_date`.
+
+State determination:
+- Any week balance < 0 → `.danger` (chart shifts to brick-red, persistent notification fires).
+- Any week below `forecast_low_water_threshold` (default $5,000) → `.lowWater` (chart shifts to amber).
+- Otherwise → `.healthy` (steel-blue).
+
+`avgDaysToPayment` is the company-wide average already computed by `MoneyDashboardViewModel`. Per-client learning is a v2 follow-up.
+
+### Schema deltas (additive — 2026-05-11 migration `add_cashflow_forecast_tables`)
+
+| Change | Detail |
+|--------|--------|
+| New table `recurring_expenses` | Per-company recurring outflows. Columns: `id, company_id, name, amount, currency, cadence, next_due_date, end_date, category_id, notes, created_by, created_at, updated_at, deleted_at`. RLS via `private.get_user_company_id()`. |
+| New table `forecast_alerts` | Per-company anti-spam ledger for the persistent dip notification. Columns: `company_id (PK), last_dip_notified_at, last_dip_min_balance, last_dip_min_week_start, last_cleared_at, dismissed_until_balance, updated_at`. RLS same pattern. |
+| New column `payment_milestones.expected_date date NULL` | When each milestone is expected to invoice. Existing rows backfill to NULL; engine falls back to project-span derivation when null. |
+| 3 new columns on `expense_settings` | `forecast_low_water_threshold numeric DEFAULT 5000`, `forecast_current_balance numeric NULL`, `forecast_balance_updated_at timestamptz NULL`. All nullable. |
+
+All migrations are additive only — older iOS clients (prior App Store releases) continue to function unchanged.
+
+### Persistent dip notification
+
+When any week of the forecast projects below zero, `ForecastNotificationDispatcher` inserts a `notifications` row with:
+
+- `type = 'forecast_dip'`
+- `persistent = true`
+- `title = '// CASH DIP PROJECTED'`
+- `body = 'Balance drops to $X the week of MMM D.'`
+- `action_url = '/books/cashflow'`
+- `action_label = 'REVIEW FORECAST'`
+
+Recipients lookup via `public.users_with_permission(company_id, 'finances.view')` — never filter by `users.role`. One notification row per recipient user; the anti-spam ledger is keyed by `company_id`.
+
+**Anti-spam rules** (full taxonomy in `07_SPECIALIZED_FEATURES.md § 14.3.2`):
+- First dip (no prior `last_dip_notified_at`, or `last_cleared_at > last_dip_notified_at`) → fire.
+- Persisting dip → re-fire only if >24h since last AND new min balance ≥ 10% worse than `last_dip_min_balance`.
+- Cleared (transition out of `.danger`) → fire one-shot non-persistent "DIP CLEARED" notification, set `last_cleared_at`, leave the persistent row in the rail until user dismisses.
+- "Don't show again" sets `dismissed_until_balance = current_min`; suppresses re-fire while next min ≥ that × 0.9.
+
+### What-if controls (v1)
+
+- **Layer toggles** — 4 switches (Committed / Contracted / Pipeline / Recurring) re-run the projection live. Persisted per-user via `@AppStorage`.
+- **Horizon zoom** — 4W / 13W toggle (both weekly buckets; daily granularity in 4W is a v2 deferral).
+- **Low-water threshold** — configurable in settings sheet, drives the amber-warning trigger.
+
+### Out of scope for v1 (explicit)
+
+- Per-invoice late-payer override slider — v2.
+- Per-client days-to-payment learning — v2.
+- Auto-detection of recurring expenses from history — v2.
+- Auto-creation of expense rows when a recurring entry hits its due date — v2.
+- Outflow projection from labor cost / open POs / catalog allocations (iOS has no labor-cost or PO model today).
+- OPS-Web cashflow forecast — tracked at `OPS-Web/docs/bugs/2026-05-11-cashflow-forecast-web-followup.md`. Web ships a placeholder route initially; full web build is a separate plan.
+
+### Spec & plan
+
+- Design spec: `docs/superpowers/specs/2026-05-11-cashflow-forecast-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-05-11-cashflow-forecast.md`
+
+---
+
+**Last Updated**: 2026-05-11
+**Document Version**: 1.4
+**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `OPS/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.

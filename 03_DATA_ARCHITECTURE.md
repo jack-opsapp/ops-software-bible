@@ -4223,4 +4223,70 @@ The `contentHash` field doubles as drift detection — on reconcile, a mismatch 
 
 Related: see `07_SPECIALIZED_FEATURES.md` §26 "iPhone Calendar Mirror".
 
+---
+
+## Cashflow Forecast (2026-05-11)
+
+Supabase schema deltas for the Cashflow Forecast feature (Card 6 of the BOOKS hero carousel). All deltas are **additive** — no rename, retype, or drop. Detailed semantics in `09_FINANCIAL_SYSTEM.md § Cashflow Forecast`. iOS SwiftData parity ships in `OPSSchemaV6` (adds `PaymentMilestone` and `RecurringExpense` models).
+
+### New tables
+
+| Table | Purpose |
+|-------|---------|
+| `recurring_expenses` | Owner-managed recurring outflows (rent, insurance, payroll, subscriptions). Drives the recurring layer of the forecast. Forecast-only — does NOT auto-create rows in `expenses`. |
+| `forecast_alerts` | Per-company anti-spam ledger for the persistent `forecast_dip` notification. Tracks last-notified state and "don't show again" dismissals. |
+
+**`recurring_expenses` columns:**
+
+```
+id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+company_id      uuid NOT NULL → companies(id) ON DELETE CASCADE
+name            text NOT NULL
+amount          numeric(12,2) NOT NULL CHECK (amount >= 0)
+currency        text NOT NULL DEFAULT 'USD'
+cadence         text NOT NULL CHECK (cadence IN ('weekly','biweekly','monthly','quarterly','annually'))
+next_due_date   date NOT NULL
+end_date        date NULL
+category_id     uuid NULL → expense_categories(id)
+notes           text NULL
+created_by      uuid NULL → users(id)
+created_at      timestamptz NOT NULL DEFAULT now()
+updated_at      timestamptz NOT NULL DEFAULT now()  -- maintained by trigger
+deleted_at      timestamptz NULL
+```
+
+RLS: `company_isolation` policy using `company_id = (SELECT private.get_user_company_id())` — matches `estimates`/`invoices`/`opportunities` pattern.
+
+**`forecast_alerts` columns:**
+
+```
+company_id              uuid PRIMARY KEY → companies(id) ON DELETE CASCADE
+last_dip_notified_at    timestamptz NULL
+last_dip_min_balance    numeric(12,2) NULL
+last_dip_min_week_start date NULL
+last_cleared_at         timestamptz NULL
+dismissed_until_balance numeric(12,2) NULL
+updated_at              timestamptz NOT NULL DEFAULT now()  -- maintained by trigger
+```
+
+RLS: same `company_isolation` pattern.
+
+### Additive columns on existing tables
+
+| Table | Column | Type | Default | Purpose |
+|-------|--------|------|---------|---------|
+| `payment_milestones` | `expected_date` | `date NULL` | NULL | When this milestone is expected to be invoiced. Drives contracted-layer forecast projection. Existing rows backfill to NULL; engine falls back to project-span derivation. |
+| `expense_settings` | `forecast_low_water_threshold` | `numeric(12,2) NULL` | `5000` | Amber-warning trigger for the forecast chart. |
+| `expense_settings` | `forecast_current_balance` | `numeric(12,2) NULL` | NULL | Manually-entered current bank balance — the starting balance for the forecast projection. |
+| `expense_settings` | `forecast_balance_updated_at` | `timestamptz NULL` | NULL | Timestamp of the last `forecast_current_balance` update. Drives the "AS OF [date]" stale-balance UI hint. |
+
+### iOS SwiftData parity (OPSSchemaV6)
+
+V6 is purely additive over V5 (Calendar Mirror). Adds two new `@Model` entities:
+
+- `PaymentMilestone` — iOS parity for the existing server table (deferred from earlier estimate work). Read-side only in v1; estimate form writes via `EstimateService` payload.
+- `RecurringExpense` — CRUD-capable, mirrors the server table.
+
+Migration: `OPSMigrationPlan` registers a lightweight `V5 → V6` stage. No data transform, no field rename.
+
 **End of Data Architecture Documentation**
