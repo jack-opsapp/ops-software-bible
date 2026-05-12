@@ -1342,7 +1342,7 @@ OPS-Web is the primary web application — the admin dashboard, management porta
       "source": "/(.*)",
       "headers": [
         { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Content-Security-Policy", "value": "frame-ancestors 'self' https://opsapp.co https://www.opsapp.co" },
         { "key": "X-XSS-Protection", "value": "1; mode=block" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
         { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" }
@@ -1354,7 +1354,7 @@ OPS-Web is the primary web application — the admin dashboard, management porta
 
 **Key details:**
 - **Region:** `iad1` (US East — Virginia). All serverless functions run in this region, close to the Supabase project.
-- **Security headers:** Applied to all routes. Prevents MIME-sniffing, clickjacking, XSS, and restricts referrer/opener policies.
+- **Security headers:** Applied to all routes. Prevents MIME-sniffing, restricts referrer/opener policies, and allows framing only by `app.opsapp.co` itself plus the public OPS site (`opsapp.co` / `www.opsapp.co`) for approved embeds.
 - **Framework detection:** Explicitly set to `nextjs`.
 
 ### Next.js Configuration
