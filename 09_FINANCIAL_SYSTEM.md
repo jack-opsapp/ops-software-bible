@@ -1136,11 +1136,11 @@ The full Pipeline, Estimates, Invoices, and Accounting system is implemented nat
 | `ExpenseCategorySettingsView.swift` | Category management: icon + name list, active toggle, add custom category sheet. |
 | `ExpenseSettingsView.swift` | Company expense settings: review frequency picker, threshold amount fields, policy toggles (require receipt, require project), save button. |
 
-#### Accounting Views (1 file)
+#### A/R Views (1 file)
 
 | File | Purpose |
 |---|---|
-| `AccountingDashboard.swift` | Read-only financial health overview. Three sections: (1) **AR Aging** horizontal bar chart (0-30d, 31-60d, 61-90d, 90d+) using Swift Charts, (2) **Invoice Status** 2x2 grid tiles (Awaiting count, Overdue count, Paid count, Outstanding amount), (3) **Top Outstanding** list of top 5 clients by outstanding balance. Loads all invoices via `AccountingRepository.fetchAllInvoices()` and computes aging/status locally. Pull-to-refresh supported. |
+| `ARAgingDetailView.swift` | Read-only A/R drill-down. Two sections: (1) **Aging Buckets** horizontal bar chart (0–30d, 31–60d, 61–90d, 90d+) using Swift Charts, (2) **Top Outstanding** list of top 5 clients by outstanding balance. Loaded via `AccountingRepository.fetchAllInvoices()`. Presented as a sheet from the BOOKS carousel's A/R card top-chase tile and from the carousel's OUTSTANDING tile. Pull-to-refresh. (Note: `AccountingDashboard.swift` was replaced by this view in an earlier session — bible drift D1 caught and reconciled 2026-05-11 during Books Phase 2 work.) |
 
 ### iOS ViewModels
 
@@ -1421,33 +1421,53 @@ protocol ExpenseOCRServiceProtocol {
 
 **AppleVisionOCRService**: Uses `VNRecognizeTextRequest` with `.accurate` recognition level. Processes all recognized text through `ReceiptParser` which uses regex patterns and heuristics to extract structured fields from raw OCR text.
 
-### iOS BOOKS Tab (Phase 1, May 2026)
+### iOS BOOKS Tab (Phase 2, May 2026)
 
-The BOOKS tab is an iOS hub that combines Pipeline + Estimates + Invoices + Expenses behind a single adaptive entry point, with a financial dashboard at the top. It replaces the previous mislabeled "Pipeline" tab slot.
+**Status:** Reconstructed 2026-05-11 from bug `1b038315`. The Phase 1 4-segment hub (`MoneyDashboardHeader` + `SmartStatCarousel` + `FinancialHealthBar` + Pipeline-in-Books) was replaced by a carousel-led money command center. Pipeline was elevated to its own top-level tab (see `PIPELINE TAB - P1-1`).
 
 **Surface:**
-- Lives at iOS `MainTabView.swift:223` rendering `BooksTabView` (commit `dd705a1`).
-- Header uses a new `AppHeader.HeaderType.books` case (title "BOOKS").
-- Top of hub: extended `MoneyDashboardHeader` with the `SmartStatCarousel` showing financial stats plus new pipeline stats — active leads, weighted forecast, stale count, next follow-up (commit `bf23031`).
-- Segmented control routes to Pipeline / Estimates / Invoices / Expenses sub-views (each reused in `embedded: true` mode where applicable).
+- Lives at iOS `MainTabView.swift` rendering `BooksTabView`. Tab icon `chart.line.uptrend.xyaxis` (unchanged).
+- Header: `AppHeader.HeaderType.books` (title "BOOKS").
+- Hero: `HeroCarousel` (`OPS/Views/Books/HeroCarousel.swift`) — swipeable 5-card paged surface using `ScrollView(.horizontal)` + `.scrollTargetBehavior(.paging)` (iOS 17+), **not** `TabView(.page)` (avoids spring physics per the OPS motion rule). Cards permission-filtered; last-viewed card persisted via `@AppStorage("books.lastViewedCard")`.
+
+| Card | Question | Period scope | Permission |
+|------|----------|--------------|------------|
+| `PLCard` | "Am I making money this period?" | Follows selector | `finances.view` |
+| `CashFlowCard` | "What's my cash rhythm?" | Follows selector | `finances.view` |
+| `ARCard` | "Who do I need to chase?" | Always all-open | `finances.view` |
+| `ForecastCard` | "What's coming if pipeline plays out?" | Always active | `pipeline.view` |
+| `JobsCard` | "Which jobs make me money? Which lost it?" | Follows selector | `finances.view` |
+
+- Period control: `PeriodPill` (`OPS/Views/Books/Components/PeriodPill.swift`) — single tap-target with 8 options (30D / 90D / 6M / 1Y / MTD / LAST / QTD / YTD).
+- Below carousel: 3-segment underline control **INVOICES · ESTIMATES · EXPENSES**. Each renders the existing list view in `embedded: true` mode (unchanged from Phase 1).
+- Header collapse: on scroll, the hero collapses to `CollapsedCarouselStrip` (active card's primary number + A/R glance + dots). Segments stick.
+
+**Per-job profitability** (Card 5) computed in `MoneyDashboardViewModel.computeJobNets(periodStart:periodEnd:)`:
+- Revenue = `sum(payments.amount)` for invoices with matching `project_id`, paid in-period.
+- Cost = `sum(expense_project_allocations.amount)` (with fallback to `expense.amount × percentage / 100` when `amount` is null).
+- `expense_project_allocations.project_id` is `text` in Supabase while `invoices.project_id` is `uuid` — both come through as `String` in Swift DTOs, so comparison is string-on-string. Drift D3, reconciled.
+- Top 5 = top 4 by net + worst loser if not already present.
 
 **Permission gating:**
-- Tab is visible when the operator has **ANY** of `pipeline.view` / `finances.view` / `estimates.view` / `expenses.view`.
-- Segments inside the hub hide individually based on the matching permission.
-- **Auto-skip behavior:** if an operator has only **one** of the four segment permissions, the hub UI is bypassed and the tab routes directly to that segment's list view (commit `06bfbea`). Crew users with `expenses.view` only land on `MyExpensesView` directly.
-
-**Pipeline section (the new surface):**
-- Uses a **Stage-Pager** pattern (Pipedrive-validated for single-owner mobile use) — a horizontal stage strip + full-width lead cards + bottom-sheet action menu. Implementing commits: `c951d3a` (root + `BooksSection` enum), `54c9b2f` (`LeadDetailView`), `461f243` (`LeadActionSheet`).
-- Add Lead, Edit Lead, Add Follow-Up, Lost Reason, and AR Aging detail sheets land in commits `abd2817`, `4a82d79`, `e753f74`, `f76f457`, `2333e38`.
+- Tab visible if user has any of `finances.view` / `estimates.view` / `expenses.view`. `pipeline.view` no longer gates BOOKS — it gates the new Pipeline tab.
+- Carousel hidden entirely when zero cards are permitted (Operator path: `estimates.view` + `expenses.view` only, no `finances.view`, no `pipeline.view`).
+- Auto-skip: Crew users with `expenses.view` (own scope) only continue to land on `MyExpensesView` directly via `booksAutoSkipDestination` in `MainTabView`.
 
 **FAB integration:**
-- Add Lead is surfaced via the global FAB's MONEY group, with segment-aware ordering so the matching create action floats to the top of the group based on the active BOOKS segment (commit `9799991`).
+- The global `FloatingActionMenu` (`OPS/Views/Components/FloatingActionMenu.swift`) re-orders its MONEY group via `@AppStorage("books.selectedSegment")`. Default changed from `"PIPELINE"` to `"INVOICES"` in Phase 2.
+- `add-lead` stays in the MONEY group because the FAB is global — Pipeline being its own top-level tab does not move the create action.
 
 **Spec & plan:**
-- Spec: `ops-ios/docs/superpowers/specs/2026-05-07-books-tab-design.md`
-- Implementation plan: `ops-ios/docs/superpowers/plans/2026-05-07-books-tab-implementation.md`
+- Spec: `ops-ios/docs/superpowers/specs/2026-05-11-books-ui-reconstruction-design.md`
+- Plan: `ops-ios/docs/superpowers/plans/2026-05-11-books-ui-reconstruction.md`
+- Phase 1 spec (superseded): `ops-ios/docs/superpowers/specs/2026-05-07-books-tab-design.md`
 
-**Phase 2 follow-ups** (tracked in spec §16): `InvoiceFormSheet` + `RecordPaymentSheet` to replace FAB MONEY-group TODOs; segment-scoped universal search; AI-generated lead fields on iOS (`aiSummary`, `aiStageConfidence`, etc.); lead images + lat/long; import contacts → leads; per-company `pipeline_stage_configs` parity (Phase 3, drift register #15).
+**Phase 1 historical record:** the 4-segment hub (Pipeline + Estimates + Invoices + Expenses), `MoneyDashboardHeader`, `SmartStatCarousel`, `FinancialHealthBar`, `PeriodToggle` were the shipped shape from 2026-05-07 until 2026-05-11. All four Money components were deleted in the Phase 2 cleanup; the May 7 spec is marked superseded.
+
+**Future work (not in scope of Phase 2):**
+- Forward cashflow projection (Card 6) — spawned as `CASHFLOW FORECAST - P1-1`.
+- Smart-default card surfacing (open most-urgent card by data condition) — Books v2.
+- Full-screen reports drilled from Card 2 (Avg/wk, Days) and Card 5 (Profitable, Losers) tiles — currently stubbed.
 
 ---
 

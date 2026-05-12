@@ -1224,25 +1224,44 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 ---
 
-### PipelineTabView (Pipeline Tab Container)
+### BooksTabView (Books Tab Container)
 
-**Purpose:** Container for the Pipeline/CRM feature area. Houses four sub-sections via a segmented control.
+**Purpose:** Money command center for trades operators. Top-level hero is a swipeable 5-card financial carousel; below that, a 3-segment list of underlying documents (Invoices · Estimates · Expenses). Replaces the Phase 1 4-segment hub.
 
-**Source:** `Views/Pipeline/PipelineTabView.swift`
+**Source:** `Views/Books/BooksTabView.swift` (Phase 2, 2026-05-11)
 
-**UI Elements:**
+**UI Elements (top to bottom):**
 
-1. **AppHeader** — pipeline header type
-2. **Segmented Control** — 4 sections: PIPELINE | ESTIMATES | INVOICES | ACCOUNTING
-3. **Content Area** — swaps between child views based on selected segment
+1. **AppHeader** — `.books` header type, "BOOKS" title.
+2. **`PeriodPill`** — single tap-target with menu of 8 period options: 30 DAYS / 90 DAYS / 6 MONTHS / 1 YEAR / THIS MONTH / LAST MONTH / THIS QUARTER / YEAR TO DATE. Drives the period scope of Cards 1, 2, 5.
+3. **`HeroCarousel`** — 5-card swipeable carousel (`ScrollView(.horizontal)` + `.scrollTargetBehavior(.paging)`):
+   - **Card 1 `PLCard`** — In − Out = Net equation, margin bar, MoM trend, drill tiles for Outstanding and Forecast.
+   - **Card 2 `CashFlowCard`** — paired in/out bars by ISO week (Swift Charts) + KPI tiles.
+   - **Card 3 `ARCard`** — aging buckets (0–30 / 31–60 / 61–90 / 90+) and top-chase drill. Always all-open (period-independent).
+   - **Card 4 `ForecastCard`** — weighted pipeline by stage + close-rate / stale tiles. Always active.
+   - **Card 5 `JobsCard`** — top 5 projects by net (diverging profit/loss bars) + profitable / margin / losers tiles.
+   - Dot pagination with active-dot fill in accent. Last-viewed card persisted via `@AppStorage("books.lastViewedCard")`.
+4. **`CollapsedCarouselStrip`** — one-line strip surfaced when the user scrolls the list; shows the active card's primary number, an A/R glance, and the dots.
+5. **Segmented Control** — 3 sections: **INVOICES | ESTIMATES | EXPENSES**. Sticky on scroll collapse.
+6. **Content Area** — swaps between child list views based on selected segment.
 
 **Child Views:**
-- `PipelineView` (Pipeline segment)
-- `EstimatesListView` (Estimates segment)
-- `InvoicesListView` (Invoices segment)
-- `AccountingDashboard` (Accounting segment)
+- `InvoicesListView` (embedded)
+- `EstimatesListView` (embedded)
+- `ExpensesListView` (admin) or `MyExpensesView` (own scope)
 
-**Access:** Conditional — only visible to users with `"pipeline"` in their `specialPermissions` array. The main FAB is hidden when on the Pipeline tab (Pipeline manages its own FAB).
+**Access:**
+- Visible to users with any of `finances.view` / `estimates.view` / `expenses.view`. (Phase 2: `pipeline.view` no longer gates BOOKS — Pipeline is its own top-level tab; see `PIPELINE TAB - P1-1`.)
+- Carousel cards filtered by per-card permission. Cards 1/2/3/5 need `finances.view`; Card 4 needs `pipeline.view`. If zero cards are visible (Operator path), the entire hero hides.
+- Auto-skip: users with exactly one visible segment route directly to that list (Crew → `MyExpensesView`).
+
+**FAB integration:**
+- The **global** `FloatingActionMenu` re-orders its MONEY group via `@AppStorage("books.selectedSegment")`. The matching create action floats to position 0.
+- `new-lead` stays in the MONEY group (FAB is global; Pipeline being a separate tab does not move the create entry).
+
+**Sheets / drill-downs:**
+- `ARAgingDetailView` — sheet from Card 3 top-chase tile and Card 1 Outstanding tile.
+- `EstimateDetailView`, `InvoiceDetailView`, `ExpenseBatchDetailView`, `ExpenseFormSheet`, `PaymentRecordSheet` — reachable from the segment lists (unchanged from Phase 1).
 
 ---
 
@@ -1375,29 +1394,26 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 ---
 
-### AccountingDashboard (Accounting Segment)
+### ARAgingDetailView (A/R Drill-Down Sheet)
 
-**Purpose:** Read-only financial health overview showing AR aging, invoice status, and top outstanding clients.
+**Purpose:** Read-only A/R drill — aging buckets + top outstanding clients. Presented as a sheet from the BOOKS carousel's A/R card and the OUTSTANDING drill on the P&L card.
 
-**Source:** `Views/Accounting/AccountingDashboard.swift`
+**Source:** `Views/Books/ARAgingDetailView.swift` (replaced the deleted `AccountingDashboard.swift` in an earlier session — bible drift D1, reconciled in Books Phase 2)
 
 **UI Elements:**
 
-1. **AR AGING Section** — horizontal bar chart (Swift Charts) with 4 buckets:
-   - 0-30 days (primary accent color)
-   - 31-60 days (primary accent color)
-   - 61-90 days (warning color)
-   - 90+ days (error color)
-   - Each bar shows dollar amount annotation
+1. **Aging Buckets Section** — horizontal bar chart (Swift Charts) with 4 buckets:
+   - 0–30 days (`accountingReceivables`)
+   - 31–60 days (`accountingReceivables`)
+   - 61–90 days (`warningStatus`)
+   - 90d+ (`accountingOverdue`)
+   - Each bar annotated with the dollar total.
 
-2. **INVOICE STATUS Section** — 2x2 grid of tiles:
-   - AWAITING (count, warning color)
-   - OVERDUE (count, error color)
-   - PAID (count, success color)
-   - OUTSTANDING (dollar amount, primary accent)
+2. **Top Outstanding Section** — ranked list of up to 5 clients with the highest outstanding balances. Client name + dollar amount per row.
 
-3. **TOP OUTSTANDING Section** — ranked list of up to 5 clients with highest outstanding balances
-   - Client name + dollar amount per row
+**Loaded from:** `AccountingRepository.fetchAllInvoices()` (computes aging client-side).
+
+**Invoice status counts** (Awaiting / Overdue / Paid / Outstanding amount) — these now surface on the BOOKS carousel's PLCard tiles (Outstanding) and ARCard summary line, no longer in a separate dashboard.
 
 **Actions:**
 - Pull to refresh → Reload invoice data
