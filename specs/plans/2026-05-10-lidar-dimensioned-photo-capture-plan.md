@@ -8,7 +8,7 @@
 
 **Architecture:** Dual-pipeline capture (ARKit live aim → AVFoundation `builtInLiDARDepthCamera` shutter), on-device Vision rectangle detection for calibration, DLT-based PnP solver in pure Swift, SwiftUI annotation view with Hover-style external-leader labels, HEIC+depth+JSON triple-asset S3 persistence, additive jsonb column on `project_photo_annotations`.
 
-**Tech Stack:** ARKit, AVFoundation (`AVCaptureDevice.builtInLiDARDepthCamera`, `AVCaptureSynchronizedDataCollection`), Vision (`VNDetectRectanglesRequest`, `VNDetectContoursRequest`), RealityKit (mesh classification), PencilKit (existing), PDFKit, SwiftUI, SwiftData. iOS 17.6 minimum deployment target.
+**Tech Stack:** ARKit, AVFoundation (`AVCaptureDevice.builtInLiDARDepthCamera`, `AVCapturePhotoOutput.depthData`), Vision (`VNDetectRectanglesRequest`, `VNDetectContoursRequest`), RealityKit (mesh classification), PencilKit (existing), PDFKit, SwiftUI, SwiftData. iOS 17.6 minimum deployment target.
 
 ---
 
@@ -371,9 +371,9 @@ After the last section header (Section 22) in `07_SPECIALIZED_FEATURES.md`, appe
 
 **Summary:** iOS-only feature. Tap MEASURE from `ProjectActionBar` on an active project → live AR view → shutter triggers AVFoundation+LiDAR synchronized capture (48 MP photo + 768×576 depth + intrinsics) → opens `DimensionedAnnotationView` for tap-to-measure or auto-detected dimensions on detected windows/doors. Optional reference-object precision mode upgrades accuracy from ±1″ to ±5 mm. Output: PNG with burned-in Hover-style external leader labels, optional PDF via system share sheet.
 
-**Key APIs:** `AVCaptureDevice.builtInLiDARDepthCamera`, `AVCaptureSynchronizedDataCollection`, `ARWorldTrackingConfiguration.sceneReconstruction = .meshWithClassification`, `VNDetectRectanglesRequest`, custom DLT-based PnP solver.
+**Key APIs:** `AVCaptureDevice.builtInLiDARDepthCamera`, `AVCapturePhotoOutput.depthData`, `ARWorldTrackingConfiguration.sceneReconstruction = .meshWithClassification`, `VNDetectRectanglesRequest`, custom DLT-based PnP solver.
 
-**Data model:** New `dimensions jsonb` column on `project_photo_annotations` (additive, NULL on legacy rows). HEIC + standalone FP32 depth + sidecar JSON stored in S3 via existing `PresignedURLUploadService`. Schema in §4.1 of the design spec.
+**Data model:** New `dimensions jsonb` column on `project_photo_annotations` (additive, NULL on legacy rows). HEIC + standalone FP32 depth in meters + sidecar JSON stored in S3 via existing `PresignedURLUploadService`. Schema in §4.1 of the design spec.
 
 **Device fallback:** LiDAR devices get full pipeline. Non-LiDAR ARKit devices get manual measurement only (visual SLAM, ±2″ in-plane). No-AR devices get manual scale tool (mark known length).
 
@@ -479,10 +479,10 @@ File: `LiDARCaptureCoordinator.swift` — add `startLiveAim()` method that confi
 Extract `ARFrame.anchors`, `camera.intrinsics`, device pose into a `Snapshot` struct (in-memory, <5 ms). Test against deterministic mock `ARFrame`.
 
 ### Task 10: AVCaptureSession handoff
-Pause ARKit, activate pre-warmed AVCapture, capture via `AVCaptureSynchronizedDataCollection`. Test: total handoff latency <250 ms on physical device.
+Pause ARKit, activate pre-warmed AVCapture, capture via `AVCapturePhotoOutput.depthData`. Test: total handoff latency <250 ms on physical device.
 
 ### Task 11: HEIC + sidecar persistence
-Embed `kCGImageAuxiliaryDataTypeDisparity` channel in HEIC, write sidecar JSON (mesh anchors + classification labels + intrinsics), write standalone FP32 raw depth. Test: round-trip HEIC + decode embedded depth.
+Embed `kCGImageAuxiliaryDataTypeDisparity` channel in HEIC, write sidecar JSON (mesh anchors + classification labels + intrinsics), write standalone FP32 raw depth in meters. Test: round-trip HEIC + decode embedded depth.
 
 ---
 

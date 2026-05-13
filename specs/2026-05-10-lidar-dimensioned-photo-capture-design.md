@@ -53,13 +53,13 @@ ARKit and AVCaptureSession both want exclusive access to the camera. The handoff
 
 1. **Capture ARKit state snapshot first** (while ARKit is still running): copy current `ARFrame.anchors` (mesh anchors with classification labels), `ARFrame.camera.intrinsics`, and current device pose into in-memory holding structs. This is a non-blocking read, ~5 ms.
 2. **Pause ARKit:** `arSession.pause()` — releases the camera.
-3. **Activate pre-warmed AVCaptureSession** with `builtInLiDARDepthCamera` and synchronized outputs (photo + depth + calibration). The session was pre-configured during the "warm-up" phase (§5.1 `// INITIALIZING …`) so this is a fast `startRunning()`, ~200 ms.
-4. **Capture frame** via `AVCapturePhotoOutput.capturePhoto(with:delegate:)` paired with `AVCaptureDepthDataOutput`, joined via `AVCaptureSynchronizedDataCollection`.
+3. **Activate pre-warmed AVCaptureSession** with `builtInLiDARDepthCamera` and `AVCapturePhotoOutput` depth delivery. The session was pre-configured during the "warm-up" phase (§5.1 `// INITIALIZING …`) so this is a fast `startRunning()`, ~200 ms.
+4. **Capture frame** via `AVCapturePhotoOutput.capturePhoto(with:delegate:)`; depth arrives on `AVCapturePhoto.depthData`. `AVCaptureDepthDataOutput` is attached during session configuration only so the LiDAR photo path advertises depth support.
 5. **Tear down AVCaptureSession** and dismiss `DimensionedCaptureView` to `§5.2`. ARKit is NOT resumed (the next capture re-initializes a new ARKit session).
 
 Returned synchronized assets:
 - 48 MP photo (`AVCapturePhotoOutput`)
-- 768×576 depth map (`AVCaptureDepthDataOutput`, FP32 `Disparity` via `AVDepthData.depthDataMap` after conversion to `kCVPixelFormatType_DisparityFloat32`)
+- 768×576 depth map from `AVCapturePhoto.depthData`, with `activeDepthDataFormat` selected only when it is exactly 768×576 `kCVPixelFormatType_DepthFloat32`
 - `AVCameraCalibrationData` (intrinsic matrix + lens distortion lookup)
 - The ARKit snapshot from step 1 (mesh anchors, classification labels, device pose) — paired with the new frame via timestamp matching
 
@@ -68,7 +68,8 @@ This is **3× the linear depth resolution** of ARKit's built-in 256×192 frame (
 **Total shutter latency budget:** 250 ms (step 2 + 3 + 4). User sees the `// CAPTURED · 0.07s` flash from §5.1 once step 4 completes.
 
 **Persistence at moment of capture:**
-- HEIC file with embedded `Disparity` channel (`kCGImageAuxiliaryDataTypeDisparity`) → uploaded as `project_photos.url` with `source = 'measurement'` (new enum value)
+- HEIC file with embedded disparity aux channel (`kCGImageAuxiliaryDataTypeDisparity`) → uploaded as `project_photos.url` with `source = 'measurement'` (new enum value)
+- Standalone raw FP32 depth-in-meters sidecar (`768×576×4`) → stored in S3 and recorded in `dimensions.depthAssetUrl`
 - Sidecar JSON (mesh anchors + classification labels + intrinsics + capture metadata) → stored in S3 alongside HEIC
 - Annotation row created in `project_photo_annotations` with the new `dimensions jsonb` column populated
 
@@ -285,7 +286,7 @@ If SwiftData throws on the migration (it shouldn't, given all fields are optiona
 | API | Framework | iOS introduced | Use in spec |
 |---|---|---|---|
 | `AVCaptureDevice.DeviceType.builtInLiDARDepthCamera` | AVFoundation | iOS 15.4 | §3.2 capture pipeline |
-| `AVCaptureSynchronizedDataCollection` | AVFoundation | iOS 11 | §3.2 sync capture |
+| `AVCapturePhotoOutput.depthData` | AVFoundation | iOS 11 | §3.2 LiDAR photo depth delivery |
 | `AVCameraCalibrationData` (intrinsicMatrix, lensDistortionLookupTable) | AVFoundation | iOS 11 | §3.2 intrinsics + §3.3 reprojection |
 | `kCGImageAuxiliaryDataTypeDisparity` | ImageIO | iOS 11 | §3.7 HEIC embedded depth |
 | `ARWorldTrackingConfiguration.frameSemantics = .smoothedSceneDepth` | ARKit | iOS 14 | §3.2 live aim |
@@ -521,11 +522,11 @@ Reference: bible §07_SPECIALIZED_FEATURES Section 14 documents the `notificatio
 
 **Upload pipeline:**
 Reuse existing [`PresignedURLUploadService`](../../ops-ios/OPS/Network/PresignedURLUploadService.swift) — same path as PencilKit annotation PNGs. Three uploads per dimensioned capture:
-1. HEIC photo with embedded depth → `project_photos.url`
+1. HEIC photo with embedded disparity aux data → `project_photos.url`
 2. Sidecar metadata JSON → S3 key recorded in `dimensions.sidecarMetadataUrl`
-3. Standalone depth map (FP32 raw) → S3 key recorded in `dimensions.depthAssetUrl`
+3. Standalone depth map (FP32 raw depth in meters) → S3 key recorded in `dimensions.depthAssetUrl`
 
-The depth channel embedded in HEIC (item 1) is enough for re-projection in most cases. The standalone FP32 depth (item 3) is for high-precision re-rendering and PDF export — kept for 90 days then lifecycled out (see cost below).
+The disparity channel embedded in HEIC (item 1) is enough for auxiliary preservation and most re-projection use cases. The standalone FP32 depth-in-meters asset (item 3) is for high-precision re-rendering and PDF export — kept for 90 days then lifecycled out (see cost below).
 
 **Storage volumes (Supabase pricing not verified — see action items below):**
 
@@ -545,7 +546,7 @@ The depth channel embedded in HEIC (item 1) is enough for re-projection in most 
 1. Pull current Supabase Storage $/GB-month and egress $/GB from the Supabase pricing page
 2. Multiply against the 2.25 GB hot / 1.75 GB steady / 1.7 GB egress numbers above
 3. Confirm the per-customer monthly figure is acceptable to the user
-4. If material, decide whether the standalone FP32 depth (item 3 above) should drop to 30-day retention or be eliminated entirely (HEIC embedded depth is sufficient for ~95% of re-rendering needs)
+4. If material, decide whether the standalone FP32 depth-in-meters asset (item 3 above) should drop to 30-day retention or be eliminated entirely (HEIC embedded disparity is sufficient for ~95% of re-rendering needs)
 
 **Compute cost:** All on-device (Vision, ARKit, PDFKit). Zero cloud inference. No new third-party SDKs, no licensing.
 
