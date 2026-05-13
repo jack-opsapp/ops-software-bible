@@ -1076,8 +1076,10 @@ The app must function fully without internet connectivity. All features must be 
 ### 14. Pipeline / CRM (iOS & OPS Web)
 
 #### Pipeline Board — OPS Web
-- **9-Stage Kanban Board** — New Lead, Qualifying, Quoting, Quoted, Follow-Up, Negotiation, Won, Lost, Discarded
-- **Drag-and-Drop** — Move opportunities between stages via @dnd-kit
+- **Focused Mode (default)** — One active stage is centered as the working column. Adjacent stages render as compact spine rails; Won/Lost render as terminal targets. The toolbar provides `[ MODE: SPATIAL ▸ ]`, and `V` toggles between focused and spatial when the user is not typing, dragging, or inside modal/menu keyboard scope.
+- **Spatial Mode** — Pannable/zoomable canvas view for scanning the full pipeline. Active stages are stack regions; Won/Lost are terminal regions. The toolbar provides `[ MODE: FOCUSED ▸ ]`.
+- **Drag-and-Drop** — Move opportunities between stages via @dnd-kit. Focused cards drop onto spine rails or terminal targets and use the same stage move path as spatial drops.
+- **Empty Canvas Drop** — Dropping on empty spatial canvas cancels the drag. Pipeline cards do not persist Finder-style custom positions; the layout engine remains canonical.
 - **Stage Transitions** — Every stage move recorded as immutable history
 - **Win Probability** — Per-stage default + per-opportunity override
 - **Weighted Pipeline Value** — estimatedValue × winProbability
