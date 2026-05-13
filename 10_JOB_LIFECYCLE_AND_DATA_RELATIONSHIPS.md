@@ -2323,6 +2323,12 @@ Phase 2 renders the new Projects spreadsheet behind the per-user `projects_table
 
 OPS-Web browser sessions use Firebase JWTs as the Supabase `accessToken`, so PostgREST evaluates them as the `anon` database role while RLS resolves the OPS user through `private.get_current_user_id()`. The Phase 2 Firebase bridge grants `anon` `SELECT` only on `project_views` and `project_table_rows`; `project_views` keeps only its read policy on `to public`, while saved-view manage policies and table mutation RPC execute grants remain authenticated-only.
 
+### Projects Table V2 Phase 3 Edit Core (added 2026-05-13)
+
+Projects Table V2 now supports inline edits for core project fields: title, address, start date, end date, and status. Direct project-field edits use PostgREST updates against `public.projects` with an `updated_at` equality check; zero-row updates are treated as edit conflicts. Status changes use `public.change_project_status(...)`, which preserves the canonical `project_notes.event_kind = 'status_change'` activity trail.
+
+Undo is client-side and capped at 50 entries. Undo performs a real reverse write through the same direct-update/RPC path and therefore respects current permissions and conflict tokens. The browser Firebase bridge uses the `anon` database role, so the restrictive `projects.role_scope_update` policy applies to `public`, and `anon` can execute only the status RPC from the Phase 1 RPC family.
+
 -- Alter existing tables:
 ALTER TABLE line_items ADD COLUMN type text DEFAULT 'LABOR';
 ALTER TABLE line_items ADD COLUMN task_type_id text;
