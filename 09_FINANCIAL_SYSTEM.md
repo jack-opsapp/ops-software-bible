@@ -150,6 +150,20 @@ interface Opportunity {
 - Stage validation: target must be in `ALL_BOARD_STAGES`
 - No-op if moved to same stage
 
+### OPS-Web Pipeline V2 Detail Panel
+
+**Status:** Phase 4 implemented 2026-05-13. The old tethered multi-window opportunity detail popover system was retired for `/pipeline`; `detail-popover.tsx`, `detail-popover-store.ts`, and `detail-popover-tether.tsx` were deleted. Opportunity detail state now lives in `usePipelineModeStore` via `detailPanelOpportunityId`, `detailPanelActiveTab`, `openDetailPanel`, `closeDetailPanel`, and `setDetailPanelActiveTab`.
+
+**Component:** `src/app/(dashboard)/pipeline/_components/pipeline-detail-panel.tsx`
+
+- Focused mode at wide desktop (`>=1280px`) renders the detail panel inline beside the focused stage list, pushing the list narrower instead of floating above it.
+- Focused compact desktop (`900-1279px`) renders the same panel as a portal drawer scoped to the pipeline shell, with backdrop coverage limited to the shell area below the topbar/sidebar.
+- Spatial mode always renders the portal drawer. It does not attempt inline/push layout because transformed canvas measurement is brittle.
+- The panel owns close behavior for the close button, `Escape`, and drawer backdrop; the page/shell close stale selections on focused stage changes, mode changes, and filtering that removes the selected opportunity.
+- Focus enters the panel on open and restores to the originating opportunity card via `data-opportunity-card-id` on close. DOM refs stay local to React components and are not stored in Zustand.
+- Detail tabs were renamed from `detail-popover-*` to `pipeline-detail-*` and share the mode-store active tab state.
+- Motion uses the OPS easing curve (`cubic-bezier(0.22, 1, 0.36, 1)`) and honors `prefers-reduced-motion`.
+
 ### Opportunity Helpers
 
 ```typescript
