@@ -61,7 +61,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<supabase anon key>
 
 ### Overview
 
-The pipeline tracks leads from first contact through to a won/lost outcome and project conversion. It is a Kanban-style board using `@dnd-kit` for drag-and-drop.
+The pipeline tracks leads from first contact through to a won/lost outcome and project conversion. OPS-Web Pipeline V2 is a dual-mode desktop surface: focused mode is the default command view, and the spatial canvas is the secondary map view for pan/zoom, marquee, and archive/discard tray workflows. Both modes use `@dnd-kit` for drag-and-drop.
 
 ### Pipeline Stages
 
@@ -78,7 +78,7 @@ The pipeline tracks leads from first contact through to a won/lost outcome and p
 | **Won** | `won` | #9DB582 | 100% | — |
 | **Lost** | `lost` | #6B7280 | 0% | — |
 
-Active stages (NewLead → Negotiation) appear as standard columns. Won and Lost are terminal columns separated by a visual divider on the board.
+Active stages (NewLead → Negotiation) appear in the focused mode spine and spatial mode stage stacks. Won and Lost are terminal stages; focused mode renders them as a single terminal tab stack with exactly one selected roving tab, and spatial mode renders them as terminal canvas regions.
 
 Per-company stage configuration is stored in the `pipeline_stage_configs` table, seeded from `PIPELINE_STAGES_DEFAULT`.
 
@@ -133,26 +133,60 @@ interface Opportunity {
 
 **iOS parity (2026-05, BOOKS tab Phase 1):** The iOS `Opportunity` SwiftData model (`OPS/DataModels/Supabase/Opportunity.swift`) now models the full opportunity schema additively. All 47 columns are now read-side on iOS; AI/location/images fields (`aiSummary`, `aiStageConfidence`, `aiStageSignals`, `detectedValue`, `latitude`, `longitude`, lead image set) remain deferred to a later phase. Implementing commit: `9047b4b` in ops-ios.
 
-### Pipeline Board UI
+### OPS-Web Pipeline V2 Focused / Spatial UI
 
-**Component**: `src/app/(dashboard)/pipeline/_components/pipeline-board.tsx`
+**Status:** Phase 11 verified 2026-05-13. Focused mode is the desktop default for `/pipeline`; spatial mode remains available as the secondary canvas mode.
 
-- Uses `@dnd-kit/core` with `PointerSensor` (8px activation distance)
-- `closestCorners` collision detection
-- `DragOverlay` renders ghost card during drag
-- Active stages render as `PipelineColumn` components
-- Terminal stages (Won/Lost) are narrower, no "Add Lead" button
-- Board filters: search (title, contact name, client name) + stage filter
+**Primary route:** `src/app/(dashboard)/pipeline/page.tsx`
+
+**Focused components:**
+- `src/app/(dashboard)/pipeline/_components/pipeline-focused-shell.tsx`
+- `src/app/(dashboard)/pipeline/_components/pipeline-focused-column.tsx`
+- `src/app/(dashboard)/pipeline/_components/pipeline-focused-card.tsx`
+- `src/app/(dashboard)/pipeline/_components/pipeline-spine-column.tsx`
+- `src/app/(dashboard)/pipeline/_components/pipeline-terminal-stack.tsx`
+
+**Spatial components:**
+- `src/app/(dashboard)/pipeline/_components/spatial-canvas.tsx`
+- `src/app/(dashboard)/pipeline/_components/spatial-stage-stack.tsx`
+- `src/app/(dashboard)/pipeline/_components/spatial-terminal-region.tsx`
+- `src/app/(dashboard)/pipeline/_components/spatial-archive-tray.tsx`
+- `src/app/(dashboard)/pipeline/_components/spatial-floating-toolbar.tsx`
+
+**Mode state:** `usePipelineModeStore` in `pipeline-mode-store.ts` owns:
+- `mode` (`focused` / `spatial`)
+- `focusedStage`
+- global `sortBy`
+- per-stage `stageSortOverrides`
+- shared detail panel state: `detailPanelOpportunityId` and `detailPanelActiveTab`
+
+The store persists only mode, focused stage, and sort state under `opsPipeline:v3`. Detail panel state is intentionally not persisted.
+
+**Focused mode model:**
+- The focused shell centers one active stage at a time, with neighboring stages rendered as spine columns.
+- The search/filter row filters the same opportunity set for both focused and spatial modes.
+- Horizontal wheel and Shift+wheel snap the focused stage. Trackpad pinch-out (`ctrl` wheel with positive `deltaY`) switches to spatial after the virtual zoom threshold.
+- The `V` shortcut toggles focused/spatial unless a drag is active or the user is typing in an input/menu/modal.
+- The accessibility model is a real tablist/tabpanel pair. Active stages and terminal Won/Lost entries are `role="tab"` controls; exactly one tab is `aria-selected="true"` and exactly one tab owns `tabIndex=0`. The single `role="tabpanel"` is labelled by the selected tab.
+- Focused drag to an active spine target moves the opportunity. Focused drag to Won/Lost opens the transition dialog before any terminal mutation.
+
+**Spatial mode model:**
+- Spatial mode keeps pan, zoom, marquee selection, context menu, archive tray, and discard tray workflows.
+- Archive/discard trays are spatial-only and are not rendered in focused mode.
+- Empty-canvas card drop is a no-op. Pipeline V2 removed free-positioning for opportunities; dropping on empty spatial canvas no longer writes custom positions.
+- `customPositions` / free-positioning state is not part of Pipeline V2. Spatial positions are computed by the layout engine from stages, sort state, and terminal regions.
+
+**Mode transition:** Pipeline V2 uses a manual FLIP transition between focused and spatial modes. Before the mode changes, `PIPELINE_MODE_WILL_CHANGE_EVENT` captures source card rects and a static source clone. After the target mode mounts, target rects are read and temporary card overlays animate with the OPS easing curve (`cubic-bezier(0.22, 1, 0.36, 1)`). Reduced motion skips the FLIP overlay and still changes mode state.
 
 **Drag behavior:**
-- `handleDragStart` → sets activeId, shows overlay
-- `handleDragEnd` → calls `onMoveStage(opportunityId, newStage)`
-- Stage validation: target must be in `ALL_BOARD_STAGES`
-- No-op if moved to same stage
+- `PipelineDndProvider` centralizes `DndContext`, pointer and keyboard sensors, and mode-aware collision handling.
+- Focused keyboard dragging uses stage-aware coordinates so arrow keys move across active and terminal stage targets.
+- `resolvePipelineDragEnd()` is the shared drop contract. Focused mode accepts only focused stage drops; spatial mode accepts stage/terminal drops and treats missing drop data as cancel/no-op.
+- Normal active-stage moves call `onMoveStage(opportunityId, newStage)`. Won/Lost drops route through the transition dialog.
 
 ### OPS-Web Pipeline V2 Detail Panel
 
-**Status:** Phase 4 implemented 2026-05-13. The old tethered multi-window opportunity detail popover system was retired for `/pipeline`; `detail-popover.tsx`, `detail-popover-store.ts`, and `detail-popover-tether.tsx` were deleted. Opportunity detail state now lives in `usePipelineModeStore` via `detailPanelOpportunityId`, `detailPanelActiveTab`, `openDetailPanel`, `closeDetailPanel`, and `setDetailPanelActiveTab`.
+**Status:** Phase 11 verified 2026-05-13. The old tethered multi-window opportunity detail popover/window system was retired for `/pipeline`; `detail-popover.tsx`, `detail-popover-store.ts`, and `detail-popover-tether.tsx` were deleted. Opportunity detail state now lives in `usePipelineModeStore` via `detailPanelOpportunityId`, `detailPanelActiveTab`, `openDetailPanel`, `closeDetailPanel`, and `setDetailPanelActiveTab`.
 
 **Component:** `src/app/(dashboard)/pipeline/_components/pipeline-detail-panel.tsx`
 
