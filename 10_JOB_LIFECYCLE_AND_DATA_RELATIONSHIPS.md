@@ -2307,6 +2307,22 @@ The list below was originally written as "tables needed." A live audit on 2026-0
 
 `source = 'measurement'` is used by LiDAR Dimensioned Photo Capture (see §07 Section 23) — added 2026-05-10 alongside the spec.
 
+### Projects Table V2 Phase 1 Schema Foundation (added 2026-05-12)
+
+Phase 1 of the Projects table redesign is schema-only. It does not change the current `/projects` UI, but it establishes the saved-view and read-model layer behind the future `projects_table_v2` flag.
+
+- `project_views` stores company and user saved table views. Each row carries the column layout, filters, sort, density, zoom, optional `permission_key`, and RLS-scoped ownership. Default company views are seeded for existing companies and for newly inserted companies.
+- `project_table_rows` is the security-invoker read view for the table surface. It denormalizes project, client, task progress, next task, days in status, photo count, and financial aggregates into one wire shape.
+- `projects.team_member_ids` is a denormalized cache of non-deleted `project_tasks.team_member_ids`. It is not a free-floating project assignment list. The `project_tasks_sync_project_team_member_ids` trigger recomputes the cache after task insert/delete and after updates to `team_member_ids`, `deleted_at`, or `project_id`.
+- `assign_project_team_member`, `remove_project_team_member`, and `change_project_status` are the Phase 1 public RPCs for atomic table writes. They validate inputs, enforce scoped project permissions through private helpers, use `updated_at` as the conflict token, and return the fresh wire state needed by the table cache.
+- Financial table fields (`estimate_total`, `invoice_total`, `paid_total`, `value`, `project_cost`, `margin`) are gated at the SQL wire level. Without `projects.view_financials`, `project_table_rows` returns `null`, never zero; clients render the empty-state mark.
+
+### Projects Table V2 Phase 2 Read-Only UI (added 2026-05-12)
+
+Phase 2 renders the new Projects spreadsheet behind the per-user `projects_table_v2` component flag. The UI reads `project_views` for seeded saved views and `project_table_rows` for the virtualized read model. It is read-only: status changes, team assignment, inline editing, undo, and conflict handling remain outside this phase. The default load excludes closed and archived projects through the seeded saved-view filters; operators can still switch views without touching the legacy canvas.
+
+OPS-Web browser sessions use Firebase JWTs as the Supabase `accessToken`, so PostgREST evaluates them as the `anon` database role while RLS resolves the OPS user through `private.get_current_user_id()`. The Phase 2 Firebase bridge grants `anon` `SELECT` only on `project_views` and `project_table_rows`; `project_views` keeps only its read policy on `to public`, while saved-view manage policies and table mutation RPC execute grants remain authenticated-only.
+
 -- Alter existing tables:
 ALTER TABLE line_items ADD COLUMN type text DEFAULT 'LABOR';
 ALTER TABLE line_items ADD COLUMN task_type_id text;
