@@ -6362,6 +6362,8 @@ Every other LiDAR measurement app forces a full room scan (Magicplan, Polycam), 
 | Persistence | `DimensionedPhotoSyncManager` via existing `PresignedURLUploadService` | HEIC+depth → `project_photos.url`, sidecar JSON + raw depth → S3 |
 | UI | `DimensionedCaptureView` + `DimensionedAnnotationView` | SwiftUI views with 6-tool toolbar, calibrate flow, accuracy badge |
 
+**Capture to annotation handoff (2026-05-13):** `.lidar` captures now build a `DimensionedAnnotationHandoff` before presenting `DimensionedAnnotationView`. The handoff loads the standalone FP32 depth asset from `CapturedAssets.depthURL`, converts the captured `ARKitSnapshot.meshFaces` into `AnchorSnapshot`, runs `OpeningClassifier`, validates candidates through `AutoMeasurer`, and passes `preloadedDepthMap`, `anchors`, and `detectedOpenings` into annotation. AUTO is shown only when real measured openings exist. If depth loading, anchor conversion, or classification produces no candidates, annotation still opens for manual measurement with AUTO hidden. `.visual` fallback bypasses auto-detect entirely, requires no depth, keeps AUTO hidden, and leaves CALIBRATE visible.
+
 ### Data model
 
 - New `dimensions jsonb` column on `project_photo_annotations` (additive, NULL on legacy rows). Schema in spec §4.1.
