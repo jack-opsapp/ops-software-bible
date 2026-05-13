@@ -4653,7 +4653,7 @@ Data source: `public.get_inbox_density_per_client(p_company_id uuid)` RPC (migra
 
 ### Overview
 
-The OPS web inbox at `/inbox` is the operator panel for **Phase C**, OPS's AI executive-assistant agent. Every email — not just pipeline leads — flows through the inbox, gets AI-classified into one of thirteen primary categories, and is surfaced to the user with the right triage affordances (archive, snooze, recategorize, Phase C-drafted reply, etc.). Rebuilt 2026-04-20 (plan: `docs/superpowers/plans/...`, commits `f05627ff` → `2430fbdc`).
+The OPS web inbox at `/inbox` is the operator panel for **Phase C**, OPS's AI executive-assistant agent. Every email — not just pipeline leads — flows through the inbox, gets AI-classified into one of twelve primary categories, and is surfaced to the user with the right triage affordances (archive, snooze, recategorize, Phase C-drafted reply, etc.). Rebuilt 2026-04-20 (plan: `docs/superpowers/plans/...`, commits `f05627ff` → `2430fbdc`); rail model collapsed to ball-in-court 2026-05-12 (audit `docs/superpowers/research/2026-05-12-inbox-category-audit.md`, commits `951a0659` → `ce91e96c`).
 
 ### Design intent
 
@@ -4675,10 +4675,11 @@ Inbox v2 is a **cache-first** design (Superhuman/Fyxer model): the inbox list is
 
 ### Primary categories (exactly one per thread)
 
+Twelve values, enforced by the `email_threads.primary_category` CHECK constraint (post `20260428061836_collapse_lead_client_to_customer`). The legacy `LEAD` + `CLIENT` values were collapsed into `CUSTOMER` in that migration and were dropped from the TypeScript union 2026-05-12 (commit `ce91e96c`).
+
 | Category | When it applies |
 |----------|-----------------|
-| `LEAD` | Potential customer inquiring about work, receiving a quote, in pre-win conversations |
-| `CLIENT` | Existing/past customer — post-win, warranty, referrals, repeat work |
+| `CUSTOMER` | Anyone the company sells work to — covers the full arc from first inquiry through warranty / repeat / referral. The lead-vs-client distinction is handled by the linked opportunity stage, not this category. |
 | `VENDOR` | Supplier selling materials/products TO the company |
 | `SUBTRADE` | Another trade/crew pitching services or coordinating as a subcontractor |
 | `PLATFORM_BID` | Automated bid invitations (Procore, BuilderTrend, PlanHub, SmartBidNet, BuildingConnected) |
@@ -4697,24 +4698,39 @@ Categories are **LAW** — adding / removing / renaming requires a migration and
 
 `URGENT` · `AWAITING_REPLY` · `HAS_ATTACHMENT` · `HAS_QUOTE` · `HAS_INVOICE` · `FROM_NEW_SENDER`. Also **LAW** — the classifier prompt and the UI chip set are keyed off this exact list.
 
-### Split-inbox rails
+`AWAITING_REPLY` post-v3 (2026-05-12) is mechanically derived from the classifier's explicit `ball_in_court` resolution: present when `ball_in_court='operator'`, absent otherwise. The label is the operational signal the rail predicate trusts; `ball_in_court` itself lives only on the wire (`ClassifyResult.ballInCourt`), not in a column.
 
-The left rail of `/inbox` is a four-rail segmented control:
+### Rail model (2026-05-12 collapse)
 
-| Rail | Query | Keyboard |
-|------|-------|----------|
-| **Needs reply** | `labels @> '{AWAITING_REPLY}' AND archived_at IS NULL AND snoozed_until IS NULL` | `1` |
-| **Everything** | `archived_at IS NULL AND snoozed_until IS NULL` | `2` |
-| **Scheduled** | `snoozed_until IS NOT NULL AND snoozed_until > now()` | `3` |
-| **Done** | `archived_at IS NOT NULL` | `4` |
+The left rail of `/inbox` is a four-button segmented control framed by **ball-in-court**. The previous six-tab set (`everything` / `needs_reply` / `drafts` / `commitments` / `scheduled` / `done`) was collapsed after the 2026-05-12 audit found `SCHEDULED` + `DONE` had 0 rows for months, `NEEDS_REPLY` undercounted unread inbound by ~5x, and `COMMITMENTS` overlapped `NEEDS_REPLY` by 37%. Single source of truth: `src/lib/inbox/rail-predicates.ts`.
 
-Below the rails, a horizontal strip of **category filter chips** (ALL + 13 categories) narrows the active rail by `primary_category`.
+| Rail | Predicate | Keyboard |
+|------|-----------|----------|
+| **ALL** | (no archived/snoozed filter — firehose of every accessible thread) | `1` |
+| **YOUR MOVE** | `archived_at IS NULL AND (snoozed_until IS NULL OR snoozed_until <= now()) AND (has_unresolved_commitments OR labels @> '{AWAITING_REPLY}' OR (latest_direction = 'inbound' AND unread_count > 0) OR agent_blocking_question IS NOT NULL)` | `2` |
+| **WAITING** | `archived_at IS NULL AND (snoozed_until IS NULL OR snoozed_until <= now())` + complement of YOUR MOVE | `3` |
+| **ARCHIVED** | `archived_at IS NOT NULL` | `4` |
+
+Default landing is `YOUR_MOVE`. Snoozed threads (`snoozed_until > now()`) are absent from YOUR MOVE + WAITING but present in ALL; archived threads are absent from both unfiltered + snoozed views (archive wins).
+
+#### Demoted rails
+
+- **DRAFTS** → header counter chip `// {n} DRAFTS ▾` next to the rail dropdown, plus the existing per-row `// DRAFT` pill on thread rows. Chip renders only when count > 0; popover lists every unsent draft (provider + Phase C) with discard / open affordances. Source endpoint unchanged (`/api/inbox/drafts`).
+- **SCHEDULED** → snooze stays as a per-thread action (via `SnoozePicker`). Header counter chip `// {n} SNOOZED ▾` renders only when at least one thread is currently snoozed; popover lists each with unsnooze + open. Internal `RailFilter` value `SNOOZED` (not in the rail nav buttons) backs the popover.
+
+Below the rails, a horizontal strip of **category filter chips** (ALL + 12 categories) narrows the active rail by `primary_category`. Category strip is unchanged by the collapse — Phase 4 visual rework owns any redesign there.
+
+#### URL/legacy parsing
+
+`parseRailFilter` (in `rail-predicates.ts`) accepts the new canonical values and gracefully maps legacy six-tab strings forward so existing bookmarks/links don't 404: `everything → ALL`, `needs_reply → YOUR_MOVE`, `commitments → YOUR_MOVE`, `drafts → ALL`, `scheduled → ALL`, `done → ARCHIVED`. Unknown/missing values fall through to the configured fallback (default `YOUR_MOVE`, ALL for the route handler).
 
 ### Thread classifier
 
 - Service: `src/lib/api/services/thread-classifier-service.ts`
 - Model: `gpt-5.4-mini` via `OPENAI_API_KEY_SYNC`
 - Invocation: fire-and-forget from `EmailThreadService.upsertFromEmail` (sync step 7.5)
+- Output: `primary_category` (one of 12), `confidence`, secondary `labels[]`, `ball_in_court` (`'operator' | 'counterparty' | 'none'`), `ai_summary`, `reasoning`
+- `CLASSIFIER_VERSION = 'v3'` (2026-05-12) — adds explicit ball-in-court resolution. The LLM decides whose turn it is BEFORE the AWAITING_REPLY label, then the service post-processes (`reconcileLabelsToBallInCourt`) to enforce label coherence — operator forces AWAITING_REPLY in, counterparty/none forces it out. Forward-fix only; the 3,257 historical rows are NOT backfilled.
 - Skip rule: only reclassify when `category_confidence < 0.6` or the thread is new; user corrections (`category_manually_set = true`) are never overwritten
 - Learned rules: corrections keyed by `sender_domain` and `participants_hash` are fed back as priors so Phase C learns per-sender taxonomy
 - Cost: ~$0.50–2.00 per 1000 threads at backfill; ~$0.30/week per active inbox
@@ -4730,7 +4746,7 @@ Below the rails, a horizontal strip of **category filter chips** (ALL + 13 categ
 | `auto_draft` | Phase C drafts on every inbound, holds in `ai_draft_history` |
 | `auto_send` | Phase C drafts + schedules via `AutoSendService` with business-hour delay |
 | `auto_archive` | Phase C archives (RECEIPT / MARKETING / PLATFORM_BID reject) |
-| `auto_follow_up` | LEAD/CLIENT — auto-nudge after configurable quiet days |
+| `auto_follow_up` | CUSTOMER — auto-nudge after configurable quiet days |
 
 **Global AUTO_SEND gate:** The router caps any category-level `auto_send` / `auto_follow_up` to `auto_draft` behavior until the global Phase C autonomy level in `AutonomyMilestoneService` reaches AUTO_SEND (level 4). This prevents any email from being sent before the overall writing profile is proven.
 
@@ -4738,8 +4754,7 @@ Below the rails, a horizontal strip of **category filter chips** (ALL + 13 categ
 
 | Category | Valid levels |
 |----------|--------------|
-| LEAD | off · draft_on_request · auto_draft · auto_send · auto_follow_up |
-| CLIENT | off · draft_on_request · auto_draft · auto_send · auto_follow_up |
+| CUSTOMER | off · draft_on_request · auto_draft · auto_send · auto_follow_up |
 | VENDOR / SUBTRADE | off · draft_on_request · auto_draft · auto_send |
 | PLATFORM_BID | off · draft_on_request · auto_draft · auto_send · auto_archive |
 | LEGAL / COLLECTIONS / JOB_SEEKER | off · draft_on_request |
@@ -4788,7 +4803,7 @@ Fired from `EmailThreadService.classifyAndUpdate` post-hook:
 
 | Event | Type | Persistent |
 |-------|------|------------|
-| Thread newly classified as LEAD | `leads_waiting` — "New lead: {sender}" | No |
+| Thread newly classified as CUSTOMER | `leads_waiting` — "New customer: {sender}" | No |
 | Thread newly classified as PLATFORM_BID | `leads_waiting` — "Platform bid: {platform}" | No |
 | URGENT label appears on an inbound thread | `role_needed` — "Urgent reply needed: {sender}" | No |
 | Category ready to graduate to auto_send | `ai_milestone` — persistent until user acts | Yes |
@@ -4799,7 +4814,7 @@ Graduation check runs daily via `/api/cron/phase-c-graduation-check`.
 
 Two widgets ship with Inbox v2:
 
-1. `inbox-leads` — unread LEAD count + 7-day daily sparkline + median inbound-to-first-outbound response time. Clicks deep-link to `/inbox?category=LEAD&filter=needs_reply`.
+1. `inbox-leads` — unread CUSTOMER count + 7-day daily sparkline + median inbound-to-first-outbound response time. Clicks deep-link to `/inbox?category=CUSTOMER&filter=YOUR_MOVE`.
 2. `phase-c-autonomy` — weekly AUTO / DRAFTS / SURFACED tallies + per-category autonomy-level bars. Clicks deep-link to `/settings/email-category-autonomy`.
 
 Registered in `src/lib/types/dashboard-widgets.ts` under category `alerts` with `requiredPermission: "inbox.view"`.
@@ -4826,13 +4841,13 @@ All gating flows through `inboxModule` in `src/lib/types/permissions.ts`:
 
 | Route | Method | Purpose |
 |-------|--------|---------|
-| `/api/inbox/threads` | GET | Paginated list (cursor-based, 30s refetch). Scope + rail + category + search query params. |
+| `/api/inbox/threads` | GET | Paginated list (cursor-based, 30s refetch). Query params: `scope=own\|company`, `filter=ALL\|YOUR_MOVE\|WAITING\|ARCHIVED\|SNOOZED` (legacy six-tab strings are accepted and degraded forward), `category=<one of 12>`, `search`, `cursor`, `limit`. Predicate built by `applyRailPredicate` in `src/lib/inbox/rail-predicates.ts`. |
 | `/api/inbox/threads/[id]` | GET | Thread detail incl. provider messages. Live-fetches Gmail/M365 for full bodies and derives direction server-side against the connection email; falls back to `activities` if the provider call fails. Each message carries `direction`, `bodyText`, and `cleanBodyText` (quoted reply chain stripped via `stripQuotedContent`). |
 | `/api/inbox/threads/[id]` | PATCH | Actions: `archive` / `unarchive` / `snooze` / `unsnooze` / `recategorize` / `markRead`. |
 | `/api/inbox/writeback-preference` | POST | Set `archive_writeback_preference` on a connection. |
 | `/api/inbox/backfill` | POST | Pulls historical mailbox content into `email_threads` one list-page at a time. Provider-agnostic (Gmail `messages.list`, M365 `/me/messages`). Body: `{ connectionId, monthsBack?=12, maxPages?=1, startPageToken?, classify?=false, dryRun?=false }`. Response reports `threadsSeen / threadsAlreadyPresent / threadsBackfilled / messagesUpserted / nextPageToken / completed`. Idempotent via `(connection_id, provider_thread_id)` unique constraint — safe to re-run and interleave with live sync. Clients loop until `completed: true` or `nextPageToken: null`. |
 | `/api/cron/unsnooze` | GET | 5-min cron — re-applies INBOX to snoozed threads past their `snoozed_until`. |
-| `/api/cron/stale-leads` | GET | Hourly cron — invokes router on LEAD/CLIENT threads >7d quiet with outbound-last. |
+| `/api/cron/stale-leads` | GET | Hourly cron — invokes router on CUSTOMER threads >7d quiet with outbound-last. |
 | `/api/cron/phase-c-graduation-check` | GET | Daily cron — fires `ai_milestone` notifications for categories ready to graduate. |
 
 ### Key files
@@ -4840,14 +4855,19 @@ All gating flows through `inboxModule` in `src/lib/types/permissions.ts`:
 | File | Role |
 |------|------|
 | `src/app/(dashboard)/inbox/page.tsx` | Three-panel page layout + command palette + undo toast host |
-| `src/components/ops/inbox/conversation-list.tsx` | Thread list (infinite query, hover actions, keyboard shortcuts) |
-| `src/components/ops/inbox/thread-detail-view.tsx` | Center pane (header, Phase C strip, AI summary, messages, action bar) |
-| `src/components/ops/inbox/thread-context-panel.tsx` | Right rail with Phase C insights |
-| `src/components/ops/inbox/category-chip.tsx` | 13-category display chip + interactive (RecategorizeMenu trigger) |
-| `src/components/ops/inbox/recategorize-menu.tsx` | Popover with all categories + "Tell Phase C why" note |
-| `src/components/ops/inbox/split-inbox-tabs.tsx` | Four-rail segmented control |
-| `src/components/ops/inbox/category-filter-chips.tsx` | Horizontal category filter strip |
-| `src/components/ops/inbox/snooze-picker.tsx` | Presets + custom datetime picker |
+| `src/lib/inbox/rail-predicates.ts` | Single source of truth for rail filter logic — `RailFilter` union, `parseRailFilter`, `applyRailPredicate`, `classifyRail`. Shared by server query, in-memory partitioning, future caught-up-state logic, and analytics. |
+| `src/components/ops/inbox/inbox-route.tsx` | Integration layer — owns thread list fetch + selection, header chips, detail panes, ContextRail |
+| `src/components/ops/inbox/thread-list.tsx` | Thread list (infinite query, hover actions, keyboard shortcuts) |
+| `src/components/ops/inbox/thread-row.tsx` | Thread row card — subject, state tag, inline `// DRAFT` pill |
+| `src/components/ops/inbox/thread-detail.tsx` | Center pane shell (header, four-button action cluster, scroll region) |
+| `src/components/ops/inbox/context-rail/context-rail.tsx` | Right rail with Phase C / client / pipeline insights |
+| `src/components/ops/inbox/category-chip.tsx` | 12-category display chip + interactive (RecategorizeMenu trigger) |
+| `src/components/ops/inbox/recategorize-menu.tsx` | Popover with all 12 categories + "Tell Phase C why" note |
+| `src/components/ops/inbox/thread-column-header.tsx` | Column header — rail filter dropdown + drafts / snoozed chips + refresh / archived / settings menu |
+| `src/components/ops/inbox/header-chip.tsx` | Shared `// {n} {LABEL} ▾` chip shell used by DraftsChip + SnoozedChip |
+| `src/components/ops/inbox/drafts-chip.tsx` | Header counter + popover for unsent drafts (provider + Phase C) |
+| `src/components/ops/inbox/snoozed-chip.tsx` | Header counter + popover for currently-snoozed threads |
+| `src/components/ops/inbox/snooze-picker.tsx` | Per-thread snooze presets + custom datetime picker |
 | `src/components/ops/inbox/writeback-preference-modal.tsx` | First-archive preference modal |
 | `src/components/ops/inbox/command-palette.tsx` | ⌘K overlay |
 | `src/components/ops/inbox/undo-toast.tsx` | Portaled 5s undo toast + `z` hotkey |
