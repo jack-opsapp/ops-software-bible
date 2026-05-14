@@ -2345,6 +2345,24 @@ Phase 4 project photo hardening keeps direct `project_photos` insert/update comp
 
 `bulk_update_project_table` accepts visible-row operations only from the client and returns per-project `success` and `failed` arrays with counts. Successful rows are applied to the table cache and included in a single bulk undo entry; failed rows remain selected for Retry or Discard. Bulk undo performs a fresh reverse `bulk_update_project_table` call with the saved post-change conflict tokens, so undo remains permission-checked and conflict-aware.
 
+### Projects Table V2 Phase 5 Saved Views + Density (added 2026-05-14)
+
+Phase 5 adds saved-view management and density persistence for the OPS-Web Projects spreadsheet. The live migration is `20260514163406_projects_table_v2_phase5_saved_view_actions.sql`; generated database types include the saved-view RPC contracts.
+
+Saved views have two ownership modes. Personal views use `project_views.owner_type = 'user'` with `owner_id` set to the current OPS user. Company views use `owner_type = 'company'` with `owner_id` set to the company id and are visible to the company subject to any `permission_key`. Creating or duplicating a view always creates a personal view first. Sharing a view with the team converts it to company ownership and requires `projects.manage_views`.
+
+OPS-Web must mutate saved views only through the Phase 5 RPCs: `create_project_table_view`, `rename_project_table_view`, `archive_project_table_view`, `reset_project_table_view`, `share_project_table_view`, and `update_project_table_view_definition`. Clients must not issue direct `project_views` update/delete writes for saved-view management. The RPCs sanitize names and definitions, enforce company isolation, enforce owner permissions, and keep Firebase browser sessions working through the `anon` execute grants while still checking the current OPS user inside the function.
+
+Archive is soft delete. `archive_project_table_view` sets `project_views.is_archived = true`; it does not hard delete the row. Archived views are removed from normal view lists and are not considered accessible for active view selection or deep links.
+
+The persisted view definition is the contract for table layout and density. The server accepts only `columns`, `filters`, `sort`, `density`, and `zoom_level` definition keys. These persist back to `project_views.columns`, `project_views.filters`, `project_views.sort`, `project_views.density`, and `project_views.zoom_level`. Default reset recomputes those fields from the canonical server default definition for the selected default view.
+
+The Projects route supports saved-view deep links through `?view=<id>`. A valid, accessible, non-archived view id becomes the active view and is stored as the user's last selected view. If the URL points to an invalid, archived, or inaccessible view, OPS-Web falls back to the default accessible view, stores that fallback, and replaces the URL with the fallback `?view=<id>` instead of rendering a broken table state.
+
+Density has three persisted presets: compact `0.85`, comfortable `1.00`, and spacious `1.25`. The density controls, keyboard shortcuts, pinch gestures, and Ctrl/Meta-wheel gestures update table metrics - row height, header height, font sizes, avatar size, and column scale - and then persist the nearest density/zoom pair through `update_project_table_view_definition`. The table must not use CSS `transform: scale(...)` for density changes; scaling is metric-driven so hit targets, virtualization, text layout, and column math stay coherent.
+
+`projects.manage_views` gates company/share behavior. Users without it may manage their own personal saved views but must not see or execute team-share controls, and they cannot mutate company-owned views. `projects.view_financials` continues to gate the Financial Overview view and all financial data. The Financial Overview saved view remains protected by `permission_key = 'projects.view_financials'`, and the `project_table_rows` financial fields still return `null` at the SQL wire level when the user lacks that permission.
+
 -- Alter existing tables:
 ALTER TABLE line_items ADD COLUMN type text DEFAULT 'LABOR';
 ALTER TABLE line_items ADD COLUMN task_type_id text;
