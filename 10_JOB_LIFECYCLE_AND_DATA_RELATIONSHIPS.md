@@ -4,7 +4,7 @@
 
 **Purpose**: Defines the complete data flow for a trade job from first contact through to a paid invoice. Documents all entity relationships, automation triggers, new entities, and required changes to existing entities. This is the master reference for how leads, pipeline, clients, estimates, projects, tasks, and invoices inter-operate.
 
-**Last Updated**: March 19, 2026
+**Last Updated**: May 13, 2026
 **Designed With**: ops-web codebase + ops-software-bible review session
 
 ---
@@ -1492,6 +1492,8 @@ When a user creates an estimate after completing a site visit:
 | `site_visit` | Auto from SiteVisit.photos | When opportunity is won |
 | `in_progress` | Uploaded by field crew during task work | During InProgress status |
 | `completion` | Uploaded at project sign-off | When all tasks complete |
+| `measurement` | LiDAR Dimensioned Photo Capture | During measurement capture |
+| `deck_design` | iOS deck builder thumbnail and overlay capture | During deck design work |
 | `other` | Manual upload from project detail | Any time |
 
 ### Gallery UI
@@ -2296,7 +2298,7 @@ The list below was originally written as "tables needed." A live audit on 2026-0
 | `company_id` | text | NO | — |
 | `url` | text | NO | — |
 | `thumbnail_url` | text | YES | — |
-| `source` | enum `photo_source` (`site_visit`, `in_progress`, `completion`, `other`, `measurement`) | NO | `'other'` |
+| `source` | enum `photo_source` (`site_visit`, `in_progress`, `completion`, `other`, `measurement`, `deck_design`) | NO | `'other'` |
 | `site_visit_id` | uuid | YES | — |
 | `uploaded_by` | text | NO | — |
 | `taken_at` | timestamptz | YES | — |
@@ -2305,7 +2307,7 @@ The list below was originally written as "tables needed." A live audit on 2026-0
 | `created_at` | timestamptz | YES | `now()` |
 | `deleted_at` | timestamptz | YES | — |
 
-`source = 'measurement'` is used by LiDAR Dimensioned Photo Capture (see §07 Section 23) — added 2026-05-10 alongside the spec.
+`source = 'measurement'` is used by LiDAR Dimensioned Photo Capture (see §07 Section 23) — added 2026-05-10 alongside the spec. `source = 'deck_design'` remains accepted for iOS deck builder thumbnails and photo overlay captures.
 
 ### Projects Table V2 Phase 1 Schema Foundation (added 2026-05-12)
 
@@ -2328,6 +2330,20 @@ OPS-Web browser sessions use Firebase JWTs as the Supabase `accessToken`, so Pos
 Projects Table V2 now supports inline edits for core project fields: title, address, start date, end date, and status. Direct project-field edits use PostgREST updates against `public.projects` with an `updated_at` equality check; zero-row updates are treated as edit conflicts. Status changes use `public.change_project_status(...)`, which preserves the canonical `project_notes.event_kind = 'status_change'` activity trail.
 
 Undo is client-side and capped at 50 entries. Undo performs a real reverse write through the same direct-update/RPC path and therefore respects current permissions and conflict tokens. The browser Firebase bridge uses the `anon` database role, so the restrictive `projects.role_scope_update` policy applies to `public`, and `anon` can execute only the status RPC from the Phase 1 RPC family.
+
+### Projects Table V2 Phase 4 Complex Cells + Bulk Writes (added 2026-05-13)
+
+Phase 4 is the OPS-Web shipped path for complex table cells and bulk writes: task-backed team assignment, Storage-backed table photo uploads, selection-aware bulk status/team/date changes, partial-failure retry, and one client undo entry per successful bulk operation.
+
+Team cells are canonical through task-backed membership only. OPS-Web table assignment must call `create_project_table_assignment_task`, `assign_project_team_member`, or `remove_project_team_member`; it must not insert `project_tasks` directly and must not write `projects.team_member_ids`. Those RPCs, plus `bulk_update_project_table`, are executable by the Firebase bridge (`anon`) and authenticated clients because Firebase browser sessions arrive at PostgREST as `anon`. That exposure is intentional: every function is helper-gated with scoped project permissions, company isolation, parseable IDs, and `updated_at` conflict checks before writing.
+
+iOS direct task creation remains supported for the existing queued Firebase/Supabase bridge. `anon` has direct `INSERT` on `public.project_tasks`, and RLS requires the inserted company to match the current OPS user, the user to hold `tasks.create` with `all` scope, and the target `project_id` to resolve to a non-deleted project in the same company. Direct `DELETE` on `project_tasks` stays revoked for `anon`. This is an iOS compatibility amendment only; new OPS-Web table code must use the helper-gated RPC path and must not rely on direct task inserts.
+
+`projects.team_member_ids` remains server-derived from non-deleted `project_tasks.team_member_ids` through the `project_tasks_sync_project_team_member_ids` trigger. It is not a client-owned assignment list and should not be directly written by new clients.
+
+Phase 4 project photo hardening keeps direct `project_photos` insert/update compatibility for valid edit-capable users while denying hard deletes. Storage writes for `project-photos` are scoped by bucket path, company, parseable project id, and `private.current_user_can_edit_project(...)`; table uploads use the path `<company_id>/<project_id>/<uuid>.<ext>`. Table uploads write `project_photos.source = 'other'`, and `uploaded_by` is the public `users.id` for the current OPS user. Table upload hooks also mirror successful uploads to `project_notes.event_kind = 'photo_uploaded'` on a best-effort basis so timeline failure never fails the gallery upload. The `deck_design` `photo_source` value is accepted for iOS deck builder compatibility.
+
+`bulk_update_project_table` accepts visible-row operations only from the client and returns per-project `success` and `failed` arrays with counts. Successful rows are applied to the table cache and included in a single bulk undo entry; failed rows remain selected for Retry or Discard. Bulk undo performs a fresh reverse `bulk_update_project_table` call with the saved post-change conflict tokens, so undo remains permission-checked and conflict-aware.
 
 -- Alter existing tables:
 ALTER TABLE line_items ADD COLUMN type text DEFAULT 'LABOR';
