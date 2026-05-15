@@ -35,6 +35,7 @@
 25. [Task Pairs — Auto-Create](#25-task-pairs--auto-create-2026-05-11)
 26. [iPhone Calendar Mirror (iOS)](#26-iphone-calendar-mirror-ios-2026-05-11--bug-68123654)
 27. [LiDAR Dimensioned Photo Capture (iOS)](#27-lidar-dimensioned-photo-capture)
+28. [Auto Bug Reporting (iOS)](#28-auto-bug-reporting-ios-2026-05-15--may-12-outage-follow-up)
 
 ---
 
@@ -6391,6 +6392,122 @@ Multi-photo stitching, volume/3D measurement, third-party AR markers, web-side e
 ### Pre-existing security follow-up
 
 `project_photo_annotations` RLS is wide open (all 3 policies evaluate to `true`). This spec inherits the gap but does NOT widen it. Tracked as separate ticket `RLS HARDENING - P1-1` — must complete before flipping the feature flag ON for production traffic.
+
+---
+
+## 28. Auto Bug Reporting (iOS, 2026-05-15) — May-12 outage follow-up
+
+Automated silent-catch failure detection. Files a `bug_reports` row from any catch site in the iOS sync layer when a permanent error fires (RLS rejection, validation, 4xx) so the dev team sees the failure the day it starts instead of after a multi-day silent outage.
+
+### The May-12 outage
+
+On 2026-05-13 a migration tightened `project_photos.INSERT` RLS to require `projects.edit`. Crew and Unassigned users hold only `projects.view`, so all their photo uploads silently rejected for 3 days. The iOS app's catch site at `ImageSyncManager.insertProjectPhotoRows` swallowed the 42501 with a bare `print(...)` — the photo appeared in the iOS carousel (S3 + `projects.project_images` updates had succeeded) but never reached the client portal. No user could tell anything was wrong. No bug ticket was filed.
+
+The RLS fix shipped in migration [`project_photos_insert_requires_view_not_edit`](https://github.com/canprojack/ops/blob/main/ops-web/supabase/migrations/20260515194437_project_photos_insert_requires_view_not_edit.sql). This subsection documents the second leg of the fix: the iOS auto-bug-reporting helper that ensures the next silent-catch shape can't sit for 3 days.
+
+### Schema additions (`public.bug_reports`)
+
+Migration [`20260515201615_bug_reports_add_dedupe_key_and_count`](https://github.com/canprojack/ops/blob/main/ops-web/supabase/migrations/20260515201615_bug_reports_add_dedupe_key_and_count.sql):
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `times_reported` | `integer NOT NULL DEFAULT 1` | Occurrence count. Auto-filed bugs increment on every re-fire of the same dedupe hash. User-filed bugs stay at 1. |
+| `last_reported_at` | `timestamptz NOT NULL DEFAULT now()` | Most recent occurrence timestamp. Distinct from `updated_at`, which also moves on triage / status changes by the dev team. |
+| `dedupe_key` | `text NULL` | Stable SHA-256 hash with `auto:` prefix. Computed from `(category, screen_name, suspected_file, error_code)`. NULL for user-filed bugs. |
+
+Partial unique index `idx_bug_reports_dedupe_key_active` on `(company_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND status IN ('new', 'triaged', 'in_progress')` — dedupes only active tickets. A resolved/closed/duplicate bug whose hash re-fires later creates a NEW row, signaling a regression.
+
+### `public.record_auto_bug` RPC
+
+Migration [`20260515201643_bug_reports_record_auto_bug_rpc`](https://github.com/canprojack/ops/blob/main/ops-web/supabase/migrations/20260515201643_bug_reports_record_auto_bug_rpc.sql). SECURITY DEFINER, authenticated-role-only after migration [`20260515201810_bug_reports_record_auto_bug_revoke_anon`](https://github.com/canprojack/ops/blob/main/ops-web/supabase/migrations/20260515201810_bug_reports_record_auto_bug_revoke_anon.sql).
+
+**Signature:**
+
+```sql
+record_auto_bug(
+  p_category text,         -- always 'bug' from iOS
+  p_priority text,         -- always 'high' from iOS
+  p_screen text,           -- logical surface, e.g. 'ImageSyncManager.saveImages'
+  p_suspected_file text,   -- Swift filename, e.g. 'ImageSyncManager.swift'
+  p_error_code text,       -- SQLSTATE / HTTP / typed-error code
+  p_summary text,          -- human-readable description
+  p_metadata jsonb,        -- caller-controlled context (project_id, retry count, etc.)
+  p_app_version text,
+  p_build_number text,
+  p_os_version text,
+  p_device_model text,
+  p_network_type text
+) returns jsonb -- { id: uuid, created: bool, times_reported: int }
+```
+
+**Behavior:**
+
+1. Resolves caller via `private.get_current_user_id()` + `private.get_user_company_id()`. Raises 42501 if either is null.
+2. Computes `dedupe_key = 'auto:' || sha256(category:screen:suspected_file:error_code)`.
+3. Looks up an active row matching `(company_id, dedupe_key)` against the partial unique index.
+4. **If found:** increments `times_reported`, sets `last_reported_at = now()`, returns `{ created: false, times_reported: <new count> }`.
+5. **If not found:** inserts a new row with `reporter_name = 'OPS iOS (auto-filed)'`, returns `{ created: true, times_reported: 1 }`.
+
+A resolved/closed bug doesn't match step 3 because the partial index excludes those statuses — a regression after resolution lands as a new ticket.
+
+### iOS — `AutoBugReporter` helper
+
+[`OPS/Services/AutoBugReporter.swift`](https://github.com/canprojack/ops/blob/main/ops-ios/OPS/Services/AutoBugReporter.swift). `@MainActor` singleton.
+
+**Configuration.** `DataController.setModelContext` calls `AutoBugReporter.shared.configure(connectivity: self.connectivity)` once at app launch so `network_type` can be derived from the live `ConnectivityManager`.
+
+**Entry points.**
+
+- `report(screen:suspectedFile:errorCode:summary:metadata:)` — base entry; classifies + fires unconditionally.
+- `reportIfPermanent(_:screen:suspectedFile:summary:metadata:)` — classifies the `Error` via `UploadErrorClassifier` and fires only if the error is permanent. Returns the classified `UploadErrorKind` so the caller can drive retry / UI logic without re-classifying.
+- `reportRetryExhausted(kind:attempts:screen:suspectedFile:summary:metadata:)` — fires when an in-session retry loop hits its cap with a non-pure-transient cause. Pure transient (bad signal) is normal in the field and never auto-bugs.
+
+**Never throws.** Every entry point swallows RPC failures internally and logs to `DebugLogger.shared` instead of `print()`. The auto-bug fire must never break the caller's retry / UI flow.
+
+**Client-side dedupe TTL.** 1-hour in-memory cache keyed by the same dedupe hash the server uses. Skips the RPC entirely if the same hash fired within the last hour. Server-side partial unique index handles the deduplication regardless; the client cache saves the round-trip during offline-drain storms (when the queue retries every 30s).
+
+### iOS — `UploadErrorClassifier`
+
+[`OPS/Utilities/UploadErrorClassifier.swift`](https://github.com/canprojack/ops/blob/main/ops-ios/OPS/Utilities/UploadErrorClassifier.swift). Triages any `Error` into a `UploadErrorKind` bucket:
+
+| Bucket | Examples | Auto-bug? | Retry? |
+|--------|----------|-----------|--------|
+| `.transient(reason:)` | URLError offline / timeout / DNS / unreachable host; HTTP 5xx; HTTP 408/425/429; Postgres class 08/53/57/58 | Never. Bad signal is normal. | Yes — 1s/5s/15s/60s in-session, then cross-session queue. |
+| `.permanent(errorCode:reason:)` | Postgres class 23 (integrity) / 42 (incl 42501 RLS) / 22 (data exception); HTTP 4xx (except 408/425/429); local `UploadError.invalidURL`; `SupabaseService.ServiceError.notAuthenticated`; `URLError.badURL` / `.badServerResponse` | Immediately. | No — won't succeed on retry. |
+| `.unknown(reason:)` | Anything not matched above | Only after in-session retry exhaustion (`reportRetryExhausted` upgrades it). | Yes — same backoff as transient. |
+
+### Catch sites instrumented (Phase 1)
+
+| File | Site | Action |
+|------|------|--------|
+| `ImageSyncManager.saveImages` (catch) | After S3 + `projects.project_images` update | Classify; if permanent → auto-bug + mark `InFlightUpload.failed=true` + keep tile rendered. Transient → existing offline-fallback path (`saveImageLocally`). |
+| `ImageSyncManager.insertProjectPhotoRows` (the May-12 site) | Best-effort `project_photos` insert | Classify; if permanent → auto-bug + return `false`. Callers flip `InFlightUpload.failed=true` so the user sees the red badge. |
+| `ImageSyncManager.syncImagesForProject` (offline drain catch) | Periodic retry of pending uploads | Classify; if permanent → auto-bug + **drop the poisoned items from `pendingUploads`** so the 30s retry timer doesn't burn forever on a rejection. Transient → keep queued. |
+| `PhotoProcessor.processOneUpload` | Cross-session upload queue worker | **Split retry semantics:** in-session 4-attempt backoff (1s/5s/15s/60s) with permanent short-circuit; cross-session `uploadRetryCount >= 20` threshold preserved. Auto-bug on permanent OR on in-session exhaustion with non-pure-transient cause. |
+| `DimensionedPhotoSyncManager.insertProjectPhotoRow` (LiDAR) | Same shape as May-12 site | `reportIfPermanent` + DebugLogger. |
+| `DimensionedPhotoSyncManager.insertAnnotationRow` | Authoritative annotation insert | `reportIfPermanent` + existing queue-for-retry path. |
+| `DimensionedPhotoSyncManager.retryQueued` | Background retry sweeper | `reportIfPermanent` so poisoned annotations don't loop forever. |
+| `PhotoAnnotationSyncManager.uploadAnnotationPNG` | S3 upload of annotation overlay | `reportIfPermanent` + existing local-save fallback. |
+| `PhotoAnnotationSyncManager.syncPendingAnnotations` | Background retry of cached annotations | `reportIfPermanent` to surface poisoned-row regressions. |
+
+### UI — failed-tile carousel
+
+`InFlightUpload` (defined in `ImageSyncManager`) gains `failed: Bool` and `lastError: String?`. The activity tab's `ProjectPhotosCarousel` renders failed tiles with a red border + corner badge + "RETRY" label instead of removing them from the list. Tap-to-retry calls `ImageSyncManager.retryFailedInFlightUpload(id:for:)`. Long-press (context menu) dismisses without retry.
+
+The cross-session `LocalPhoto.status = "failed"` path remains unchanged — PhotoProcessor flips photos to `"failed"` after in-session exhaustion, the next `processUploadQueue` pass picks them up.
+
+### Retry semantics summary
+
+| Layer | Scope | Cap | Backoff | When auto-bug fires |
+|-------|-------|-----|---------|---------------------|
+| In-session (within a single upload attempt) | One `processOneUpload` invocation | 4 attempts | 1s / 5s / 15s / 60s | Permanent error AT ANY attempt; OR cap exhausted with non-pure-transient cause |
+| Cross-session (between app launches) | `LocalPhoto.uploadRetryCount` | 20 attempts → `permanently_failed` | None (waits for next app launch + good connectivity) | Never directly. The in-session loop within each attempt fires its own auto-bugs as needed. |
+
+The two caps are independent on purpose. A photo with 4 transient failures across 4 days of bad signal isn't permanently broken — it's just waiting for the truck to drive somewhere with bars. Don't conflate.
+
+### Out of scope (Phase 1)
+
+180+ catches in `SyncEngine`, `InboundProcessor`, `OutboundProcessor`, `RealtimeProcessor`, `DataController`, auth managers, repository wrappers — these may contain other silent-catch shapes. Tracked as a separate audit phase.
 
 ---
 
