@@ -179,6 +179,14 @@ final class Project: Identifiable {
     var createdAt: Date?
     var createdBy: String?
 
+    // Server-maintained row-touched timestamp — added 2026-05-15 (bug
+    // 70a4d9fd) to power the JobBoard "latest edited" sort. Mirrors
+    // `projects.updated_at`, auto-bumped by Supabase on every write.
+    // Outbound DTO callers omit this field; inbound DTO reads it.
+    // Nil for projects synced down before this column was plumbed —
+    // the sort falls back to `createdAt` in that case.
+    var updatedAt: Date?
+
     // Transient
     @Transient var lastTapped: Date?
     @Transient var coordinatorData: [String: Any]?
@@ -190,6 +198,7 @@ final class Project: Identifiable {
     // Audit columns (Supabase) — also surfaced as SwiftData properties
     // created_at       TIMESTAMPTZ — auto-populated by Supabase default
     // created_by       UUID FK → auth.users(id) — populated by iOS on insert; index idx_projects_created_by_created_at (created_by, created_at DESC) WHERE deleted_at IS NULL speeds the recency strip query.
+    // updated_at       TIMESTAMPTZ — auto-maintained by Supabase trigger; read-only from iOS, drives the JobBoard "latest edited" sort (see OPS/Views/JobBoard/JobBoardProjectListView.swift `recencyStamp(for:)`).
 }
 ```
 
@@ -2634,6 +2643,10 @@ final class DeckDesign: Identifiable {
     var updatedAt: Date?
 }
 ```
+
+### Supabase row
+
+Live schema verified 2026-05-12 in project `ijeekuhbatykdomumfjx`: `deck_designs.id`, `company_id`, `project_id`, and `created_by` are PostgreSQL `uuid` columns; `project_id` and `created_by` are nullable. iOS canonicalizes UUID strings to lowercase before queueing sync payloads so local SwiftData ids match the lowercase UUID strings returned by Postgres. Project-create capture starts with `projectId == nil`; once the project id exists, iOS records a deck-design create/upsert or update sync operation carrying the real `project_id` so the drawing does not remain a standalone sketch in Supabase. Inbound sync must also merge `project_id` onto existing local `DeckDesign` rows; otherwise devices that already cached a standalone row will continue showing it outside the project even after Supabase has the corrected association. The project Deck tab performs a targeted `fetchForProject` self-heal when no local design is attached, then inserts/merges the returned rows into SwiftData so repaired server associations appear without waiting for an app-wide sync.
 
 ### `drawingDataJSON` schema
 
