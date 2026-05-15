@@ -6478,17 +6478,23 @@ A resolved/closed bug doesn't match step 3 because the partial index excludes th
 
 ### Catch sites instrumented (Phase 1)
 
+9 logical sites across 4 files; 10 `AutoBugReporter` call points total — `PhotoProcessor.processOneUpload` fires twice (permanent short-circuit inside the retry loop AND retry-exhausted at the bottom).
+
 | File | Site | Action |
 |------|------|--------|
 | `ImageSyncManager.saveImages` (catch) | After S3 + `projects.project_images` update | Classify; if permanent → auto-bug + mark `InFlightUpload.failed=true` + keep tile rendered. Transient → existing offline-fallback path (`saveImageLocally`). |
 | `ImageSyncManager.insertProjectPhotoRows` (the May-12 site) | Best-effort `project_photos` insert | Classify; if permanent → auto-bug + return `false`. Callers flip `InFlightUpload.failed=true` so the user sees the red badge. |
 | `ImageSyncManager.syncImagesForProject` (offline drain catch) | Periodic retry of pending uploads | Classify; if permanent → auto-bug + **drop the poisoned items from `pendingUploads`** so the 30s retry timer doesn't burn forever on a rejection. Transient → keep queued. |
-| `PhotoProcessor.processOneUpload` | Cross-session upload queue worker | **Split retry semantics:** in-session 4-attempt backoff (1s/5s/15s/60s) with permanent short-circuit; cross-session `uploadRetryCount >= 20` threshold preserved. Auto-bug on permanent OR on in-session exhaustion with non-pure-transient cause. |
+| `PhotoProcessor.processOneUpload` | Cross-session upload queue worker | **Split retry semantics:** in-session 4-attempt backoff (1s/5s/15s/60s) with permanent short-circuit; cross-session `uploadRetryCount >= 20` threshold preserved. Auto-bug on permanent OR on in-session exhaustion with non-pure-transient cause (2 RPC call points in this one function). |
 | `DimensionedPhotoSyncManager.insertProjectPhotoRow` (LiDAR) | Same shape as May-12 site | `reportIfPermanent` + DebugLogger. |
 | `DimensionedPhotoSyncManager.insertAnnotationRow` | Authoritative annotation insert | `reportIfPermanent` + existing queue-for-retry path. |
 | `DimensionedPhotoSyncManager.retryQueued` | Background retry sweeper | `reportIfPermanent` so poisoned annotations don't loop forever. |
 | `PhotoAnnotationSyncManager.uploadAnnotationPNG` | S3 upload of annotation overlay | `reportIfPermanent` + existing local-save fallback. |
 | `PhotoAnnotationSyncManager.syncPendingAnnotations` | Background retry of cached annotations | `reportIfPermanent` to surface poisoned-row regressions. |
+
+### Race-safe RPC (post-review fix)
+
+Migration `20260515205350_bug_reports_record_auto_bug_race_safe` wraps the INSERT branch in `BEGIN ... EXCEPTION WHEN unique_violation`. Two concurrent fires of the same dedupe hash can both pass the initial SELECT before either inserts; the partial unique index makes one win and one raise `23505`. The EXCEPTION block catches the loser and replays the dedupe as an UPDATE so neither call is silently dropped. The original SELECT-then-INSERT path stays as the happy path (no exception overhead when there's no race).
 
 ### UI — failed-tile carousel
 
