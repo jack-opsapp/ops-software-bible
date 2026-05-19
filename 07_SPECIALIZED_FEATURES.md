@@ -6359,8 +6359,8 @@ Every other LiDAR measurement app forces a full room scan (Magicplan, Polycam), 
 | Shutter handoff | `LiDARCaptureCoordinator` (5-step ARKit→AVCapture sequence) | Pause ARKit, snapshot anchors, activate AVCapture |
 | Capture | `AVCaptureDevice.builtInLiDARDepthCamera` + `AVCapturePhotoOutput.depthData` | 48 MP photo + exact 768×576 FP32 depth-in-meters + intrinsics |
 | Measurement engine | `DepthRaycaster` + `OpeningClassifier` + `ReferenceObjectCalibrator` + custom DLT `PnPSolver` | World-point extraction + auto-detection + scale calibration |
-| Rendering | `DimensionsRenderer` (Hover-style external leaders) | 2048 long-edge PNG burn + on-screen overlay |
-| Persistence | `DimensionedPhotoSyncManager` via existing `PresignedURLUploadService` | HEIC+embedded disparity → `project_photos.url`, sidecar JSON + FP32 depth-in-meters → S3 |
+| Rendering | `RenderedPhotoComposer` + `DimensionsRenderer` (Hover-style external leaders) | 2048 long-edge PNG burn + on-screen overlay |
+| Persistence | `DimensionedPhotoSyncManager` via existing `PresignedURLUploadService` | HEIC+embedded disparity → `project_photos.url`, rendered PNG → `project_photos.rendered_url` + `project_photo_annotations.rendered_photo_url`, sidecar JSON + FP32 depth-in-meters → S3 |
 | UI | `DimensionedCaptureView` + `DimensionedAnnotationView` | SwiftUI views with 6-tool toolbar, calibrate flow, accuracy badge |
 
 **Capture to annotation handoff (2026-05-13):** `.lidar` captures now build a `DimensionedAnnotationHandoff` before presenting `DimensionedAnnotationView`. Live AR frame updates remain lightweight; full `ARKitSnapshot.meshFaces` extraction happens once at shutter, while ARKit is still running and immediately before `arSession.pause()`. The handoff loads the exact 768×576 standalone FP32 depth-in-meters asset from `CapturedAssets.depthURL`, converts the captured `meshFaces` into `AnchorSnapshot`, runs `OpeningClassifier`, validates candidates through `AutoMeasurer`, and passes `preloadedDepthMap`, `anchors`, and `detectedOpenings` into annotation. AUTO is shown only when real measured openings exist. If depth loading, anchor conversion, or classification produces no candidates, annotation still opens for manual measurement with AUTO hidden. `.visual` fallback bypasses auto-detect entirely, requires no depth, keeps AUTO hidden, and leaves CALIBRATE visible.
@@ -6370,8 +6370,9 @@ Every other LiDAR measurement app forces a full room scan (Magicplan, Polycam), 
 ### Data model
 
 - New `dimensions jsonb` column on `project_photo_annotations` (additive, NULL on legacy rows). Schema in spec §4.1.
+- New `project_photos.rendered_url` and `project_photo_annotations.rendered_photo_url` text columns hold the derived 2048-long-edge PNG deliverable. `project_photos.url` and `project_photo_annotations.photo_url` remain the source HEIC/photo pointers.
 - New `'measurement'` value in `photo_source` enum.
-- SwiftData `PhotoAnnotation` extended with `dimensionsData: Data?` (synced) + `localDepthMapPath`, `localSidecarPath`, `localCaptureFinishedAt` (local-only working state).
+- SwiftData `PhotoAnnotation` extended with `dimensionsData: Data?` and `renderedPhotoURL: String?` (synced) + `localDepthMapPath`, `localSidecarPath`, `localCaptureFinishedAt` (local-only working state).
 
 ### Device fallback ladder
 
