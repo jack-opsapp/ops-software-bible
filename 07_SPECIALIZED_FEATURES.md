@@ -4707,13 +4707,13 @@ The left rail of `/inbox` is a three-option audience filter, not a reply-state c
 
 | Rail | Predicate | Keyboard |
 |------|-----------|----------|
-| **CLIENTS** | `archived_at IS NULL AND (client_id IS NOT NULL OR opportunity_id IS NOT NULL OR primary_category IN ('CUSTOMER','LEAD','CLIENT','PLATFORM_BID'))` | `1` |
-| **EVERYTHING ELSE** | `archived_at IS NULL AND client_id IS NULL AND opportunity_id IS NULL AND (primary_category IS NULL OR primary_category NOT IN ('CUSTOMER','LEAD','CLIENT','PLATFORM_BID'))` | `2` |
+| **CLIENTS** | `archived_at IS NULL AND (client_id IS NOT NULL OR opportunity_id IS NOT NULL OR primary_category IN ('CUSTOMER','PLATFORM_BID'))` | `1` |
+| **EVERYTHING ELSE** | `archived_at IS NULL AND client_id IS NULL AND opportunity_id IS NULL AND (primary_category IS NULL OR primary_category NOT IN ('CUSTOMER','PLATFORM_BID'))` | `2` |
 | **ALL** | `archived_at IS NULL` | `3` |
 
 Default landing is the operator's starred primary rail, persisted in the web inbox layout preference store (`ops-inbox-layout.defaultRailFilter`). If no star exists, the default is `CLIENTS`. `ARCHIVED` and `SNOOZED` remain utility filters opened from secondary surfaces, not primary rail buttons.
 
-Reply debt remains row/detail state. `isYourMove(...)` still computes the operator-obligation signal from unresolved commitments, `AWAITING_REPLY`, unread inbound, and Phase C blocking questions; it powers the row state tag and floating `// YOUR TURN` badge but does not determine `CLIENTS` vs `EVERYTHING ELSE` membership. Unread remains visual-only read state.
+Reply debt remains row/detail state. `isYourMove(...)` still computes the operator-obligation signal from unresolved commitments, `AWAITING_REPLY`, unread inbound, and Phase C blocking questions; it powers the row state tag and floating `// YOUR TURN` badge but does not determine `CLIENTS` vs `EVERYTHING ELSE` membership. The left list renders the active rail as a flat feed; there are no `NEEDS REPLY`, `DRAFTS READY`, `AWAITING THEM`, or `LATER` section headers. Unread remains visual-only read state.
 
 #### Demoted rails
 
