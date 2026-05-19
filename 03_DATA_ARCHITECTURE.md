@@ -4238,19 +4238,28 @@ Related: see `07_SPECIALIZED_FEATURES.md` §26 "iPhone Calendar Mirror".
 
 ---
 
-## Schema V6 — PhotoAnnotation.renderedPhotoURL (2026-05-19)
+## Schema V6 — Cashflow Forecast + PhotoAnnotation.renderedPhotoURL (2026-05-19)
 
-iOS SwiftData schema bump. Purely additive — adds a nullable `renderedPhotoURL: String?` to the existing `PhotoAnnotation` `@Model` class (the derived 2048-long-edge PNG deliverable with burned-in dimensions; the original `photoURL` remains the source HEIC). No new entities, no rename, no retype.
+Consolidated iOS SwiftData schema bump shipped as ops-ios merge commit `41204a5` (cashflow-forecast → main). Purely additive over V5; SwiftData lightweight migration handles the V5 store transparently because no existing column is renamed, retyped, or made non-optional.
 
-The bump was forced — not optional — because the live `PhotoAnnotation` type is referenced by V4 and V5 via `OPSSchemaCommon.unchangedModels`. Adding a persistent property to the live class causes both versioned schemas to silently pick up the new property, which in turn collides their migration-stage checksums and crashes `ModelContainer` init with `Duplicate version checksums across stages detected`. Minting V6 (with its own lightweight `V5 → V6` stage in `OPSMigrationPlan`) owns the change explicitly and resolves the collision. See `OPS/DataModels/Migrations/OPSSchemaV6.swift` + the comment block at the top of `OPS/OPSApp.swift` for the long-form rationale.
+**Adds two new `@Model` entities** (`OPSSchemaCommon.v6ForecastModels`):
 
-**Migration:** `OPSMigrationPlan.addRenderedPhotoURLV5toV6` — `MigrationStage.lightweight(fromVersion: OPSSchemaV5.self, toVersion: OPSSchemaV6.self)`. No data transform; SwiftData handles the V5 store transparently.
+- `PaymentMilestone` — iOS parity for the existing server `payment_milestones` table (was Supabase-only until V6). Read-side only in v1; estimate-form writes still go via the `EstimateService` payload.
+- `RecurringExpense` — owner-managed recurring outflows (rent, insurance, payroll, subscriptions). Drives the recurring layer of the cashflow forecast.
 
-**Supabase side:** mirrored on `project_photo_annotations.rendered_photo_url` (nullable text). The sync write lives in `DimensionedPhotoSyncManager`.
+These new model types are the *real* checksum differentiator vs V5 — V6's hash diverges from V5 organically because `v6ForecastModels` is appended.
+
+**Implicitly absorbs `PhotoAnnotation.renderedPhotoURL`** — the property added by ops-ios commit `6b62f40` ("Persist rendered dimensioned photo deliverables") rides on the live `PhotoAnnotation` class which is referenced by every historical schema via `OPSSchemaCommon.unchangedModels`. When a persistent property lands on a live `@Model` like that, every schema's hash shifts by the same delta — relative distinctness between schemas is preserved as long as every adjacent pair (Vn, Vn+1) already declared a real model-list difference. V6 satisfies that contract because `v6ForecastModels` is genuinely new.
+
+**The crash this resolves.** Pre-merge, a sibling-WIP attempt to mint a V6 whose models list was *identical* to V5 (no new model types — just an excuse to "own" the renderedPhotoURL property) collapsed the stage chain and produced the `Duplicate version checksums detected` crash at `ModelContainer` init on app launch. The merge consolidates V6 around the cashflow-forecast pattern, which differentiates organically. See `OPS/DataModels/Migrations/OPSSchemaV6.swift` and the comment block at the top of `OPS/OPSApp.swift` for the long-form rationale and forward-looking guidance for V7+.
+
+**Migration:** `OPSMigrationPlan.addForecastModelsV5toV6` — `MigrationStage.lightweight(fromVersion: OPSSchemaV5.self, toVersion: OPSSchemaV6.self)`. No data transform.
+
+**Supabase side:** the cashflow tables already shipped earlier (`recurring_expenses`, `forecast_alerts`, additive columns on `payment_milestones` + `expense_settings` — see § Cashflow Forecast below). `renderedPhotoURL` mirrors `project_photo_annotations.rendered_photo_url` (nullable text); sync write lives in `DimensionedPhotoSyncManager`.
 
 ## Cashflow Forecast (2026-05-11)
 
-Supabase schema deltas for the Cashflow Forecast feature (Card 6 of the BOOKS hero carousel). All deltas are **additive** — no rename, retype, or drop. Detailed semantics in `09_FINANCIAL_SYSTEM.md § Cashflow Forecast`. iOS SwiftData parity is scheduled to ship as `OPSSchemaV7` (adds `PaymentMilestone` and `RecurringExpense` models) — the V6 slot was already consumed by the PhotoAnnotation.renderedPhotoURL bump above.
+Supabase schema deltas for the Cashflow Forecast feature (Card 6 of the BOOKS hero carousel). All deltas are **additive** — no rename, retype, or drop. Detailed semantics in `09_FINANCIAL_SYSTEM.md § Cashflow Forecast`. iOS SwiftData parity ships in `OPSSchemaV6` (consolidated with the PhotoAnnotation rendered-deliverable property — see § Schema V6 above).
 
 ### New tables
 
@@ -4303,13 +4312,13 @@ RLS: same `company_isolation` pattern.
 | `expense_settings` | `forecast_current_balance` | `numeric(12,2) NULL` | NULL | Manually-entered current bank balance — the starting balance for the forecast projection. |
 | `expense_settings` | `forecast_balance_updated_at` | `timestamptz NULL` | NULL | Timestamp of the last `forecast_current_balance` update. Drives the "AS OF [date]" stale-balance UI hint. |
 
-### iOS SwiftData parity (OPSSchemaV7 — pending)
+### iOS SwiftData parity (OPSSchemaV6)
 
-Originally scoped as V6; renumbered to V7 because the V6 slot shipped first for `PhotoAnnotation.renderedPhotoURL` (see § Schema V6 above). Purely additive over V6. Adds two new `@Model` entities:
+Landed in the cashflow-forecast → main merge (ops-ios `41204a5`, 2026-05-19). Purely additive over V5. Adds two new `@Model` entities:
 
 - `PaymentMilestone` — iOS parity for the existing server table (deferred from earlier estimate work). Read-side only in v1; estimate form writes via `EstimateService` payload.
 - `RecurringExpense` — CRUD-capable, mirrors the server table.
 
-Migration: `OPSMigrationPlan` will register a lightweight `V6 → V7` stage when this ships. No data transform, no field rename.
+Migration: `OPSMigrationPlan.addForecastModelsV5toV6` — lightweight `V5 → V6` stage. No data transform, no field rename.
 
 **End of Data Architecture Documentation**
