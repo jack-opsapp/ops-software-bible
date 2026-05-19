@@ -4701,18 +4701,19 @@ Categories are **LAW** — adding / removing / renaming requires a migration and
 
 `AWAITING_REPLY` post-v3 (2026-05-12) is mechanically derived from the classifier's explicit `ball_in_court` resolution: present when `ball_in_court='operator'`, absent otherwise. The label is the operational signal the rail predicate trusts; `ball_in_court` itself lives only on the wire (`ClassifyResult.ballInCourt`), not in a column.
 
-### Rail model (2026-05-12 collapse)
+### Rail model (2026-05-19 audience IA)
 
-The left rail of `/inbox` is a four-button segmented control framed by **ball-in-court**. The previous six-tab set (`everything` / `needs_reply` / `drafts` / `commitments` / `scheduled` / `done`) was collapsed after the 2026-05-12 audit found `SCHEDULED` + `DONE` had 0 rows for months, `NEEDS_REPLY` undercounted unread inbound by ~5x, and `COMMITMENTS` overlapped `NEEDS_REPLY` by 37%. Single source of truth: `src/lib/inbox/rail-predicates.ts`.
+The left rail of `/inbox` is a three-option audience filter, not a reply-state control. The 2026-05-19 IA pass replaced the ball-in-court primary rails (`YOUR MOVE` / `WAITING`) with `CLIENTS` / `EVERYTHING ELSE` / `ALL` because reply debt is more useful as row/detail state than as disconnected top-level buckets. Single source of truth: `src/lib/inbox/rail-predicates.ts`.
 
 | Rail | Predicate | Keyboard |
 |------|-----------|----------|
-| **ALL** | (no archived/snoozed filter — firehose of every accessible thread) | `1` |
-| **YOUR MOVE** | `archived_at IS NULL AND (snoozed_until IS NULL OR snoozed_until <= now()) AND (has_unresolved_commitments OR labels @> '{AWAITING_REPLY}' OR (latest_direction = 'inbound' AND unread_count > 0) OR agent_blocking_question IS NOT NULL)` | `2` |
-| **WAITING** | `archived_at IS NULL AND (snoozed_until IS NULL OR snoozed_until <= now())` + complement of YOUR MOVE | `3` |
-| **ARCHIVED** | `archived_at IS NOT NULL` | `4` |
+| **CLIENTS** | `archived_at IS NULL AND (client_id IS NOT NULL OR opportunity_id IS NOT NULL OR primary_category IN ('CUSTOMER','LEAD','CLIENT','PLATFORM_BID'))` | `1` |
+| **EVERYTHING ELSE** | `archived_at IS NULL AND client_id IS NULL AND opportunity_id IS NULL AND (primary_category IS NULL OR primary_category NOT IN ('CUSTOMER','LEAD','CLIENT','PLATFORM_BID'))` | `2` |
+| **ALL** | `archived_at IS NULL` | `3` |
 
-Default landing is `YOUR_MOVE`. Snoozed threads (`snoozed_until > now()`) are absent from YOUR MOVE + WAITING but present in ALL; archived threads are absent from both unfiltered + snoozed views (archive wins).
+Default landing is the operator's starred primary rail, persisted in the web inbox layout preference store (`ops-inbox-layout.defaultRailFilter`). If no star exists, the default is `CLIENTS`. `ARCHIVED` and `SNOOZED` remain utility filters opened from secondary surfaces, not primary rail buttons.
+
+Reply debt remains row/detail state. `isYourMove(...)` still computes the operator-obligation signal from unresolved commitments, `AWAITING_REPLY`, unread inbound, and Phase C blocking questions; it powers the row state tag and floating `// YOUR TURN` badge but does not determine `CLIENTS` vs `EVERYTHING ELSE` membership. Unread remains visual-only read state.
 
 #### Demoted rails
 
@@ -4723,7 +4724,7 @@ Below the rails, a horizontal strip of **category filter chips** (ALL + 12 categ
 
 #### URL/legacy parsing
 
-`parseRailFilter` (in `rail-predicates.ts`) accepts the new canonical values and gracefully maps legacy six-tab strings forward so existing bookmarks/links don't 404: `everything → ALL`, `needs_reply → YOUR_MOVE`, `commitments → YOUR_MOVE`, `drafts → ALL`, `scheduled → ALL`, `done → ARCHIVED`. Unknown/missing values fall through to the configured fallback (default `YOUR_MOVE`, ALL for the route handler).
+`parseRailFilter` (in `rail-predicates.ts`) accepts the canonical audience values and gracefully maps legacy strings forward so existing bookmarks/links don't 404: `everything → ALL`, `needs_reply → ALL`, `commitments → ALL`, `drafts → ALL`, `scheduled → ALL`, `done → ARCHIVED`, `YOUR_MOVE → ALL`, `WAITING → ALL`. Unknown/missing values fall through to the configured fallback (default `CLIENTS`, `ALL` for the route handler).
 
 ### Thread classifier
 
@@ -4790,13 +4791,13 @@ Persisted on `email_connections.archive_writeback_preference`. Snooze always rem
 | `c` | Compose new |
 | `/` | Focus search |
 | `⌘K` | Open command palette |
-| `1` / `2` / `3` / `4` | Switch rail |
+| `1` / `2` / `3` | Switch primary rail |
 | `z` | Undo last toast action |
 | `Esc` | Back to list |
 
 ### Command palette (⌘K)
 
-Full-screen overlay built on `cmdk`. Type to fuzzy-search threads (live API query when ≥2 chars). Also exposes: archive / snooze / recategorize / mark unread / AI draft / compose new / switch rail / filter category. All commands collapse into the same keyboard flow as the inline shortcuts.
+Full-screen overlay built on `cmdk`. Type to fuzzy-search threads (live API query when ≥2 chars). Also exposes: archive / snooze / recategorize / mark unread / AI draft / compose new / switch primary rail / filter category. All commands collapse into the same keyboard flow as the inline shortcuts.
 
 ### Notifications
 
@@ -4815,7 +4816,7 @@ Graduation check runs daily via `/api/cron/phase-c-graduation-check`.
 
 Two widgets ship with Inbox v2:
 
-1. `inbox-leads` — unread CUSTOMER count + 7-day daily sparkline + median inbound-to-first-outbound response time. Clicks deep-link to `/inbox?category=CUSTOMER&filter=YOUR_MOVE`.
+1. `inbox-leads` — unread CUSTOMER count + 7-day daily sparkline + median inbound-to-first-outbound response time. Clicks deep-link to `/inbox?category=CUSTOMER&filter=CLIENTS`.
 2. `phase-c-autonomy` — weekly AUTO / DRAFTS / SURFACED tallies + per-category autonomy-level bars. Clicks deep-link to `/settings/email-category-autonomy`.
 
 Registered in `src/lib/types/dashboard-widgets.ts` under category `alerts` with `requiredPermission: "inbox.view"`.
@@ -4842,7 +4843,7 @@ All gating flows through `inboxModule` in `src/lib/types/permissions.ts`:
 
 | Route | Method | Purpose |
 |-------|--------|---------|
-| `/api/inbox/threads` | GET | Paginated list (cursor-based, 30s refetch). Query params: `scope=own\|company`, `filter=ALL\|YOUR_MOVE\|WAITING\|ARCHIVED\|SNOOZED` (legacy six-tab strings are accepted and degraded forward), `category=<one of 12>`, `search`, `cursor`, `limit`. Predicate built by `applyRailPredicate` in `src/lib/inbox/rail-predicates.ts`. |
+| `/api/inbox/threads` | GET | Paginated list (cursor-based, 30s refetch). Query params: `scope=own\|company`, `filter=CLIENTS\|EVERYTHING_ELSE\|ALL\|ARCHIVED\|SNOOZED` (legacy six-tab and ball-in-court strings are accepted and degraded forward), `category=<one of 12>`, `search`, `cursor`, `limit`. Predicate built by `applyRailPredicate` in `src/lib/inbox/rail-predicates.ts`. |
 | `/api/inbox/threads/[id]` | GET | Thread detail incl. provider messages. Live-fetches Gmail/M365 for full bodies and derives direction server-side against the connection email; falls back to `activities` if the provider call fails. Each message carries `direction`, `bodyText`, and `cleanBodyText` (quoted reply chain stripped via `stripQuotedContent`). |
 | `/api/inbox/threads/[id]` | PATCH | Actions: `archive` / `unarchive` / `snooze` / `unsnooze` / `recategorize` / `markRead`. |
 | `/api/inbox/writeback-preference` | POST | Set `archive_writeback_preference` on a connection. |
@@ -4856,7 +4857,7 @@ All gating flows through `inboxModule` in `src/lib/types/permissions.ts`:
 | File | Role |
 |------|------|
 | `src/app/(dashboard)/inbox/page.tsx` | Three-panel page layout + command palette + undo toast host |
-| `src/lib/inbox/rail-predicates.ts` | Single source of truth for rail filter logic — `RailFilter` union, `parseRailFilter`, `applyRailPredicate`, `classifyRail`. Shared by server query, in-memory partitioning, future caught-up-state logic, and analytics. |
+| `src/lib/inbox/rail-predicates.ts` | Single source of truth for rail filter logic — `RailFilter` union, `InboxPrimaryRail`, `parseRailFilter`, `applyRailPredicate`, `classifyRail`, and row-state `isYourMove` / `classifyThreadState`. Shared by server query, in-memory classification, row state, and analytics. |
 | `src/components/ops/inbox/inbox-route.tsx` | Integration layer — owns thread list fetch + selection, header chips, detail panes, ContextRail |
 | `src/components/ops/inbox/thread-list.tsx` | Thread list (infinite query, hover actions, keyboard shortcuts) |
 | `src/components/ops/inbox/thread-row.tsx` | Thread row card — subject, state tag, inline `// DRAFT` pill |
