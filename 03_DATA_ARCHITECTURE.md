@@ -60,7 +60,7 @@ The OPS data layer follows a **three-tier architecture**:
 
 ### The 49 Registered Schema Models
 
-As defined in `OPSSchemaCommon.unchangedModels` (48 entries) + `WizardState` (per-version, schema V3 today). The schema container is built via `OPSSchemaV3` in `OPSApp.swift`.
+As defined in `OPSSchemaCommon.unchangedModels` + `WizardState` (per-version) + `CalendarMirrorMap` (V5+). The schema container is built via `OPSSchemaV6` in `OPSApp.swift` (latest as of 2026-05-19 — `renderedPhotoURL` on `PhotoAnnotation`, see § V6 below).
 
 **Core Entities (11):**
 1. **User** -- Team member with role-based permissions
@@ -125,7 +125,7 @@ As defined in `OPSSchemaCommon.unchangedModels` (48 entries) + `WizardState` (pe
 49. **DeckDesign** -- Canvas drawing data for design components (railing, deck_board, stair_set, gate, post_set)
 
 **Per-Schema-Version (1):**
-- **WizardState** -- Onboarding wizard state (schema-versioned; appended in `OPSSchemaV3.models`)
+- **WizardState** -- Onboarding wizard state (schema-versioned; appended in each `OPSSchemaV*.models`)
 
 > Legacy note: `InventoryItem`, `InventorySnapshot`, `InventorySnapshotItem`, `InventoryTag`, `InventoryUnit` files remain on disk through the V2→V3 migration window for compile-time references but are NOT registered in `OPSSchemaCommon`. They are removed by Phase 4 of the catalog plan. SQL-side, the `inventory_*` tables are renamed to `catalog_*` by migration `2026-05-06-01-catalog-schema.sql`.
 
@@ -4238,9 +4238,19 @@ Related: see `07_SPECIALIZED_FEATURES.md` §26 "iPhone Calendar Mirror".
 
 ---
 
+## Schema V6 — PhotoAnnotation.renderedPhotoURL (2026-05-19)
+
+iOS SwiftData schema bump. Purely additive — adds a nullable `renderedPhotoURL: String?` to the existing `PhotoAnnotation` `@Model` class (the derived 2048-long-edge PNG deliverable with burned-in dimensions; the original `photoURL` remains the source HEIC). No new entities, no rename, no retype.
+
+The bump was forced — not optional — because the live `PhotoAnnotation` type is referenced by V4 and V5 via `OPSSchemaCommon.unchangedModels`. Adding a persistent property to the live class causes both versioned schemas to silently pick up the new property, which in turn collides their migration-stage checksums and crashes `ModelContainer` init with `Duplicate version checksums across stages detected`. Minting V6 (with its own lightweight `V5 → V6` stage in `OPSMigrationPlan`) owns the change explicitly and resolves the collision. See `OPS/DataModels/Migrations/OPSSchemaV6.swift` + the comment block at the top of `OPS/OPSApp.swift` for the long-form rationale.
+
+**Migration:** `OPSMigrationPlan.addRenderedPhotoURLV5toV6` — `MigrationStage.lightweight(fromVersion: OPSSchemaV5.self, toVersion: OPSSchemaV6.self)`. No data transform; SwiftData handles the V5 store transparently.
+
+**Supabase side:** mirrored on `project_photo_annotations.rendered_photo_url` (nullable text). The sync write lives in `DimensionedPhotoSyncManager`.
+
 ## Cashflow Forecast (2026-05-11)
 
-Supabase schema deltas for the Cashflow Forecast feature (Card 6 of the BOOKS hero carousel). All deltas are **additive** — no rename, retype, or drop. Detailed semantics in `09_FINANCIAL_SYSTEM.md § Cashflow Forecast`. iOS SwiftData parity ships in `OPSSchemaV6` (adds `PaymentMilestone` and `RecurringExpense` models).
+Supabase schema deltas for the Cashflow Forecast feature (Card 6 of the BOOKS hero carousel). All deltas are **additive** — no rename, retype, or drop. Detailed semantics in `09_FINANCIAL_SYSTEM.md § Cashflow Forecast`. iOS SwiftData parity is scheduled to ship as `OPSSchemaV7` (adds `PaymentMilestone` and `RecurringExpense` models) — the V6 slot was already consumed by the PhotoAnnotation.renderedPhotoURL bump above.
 
 ### New tables
 
@@ -4293,13 +4303,13 @@ RLS: same `company_isolation` pattern.
 | `expense_settings` | `forecast_current_balance` | `numeric(12,2) NULL` | NULL | Manually-entered current bank balance — the starting balance for the forecast projection. |
 | `expense_settings` | `forecast_balance_updated_at` | `timestamptz NULL` | NULL | Timestamp of the last `forecast_current_balance` update. Drives the "AS OF [date]" stale-balance UI hint. |
 
-### iOS SwiftData parity (OPSSchemaV6)
+### iOS SwiftData parity (OPSSchemaV7 — pending)
 
-V6 is purely additive over V5 (Calendar Mirror). Adds two new `@Model` entities:
+Originally scoped as V6; renumbered to V7 because the V6 slot shipped first for `PhotoAnnotation.renderedPhotoURL` (see § Schema V6 above). Purely additive over V6. Adds two new `@Model` entities:
 
 - `PaymentMilestone` — iOS parity for the existing server table (deferred from earlier estimate work). Read-side only in v1; estimate form writes via `EstimateService` payload.
 - `RecurringExpense` — CRUD-capable, mirrors the server table.
 
-Migration: `OPSMigrationPlan` registers a lightweight `V5 → V6` stage. No data transform, no field rename.
+Migration: `OPSMigrationPlan` will register a lightweight `V6 → V7` stage when this ships. No data transform, no field rename.
 
 **End of Data Architecture Documentation**
