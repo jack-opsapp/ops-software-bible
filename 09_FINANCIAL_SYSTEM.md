@@ -135,7 +135,7 @@ interface Opportunity {
 
 ### OPS-Web Pipeline V2 Focused / Spatial UI
 
-**Status:** Phase 11 verified 2026-05-13. Focused mode is the desktop default for `/pipeline`; spatial mode remains available as the secondary canvas mode.
+**Status:** Phase 11 focused/spatial contract updated 2026-05-14. Focused mode is the desktop default for `/pipeline`; spatial mode remains available as the secondary canvas mode.
 
 **Primary route:** `src/app/(dashboard)/pipeline/page.tsx`
 
@@ -164,10 +164,12 @@ The store persists only mode, focused stage, and sort state under `opsPipeline:v
 
 **Focused mode model:**
 - The focused shell centers one active stage at a time, with neighboring stages rendered as spine columns.
+- The focused toolbar is a single bottom-left overlay aligned to the dashboard content edge. It owns the focused/spatial mode toggle, search, stage filter, assignment filter, and lead creation controls. It uses the standard OPS glass/hairline toolbar treatment, restrained monochrome controls, and no accent-as-decoration.
 - The search/filter row filters the same opportunity set for both focused and spatial modes.
 - Horizontal wheel and Shift+wheel snap the focused stage. Trackpad pinch-out (`ctrl` wheel with positive `deltaY`) switches to spatial after the virtual zoom threshold.
 - The `V` shortcut toggles focused/spatial unless a drag is active or the user is typing in an input/menu/modal.
 - The accessibility model is a real tablist/tabpanel pair. Active stages and terminal Won/Lost entries are `role="tab"` controls; exactly one tab is `aria-selected="true"` and exactly one tab owns `tabIndex=0`. The single `role="tabpanel"` is labelled by the selected tab.
+- Focused cards expose compact adjacent-stage reassignment controls when the user can manage pipeline stages. Controls are disabled for read-only users and terminal moves still route through the transition dialog.
 - Focused drag to an active spine target moves the opportunity. Focused drag to Won/Lost opens the transition dialog before any terminal mutation.
 
 **Spatial mode model:**
@@ -180,21 +182,27 @@ The store persists only mode, focused stage, and sort state under `opsPipeline:v
 
 **Drag behavior:**
 - `PipelineDndProvider` centralizes `DndContext`, pointer and keyboard sensors, and mode-aware collision handling.
+- Focused pointer dragging uses pointer-only collision evidence and a `DragOverlay`; the source card dims in place so visual movement is not clipped by the current list.
 - Focused keyboard dragging uses stage-aware coordinates so arrow keys move across active and terminal stage targets.
-- `resolvePipelineDragEnd()` is the shared drop contract. Focused mode accepts only focused stage drops; spatial mode accepts stage/terminal drops and treats missing drop data as cancel/no-op.
+- `resolvePipelineDragEnd()` is the shared drop contract. Focused mode accepts only intentional focused stage drops marked by `focusedDropIntent: "stage-target"`; neutral release, missing pointer target, or stage-looking drops without that intent cancel/no-op. Spatial mode accepts stage/terminal drops and treats missing drop data as cancel/no-op.
 - Normal active-stage moves call `onMoveStage(opportunityId, newStage)`. Won/Lost drops route through the transition dialog.
 
 ### OPS-Web Pipeline V2 Detail Panel
 
-**Status:** Phase 11 verified 2026-05-13. The old tethered multi-window opportunity detail popover/window system was retired for `/pipeline`; `detail-popover.tsx`, `detail-popover-store.ts`, and `detail-popover-tether.tsx` were deleted. Opportunity detail state now lives in `usePipelineModeStore` via `detailPanelOpportunityId`, `detailPanelActiveTab`, `openDetailPanel`, `closeDetailPanel`, and `setDetailPanelActiveTab`.
+**Status:** Phase 11 verified 2026-05-13; focused-window correction verified 2026-05-19. The old tethered multi-window opportunity detail popover/window system was retired for `/pipeline`; `detail-popover.tsx`, `detail-popover-store.ts`, and `detail-popover-tether.tsx` were deleted. Opportunity detail state now lives in `usePipelineModeStore` via `detailPanelOpportunityId`, `detailPanelActiveTab`, `openDetailPanel`, `closeDetailPanel`, and `setDetailPanelActiveTab`.
 
-**Component:** `src/app/(dashboard)/pipeline/_components/pipeline-detail-panel.tsx`
+**Components:**
+- `src/app/(dashboard)/pipeline/_components/pipeline-focused-detail-window.tsx` — focused-mode window wrapper.
+- `src/app/(dashboard)/pipeline/_components/pipeline-detail-panel.tsx` — shared detail body/actions and spatial drawer.
+- `src/components/ops/projects/workspace/shell/project-workspace-window.tsx` — shared project-style window shell.
+- `src/stores/window-store.ts` — includes `pipeline-detail` window type and sizing.
 
-- Focused mode at wide desktop (`>=1280px`) renders the detail panel inline beside the focused stage list, pushing the list narrower instead of floating above it.
-- Focused compact desktop (`900-1279px`) renders the same panel as a portal drawer scoped to the pipeline shell, with backdrop coverage limited to the shell area below the topbar/sidebar.
+- Focused mode renders opportunity detail as a separate `ProjectWorkspaceWindow` surface via the shared window store (`pipeline-detail:<opportunityId>`). It is portaled to `document.body`, uses the same dense glass, traffic-light chrome, drag/resize, z-index, focus, minimize, and mobile sizing model as project details, and never renders inline beside the focused stage list.
+- Opening focused detail must not apply split-width classes or collapse the focused list. The focused card/list frame remains full width while the detail window floats above the Pipeline canvas.
 - Spatial mode always renders the portal drawer. It does not attempt inline/push layout because transformed canvas measurement is brittle.
-- The panel owns close behavior for the close button, `Escape`, and drawer backdrop; the page/shell close stale selections on focused stage changes, mode changes, and filtering that removes the selected opportunity.
+- Focused window close paths (traffic-light close, `Escape`, external window-store close) synchronize back to `usePipelineModeStore.closeDetailPanel()`. Spatial drawer close paths remain close button, `Escape`, and backdrop.
 - Focus enters the panel on open and restores to the originating opportunity card via `data-opportunity-card-id` on close. DOM refs stay local to React components and are not stored in Zustand.
+- The focused window root is marked `data-keyboard-scope="modal-or-menu"` so focused-mode stage shortcuts do not fire while the window, title bar, action menu, tabs, or detail content has focus.
 - Detail tabs were renamed from `detail-popover-*` to `pipeline-detail-*` and share the mode-store active tab state.
 - Motion uses the OPS easing curve (`cubic-bezier(0.22, 1, 0.36, 1)`) and honors `prefers-reduced-motion`.
 
@@ -288,8 +296,9 @@ convert_lead_to_project(
 1. Insert `projects` row — `status='accepted'`, `opportunity_id` back-link (legacy text column on projects, no FK), `client_id` carried over from the lead, `created_by = p_user_id`.
 2. Forward-link estimates — every `estimates` row where `opportunity_id = p_opportunity_id` AND `project_id IS NULL` gets both `project_id` (text) and `project_ref` (uuid FK) set to the new project id.
 3. Materialize each LABOR line item across those estimates as a `project_tasks` row — `task_type_id` from `line_items.task_type_ref` (uuid FK, nullable), `custom_title` from `line_items.name` (NOT NULL on source), `source_line_item_id` + `source_estimate_id` as text back-links, `display_order` from `line_items.sort_order`, `duration = COALESCE(task_types.default_duration, 1)`, `task_color = COALESCE(task_types.color, '#417394')`, `status='active'` (the only valid value per the `project_tasks_status_check` CHECK constraint — `pending` would reject).
-4. Update `opportunities` row — `stage='won'`, `actual_value`, `actual_close_date`, `project_id` (uuid column), `project_ref`, `stage_entered_at = now()`, `stage_manually_set = true`.
-5. Insert `stage_transitions` row capturing `duration_in_stage` (mirrors `move_opportunity_stage` pattern from `2026-05-07-01-move-opportunity-stage-rpc.sql`).
+4. Auto-attach site visit photos as `project_photos` rows (added 2026-05-20, migration `migrations/2026-05-20-extend-convert-lead-to-project-site-visit-photos.sql`) — for every non-deleted `site_visits` row where `opportunity_id = p_opportunity_id`, each URL in the visit's `photos[]` becomes a `project_photos` row with `source='site_visit'`, `site_visit_id` back-linked, `uploaded_by = site_visits.created_by` (the operator who booked the visit, not the operator winning the lead), `taken_at = NULL` (no EXIF surfaced at this layer — timeline orders by `created_at`), and `is_client_visible = false` (column default; the operator opts each photo into the portal via the per-photo toggle later). Empty/NULL photos arrays unnest to zero rows — visits with no photos contribute nothing. The idempotency guard above ensures a retried conversion does not re-insert photos.
+5. Update `opportunities` row — `stage='won'`, `actual_value`, `actual_close_date`, `project_id` (uuid column), `project_ref`, `stage_entered_at = now()`, `stage_manually_set = true`.
+6. Insert `stage_transitions` row capturing `duration_in_stage` (mirrors `move_opportunity_stage` pattern from `2026-05-07-01-move-opportunity-stage-rpc.sql`).
 
 **Idempotency.** The RPC returns the existing project id without re-running anything if a project already back-links to `p_opportunity_id`. Guards against double-tap and the iOS-vs-web race when both clients try to convert at once.
 
@@ -307,7 +316,7 @@ convert_lead_to_project(
 
 **Deferred per plan §9.4** (`docs/superpowers/plans/2026-05-19-leads-tab-rebuild.md`):
 
-- Site-visit photo auto-attach on win (bible §10:289) — would require a `project_photos` insert per `SiteVisit.photos` with `source = 'site_visit'`.
+- ~~Site-visit photo auto-attach on win (bible §10:289)~~ — **Implemented 2026-05-20.** RPC step 4 above. Historical wins (leads converted before this migration shipped) keep their photos unattached; a one-time backfill is a separate ticket if wanted.
 - Task Generation modal (bible §10:290) — the UI for adding/removing tasks pre-materialization. v1 materializes every LABOR line item silently with no per-task toggle.
 
 Web has no direct equivalent of `LeadConversionService` yet — the web app handles the conversion through the existing `opportunity-service.markWon` + the project-service create flow rather than a dedicated transactional service. Flag for future web parity if the RPC becomes the canonical path on web too.
@@ -1647,6 +1656,6 @@ Recipients lookup via `public.users_with_permission(company_id, 'finances.view')
 
 ---
 
-**Last Updated**: 2026-05-11
+**Last Updated**: 2026-05-19
 **Document Version**: 1.4
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `OPS/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.

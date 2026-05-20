@@ -282,12 +282,12 @@ Client has replied but not approved. Price or scope discussion in progress.
 #### `won`
 Estimate approved. Project goes live.
 
-**What happens automatically:**
+**What happens automatically** (implemented in `convert_lead_to_project` RPC — see §09 LeadConversionService, migrations `2026-05-19-convert-lead-to-project-rpc.sql` + `2026-05-20-extend-convert-lead-to-project-site-visit-photos.sql`):
 1. `opportunity.stage = won`
 2. `opportunity.actualCloseDate = now`
 3. `project.status = Accepted`
-4. Site visit photos → auto-attached to project as ProjectPhotos (source: `site_visit`)
-5. Task Generation modal opens (or silent auto-generate if toggle enabled)
+4. Site visit photos → auto-attached to project as ProjectPhotos with `source='site_visit'`, `site_visit_id` back-linked, `uploaded_by = site_visit.created_by` (implemented 2026-05-20)
+5. Task Generation modal opens (or silent auto-generate if toggle enabled — v1 is silent auto-generate on iOS; the modal UI remains deferred)
 
 **Card shows (PROJECT DATA):**
 ```
