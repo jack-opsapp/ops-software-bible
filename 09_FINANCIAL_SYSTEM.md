@@ -267,6 +267,51 @@ Located at `src/lib/api/services/opportunity-service.ts` (wired from `2742b60` c
 | `fetchFollowUps(opportunityId:)` | (included in `fetchOpportunity`) | iOS reads via direct Supabase query against `follow_ups` |
 | `fetchStageTransitions(opportunityId:)` | (included in `fetchOpportunity`) | iOS reads via direct Supabase query against `stage_transitions` |
 
+### LeadConversionService — Lead → Project Conversion (iOS, 2026-05-19)
+
+`LeadConversionService` (`OPS/Services/LeadConversionService.swift`, commit `38c9256` on `feat/leads-tab-rebuild`) orchestrates the conversion that lands when an operator marks a pipeline opportunity won — mirroring the canonical 'won' behavior documented in `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § `won` (line 282). Backed by the `convert_lead_to_project` Postgres RPC (`migrations/2026-05-19-convert-lead-to-project-rpc.sql`), which runs the entire conversion in one transaction so partial failure is impossible.
+
+**RPC signature:**
+
+```sql
+convert_lead_to_project(
+  p_opportunity_id uuid,
+  p_actual_value   numeric,
+  p_title          text,
+  p_address        text,
+  p_user_id        uuid
+) RETURNS uuid  -- the new project id
+```
+
+**Behavior (single Postgres transaction, `SECURITY DEFINER`):**
+
+1. Insert `projects` row — `status='accepted'`, `opportunity_id` back-link (legacy text column on projects, no FK), `client_id` carried over from the lead, `created_by = p_user_id`.
+2. Forward-link estimates — every `estimates` row where `opportunity_id = p_opportunity_id` AND `project_id IS NULL` gets both `project_id` (text) and `project_ref` (uuid FK) set to the new project id.
+3. Materialize each LABOR line item across those estimates as a `project_tasks` row — `task_type_id` from `line_items.task_type_ref` (uuid FK, nullable), `custom_title` from `line_items.name` (NOT NULL on source), `source_line_item_id` + `source_estimate_id` as text back-links, `display_order` from `line_items.sort_order`, `duration = COALESCE(task_types.default_duration, 1)`, `task_color = COALESCE(task_types.color, '#417394')`, `status='active'` (the only valid value per the `project_tasks_status_check` CHECK constraint — `pending` would reject).
+4. Update `opportunities` row — `stage='won'`, `actual_value`, `actual_close_date`, `project_id` (uuid column), `project_ref`, `stage_entered_at = now()`, `stage_manually_set = true`.
+5. Insert `stage_transitions` row capturing `duration_in_stage` (mirrors `move_opportunity_stage` pattern from `2026-05-07-01-move-opportunity-stage-rpc.sql`).
+
+**Idempotency.** The RPC returns the existing project id without re-running anything if a project already back-links to `p_opportunity_id`. Guards against double-tap and the iOS-vs-web race when both clients try to convert at once.
+
+**Authorization.** `SECURITY DEFINER` (writes across five tables in one transaction require elevated privileges). Caller is authorized via an explicit same-company check on `p_user_id` against the opportunity's `company_id`. Raises `opportunity_not_found` (SQLSTATE `P0002`) when the lead row is missing or soft-deleted, `access_denied` (SQLSTATE `42501`) when the user isn't a member of the lead's company.
+
+**iOS service surface:**
+
+| Method | Purpose |
+|---|---|
+| `existingProject(for:in:)` | SwiftData lookup — `Project` where `opportunityId == lead.id` AND `deletedAt == nil`. Drives the DUPLICATE-EXISTS pre-flight state on `ConvertToProjectSheet`. |
+| `clientProjectsSummary(for:in:)` | SwiftData lookup — other projects under the same client (excluding the duplicate). Drives the CLIENT-HAS-OTHERS warning banner. |
+| `estimates(for:)` | Network fetch — refreshes the estimates linked to the lead. |
+| `convertLeadToProject(lead:actualValue:title:address:notes:userId:)` | Calls the RPC, optionally PATCHes notes after (RPC signature doesn't take notes), fetches the new project DTO, returns the SwiftData `Project` model. |
+| `markWonNoProject(lead:actualValue:userId:)` | Escape hatch — wraps `OpportunityRepository.markWon` with `projectId: nil`. Used when the operator dismisses `ConvertToProjectSheet` without creating a project (sheet's CANCEL exit). |
+
+**Deferred per plan §9.4** (`docs/superpowers/plans/2026-05-19-leads-tab-rebuild.md`):
+
+- Site-visit photo auto-attach on win (bible §10:289) — would require a `project_photos` insert per `SiteVisit.photos` with `source = 'site_visit'`.
+- Task Generation modal (bible §10:290) — the UI for adding/removing tasks pre-materialization. v1 materializes every LABOR line item silently with no per-task toggle.
+
+Web has no direct equivalent of `LeadConversionService` yet — the web app handles the conversion through the existing `opportunity-service.markWon` + the project-service create flow rather than a dedicated transactional service. Flag for future web parity if the RPC becomes the canonical path on web too.
+
 ---
 
 ## Estimates System
