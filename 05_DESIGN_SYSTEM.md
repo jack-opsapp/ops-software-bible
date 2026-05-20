@@ -2813,6 +2813,67 @@ Floating windows and stacked modals (the workspace shell, the workspace-scoped `
 
 ---
 
+## 20. iOS Glass Surface Modifiers + Mobile-Contrast Earth-Tones (2026-05-19)
+
+The LEADS tab rebuild (commits `a4ebb57..11bf2dc` on `ops-ios` `feat/leads-tab-rebuild`) landed the first iOS implementation of two design-system primitives that were previously web-only.
+
+### 20.1 Glass surface modifiers
+
+**File:** `OPS/Styles/Components/GlassSurface.swift`
+
+Three SwiftUI view modifiers, one per surface tier from `ops-design-system/project/mobile/MOBILE.md` § 3:
+
+| Modifier | Tier | Treatment |
+|---|---|---|
+| `.glassSurface(cornerRadius: 10)` | L1 section card | `.ultraThinMaterial` + `glassApprox` tint (`rgba(18,18,20,0.58)`) + `glassBorder` hairline (`rgba(255,255,255,0.09)`) + 4% white top-edge gradient |
+| `.glassDense(cornerRadius: 12)` | L1 dense (sheets / popovers / dropdowns) | Same fill model, `glassDenseApprox` (`rgba(18,18,20,0.78)`), no top-edge gradient |
+| `.nestedCard(cornerRadius: 6)` | L2 nested card | Flat `Color.white.opacity(0.04)` + `Color.white.opacity(0.08)` hairline. No blur, no top-edge gradient |
+
+Three glass layers deep is forbidden — see `MOBILE.md` § 3.
+
+**Migration path:** existing call sites using `OPSStyle.Colors.cardBackground` (a flat `#191919` asset) remain for legacy consumers (Books `HeroCarousel`, JobBoard cards, etc.) and continue to compile. New code must use the modifiers; old code migrates opportunistically when the surface is otherwise rebuilt.
+
+### 20.2 Mobile-contrast earth-tone variants
+
+Per `MOBILE.md` § 1 "outdoor-glare uplift" — earth-tone tags + status fills on iOS require higher contrast than their desktop equivalents because the operator reads them in direct sun on a job site. Added to `OPSStyle.Colors` (`OPS/Styles/OPSStyle.swift`):
+
+| Token | Value |
+|---|---|
+| `oliveFillM` | `Color("StatusSuccess").opacity(0.20)` (vs `oliveSoft` 0.12) |
+| `oliveLineM` | `Color("StatusSuccess").opacity(0.55)` (vs `oliveLine` 0.30) |
+| `oliveTextM` | `#B5C9A0` — ~25% brighter than `#9DB582` base |
+| `tanFillM` | `Color("AccentSecondary").opacity(0.20)` |
+| `tanLineM` | `Color("AccentSecondary").opacity(0.55)` |
+| `tanTextM` | `#D6BC82` |
+| `roseFillM` | `Color("Rose").opacity(0.20)` |
+| `roseLineM` | `Color("Rose").opacity(0.55)` |
+| `roseTextM` | `#C99CA3` |
+
+The legacy `oliveSoft` / `oliveLine` / `tanSoft` / etc. variants remain for OPS-Web parity at 0.12 / 0.30 alpha.
+
+### 20.3 New layout constant
+
+| Token | Value | Use |
+|---|---|---|
+| `cardRadius` | `6` | L2 nested-card corner radius — KPI tiles, peer-grouped chips, anywhere `.nestedCard()` is applied without an override |
+
+Sits between the existing `chipRadius` (4pt) and `panelRadius` (10pt).
+
+### 20.4 Consumers
+
+The LEADS tab rebuild (Phases 0–6) is the first consumer:
+
+- `HeroWidget` — `.glassSurface()`
+- `LeadActionCard` — `.glassSurface()`, mobile-contrast earth-tone variants for stage tag tones + urgency-tinted verbs and due chips
+- `WonConvertCarousel` — `.glassSurface()` per card, `oliveFillM` check-badge
+- `PipelineFooter` — `.glassSurface()`
+- `LeadDetailView` family (`DetailHero`, `ContactCard`, `FollowUpsCard`, `ActivityTimeline`, `StageTimeline`, `StickyActionBar`) — combinations of `.glassSurface()` + `.nestedCard()` + earth-tone -M variants
+- `LeadFormView` + all five sheets — chip pickers, status lines, danger-zone destructive button
+
+Future consumers (Books tab, JobBoard cards, Schedule, Settings) should migrate to the modifiers when those surfaces are otherwise rebuilt — not as a standalone change.
+
+---
+
 **End of Design System Documentation**
 
 This document serves as the complete design system reference for OPS iOS, Android, and Web implementations. All code must conform to these standards to maintain brand consistency and field-first usability.
