@@ -246,6 +246,17 @@ interface StageTransition {
 
 **iOS parity (2026-05, BOOKS tab Phase 1):** iOS now writes `stage_transitions` rows on every stage move via the new `move_opportunity_stage` Postgres RPC. The RPC atomically updates `stage`, `stage_entered_at`, `stage_manually_set`, and INSERTs the transition row in a single transaction — eliminating the prior risk of a stage update landing without a paired transition record on partial network failure. RPC source: `ops-software-bible/migrations/2026-05-07-01-move-opportunity-stage-rpc.sql` (committed `b8db1aa`). iOS calling code: `OpportunityRepository.moveToStage(opportunityId:to:userId:)` (commit `bf26423`).
 
+**Server-side auto-advance trigger (2026-05-20, LEADS polish P1-4):** `tr_activities_first_log_auto_advance` — an `AFTER INSERT ON activities` row-level trigger — implements the bible §10:205 documented behavior that was missing in prod. The LEADS tab rebuild verification (P1-1) proved zero historical system-triggered `new_lead → qualifying` transitions: every transition in `stage_transitions` had been user-initiated, confirming the auto-advance never existed despite being canonical. iOS `LeadLogActivitySheet` (Phase 4) writes activities expecting this trigger to fire. The trigger:
+
+- Bails immediately if `NEW.opportunity_id IS NULL` (non-opp activities contribute nothing).
+- Reads the target opp's `stage`, `company_id`, and `stage_entered_at`. Skips if the opp is missing/soft-deleted or already past `new_lead`.
+- `UPDATE opportunities SET stage='qualifying', stage_entered_at=NEW.created_at, stage_manually_set=false WHERE id=NEW.opportunity_id AND stage='new_lead'`. The `AND stage='new_lead'` clause is the idempotency guard — if a sibling client advanced the opp between the SELECT and UPDATE, the WHERE matches zero rows and the rest is skipped.
+- Only when the UPDATE actually matched (`FOUND` is true), INSERTs a `stage_transitions` row mirroring the `move_opportunity_stage` RPC's column set: `from_stage='new_lead'`, `to_stage='qualifying'`, `transitioned_at=NEW.created_at`, `transitioned_by=NEW.created_by`, `duration_in_stage=NEW.created_at - prior_stage_entered_at`.
+
+`SECURITY DEFINER` so the trigger writes `opportunities` + `stage_transitions` regardless of the inserting client's RLS posture; authorization is upstream — the activity INSERT that fired the trigger already passed the `activities` company-isolation RLS policy. `stage_manually_set=false` marks system-driven advances distinct from manual Kanban drags (which set it true via `move_opportunity_stage`). Coexists cleanly with that RPC under concurrent writes: Postgres serializes the UPDATEs, whichever commits first wins, the other's `WHERE stage='new_lead'` matches zero rows.
+
+Historical backfill deliberately out of scope: leads with activities logged before this migration stay at their current stage. Migration source: `ops-software-bible/migrations/2026-05-20-activities-first-log-auto-advance-trigger.sql`. iOS caller path unchanged: `LeadDetailViewModel.logActivity(...)` writes the activity row, the `LeadActivityLoggedSuccess` notification re-triggers `LeadsTabView.viewModel.loadData()`, the next reload picks up the new stage.
+
 ### OpportunityService
 
 Located at `src/lib/api/services/opportunity-service.ts` (wired from `2742b60` commit):

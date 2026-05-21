@@ -204,6 +204,8 @@ Project (Closed)
 
 **Auto-advance trigger:** First Activity logged → `qualifying`
 
+> Implemented 2026-05-20 via Postgres trigger `tr_activities_first_log_auto_advance` (migration `2026-05-20-activities-first-log-auto-advance-trigger.sql`). Server-side, fires `AFTER INSERT ON activities` for any opp-attached activity where the opp is currently in `new_lead`. See `09_FINANCIAL_SYSTEM.md` § Stage Transitions for the full trigger semantics, idempotency guard, and the historical-backfill scope decision.
+
 ---
 
 #### `qualifying`
