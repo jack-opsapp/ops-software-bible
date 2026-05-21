@@ -1906,6 +1906,6 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 ---
 
-**Last Updated:** March 2, 2026
-**Document Version:** 1.3
+**Last Updated:** May 20, 2026
+**Document Version:** 1.4
 **iOS App Version:** 207+ Swift files, iOS 17+, SwiftData + SwiftUI
