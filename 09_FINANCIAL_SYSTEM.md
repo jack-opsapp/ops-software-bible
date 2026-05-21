@@ -1622,15 +1622,15 @@ Per-card composition (`OPS/Views/Books/Cards/`):
 
 ---
 
-## Cashflow Forecast (Card 6 — 2026-05-11)
+## Cashflow Forecast (2026-05-11)
 
-**Status:** Initiative `CASHFLOW FORECAST - P1` — design and additive Supabase schema landed 2026-05-11; iOS engine + UI in flight. Card 6 of the BOOKS hero carousel. Forward-looking complement to the retrospective Pipeline Forecast (Card 4).
+**Status:** Initiative `CASHFLOW FORECAST - P1` — design and additive Supabase schema landed 2026-05-11; iOS engine + UI in flight. Surfaced as a preview card mounted below the BOOKS hero carousel; integrating it as a 6th in-carousel card is future scope. Forward-looking complement to the retrospective Pipeline Forecast (Card 4).
 
 **The question this card answers:** "Given the jobs I already have on the books — sent invoices, approved estimates, weighted pipeline — what does my cash position look like over the next 13 weeks?"
 
 ### Surface
 
-- **Card preview** (`CashflowForecastCard`) — sits at slot 6 of the BOOKS hero carousel. Shows end-of-horizon balance, sparkline of running balance, lowest projected point, state badge (`ON TRACK` / `WATCH` / `DIP DETECTED`).
+- **Card preview** (`CashflowForecastCard`) — mounted below the BOOKS hero carousel. Shows end-of-horizon balance, sparkline of running balance, lowest projected point, state badge (`ON TRACK` / `WATCH` / `DIP DETECTED`).
 - **Full screen** (`CashflowForecastScreen`) — opens on tap. 13-week running-balance line chart, layer toggles, 4w/13w horizon zoom, drill-into-week sheet.
 - **Bottom sheet** (`WeekBreakdownSheet`) — tap any data point. Lists every contributing invoice / milestone / recurring expense / opportunity for that week, grouped by inflow/outflow. Each row deep-links to its source entity.
 - **Settings sheet** (`ForecastSettingsSheet`) — gear icon on the full screen. CRUD on recurring expenses + low-water threshold + current-balance refresh.

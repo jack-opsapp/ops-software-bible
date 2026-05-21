@@ -3196,7 +3196,7 @@ Every notification inserted into the `notifications` table MUST satisfy this con
 
 ### §14.3.2 Forecast Dip Notification (2026-05-11)
 
-Persistent notification fired when the Cashflow Forecast (Card 6 of the BOOKS hero carousel — see `09_FINANCIAL_SYSTEM.md § Cashflow Forecast`) projects any week below zero.
+Persistent notification fired when the Cashflow Forecast (a preview mounted below the BOOKS hero carousel — see `09_FINANCIAL_SYSTEM.md § Cashflow Forecast`) projects any week below zero.
 
 **Notification shape:**
 
