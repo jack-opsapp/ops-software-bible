@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** March 29, 2026
+**Last Updated:** May 20, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -2752,6 +2752,38 @@ Uncovered types → legacy passes through. Warning rows always pass through rega
 Groups merged rows by `taskTypeId` via `CatalogEstimateMerger.groupByTaskType` (mirrors the legacy `EstimateGeneratorService.groupByTaskType` shape so the parent/child structure is identical between paths). For each child, `CreateLineItemDTO` flows the snapshot fields through to `line_items.configured_options` (jsonb) / `resolved_unit_price` / `resolved_options_label` so `CutListMaterializer` can resolve recipes at install time.
 
 **Backwards compatibility**: companies without any `CompanyDefaultProduct` rows see the legacy preview unchanged — adapter returns `[]`, merger passes legacy through, persistence path is identical to pre-catalog behavior.
+
+### Vinyl Auto Order (iOS — added 2026-05-20)
+
+**Entry point:** Deck Builder canvas → select one or more closed surfaces → toolbar `Order Vinyl` → `VinylOrderSheet`.
+
+The sheet converts selected deck surfaces into a vinyl membrane cut list and order draft for field ordering. It supports single-level and multi-level drawings by resolving selected persisted `DeckSurface` ids back to detected face polygons after `DeckBuilderViewModel.reconcileSurfaces()`.
+
+**Defaults:**
+- Roll width: 72 in
+- Seam overlap: 1.5 in
+- Edge wrap: 6 in
+- Run direction: `automatic`
+- Color: field-confirmed free text
+
+**Cut-list engine:** `OPS/OPS/DeckBuilder/Engine/VinylCutListEngine.swift`
+
+For each selected surface, the engine:
+1. Expands the measured face width/length by edge wrap.
+2. Resolves run direction. `automatic` compares lengthwise vs widthwise strip counts and waste, then chooses the lower-waste option.
+3. Computes strip count, strip length, cut area, ordered square feet, waste square feet, and seam line placement.
+4. Produces cross-surface offcut reuse notes when a full smaller surface can fit inside another surface's offcut.
+5. Renders an order-note block with project, design, color, cut list, and offcut sections.
+
+**Order persistence:** `VinylOrderSheet.createOrderAndNote()`
+
+On `CREATE ORDER + NOTE`, iOS writes:
+- `catalog_orders` row with status `draft`, title `VINYL ORDER - <PROJECT>`, and the full cut list in `notes`.
+- Optional `catalog_order_items` row only when a local active company catalog variant matches vinyl membrane material. Matching requires text containing `vinyl` plus one of `membrane`, `deck`, `roll`, or `sheet`, and excludes `diverter`. This prevents Canpro's `Vinyl Diverter` SKU from being misused as membrane roll material.
+- `project_notes` row containing the cut list and created order id.
+- Standard `notifications` row for the current user with `type = catalog_order_drafted`, `deep_link_type = catalogOrders`, and `action_url = ops://catalog/orders?tab=drafts`.
+
+**Text handoff:** The sheet can open `MFMessageComposeViewController` with the cut list and the project's effective client phone. If the device cannot send SMS, it copies the same cut-list text to the clipboard.
 
 ### Cut-List Materialization (NEW)
 
