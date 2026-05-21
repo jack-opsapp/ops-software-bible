@@ -2771,17 +2771,17 @@ The sheet converts selected deck surfaces into a vinyl membrane cut list and ord
 For each selected surface, the engine:
 1. Expands the measured face width/length by edge wrap.
 2. Resolves run direction. `automatic` compares lengthwise vs widthwise strip counts and waste, then chooses the lower-waste option.
-3. Computes strip count, strip length, cut area, ordered square feet, waste square feet, and seam line placement.
-4. Produces cross-surface offcut reuse notes when a full smaller surface can fit inside another surface's offcut.
+3. Computes strip count, strip length, cut area, purchased square feet, waste square feet, and seam line placement.
+4. Produces cross-surface offcut reuse notes when a full smaller surface can fit inside another surface's offcut. Full reused target surfaces are subtracted from purchased order area.
 5. Renders an order-note block with project, design, color, cut list, and offcut sections.
 
 **Order persistence:** `VinylOrderSheet.createOrderAndNote()`
 
 On `CREATE ORDER + NOTE`, iOS writes:
-- `catalog_orders` row with status `draft`, title `VINYL ORDER - <PROJECT>`, and the full cut list in `notes`.
+- `catalog_orders` row with status `draft`, title `VINYL ORDER - <PROJECT>`, and the full cut list in `notes`. If the item or project-note write fails after order creation, iOS rolls back the item and soft-deletes the draft order to avoid orphan drafts.
 - Optional `catalog_order_items` row only when a local active company catalog variant matches vinyl membrane material. Matching requires text containing `vinyl` plus one of `membrane`, `deck`, `roll`, or `sheet`, and excludes `diverter`. This prevents Canpro's `Vinyl Diverter` SKU from being misused as membrane roll material.
 - `project_notes` row containing the cut list and created order id.
-- Standard `notifications` row for the current user with `type = catalog_order_drafted`, `deep_link_type = catalogOrders`, and `action_url = ops://catalog/orders?tab=drafts`.
+- Standard `notifications` row for the current user with `type = catalog_order_drafted`, `deep_link_type = catalogOrders`, and `action_url = ops://catalog/orders?tab=draft`.
 
 **Text handoff:** The sheet can open `MFMessageComposeViewController` with the cut list and the project's effective client phone. If the device cannot send SMS, it copies the same cut-list text to the clipboard.
 
