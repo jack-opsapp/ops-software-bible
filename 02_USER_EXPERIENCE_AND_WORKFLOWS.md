@@ -1226,42 +1226,57 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 ### BooksTabView (Books Tab Container)
 
-**Purpose:** Money command center for trades operators. Top-level hero is a swipeable 5-card financial carousel; below that, a 3-segment list of underlying documents (Invoices · Estimates · Expenses). Replaces the Phase 1 4-segment hub.
+**Purpose:** Money command center for trades operators. The hero is a swipeable 5-card financial carousel; below it sits a 3-segment list of the underlying documents (Invoices · Estimates · Expenses). Visually rebuilt 2026-05-19 against the "Mission Deck" design (Phase 3); the Phase 2 carousel architecture is unchanged.
 
-**Source:** `Views/Books/BooksTabView.swift` (Phase 2, 2026-05-11)
+**Source:** `Views/Books/BooksTabView.swift` (Phase 3 — Mission Deck, 2026-05-19)
 
 **UI Elements (top to bottom):**
 
 1. **AppHeader** — `.books` header type, "BOOKS" title.
-2. **`PeriodPill`** — single tap-target with menu of 8 period options: 30 DAYS / 90 DAYS / 6 MONTHS / 1 YEAR / THIS MONTH / LAST MONTH / THIS QUARTER / YEAR TO DATE. Drives the period scope of Cards 1, 2, 5.
-3. **`HeroCarousel`** — 5-card swipeable carousel (`ScrollView(.horizontal)` + `.scrollTargetBehavior(.paging)`):
-   - **Card 1 `PLCard`** — In − Out = Net equation, margin bar, MoM trend, drill tiles for Outstanding and Forecast.
-   - **Card 2 `CashFlowCard`** — paired in/out bars by ISO week (Swift Charts) + KPI tiles.
-   - **Card 3 `ARCard`** — aging buckets (0–30 / 31–60 / 61–90 / 90+) and top-chase drill. Always all-open (period-independent).
-   - **Card 4 `ForecastCard`** — weighted pipeline by stage + close-rate / stale tiles. Always active.
-   - **Card 5 `JobsCard`** — top 5 projects by net (diverging profit/loss bars) + profitable / margin / losers tiles.
-   - Dot pagination with active-dot fill in accent. Last-viewed card persisted via `@AppStorage("books.lastViewedCard")`.
-4. **`CollapsedCarouselStrip`** — one-line strip surfaced when the user scrolls the list; shows the active card's primary number, an A/R glance, and the dots.
-5. **Segmented Control** — 3 sections: **INVOICES | ESTIMATES | EXPENSES**. Sticky on scroll collapse.
-6. **Content Area** — swaps between child list views based on selected segment.
+2. **Sync banner** (`BooksSyncBanner`) — present only when the dashboard is not fully synced: a pulsing `SYS :: SYNC · HH:mm` while a refresh is in flight, or `SYS :: OFFLINE · CACHED HH:mm` / `SYS :: ERROR · LAST HH:mm` with a RETRY button when the network is down or the last fetch failed.
+3. **`HeroCarousel`** — 5-card swipeable, paged carousel. Swiping fires a light haptic, updates the inline header label and the dot pagination, and persists the last-viewed card for next launch.
+   - **Card 1 — `PLCard`** ("Am I making money?") — net-cash hero number, a margin meter with a `X% MARGIN` caption, a `PAYMENTS IN` / `EXPENSES OUT` row, and `OUTSTANDING` / `FORECAST` drill tiles.
+   - **Card 2 — `CashFlowCard`** ("What's my cash rhythm?") — net-cash hero plus a weekly-net sparkline; any week where money out beat money in gets a rose marker. Tiles: `SALES`, `AVG/WK`, `DAYS`.
+   - **Card 3 — `ARCard`** ("Who do I need to chase?") — total-outstanding hero, an aging ramp (0–30 / 31–60 / 61–90 / 90+) with a bucket grid, and a full-width `TOP CHASE` tile. Always all-open — ignores the period.
+   - **Card 4 — `ForecastCard`** ("What's coming if pipeline plays out?") — weighted-forecast hero plus per-stage bars with a probability indicator. Tiles: `CLOSE RATE`, `STALE`. Always active-only.
+   - **Card 5 — `JobsCard`** ("Which jobs made money? Which lost it?") — diverging profit/loss bars from a center axis, with `PROFITABLE` / `AVG MARGIN` / `LOSERS` tiles.
+   - **Inline header** — the active card's label on the left, the period pill on the right. Cards 3 and 4 carry a colored scope-hint badge (`ALL OPEN` / `ACTIVE`) so the user knows they don't track the selected period.
+   - **Dot pagination** — the active dot is a wide white capsule; tapping a dot jumps to that card.
+4. **`PeriodPill`** — a single tap-target opening a menu of 8 periods (30 DAYS / 90 DAYS / 6 MONTHS / 1 YEAR / THIS MONTH / LAST MONTH / THIS QUARTER / YEAR TO DATE). Choosing a period re-computes Cards 1, 2 and 5; Cards 3 and 4 are unaffected.
+5. **`CashflowForecastCard`** — a forward-looking 13-week cashflow preview mounted below the carousel for users with `finances.view` (see `09_FINANCIAL_SYSTEM.md` → Cashflow Forecast).
+6. **Segmented control** — inset-pill style, 3 sections **INVOICES | ESTIMATES | EXPENSES**; the active segment is a neutral white pill (no accent). Switching fires a light haptic. Sticky on scroll-collapse.
+7. **Drill filter chip** (`BooksDrillFilterChip`) — shown below the segments when a card drill applied a filter (`OVERDUE` for Invoices, `SENT` for Estimates). Tap × to clear it and restore the list's full scope.
+8. **Content area** — the selected segment's list view.
+
+**Workflows:**
+- *Swipe the carousel* — light haptic; the inline header label and dots update; the last-viewed card is restored on the next launch.
+- *Change the period* — tap the pill and pick a window; Cards 1, 2 and 5 morph their numbers; Cards 3 and 4 hold (their scope-hint badges explain why).
+- *Scroll-collapse* — scrolling the list collapses the hero into a one-line `CollapsedCarouselStrip` (the active card's primary number, an A/R glance, and dots); the segmented control and any filter chip stick to the top. Scrolling back up re-expands the hero.
+- *Drill from a card* — Card 1 `OUTSTANDING` → Invoices filtered to overdue; Card 1 `FORECAST` → Estimates filtered to sent; Card 3 `TOP CHASE` → the A/R aging half-sheet. A drill switches the segment and drops a filter chip; tap the chip's × to clear it.
+- *Pull-to-refresh* — pulling down on the content re-runs the dashboard load; progress shows in the sync banner.
+- *Recover from an error* — a single failed data fetch shows a card-level error on only the affected card(s) with a RETRY button while sibling cards keep their data; a whole-dashboard failure surfaces in the sync banner with RETRY.
+
+**States:**
+- *Cold launch, no cache* — per-card skeleton placeholders render until the first load completes.
+- *Empty data* — a card with zero data shows an empty hero (`$0` / `—`) and a `// NO …` label rather than a blank card.
+- *Syncing / offline / error* — surfaced by the sync banner; offline keeps the cached numbers on screen with a RETRY action.
+- *Reduced motion* — number morphs, bar fills, the sparkline animation and the dot-capsule transition are all suppressed.
 
 **Child Views:**
-- `InvoicesListView` (embedded)
-- `EstimatesListView` (embedded)
-- `ExpensesListView` (admin) or `MyExpensesView` (own scope)
+- `InvoicesListView` (embedded) · `EstimatesListView` (embedded) · `ExpensesListView` (full access) or `MyExpensesView` (own scope).
 
-**Access:**
-- Visible to users with any of `finances.view` / `estimates.view` / `expenses.view`. (Phase 2: `pipeline.view` no longer gates BOOKS — Pipeline is its own top-level tab; see `PIPELINE TAB - P1-1`.)
-- Carousel cards filtered by per-card permission. Cards 1/2/3/5 need `finances.view`; Card 4 needs `pipeline.view`. If zero cards are visible (Operator path), the entire hero hides.
-- Auto-skip: users with exactly one visible segment route directly to that list (Crew → `MyExpensesView`).
+**Access / role differences:**
+- Visible to users with any of `finances.view` / `estimates.view` / `expenses.view`. `pipeline.view` no longer gates BOOKS — Pipeline is its own top-level tab (see `PIPELINE TAB - P1-1`).
+- Carousel cards are permission-filtered: PL / Cash Flow / A/R / Jobs need `finances.view`, Forecast needs `pipeline.view`. With neither permission the hero is hidden entirely.
+- **Owner** — the full 5-card carousel and all 3 segments. **Operator** (estimates + expenses only) — no carousel; Estimates and Expenses segments. **Crew** (own-scope expenses only) — auto-skipped past the hub straight to `MyExpensesView` (`MainTabView.booksAutoSkipDestination`, triggered when exactly one segment is visible).
 
 **FAB integration:**
-- The **global** `FloatingActionMenu` re-orders its MONEY group via `@AppStorage("books.selectedSegment")`. The matching create action floats to position 0.
-- `new-lead` stays in the MONEY group (FAB is global; Pipeline being a separate tab does not move the create entry).
+- The global `FloatingActionMenu` re-orders its MONEY group via `@AppStorage("books.selectedSegment")` so the active segment's create action floats to the front. `add-lead` stays in the MONEY group (the FAB is global; the Pipeline tab split does not move the create entry).
 
 **Sheets / drill-downs:**
-- `ARAgingDetailView` — sheet from Card 3 top-chase tile and Card 1 Outstanding tile.
-- `EstimateDetailView`, `InvoiceDetailView`, `ExpenseBatchDetailView`, `ExpenseFormSheet`, `PaymentRecordSheet` — reachable from the segment lists (unchanged from Phase 1).
+- `ARAgingDetailView` — half-sheet (medium/large detents) from Card 3's `TOP CHASE` tile.
+- `CashflowForecastScreen` — full-screen, from the cashflow card and the cashflow notification deep link.
+- `EstimateDetailView`, `InvoiceDetailView`, `ExpenseBatchDetailView`, `ExpenseFormSheet`, `PaymentRecordSheet` — reachable from the segment lists.
 
 ---
 

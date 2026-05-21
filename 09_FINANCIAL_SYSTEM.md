@@ -1534,52 +1534,91 @@ protocol ExpenseOCRServiceProtocol {
 
 **AppleVisionOCRService**: Uses `VNRecognizeTextRequest` with `.accurate` recognition level. Processes all recognized text through `ReceiptParser` which uses regex patterns and heuristics to extract structured fields from raw OCR text.
 
-### iOS BOOKS Tab (Phase 2, May 2026)
+### iOS BOOKS Tab (Phase 3 — Mission Deck, May 2026)
 
-**Status:** Reconstructed 2026-05-11 from bug `1b038315`. The Phase 1 4-segment hub (`MoneyDashboardHeader` + `SmartStatCarousel` + `FinancialHealthBar` + Pipeline-in-Books) was replaced by a carousel-led money command center. Pipeline was elevated to its own top-level tab (see `PIPELINE TAB - P1-1`).
+**Status:** Visual rebuild landed 2026-05-19 on branch `feat/books-mission-deck` (spec `ops-ios/docs/superpowers/specs/2026-05-19-books-tab-mission-deck-rebuild.md`, Phases A–H; Phase I is build verification + this bible update). The Phase 2 carousel architecture — 5-card hero + 3-segment list — is unchanged; every visual treatment was rebuilt against the approved "Mission Deck" design, and an entire new state layer was added (sync banner, skeletons, card-level error, drill filter chip, scope-hint badges, per-card empty states). No schema or migration changes — all Phase 3 ViewModel additions are computed. Lineage: Phase 1 4-segment hub (2026-05-07) → Phase 2 carousel command center (2026-05-11) → Phase 3 Mission Deck visual rebuild (2026-05-19).
 
 **Surface:**
-- Lives at iOS `MainTabView.swift` rendering `BooksTabView`. Tab icon `chart.line.uptrend.xyaxis` (unchanged).
-- Header: `AppHeader.HeaderType.books` (title "BOOKS").
-- Hero: `HeroCarousel` (`OPS/Views/Books/HeroCarousel.swift`) — swipeable 5-card paged surface using `ScrollView(.horizontal)` + `.scrollTargetBehavior(.paging)` (iOS 17+), **not** `TabView(.page)` (avoids spring physics per the OPS motion rule). Cards permission-filtered; last-viewed card persisted via `@AppStorage("books.lastViewedCard")`.
+- Rendered by `MainTabView` (tab icon `chart.line.uptrend.xyaxis`); container `BooksTabView` (`OPS/Views/Books/BooksTabView.swift`). Header `AppHeader.HeaderType.books` (title "BOOKS").
+- Top-to-bottom: AppHeader → optional sync banner → `HeroCarousel` → `CashflowForecastCard` (when `finances.view`) → inset-pill segmented control → optional drill filter chip → selected segment's list. On scroll-collapse the carousel is swapped for `CollapsedCarouselStrip` and the segmented control + filter chip stick to the top.
+
+**Hero carousel** — `HeroCarousel` (`OPS/Views/Books/HeroCarousel.swift`): swipeable 5-card paged surface, `ScrollView(.horizontal)` + `.scrollTargetBehavior(.paging)` + `.scrollPosition` (iOS 17+), **not** `TabView(.page)` (avoids spring physics per the OPS motion rule). Light impact haptic on each swap. Cards are permission-filtered; the last-viewed card persists via `@AppStorage("books.lastViewedCard")`.
 
 | Card | Question | Period scope | Permission |
 |------|----------|--------------|------------|
-| `PLCard` | "Am I making money this period?" | Follows selector | `finances.view` |
-| `CashFlowCard` | "What's my cash rhythm?" | Follows selector | `finances.view` |
+| `PLCard` | "Am I making money this period?" | Follows period pill | `finances.view` |
+| `CashFlowCard` | "What's my cash rhythm?" | Follows period pill | `finances.view` |
 | `ARCard` | "Who do I need to chase?" | Always all-open | `finances.view` |
 | `ForecastCard` | "What's coming if pipeline plays out?" | Always active | `pipeline.view` |
-| `JobsCard` | "Which jobs make me money? Which lost it?" | Follows selector | `finances.view` |
+| `JobsCard` | "Which jobs made me money? Which lost it?" | Follows period pill | `finances.view` |
 
-- Period control: `PeriodPill` (`OPS/Views/Books/Components/PeriodPill.swift`) — single tap-target with 8 options (30D / 90D / 6M / 1Y / MTD / LAST / QTD / YTD).
-- Below carousel: 3-segment underline control **INVOICES · ESTIMATES · EXPENSES**. Each renders the existing list view in `embedded: true` mode (unchanged from Phase 1).
-- Header collapse: on scroll, the hero collapses to `CollapsedCarouselStrip` (active card's primary number + A/R glance + dots). Segments stick.
+Per-card composition (`OPS/Views/Books/Cards/`):
+- **Card 1 — `PLCard`.** Hero `NET CASH` = `viewModel.netCash` (Mohave Light 60pt, rose when negative). Below: a margin meter (olive fill over a tan-soft track), a sign-keyed `X% MARGIN` caption, and a `PAYMENTS IN` / `EXPENSES OUT` row. Drill tiles: `OUTSTANDING` (overdue invoices value + count) and `FORECAST` (pending estimates value + count). Source: in-period payments + expenses.
+- **Card 2 — `CashFlowCard`.** Hero `NET CASH · {N}W TRAILING`. Body: a weekly-net sparkline drawn with SwiftUI `Canvas` — zero-axis hairline, olive line + olive-soft area fill, per-point dots; any week where expenses-out exceeded payments-in gets a rose marker (bad-week rule). Drill tiles: `SALES`, `AVG/WK`, `DAYS`. Source: `paymentsByWeek` / `expensesByWeek` (ISO-week buckets).
+- **Card 3 — `ARCard`.** Hero `TOTAL OUTSTANDING` (rose) with a `{open} OPEN · {overdue} OVERDUE` subline. Body: a single continuous aging ramp of four colored segments sized by bucket amount (0–30 olive, 31–60 receivables-tan, 61–90 warning-tan, 90+ overdue-brick) and a 4-column bucket grid. A full-width `TOP CHASE` tile surfaces the most-overdue invoice. Period-independent. Source: `outstandingInvoiceBreakdown`, `overdueInvoicesCount`.
+- **Card 4 — `ForecastCard`.** Hero `WEIGHTED FORECAST` (steel-blue accent) with a `{N} ACTIVE OPPORTUNITIES` subline. Body: per-stage bars in funnel order — each row shows the stage name, an `×{avgProbability}%` indicator, and the weighted dollar value. Drill tiles: `CLOSE RATE`, `STALE`. Source: `weightedForecastByStage` (`[StageForecast]`).
+- **Card 5 — `JobsCard`.** No hero number — label `TOP 5 JOBS BY NET`. Body: diverging profit/loss bars from a center axis (olive extends right for profit, rose left for loss); each row shows job title, signed margin %, signed net $. Drill tiles: `PROFITABLE`, `AVG MARGIN` (read-only), `LOSERS`. Source: `topProjectsByNet` (`[JobNet]`).
 
-**Per-job profitability** (Card 5) computed in `MoneyDashboardViewModel.computeJobNets(periodStart:periodEnd:)`:
-- Revenue = `sum(payments.amount)` for invoices with matching `project_id`, paid in-period.
-- Cost = `sum(expense_project_allocations.amount)` (with fallback to `expense.amount × percentage / 100` when `amount` is null).
-- `expense_project_allocations.project_id` is `text` in Supabase while `invoices.project_id` is `uuid` — both come through as `String` in Swift DTOs, so comparison is string-on-string. Drift D3, reconciled.
-- Top 5 = top 4 by net + worst loser if not already present.
+**Carousel chrome:**
+- Inline header — the active card's label (JetBrains Mono 11pt, 0.16em, semibold, uppercase) left-aligned, `PeriodPill` right-aligned.
+- Scope-hint badges (`BooksScopeHintBadge`) — rendered beside the header label on Card 3 (`ALL OPEN`, rose) and Card 4 (`ACTIVE`, accent), signalling that those two cards do not respond to the period pill.
+- Dot pagination — the active dot is a 22×6 white capsule, inactive dots are 6×6 muted; the capsule width animates over the canonical 200ms easing. Each dot carries a 44pt hit target and jumps to its card on tap.
+- `PeriodPill` (`OPS/Views/Books/Components/PeriodPill.swift`) — a single 44pt-minimum tap-target opening a `Menu` of 8 periods (30 DAYS / 90 DAYS / 6 MONTHS / 1 YEAR / THIS MONTH / LAST MONTH / THIS QUARTER / YEAR TO DATE). Drives Cards 1, 2, 5; Cards 3 and 4 ignore it.
+
+**Segmented control + drill filter chip:**
+- Inset-pill control — 3 segments **INVOICES · ESTIMATES · EXPENSES**, replacing the Phase 2 underline control. The active segment is a neutral white-fill pill with a 1pt inset top-light and no accent color (OPS "no accent on toggles" rule). Light haptic on switch. Each segment renders its existing list view in `embedded: true` mode.
+- `BooksDrillFilterChip` — appears below the segmented control when a carousel drill applied a filter (`OVERDUE` for Invoices, `SENT` for Estimates). Tapping × clears the filter.
+
+**Drill interactions** — three carousel drills are wired; the remaining five tiles are present and VoiceOver-labelled but have deferred no-op handlers:
+- Card 1 `OUTSTANDING` → Invoices segment, `overdue` filter applied.
+- Card 1 `FORECAST` → Estimates segment, `sent` filter applied.
+- Card 3 `TOP CHASE` → `ARAgingDetailView` presented as a half-sheet (`.presentationDetents([.medium, .large])`, drag indicator visible).
+- Deferred no-ops: Card 2 `DAYS`, Card 4 `CLOSE RATE` / `STALE`, Card 5 `PROFITABLE` / `LOSERS` — full-screen reports and Pipeline-tab drills are future scope.
+
+**States** — sync banner, skeleton, card-level error, per-card empty (`OPS/Views/Books/Components/`):
+- `BooksSyncBanner` — slim banner above the carousel whenever `MoneyDashboardViewModel.syncState != .synced`: a pulsing-dot `SYS :: SYNC · HH:mm` while syncing, or `SYS :: OFFLINE · CACHED HH:mm` / `SYS :: ERROR · LAST HH:mm` with a RETRY action.
+- `BooksSkeleton` — per-card skeleton placeholders for the cold-paint, no-cache path (`!hasEverLoaded && isLoading`); each card's skeleton mirrors its real layout.
+- `BooksCardError` — card-level fail-soft error. A failed repository fetch routes only the affected cards into an error state (`— / // ERROR — LOAD FAILED / [RETRY →]`) while sibling cards keep rendering live data.
+- Per-card empty states — a card with zero data (after a load completed) renders an empty hero (`$0` / `—`) and a `// NO …` tactical label instead of a blank card.
+- Pull-to-refresh — native SwiftUI `.refreshable` on the scroll view, runs `loadData()`.
+
+**`MoneyDashboardViewModel` Phase 3 additions** (`OPS/ViewModels/MoneyDashboardViewModel.swift`, all computed — no schema change):
+- `StageForecast` — replaces the Phase 2 `(stage, value)` tuple for Card 4: `id` (PipelineStage), `value` (weighted dollars), `avgProbability` (unweighted mean win-probability — the `×62%` indicator), `count`. A `stage` computed alias keeps legacy call-sites compiling.
+- Per-card error tracking — `BooksCard` enum (`pl`/`cashFlow`/`ar`/`forecast`/`jobs`), `failedCards: Set<BooksCard>`, `cardError(_:)`, `retry(_:)`. `loadData()` is fail-soft: each repository fetch is a `Result`; an invoice failure flags PL/Cash Flow/A/R/Jobs, expenses flags PL/Cash Flow/Jobs, opportunities flags Forecast, allocations flags Jobs.
+- Sync state — `SyncState` (`syncing`/`synced`/`offline`/`error`) and `lastSyncedAt`. A `URLError` of `.notConnectedToInternet` / `.networkConnectionLost` / `.timedOut` downgrades to `.offline`; any other error to `.error`.
+- `hasEverLoaded` — gates the skeleton path. Flips true on the first `loadData()` that runs to completion — including a load with per-card failures, so a transient first-launch error does not trap the user in skeleton.
+- Worst-loser floor — `computeJobNets` builds a top-5-by-net display slice, then displaces the 5th entry with the period's worst loser when one exists below the `worstLossFloor` noise guard (−$500) and is not already shown. Aggregates (`profitableProjectCount` / `losersProjectCount` / `avgProjectMargin`) always count the full project set, not the display slice.
+
+**Per-job profitability** (Card 5) — `MoneyDashboardViewModel.computeJobNets(periodStart:periodEnd:)`:
+- Revenue = `sum(payments.amount)` for non-void invoices carrying a `project_id`, paid in-period.
+- Cost = `sum(expense_project_allocations.amount)` (fallback `expense.amount × percentage / 100` when `amount` is null) for non-deleted in-period expenses.
+- `expense_project_allocations.project_id` is `text` in Supabase while `invoices.project_id` is `uuid`; both arrive as `String` in Swift DTOs, so the join is string-on-string.
 
 **Permission gating:**
-- Tab visible if user has any of `finances.view` / `estimates.view` / `expenses.view`. `pipeline.view` no longer gates BOOKS — it gates the new Pipeline tab.
-- Carousel hidden entirely when zero cards are permitted (Operator path: `estimates.view` + `expenses.view` only, no `finances.view`, no `pipeline.view`).
-- Auto-skip: Crew users with `expenses.view` (own scope) only continue to land on `MyExpensesView` directly via `booksAutoSkipDestination` in `MainTabView`.
+- Tab visible (`MainTabView.hasBooksAccess`) with any of `finances.view` / `estimates.view` / `expenses.view`. `pipeline.view` does not gate BOOKS — it gates the separate Pipeline tab.
+- Carousel cards filtered per-card (table above); the hero is hidden entirely when the user has neither `finances.view` nor `pipeline.view`.
+- Segments filtered by `BooksSection.requiredPermission`: Invoices `finances.view`, Estimates `estimates.view`, Expenses `expenses.view`. Expenses renders `MyExpensesView` for own-scope users, `ExpensesListView` for full access.
+- Role outcomes: an **Owner** sees all 5 cards and all 3 segments; an **Operator** (estimates + expenses, no finances/pipeline) gets no carousel and the Estimates/Expenses segments only; a **Crew** member (own-scope `expenses.view` only) is auto-skipped — `MainTabView.booksAutoSkipDestination` routes the BOOKS tab straight to `MyExpensesView` whenever exactly one segment is visible.
+
+**Accessibility:**
+- The carousel container is one VoiceOver element (`.contain` children, heading trait): "Books dashboard, N cards, swipe with two fingers to navigate" (N is permission-filtered).
+- Each card folds its non-tile content into a single composed summary (e.g. "P and L. Net cash $X this 30D. Y% margin."); drill tiles, the period pill, the dots, the segmented control and the sync-banner RETRY each remain individually navigable with their own labels and hints.
+- Dynamic Type — hero numbers clamp at `accessibility3` and scale down via `minimumScaleFactor(0.7)`; card-header and tile labels clamp at `accessibility2`.
 
 **FAB integration:**
-- The global `FloatingActionMenu` (`OPS/Views/Components/FloatingActionMenu.swift`) re-orders its MONEY group via `@AppStorage("books.selectedSegment")`. Default changed from `"PIPELINE"` to `"INVOICES"` in Phase 2.
-- `add-lead` stays in the MONEY group because the FAB is global — Pipeline being its own top-level tab does not move the create action.
+- The global `FloatingActionMenu` (`OPS/Views/Components/FloatingActionMenu.swift`) re-orders its MONEY group via `@AppStorage("books.selectedSegment")` so the create action for the active segment floats to the front. `add-lead` stays in the MONEY group — the FAB is global and the Pipeline tab split does not move the create action.
+
+**Deferred / known gaps (as-built):**
+- `BooksPTRIndicator` (OPS-mark + spin-arc + `SYNCING` label) is built but **not wired in** — it is a standalone view, not a `ProgressViewStyle`, so it cannot drive the system refresh control. Pull-to-refresh ships on native `.refreshable`; adopting the custom indicator is a future polish phase (spec § 7.5).
+- Five of the eight carousel drill tiles (`DAYS`, `CLOSE RATE`, `STALE`, `PROFITABLE`, `LOSERS`) have deferred no-op handlers pending their full-screen report / Pipeline-tab drill targets.
+- `CashflowForecastCard` is mounted **below** the carousel rather than as an in-carousel card; integrating it as a 6th card is future scope (see the Cashflow Forecast section below).
+
+**History:** Phase 1's `MoneyDashboardHeader` / `SmartStatCarousel` / `FinancialHealthBar` / `PeriodToggle` were removed in the Phase 2 cleanup; the 2026-05-07 spec is superseded.
 
 **Spec & plan:**
-- Spec: `ops-ios/docs/superpowers/specs/2026-05-11-books-ui-reconstruction-design.md`
-- Plan: `ops-ios/docs/superpowers/plans/2026-05-11-books-ui-reconstruction.md`
-- Phase 1 spec (superseded): `ops-ios/docs/superpowers/specs/2026-05-07-books-tab-design.md`
-
-**Phase 1 historical record:** the 4-segment hub (Pipeline + Estimates + Invoices + Expenses), `MoneyDashboardHeader`, `SmartStatCarousel`, `FinancialHealthBar`, `PeriodToggle` were the shipped shape from 2026-05-07 until 2026-05-11. All four Money components were deleted in the Phase 2 cleanup; the May 7 spec is marked superseded.
-
-**Future work (not in scope of Phase 2):**
-- Smart-default card surfacing (open most-urgent card by data condition) — Books v2.
-- Full-screen reports drilled from Card 2 (Avg/wk, Days) and Card 5 (Profitable, Losers) tiles — currently stubbed.
+- Phase 3 Mission Deck visual rebuild: `ops-ios/docs/superpowers/specs/2026-05-19-books-tab-mission-deck-rebuild.md`.
+- Phase 2 carousel architecture: `ops-ios/docs/superpowers/specs/2026-05-11-books-ui-reconstruction-design.md` + plan `2026-05-11-books-ui-reconstruction.md`.
+- Phase 1 (superseded): `ops-ios/docs/superpowers/specs/2026-05-07-books-tab-design.md`.
 
 ---
 
@@ -1667,6 +1706,6 @@ Recipients lookup via `public.users_with_permission(company_id, 'finances.view')
 
 ---
 
-**Last Updated**: 2026-05-19
-**Document Version**: 1.4
+**Last Updated**: 2026-05-20
+**Document Version**: 1.5
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `OPS/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
