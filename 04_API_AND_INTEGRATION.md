@@ -1417,7 +1417,9 @@ The Email Pipeline system adds 24 API routes across 6 route groups. All routes l
 
 Each `ImportLead` has: `id, threadId, clientName, clientEmail, clientPhone?, stage, description?, estimatedValue?, action ("create" | "link" | "create_subclient"), existingClientId?, mergeWithLeadId?`.
 
-**Behavior:** For each lead: resolves or creates client (with merge/link/subclient logic), creates opportunity with AI-detected stage, inserts `opportunity_email_threads` junction row, creates email activity record, applies "OPS Pipeline" label to the Gmail/M365 thread.
+**Behavior:** For each lead: resolves or creates client (with merge/link/subclient logic), creates opportunity with AI-detected stage, inserts `opportunity_email_threads` junction row, creates email activity record, applies "OPS Pipeline" label to the Gmail/M365 thread. Opportunity titles are generated from customer identity only via `OPS-Web/src/lib/email/opportunity-title.ts`; wizard-provided `lead.title`, email subjects, company names, and AI summaries are never persisted as `opportunities.title`. Imported estimate leads use the customer-based form `"{customerName} — Estimate"`. The AI summary remains in `description` and is mirrored to `ai_summary` after creation.
+
+**Direct inbound webhook (`POST /api/integrations/email-webhook`)**: Legacy parsed inbound email webhook inserts opportunities with `title` generated from safe sender identity (`"{customerName} — Email Inquiry"`). The webhook passes the matched company name, email, and website domain into the unsafe identity filter so company/operator senders fall back to `New Lead` instead of becoming the opportunity title. The inbound `subject` is not a title source; it is context only. The body is stored in `description` with the existing 5,000-character cap.
 
 ### 4. POST /api/integrations/email/activate
 
@@ -1443,7 +1445,7 @@ Each `ImportLead` has: `id, threadId, clientName, clientEmail, clientPhone?, sta
 | Response | `{ ok: true, source, connectionsProcessed, results: SyncResult[] }` |
 | Service calls | `SyncEngine.runSync()` |
 
-**Behavior:** If `connectionId` is provided, syncs that single connection. If `companyId`, syncs all active connections for that company. Each `SyncResult` contains `{ connectionId, activitiesCreated, newLeads }`.
+**Behavior:** If `connectionId` is provided, syncs that single connection. If `companyId`, syncs all active connections for that company. Each `SyncResult` contains `{ connectionId, activitiesCreated, newLeads }`. Sync-created opportunity titles use the shared email title helper. Inbound leads prefer parsed contact-form submitters and inbound sender identity before linked client display names; sent-folder safety-net leads use the external recipient identity and never the operator sender. Subjects remain activity/thread context.
 
 ### 6. POST /api/integrations/email/draft
 

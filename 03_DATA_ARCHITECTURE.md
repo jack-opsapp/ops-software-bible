@@ -889,6 +889,8 @@ class Opportunity: Identifiable {
     // title              TEXT NOT NULL — deal display title (e.g. "Renata Shoop - Lead").
     //   Not stored in SwiftData (iOS displays via contactName). Web sets explicit title in
     //   create-lead-modal.tsx; iOS sets "{contactName} - Lead" in LogActivityViewModel.save().
+    //   Email-generated opportunities use OPS-Web/src/lib/email/opportunity-title.ts.
+    //   Email subjects and AI summaries are context only; they must never become title.
     //   Defense-in-depth trigger trg_opportunities_default_title (BEFORE INSERT) auto-fills
     //   title from contact_name when null/empty, falling back to "New Lead".
 }
@@ -896,7 +898,9 @@ class Opportunity: Identifiable {
 
 **Computed**: `weightedValue`, `daysInStage`, `isStale`.
 
-**Title invariant**: `opportunities.title` is `TEXT NOT NULL`. Every insert path must supply it. A `BEFORE INSERT` trigger (`trg_opportunities_default_title` — migration `add_opportunities_title_default_trigger`) populates it from `contact_name` if a client forgets, so the column constraint never fails an otherwise valid insert. Clients should still send an explicit title to match the human-readable convention used across the product (`"{contactName} - Lead"` for manual creation, `"{fromName} — Email Inquiry"` for email triage).
+**Title invariant**: `opportunities.title` is `TEXT NOT NULL`. Every insert path must supply it. A `BEFORE INSERT` trigger (`trg_opportunities_default_title` — migration `add_opportunities_title_default_trigger`) populates it from `contact_name` if a client forgets, so the column constraint never fails an otherwise valid insert. Clients should still send an explicit title to match the human-readable convention used across the product (`"{contactName} - Lead"` for manual creation).
+
+**Email title invariant**: Email-created opportunities must build titles from verified customer identity, never from `subject`, AI summaries, platform sender names, company/operator identities, or company email addresses. OPS-Web centralizes this in `src/lib/email/opportunity-title.ts`. Precedence is parsed contact-form submitter / inbound sender identity, opportunity contact identity, linked client display name, then safe email local-part. Sent-folder safety-net leads treat the external recipient as the sender identity and never use the operator sender. Imported estimate leads use `"{customerName} — Estimate"`; inbound email leads use `"{customerName} — Email Inquiry"`. `New Lead` is allowed only when no safe customer identity exists. Email subjects remain on activities/thread context, and AI-generated summaries stay in `description`/`ai_summary`.
 
 ---
 
