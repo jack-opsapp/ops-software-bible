@@ -1020,14 +1020,22 @@ SegmentedControl(
 
 ### Icon System
 
-OPS uses SF Symbols exclusively, accessed through `OPSStyle.Icons` constants.
+OPS has adopted the **IBM Carbon Design System** icon set off-the-shelf across all surfaces — Apache-2.0 (free; commercial use and modification permitted, retain the license/NOTICE file in each repo), ~2,300 icons, monochrome. Carbon replaces the prior mix: web `lucide-react`, iOS Apple SF Symbols, marketing-site hand-drawn SVGs.
 
-**CRITICAL**: Never hardcode SF Symbol strings. Always use OPSStyle.Icons constants.
+Per surface:
+
+- **iOS** (`ops-ios`) — Carbon's raw SVGs are converted into **SF Symbols custom symbols**, so they remain drop-in via `Image(...)` and inherit weight/scale/tint. Access is still through `OPSStyle.Icons` constants.
+- **Web** (`ops-web`) — `@carbon/icons-react`, tree-shakeable React components, `currentColor`, `size` prop.
+- **Marketing site** (`ops-site`) — Carbon SVGs inline.
+
+The only bespoke icons are 8 trade-type glyphs (`plumbing`, `roofing`, `flooring`, `masonry`, `drywall`, `concrete`, `cleaning`, `windows-doors`), drawn to match Carbon's stroke weight and grid. The complete OPS-concept → Carbon-icon mapping lives in `OPS-ICON-SET-BRIEF.md` at the OPS project root.
+
+**CRITICAL**: Never hardcode icon name strings. Always use OPSStyle.Icons constants.
 
 ```swift
 // ✅ CORRECT
-Image(systemName: OPSStyle.Icons.calendar)
-Image(systemName: OPSStyle.Icons.personFill)
+Image(OPSStyle.Icons.calendar)
+Image(OPSStyle.Icons.personFill)
 
 // ❌ WRONG
 Image(systemName: "calendar")           // Hardcoded

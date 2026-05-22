@@ -67,7 +67,7 @@ All styling decisions live in the centralized design system — not in CLAUDE.md
 - **Voice:** OPS copy is terse and tactical. `// OPERATOR :: JACKSON`, not "Welcome back!". No emoji, no exclamation points, sentence case for content / UPPERCASE for authority. See `ops-design-system/project/README.md` § CONTENT FUNDAMENTALS.
 - **Numbers:** Always JetBrains Mono, tabular-lining, slashed zero. Always formatted (`87%`, never `86.5671641`). Empty state is `—`, not "N/A".
 - **Motion:** One easing curve `cubic-bezier(0.22, 1, 0.36, 1)`. No spring physics, no bounce (exception: drag-and-drop reorder). Always honor `prefers-reduced-motion`.
-- **Icons:** Lucide, 1.5px stroke, `currentColor`. No emoji, no decorative icons.
+- **Icons:** IBM Carbon Design System — `@carbon/icons-react` (web), SF Symbols custom symbols (iOS), Carbon SVGs (marketing site). Sizes 16/20/24/32; monochrome, `currentColor`. No emoji, no decorative icons. OPS-concept → Carbon-icon mapping: `OPS-ICON-SET-BRIEF.md` at the OPS project root.
 
 ### Claude Design Handoff Protocol
 
