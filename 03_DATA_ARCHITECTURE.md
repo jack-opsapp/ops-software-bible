@@ -3301,7 +3301,7 @@ Role is determined by the `role: UserRole` property on the User model. The Supab
 
 ### Project Team Computation
 
-Project team members are computed from task team members via `updateTeamMembersFromTasks(in:)`. Call after any task creation, update, or deletion.
+Project team members are a read/cache projection of non-deleted task team members. Locally, iOS recomputes the projection with `updateTeamMembersFromTasks(in:)` after task creation, update, or deletion. For server persistence, iOS writes crew changes to `project_tasks.team_member_ids` or uses the project table assignment RPCs; it must not enqueue `projects.team_member_ids` as a project table write.
 
 ---
 

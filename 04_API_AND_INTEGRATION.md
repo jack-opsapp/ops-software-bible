@@ -161,7 +161,9 @@ All 15 repository classes follow the same pattern: each takes a `companyId` on i
 | `updateNotes` | `(_ projectId: String, notes: String)` | Update notes + updated_at |
 | `updateDates` | `(_ projectId: String, startDate: Date?, endDate: Date?)` | Update start/end dates |
 | `updateAddress` | `(_ projectId: String, address: String)` | Update address |
-| `updateTeamMembers` | `(_ projectId: String, memberIds: [String])` | Replace team_member_ids array |
+| `createProjectTableAssignmentTask` | `(_ projectId: String, title: String, expectedUpdatedAt: String) -> ProjectTeamAssignmentRPCResult` | Create a task-backed assignment row for project-level team edits when no active tasks exist |
+| `assignProjectTeamMember` | `(_ projectId: String, userId: String, taskIds: [String], expectedUpdatedAt: String) -> ProjectTeamAssignmentRPCResult` | Add a user to task-backed project assignment via RPC/conflict token |
+| `removeProjectTeamMember` | `(_ projectId: String, userId: String, taskIds: [String]?, expectedUpdatedAt: String) -> ProjectTeamAssignmentRPCResult` | Remove a user from task-backed project assignment via RPC/conflict token |
 | `updateFields` | `(_ projectId: String, fields: [String: AnyJSON])` | Generic field update |
 | `softDelete` | `(_ projectId: String)` | Set deleted_at + updated_at |
 
