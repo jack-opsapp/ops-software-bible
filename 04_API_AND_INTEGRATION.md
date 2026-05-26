@@ -1925,6 +1925,98 @@ The webhook handler extension (Stage C.2) inspects `session.customer_details.add
 
 Both tables are RLS-locked with a single `for all using (false)` policy; only service-role connections read/write.
 
+### GET `/spec/intake/[token]` (Stage C.4)
+
+**Source**: `ops-site/src/app/spec/intake/[token]/page.tsx`. Landed 2026-05-26 on `feat/spec-intake-form`.
+
+Token-gated SPEC intake form. The plaintext token is emitted in the `spec.deposit_confirmed` email (Path A) or `spec.owner_approval_granted` checkout-token consumption (Path B); the DB stores only `spec_projects.intake_token_hash` (SHA-256 hex). Issuance happens in Stage C.2's webhook + Stage C.3's approval handler — not here. This page consumes the token: marks the intake completed on submit by stamping `intake_completed_at`.
+
+**Behavior**:
+- SHA-256 the URL segment; look up `spec_projects` where `intake_token_hash = <hash>`. No match → `notFound()` (never disclose).
+- If `intake_completed_at` is set → friendly "you're done" panel with the Calendly link (no re-disclosure of project data beyond tier).
+- Otherwise render `IntakeForm` (client component) prefilled with any autosaved `intake_responses` + the uploaded-files list.
+
+**Calendly**: env `SPEC_DISCOVERY_CALENDLY_URL` (configurable without code deploy). If unset, the form still submits; the post-submit panel says scheduling arrives by email.
+
+**SEO**: `robots: { index: false, follow: false }`. Pages keyed by token must never appear in search results.
+
+### POST `/api/spec/intake/submit` (Stage C.4)
+
+**Source**: `ops-site/src/app/api/spec/intake/submit/route.ts`.
+
+The canonical SPEC intake submission endpoint. Token-gated. Three independent gates run in order; failing any of them returns 422 with operator notification + NO intake_completed_at flip:
+
+1. **Regulated-workflow attestation** — if any of `phi_phipa` / `pci_raw_card` / `regulated_credit` / `surveillance` / `casl_bulk_messaging` is `true`, the submission is blocked. The server stamps `spec_projects.regulated_workflow_flagged_at = now()`, stores the attestations in `regulated_workflow_flags`, and fans out a **persistent** operator notification per SPEC operator with `type='spec_intake_regulated_workflow_flagged'` and `action_url='/admin/spec/{id}'`. The response carries `code='regulated_workflow_blocked'`, the failing keys, and `refund_path='/account/spec/{id}/request-refund'`.
+2. **Quebec intake re-check** — if any of `qc_head_office` / `qc_operating_address` / `qc_establishment` / `qc_material_use` is `true`, the submission is blocked. Persistent operator notification with `type='spec_intake_quebec_flagged'`. Response carries `code='quebec_intake_blocked'`, the failing keys, and the same `refund_path`.
+3. **File path traversal** — every entry in `uploaded_file_paths` must start with `{spec_project_id}/`, contain no `..` segments, and end in one of the allowed extensions (`pdf`, `png`, `jpg`, `jpeg`, `docx`, `xlsx`). Failure → 422 with `code='file_path_invalid'`.
+
+**Happy path**:
+1. `update spec_projects set intake_responses = {...full payload with attestations + submitted_at}, intake_completed_at = now(), intake_files = <paths jsonb> where id = ? and intake_completed_at is null` (concurrent-safe; the second submitter sees `null` rowcount).
+2. Queue `spec.intake_completed_customer` in `spec_email_outbox` for the buyer.
+3. Insert customer notification (`type='spec_intake_completed'`, `action_url='/account/spec/{id}'`).
+4. Fan out operator notifications (`type='spec_intake_completed_operator'`, non-persistent, `action_url='/admin/spec/{id}'`) to every SPEC operator (members of role `00000000-0000-0000-0000-0000000000a1` + `user_permission_overrides` for `spec.admin granted=true`). Operator rows carry `company_id = OPS_OPERATIONS_COMPANY_ID`.
+5. Enqueue `intake_submitted` in `conversion_event_outbox`.
+6. Respond `200 { ok: true, redirect_to: SPEC_DISCOVERY_CALENDLY_URL | null }`.
+
+### POST `/api/spec/intake/upload` (Stage C.4)
+
+**Source**: `ops-site/src/app/api/spec/intake/upload/route.ts`. `runtime = 'nodejs'` so Buffer + crypto are available.
+
+Multipart upload to Supabase Storage bucket `spec-intake`. The Phase 1 storage migration (`2026-05-25-spec-phase1-08-storage.sql`) makes the bucket operator-only at the RLS layer, so customer uploads go through this server route — the service-role client (RLS bypass) writes the object on the customer's behalf.
+
+**Request**: `multipart/form-data`
+- `token` (string, plaintext intake token)
+- `file` (File, single per request)
+
+**Server-authoritative checks (never trust the client)**:
+- 25 MB cap (`SPEC_INTAKE_MAX_BYTES = 26214400`)
+- MIME whitelist: `application/pdf`, `image/png`, `image/jpeg`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- Filename sanitization: `[^A-Za-z0-9._-]+` → `_`, max 60 chars stem, extension derived from MIME (never from filename).
+- Path layout: `{spec_project_id}/{random_hex}-{sanitized_filename}.{ext}` — the random hex prevents collisions and obscures from object-listing brute force.
+
+**Response**: `200 { path, content_type, size_bytes, original_filename }`. The form holds the returned `path` array; the submission route validates that every path is under the project's prefix before stamping `spec_projects.intake_files`.
+
+### POST `/api/spec/intake/autosave` (Stage C.4)
+
+**Source**: `ops-site/src/app/api/spec/intake/autosave/route.ts`.
+
+Per-field debounced save into `spec_projects.intake_responses` jsonb. The client side debounces 500ms per field and fires on blur (text) / change (checkbox + select).
+
+**Request**: `{ token, field_path, value }`
+- `field_path` must match `/^[a-zA-Z][a-zA-Z0-9_]{0,30}(?:\.[a-zA-Z][a-zA-Z0-9_]{0,30}){0,4}$/` — at most 5 dotted segments, alphanumeric + underscore only.
+- Top-level keys `regulated_workflow_attestations`, `quebec_intake_attestations`, `uploaded_file_paths`, `submitted_at` are **reserved** for the submit endpoint and rejected from autosave (preventing operational fields from being client-driven mid-intake).
+- Submission blocked when `intake_completed_at` is non-null (404).
+
+**Response**: `200 { saved_at: ISO-8601 }`. Lightweight, idempotent.
+
+### Schema additions — Stage C.4 (`2026-05-26-03-spec-phase1-intake-columns.sql`)
+
+Additive migration on `spec_projects` (all `add column if not exists` — Stage C.2 and Stage C.4 can land in either order):
+
+| Column | Type | Notes |
+|---|---|---|
+| `intake_token_hash` | text | SHA-256 hex (64 chars) of the plaintext URL token. Unique partial index when not null. Set by Stage C.2 webhook at `deposit_paid`. |
+| `intake_token_issued_at` | timestamptz | When the token was issued. |
+| `intake_files` | jsonb default `'[]'::jsonb` | Array of Supabase Storage object paths uploaded under `spec-intake/{id}/`. Stamped on submit. |
+| `regulated_workflow_flagged_at` | timestamptz | Set if intake submission triggered the regulated-workflow gate. NEVER flipped to non-null alongside `intake_completed_at`. |
+| `regulated_workflow_flags` | jsonb | The 5-key attestation payload as submitted, for the operator review queue. |
+
+### Supabase Storage usage — `spec-intake`
+
+Bucket configured by `2026-05-25-spec-phase1-08-storage.sql`:
+- `public: false` — signed URLs only (24h TTL, regenerated each time the operator detail page opens).
+- `file_size_limit: 26214400` (25 MB).
+- `allowed_mime_types: [application/pdf, image/png, image/jpeg, .docx, .xlsx]`.
+- RLS on `storage.objects`: operator-only `select`, `insert`, `update`, `delete` via `private.is_spec_operator()`.
+
+Customer uploads go through `/api/spec/intake/upload` (token-gated, service-role write). The submit route validates every returned path against the project's prefix before persisting `intake_files`. Path traversal (`..`, leading `/`, escape into another project's folder) is hard-rejected.
+
+Object retention: 90 days after the engagement reaches a terminal state (`completed`, `cancelled`, `refunded`). A future weekly cron prunes; customers may request earlier deletion via the off-boarding flow.
+
+### Environment variables — Stage C.4
+
+- `SPEC_DISCOVERY_CALENDLY_URL` (optional) — the live discovery scheduling link. Read at request time so it can rotate without a code deploy. Falls back to "scheduling arrives by email" copy when unset.
+
 ---
 
 **End of Document**
