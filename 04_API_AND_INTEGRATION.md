@@ -1925,6 +1925,78 @@ The webhook handler extension (Stage C.2) inspects `session.customer_details.add
 
 Both tables are RLS-locked with a single `for all using (false)` policy; only service-role connections read/write.
 
+### POST `/api/shop/webhook` — SPEC dispatch (Stage C.2)
+
+**Source**: `ops-site/src/app/api/shop/webhook/route.ts` (modified). SPEC handlers in `ops-site/src/lib/spec/webhook-handlers.ts` + `ops-site/src/lib/spec/notifications.ts`. Landed on `feat/spec-webhook-extension`.
+
+**Purpose**: Extends the existing consolidated `/api/shop/webhook` endpoint so it dispatches `checkout.session.completed` events whose `metadata.type` is `spec_deposit` (legacy `tailored_deposit` accepted during cutover) and `charge.dispute.created` events that match a SPEC payment. Shop event branches (`payment_intent.succeeded`, `payment_intent.payment_failed`) are unchanged.
+
+**Event-type dispatch table**:
+
+| Stripe event | Matcher | SPEC handler | Side effects (summary) |
+|---|---|---|---|
+| `checkout.session.completed` | `session.metadata.type === 'spec_deposit'` | `handleSpecCheckoutSessionCompleted` | Quebec post-Stripe defense (FIRST) OR normal deposit_paid flow |
+| `charge.dispute.created` | matched against `spec_payments.stripe_payment_intent_id` | `handleSpecChargeDisputeCreated` | Disable entitlements, flip payment to disputed, notify operator + buyer |
+| `payment_intent.succeeded` | shop-only | shop branch (unchanged) | Confirm shop order, decrement stock |
+| `payment_intent.payment_failed` | shop-only | shop branch (unchanged) | Cancel shop order, release inventory |
+
+**Idempotency**: every SPEC branch consults `public.stripe_webhook_events` for the incoming `event.id` before mutating. If the row exists, the handler returns `{ ok: true, status: 'duplicate' }` without side effects. The dedup row is INSERTED at the END of a successful branch, so a mid-handler failure leaves the row absent and Stripe re-delivers (matches OPS-Web's existing webhook dedup contract).
+
+**Quebec post-Stripe defense (locked per `SPEC-STRIPE-ADDRESS-TAX-SPIKE`)** — fires FIRST, BEFORE any deposit_paid mutation. Triggers when `session.customer_details.address.state === 'QC'` OR `country !== 'CA'`. Side effects:
+
+1. `stripe.refunds.create({ payment_intent, reason: 'requested_by_customer', metadata: { reversal_reason: 'spec_quebec_post_stripe_leak', spec_project_id } })` — full refund, with one retry on transient Stripe API failure.
+2. `update spec_projects set status='cancelled', cancellation_reason='quebec_billing_at_stripe', cancelled_at=now()` — `deposit_paid_at` is NEVER stamped on a Quebec leak.
+3. `insert spec_blocked_buyers` with `email=session.customer_details.email`, `stripe_customer_id=session.customer`, `blocked_reason='quebec_misrepresented_billing_address_post_stripe'`.
+4. `queueSpecEmail('spec.quebec_rejected_post_stripe', ...)` with the Stage H `SpecQuebecRejectedPostStripeProps` payload (buyerName, amountRefundedFormatted, refundedAtFormatted, stripeRefundReceiptUrl).
+5. `dispatchSpecOperatorNotification('spec_quebec_leak_refunded', persistent=true)` — every SPEC operator gets a rail row with `company_id=OPS_OPERATIONS_COMPANY_ID`.
+6. Internal-only `quebec_rejected` conversion event written to `conversion_event_outbox` — NEVER sent to ad platforms.
+7. `spec_communications` system audit row with the dispute reason + refund id + billing state for evidence.
+
+**Normal deposit_paid flow** (locked per SPEC/07_ROLLOUT.md § 5):
+
+1. Update `spec_projects`: `status='deposit_paid'`, `deposit_paid_at`, `tos_version_accepted` (from `metadata.tos_version_hash`), `tos_accepted_at`, `tos_accepted_ip` (NULL — Stripe Checkout doesn't expose the customer's IP on the Session payload; documented limitation), back-fill `customer_name`/`customer_phone`/`customer_gst_number` from `customer_details` + `custom_fields.gst_hst_number`.
+2. Back-fill `companies.stripe_customer_id` if null (first-time SPEC customer mapping for future subscription billing).
+3. Insert `spec_acceptance_events` row: `event_type='tos_accepted'`, `accepted_by_user_id=metadata.user_id`, `signature_method='click_in_app'` (the live check constraint allows only `click_in_app`/`docusign`/`email_reply` — `click_in_app` is the closest semantic match for Stripe `consent_collection`), `signature_evidence_url` pinned to the Stripe payment receipt, `payload_hash=metadata.tos_version_hash`.
+4. Insert `spec_payments` deposit milestone marked paid (`milestone='deposit'` — matches live `spec_payment_milestone` enum, not the spec's "P1" shorthand; `status='paid'`, `paid_at=now()`).
+5. Insert `spec_referrals` row when `spec_projects.referrer_email` is non-null (status='pending', eligible_at=null).
+6. `queueSpecEmail('spec.deposit_confirmed', ...)` with the Stage H `SpecDepositConfirmedProps` payload (buyerName, companyName, tier capitalized, depositAmountFormatted with CAD locale, totalAmountFormatted, paidAtFormatted in `America/Vancouver` time, stripeReceiptUrl, intakeUrl).
+7. `dispatchSpecCustomerNotification`: buyer rail row (`company_id=linked_company_id`, `type='spec_deposit_confirmed'`, `persistent=false`, `action_url=/account/spec/{id}/request-refund`).
+8. `dispatchSpecOperatorNotification`: one rail row per SPEC operator (`company_id=OPS_OPERATIONS_COMPANY_ID`, `type='spec_deposit_received'`, `persistent=true`, `action_url=/admin/spec/{id}`).
+9. `sendConversionEvent('stripe_checkout_completed', ...)` — primary funnel conversion, written to `conversion_event_outbox`.
+10. `spec_communications` system audit row.
+
+**Charge dispute branch**:
+
+1. Lookup `spec_payments` by `stripe_payment_intent_id`. No match → return `{ ok: true, status: 'skipped' }` (let any non-SPEC dispute handler take it — none exists today on ops-site).
+2. Flip the matched `spec_payments.status='disputed'`.
+3. Update all `spec_module_entitlements` for the engagement: `enabled=false, disabled_reason='dispute', disabled_at=now()` (the `disabled_reason` check constraint allows the value).
+4. `spec_communications` system row with `summary='Stripe dispute opened — {reason}'` + dispute id + payment_intent + charge id + `guarantee_window_closed: true` flag. **The live `spec_projects` schema does NOT carry `has_active_dispute`/`dispute_opened_at`/`guarantee_window_closed_at` columns today** — the communications row + payment status + operator notification serve as the canonical signal until Stage A adds explicit flags. Open follow-up.
+5. `dispatchSpecOperatorNotification('spec_dispute_opened', persistent=true)` — every SPEC operator + a direct dispute-alert email enqueued via `spec_email_outbox` to `jack@opsapp.co` (templated via the `spec.refund_denied` slot with an `__operator_alert` payload flag; the dedicated dispute template is Phase 2 evidence-package work).
+6. `dispatchSpecCustomerNotification('spec_dispute_opened', persistent=true)` — buyer gets a rail row so the dispute isn't a silent state change.
+
+**Notification routing (locked per `SPEC-NOTIFICATION-RAIL-DEPRECATED`)**:
+
+| Audience | `company_id` | `persistent` | `action_url` |
+|---|---|---|---|
+| Customer (buyer/account_holder) | `linked_company_id` (non-null per `SPEC-NO-COMPANY-BUYER-FLOW-LOCK`) | `false` (deposit confirmed); `true` (dispute) | `/account/spec/{id}/request-refund` (Phase 1 only customer-facing route) |
+| Operator (every SPEC operator) | `OPS_OPERATIONS_COMPANY_ID` = `00000000-0000-0000-0000-00000000000a` | `true` | `/admin/spec/{id}` |
+
+SPEC operators are enumerated by `getSpecOperatorUserIds()` — the union of:
+- `user_roles` joined to `role_permissions(permission='spec.admin', scope='all')` via the `SPEC Operator` role (`id='00000000-0000-0000-0000-0000000000a1'`)
+- `user_permission_overrides(permission='spec.admin', granted=true)` (by convention every override row carries `company_id=OPS_OPERATIONS_COMPANY_ID`)
+
+This matches the data source of `private.is_spec_operator()` (SQL function) — the TS helper is a parallel implementation for service-role server routes that need to fan out operator notifications.
+
+**Test infrastructure**:
+
+- `ops-site/scripts/spec-webhook-test.ts` — Node built-in assert unit tests. 15/15 pass. Covers: `isQuebecPostStripeLeak` predicate (state/country variants + null/undefined); idempotency dedup (both branches); Quebec defense (QC + non-CA both trigger refund + cancel + block-list + operator notification + audit row); normal deposit_paid flow (all the side effects above except email_outbox + conversion_event_outbox, which go through C.1's service-role-singleton helpers); malformed-metadata error path; dispute handler positive + skipped + duplicate paths.
+- `ops-site/scripts/spec-webhook-integration.ts` — end-to-end script against a real Supabase env. Inserts an `is_test=true` `spec_projects` fixture under OPS Operations company with Jackson as buyer, runs both handlers, verifies all rows landed, cascade-cleans on teardown. Smoke-tested env validation; couldn't be executed end-to-end in this session because Supabase MCP wasn't exposed.
+
+**Open follow-ups**:
+
+- `spec_projects` schema lacks `has_active_dispute`/`dispute_opened_at`/`guarantee_window_closed_at` columns; the dispute handler writes evidence to `spec_communications` instead. If Stage A adds these flags in a future migration, the dispute branch should be updated to stamp them.
+- The `tos_accepted_ip` column stays NULL because Stripe Checkout Sessions don't propagate the customer's IP through the webhook payload. The `spec_acceptance_events.accepted_ip` column is also NULL for the same reason. If we later route checkout completion through a server-side polling endpoint that captures the request IP, both can be populated.
+
 ### `/spec/awaiting-approval` (Stage C.3)
 
 **Source**: `ops-site/src/app/spec/awaiting-approval/page.tsx`. Landed on `feat/spec-owner-approval`.
