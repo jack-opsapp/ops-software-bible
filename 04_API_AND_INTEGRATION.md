@@ -1925,6 +1925,85 @@ The webhook handler extension (Stage C.2) inspects `session.customer_details.add
 
 Both tables are RLS-locked with a single `for all using (false)` policy; only service-role connections read/write.
 
+### `/spec/awaiting-approval` (Stage C.3)
+
+**Source**: `ops-site/src/app/spec/awaiting-approval/page.tsx`. Landed on `feat/spec-owner-approval`.
+
+Path B intermediate wait state for buyers whose purchase is pending owner approval. Server component, auth-gated. Looks up the most-recent `spec_owner_approval_requests` row where `buyer_user_id = <signed-in user>` and `status = 'pending'`. No pending row → redirect to `/spec` (defensive — the buyer probably hit the URL out-of-band). Pending row → renders the owner name + company + tier + cost copy. No CTA — this is a wait state. When the owner approves, the buyer receives the `spec.owner_approval_granted` email with the checkout link.
+
+### `/spec/owner-approval/[approval_token]` (Stage C.3)
+
+**Source**: `ops-site/src/app/spec/owner-approval/[approval_token]/page.tsx`. Landed on `feat/spec-owner-approval`.
+
+Account-holder approval landing page reached via the `spec.owner_approval_required` email link. The URL token is bcrypt/argon2-equivalent — SHA-256 hashed (192-bit entropy plaintext) — and never stored in plaintext. Lookup chain (every check is a security boundary):
+
+1. SHA-256 the URL segment; select from `spec_owner_approval_requests` where `approval_token_hash = <hash>`. No match → `notFound()` (never disclose which side failed).
+2. Status gate: `approved` / `declined` / `expired` → render already-acted state, no CTAs.
+3. Soft expiry: `requested_at + 7 days < now()` → render expired state even if cron hasn't flipped status yet.
+4. Auth gate: no signed-in user → redirect to OPS-Web sign-in with `returnTo` back to this URL.
+5. Account-holder match: signed-in `users.id != account_holder_user_id` → friendly wrong-user error (never reveal the right account).
+6. Render buyer name + tier + 4-milestone cost breakdown + ToS reference + the `<OwnerApprovalForm />` client component.
+
+The page itself is read-only; the writes happen via `POST /api/spec/owner-approval/[token]`.
+
+### POST `/api/spec/owner-approval/[token]` (Stage C.3)
+
+**Source**: `ops-site/src/app/api/spec/owner-approval/[token]/route.ts`. Landed on `feat/spec-owner-approval`.
+
+Server-only handler for the Approve / Decline action. Hard rules — every one is a security boundary:
+
+1. **Auth first**: verify Firebase / Supabase ID token via `getCurrentUserFromRequest`. No user → 401.
+2. **Token lookup**: SHA-256 hash + `eq('approval_token_hash', ...)`. No match → 404 (never disclose).
+3. **Account-holder match**: `currentUser.id !== row.account_holder_user_id` → 403. We do NOT trust anything in the URL or body to identify the actor.
+4. **Status check**: must be `pending` → 409 with reason code if not.
+5. **TTL check**: `requested_at + 7 days < now()` → 410 Gone; the status is also flipped to `expired` so future hits short-circuit.
+6. **Branch on action**:
+
+**Approve**:
+- Update `spec_owner_approval_requests` (`status='approved'`, `decided_at`, `decided_ip`, `decided_user_agent`, `buyer_checkout_token_hash`, `buyer_checkout_expires_at = now() + 24h`). The `.eq('status', 'pending')` race-guard prevents double-approval.
+- Update `spec_projects` (`status='awaiting_deposit'`, `owner_approved_at`, `checkout_token_issued_at`, `checkout_token_expires_at`).
+- Insert `spec_acceptance_events` row with `event_type='owner_purchase_approved'`, `signature_method='click_in_app'` (per the live DB CHECK constraint — `owner_approval_click` is NOT in the allowed enum), `payload_hash = approved_tos_version_hash`. This is the binding acceptance event for the account-holder; the buyer's `tos_accepted` event lands later at Stripe payment completion (Stage C.2).
+- Generate a 192-bit plaintext `buyer_checkout_token` via `generateApprovalToken()`; store ONLY the SHA-256 hash in `buyer_checkout_token_hash`.
+- Queue `spec.owner_approval_granted` to the buyer's email with the plaintext token in the URL.
+- Emit `owner_approval_requested` conversion event with `outcome='approved'`.
+- Returns `{ status: 'approved' }`.
+
+**Decline**:
+- Update `spec_owner_approval_requests` (`status='declined'`, `decided_at`, IP, UA).
+- Update `spec_projects` (`status='cancelled'`, `cancellation_reason='owner_declined'` plus optional free-text suffix, `cancelled_at`, `owner_declined_at`).
+- Queue `spec.owner_approval_declined` to the buyer.
+- Emit `owner_approval_requested` conversion event with `outcome='declined'`.
+- Returns `{ status: 'declined' }`.
+
+All DB writes use the service-role client (SPEC tables are RLS-locked).
+
+### `/spec/checkout/[buyer_checkout_token]` (Stage C.3)
+
+**Source**: `ops-site/src/app/spec/checkout/[buyer_checkout_token]/page.tsx`. Landed on `feat/spec-owner-approval`.
+
+Path B final step. The buyer clicks the checkout link in the `spec.owner_approval_granted` email and lands here. Server component / loader:
+
+1. SHA-256 the URL segment; select `spec_owner_approval_requests` where `buyer_checkout_token_hash = <hash>`. No match → "invalid link" page.
+2. Soft expiry: `buyer_checkout_expires_at <= now()` → "expired" page with "Request a new approval" CTA.
+3. Status check: must be `approved`. `declined` → friendly declined page; anything else → invalid.
+4. Auth gate: no signed-in user → redirect to OPS-Web sign-in.
+5. Buyer match: `currentUser.id !== buyer_user_id` → wrong-user page.
+6. Project sanity: `spec_projects.status` must be `awaiting_deposit`; billing fields must be populated (C.1 wrote them).
+7. **Single-use lock**: atomic `update ... set buyer_checkout_token_hash = null where id = ? and status = 'approved' and buyer_checkout_token_hash = ?`. If no row updated, the token was consumed by a parallel race → "already used" page.
+8. Create Stripe Checkout Session via the shared `createSpecStripeCheckoutSession()` helper (locked SPEC-STRIPE-ADDRESS-TAX-SPIKE field set).
+9. Emit `stripe_checkout_opened` conversion event with `path='path_b_post_approval'`.
+10. `302` redirect to the Stripe URL.
+
+If Stripe fails after the token was consumed, the route best-effort restores the hash so the buyer can retry (status still `approved`, expiry not yet hit).
+
+### Shared helper — `src/lib/spec/stripe-session.ts` (Stage C.3 extraction)
+
+`createSpecStripeCheckoutSession()` is the single enforcement point for the locked SPEC-STRIPE-ADDRESS-TAX-SPIKE contract. Used by:
+- `/api/spec/create-checkout-session` Path A (buyer == account_holder)
+- `/spec/checkout/[buyer_checkout_token]` Path B post-approval (buyer ≠ account_holder)
+
+The helper owns: Stripe Customer get-or-create (persists `companies.stripe_customer_id` on first creation), Checkout Session creation with the full locked field set (`automatic_tax`, `billing_address_collection`, `consent_collection.terms_of_service`, `phone_number_collection`, GST/HST `custom_fields`, full metadata payload incl. `tos_version_hash` + attribution UTMs/click ids), and `spec_projects` update with `stripe_customer_id` + `stripe_session_id`.
+
 ### GET `/spec/intake/[token]` (Stage C.4)
 
 **Source**: `ops-site/src/app/spec/intake/[token]/page.tsx`. Landed 2026-05-26 on `feat/spec-intake-form`.
@@ -2016,6 +2095,120 @@ Object retention: 90 days after the engagement reaches a terminal state (`comple
 ### Environment variables — Stage C.4
 
 - `SPEC_DISCOVERY_CALENDLY_URL` (optional) — the live discovery scheduling link. Read at request time so it can rotate without a code deploy. Falls back to "scheduling arrives by email" copy when unset.
+
+### POST `/api/account/spec/[id]/request-refund` (Stage D — OPS-Web)
+
+**Source**: `OPS-Web/src/app/api/account/spec/[id]/request-refund/route.ts`. Landed 2026-05-26 on `feat/spec-refund-request` (OPS-Web).
+
+**Purpose**: Phase 1 minimal customer-facing route for filing a Guarantee Refund or post-window goodwill request. Every operational field on `spec_refund_requests` is server-computed; the customer cannot influence eligibility, refund amount, Stripe IDs, internal notes, processing controls, or entitlement toggles. Admin processing remains in `/admin/spec/refunds` (Stage F).
+
+**Auth**: Firebase ID token (web) or Supabase JWT (iOS) via Authorization header or `__session` / `ops-auth-token` cookie. The verified user MUST match `spec_projects.buyer_user_id` OR `spec_projects.account_holder_user_id` — non-members get a 404 (never 403) to avoid existence disclosure per SPEC-SERVER-ROUTES-VS-RAW-RLS-DECISION.
+
+**Request body (JSON)**:
+
+```jsonc
+{
+  "reason_text": "string (50–2000 chars; C0 control bytes stripped server-side, \\t \\n \\r preserved)"
+}
+```
+
+**Response codes**:
+
+| Status | Reason | Body |
+|---|---|---|
+| 201 | Request filed | `{ request_id: uuid }` |
+| 400 | Malformed JSON | `{ error }` |
+| 401 | Missing / invalid auth | `{ error: "Unauthorized" }` |
+| 404 | Project not found OR caller is neither buyer nor account_holder | `{ error: "Not found" }` |
+| 409 | A Guarantee invocation is already open for this engagement (partial-unique index `spec_refund_one_guarantee_per_project_idx`) | `{ error }` |
+| 422 | `reason_text` missing / under 50 / over 2000 chars | `{ error }` |
+| 500 | Project load or insert failure | `{ error }` |
+
+**Server-computed eligibility** (`src/lib/spec/refund-eligibility.ts`):
+
+```
+isGuaranteeInvocation =
+   walkthrough_completed_at IS NOT NULL
+   AND walkthrough_completed_at + interval '30 days' > now()
+   AND status NOT IN ('refunded', 'cancelled')
+   AND no spec_payments row for this project has status = 'disputed'
+
+isGoodwill = NOT isGuaranteeInvocation
+```
+
+Window states surfaced to the read-only UI: `active`, `expired`, `no_walkthrough`, `terminal`, `disputed`. The customer cannot influence which one applies.
+
+**Side effects on 201**:
+
+1. Inserts `spec_refund_requests` with `spec_project_id`, `request_source='customer_initiated'`, `customer_reason_text` (sanitized), `is_guarantee_invocation` + `is_goodwill` (server-computed), `status='pending'`. Stripe IDs, refund amounts, internal notes, processing controls, and entitlement toggles are NEVER set from this route.
+2. Inserts a customer-facing in-app notification: `user_id=caller`, `company_id=spec_projects.linked_company_id` (skipped if null), `type='spec_refund_requested'`, `persistent=false`, `action_url=/account/spec/{id}/request-refund`.
+3. Inserts a persistent operator notification PER spec operator returned by `getSpecOperatorUserIds()` (mirror of `private.is_spec_operator()`): `user_id=operator`, `company_id=OPS_OPERATIONS_COMPANY_ID` (`00000000-0000-0000-0000-00000000000a`), `type='spec_refund_request_pending'`, `persistent=true`, `action_url=/admin/spec/refunds`.
+4. Writes an internal-only `refund_invoked` row to `conversion_event_outbox` (`internal_only=true`). Explicitly excluded from Meta CAPI + Google Enhanced ad-platform conversion signals per SPEC/04_CUSTOMER_UX.md § Failure modes — refund volume must never be used as an optimization signal.
+
+**Idempotency**: the partial-unique index `spec_refund_one_guarantee_per_project_idx` (one `is_guarantee_invocation=true` row per project in `pending`/`processed`/`partial` status) enforces single-fire at the DB layer. The route detects the resulting `23505` error and maps it to HTTP 409.
+
+**Page**: `OPS-Web/src/app/account/spec/[id]/request-refund/page.tsx` (server component). Verifies auth via cookie, loads the project + active dispute state + existing-guarantee state, renders the read-only eligibility context block + the client `RefundRequestForm`. Unauthenticated callers redirect to `/login?returnTo=/account/spec/{id}/request-refund`; non-members 404.
+
+**Voice**: tactical, terse. Header `// REFUND REQUEST`; eligibility block `// ELIGIBILITY`; submit CTA "Submit refund request"; filed-state confirms request ID. Numbers in JetBrains Mono with `tabular-nums`. No emoji.
+
+### POST `/api/admin/spec/board/refresh` (Stage F.1 — OPS-Web)
+
+**Source**: `OPS-Web/src/app/api/admin/spec/board/refresh/route.ts`. Landed 2026-05-26 on `feat/spec-admin-overview` (OPS-Web).
+
+**Purpose**: Operator-only manual force-refresh of `public.spec_public_board_snapshot`. The pg_cron job (`spec_board_snapshot_refresh`) handles the 5-minute background cadence; this route is the operator's "give me fresh numbers right now" affordance from the `/admin/spec` REFRESH BOARD header button.
+
+**Auth**: Firebase ID token (web) or Supabase JWT (iOS) via Authorization header or `__session` / `ops-auth-token` cookie. After verifying the token + resolving the OPS user, the route re-checks `isSpecOperator(opsUser.id)` (the TS mirror of `private.is_spec_operator()`) — the `/admin/spec/layout.tsx` gate does NOT carry through to API routes, so the check is explicit and additive here. Customer-side company admins (those satisfying `is_company_admin / account_holder_id / admin_ids` but with no `spec.admin` role/override) are rejected with 403.
+
+**Response codes**:
+
+| Status | Reason | Body |
+|---|---|---|
+| 200 | Snapshot refreshed | `{ refreshed_at: ISO-8601 }` |
+| 401 | Missing / invalid auth | `{ error: "Unauthorized" }` |
+| 403 | Authenticated but not a SPEC operator | `{ error: "Forbidden" }` |
+| 500 | Service-role env not configured | `{ error: "Service role not configured" }` |
+| 502 | PostgREST RPC failed (e.g. wrapper migration not applied) | `{ error: "Snapshot refresh failed", detail }` |
+
+**Side effects on 200**:
+
+1. Calls `public.refresh_spec_board_snapshot()` (added by the Stage F.1 wrapper migration `2026-05-26-03-spec-stage-f1-board-refresh-wrapper.sql`) via the service-role supabase-js client. The wrapper is SECURITY DEFINER and delegates to `private.refresh_spec_board_snapshot()`; EXECUTE on the wrapper is granted to `service_role` only, so anon/authenticated cannot fire a refresh.
+2. Reads the new `refreshed_at` back from `public.spec_public_board_snapshot` and returns it to the caller.
+3. Calls `revalidateTag('spec-capacity')` so the next `/admin/spec` overview render reflects the updated snapshot.
+
+**Why the wrapper exists**: `private.refresh_spec_board_snapshot()` lives in the `private` schema per `SPEC-SECURITY-DEFINER-PRIVATE-SCHEMA`. Default Supabase PostgREST only exposes `public, storage, graphql_public` — `private` is intentionally not exposed so anon/authenticated cannot reach SECURITY DEFINER helpers. The wrapper provides a PostgREST-callable surface that the operator-gated server route can hit via supabase-js without exposing the `private` schema publicly.
+
+**Page surface**: `OPS-Web/src/app/admin/spec/_components/refresh-board-button.tsx` is the client component that posts to this route and re-renders the capacity panel with the new `refreshed_at` ("UPDATED [N min ago]" copy ticks live until the next manual or cron refresh).
+
+### GET `/spec/confirmation` (Stage D — ops-site)
+
+**Source**: `ops-site/src/app/spec/confirmation/page.tsx` + `ops-site/src/components/spec/SpecConfirmation.tsx` + `ops-site/src/components/spec/SpecMilestoneTimeline.tsx`. Landed 2026-05-26 on `feat/spec-confirmation-rewrite` (ops-site).
+
+**Purpose**: Post-Stripe success surface. Server-side retrieves the Stripe Checkout Session (`expand: ['payment_intent', 'customer']`), verifies `metadata.type === 'spec_deposit'` and `payment_status === 'paid'`, and (when `spec_project_id` is in metadata + Supabase env is configured) loads the matching `spec_projects` row for milestone state and intake-token presence.
+
+**Render modes**:
+
+- `?session_id` missing → soft "no payment session detected" state.
+- Session metadata.type ≠ `spec_deposit` or Stripe retrieve failure → soft "could not verify payment" state.
+- `payment_status !== 'paid'` → soft "processing your payment" state.
+- Verified + paid → full confirmation surface.
+
+**Full confirmation surface**:
+
+- `// DEPOSIT CONFIRMED` header + tactical session ID tail.
+- `You're in.` hero (Cake Mono Light, sentence case; i18n key `confirmation.heading`).
+- Session card (Package / Paid / Total) — Cake Mono Light for package, JetBrains Mono with `tabular-nums` for currency. Receipt sent line shows the customer email.
+- Founder welcome block (`// OPERATOR :: JACKSON`). Optional `founderVideoUrl` prop drives the embed; default fallback is a placeholder pane with `[video shipping shortly]` per SPEC/07_ROLLOUT.md open item 1.
+- 4-milestone timeline (`SpecMilestoneTimeline.tsx`): steel-blue rail strokes left-to-right; markers pop sequentially; current marker has a subtle 2.2s opacity pulse. Reduced-motion: instant final state, no pulse. Single easing curve `cubic-bezier(0.22, 1, 0.36, 1)`. Statuses derived from `spec_projects` timestamps (`scope_doc_signed_at`, `midpoint_accepted_at`, `walkthrough_completed_at`) or default to P1=paid, P2=current when no project row is available (Phase 0 fallback).
+- Primary CTA `Open your intake link` → `/spec/intake/{plaintext_token}` when Stripe metadata carries an `intake_token` plaintext; otherwise `Check your inbox` fallback (the canonical intake-link delivery path is the `spec.deposit_confirmed` email; the DB stores only `intake_token_hash`).
+- Secondary CTA `Book your discovery session` → `SPEC_DISCOVERY_CALENDLY_URL` server-side env (Stage C.4). Disabled-style fallback when unset.
+- 30-day Guarantee Refund reminder anchored to walkthrough delivery, with link to `/legal?page=spec-terms` (Stage G port). Exclusion list inlined per SPEC/01_BUSINESS_MODEL.md § 3.
+- Stripe receipt link (`payment_intent.latest_charge.receipt_url`).
+
+**`force-dynamic` directive**: kept from Stage E. The page is keyed on `?session_id=` and must not be statically prerendered.
+
+**Voice / typography**: tactical OPS — `// SECTION` slash prefixes, `[brackets]` for metadata, sentence case for body, Cake Mono Light 300 for uppercase display, JetBrains Mono for numbers with `font-variant-numeric: tabular-nums`. No emoji.
+
+**i18n**: `src/i18n/dictionaries/{en,es}/spec.json` — `confirmation.heading`, `confirmation.subtitle`. Per-tier `confirmation.timeline.{setup|build|enterprise}` keys retained but not currently rendered (kept for future tier-specific copy).
 
 ---
 
