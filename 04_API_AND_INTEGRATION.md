@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: March 19, 2026
+**Last Updated**: May 25, 2026
 **iOS Reference**: `OPS/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -150,13 +150,15 @@ All 15 repository classes follow the same pattern: each takes a `companyId` on i
 
 **Table**: `projects`
 **Init**: `ProjectRepository(companyId:)`
+**Audit Columns** (2026-05-10, bug 9d5c2535): `created_at` (TIMESTAMPTZ, Supabase default `now()`) and `created_by` (UUID FK → `auth.users.id`, populated by iOS on insert, immutable). Both are round-tripped through `SupabaseProjectDTO`. The combined index `idx_projects_created_by_created_at (created_by, created_at DESC) WHERE deleted_at IS NULL` powers the "start from recent" suggestions strip on the project form.
+**Vinyl Order Marker Columns** (2026-05-21): `vinyl_order_status` (`not_ordered` / `ordered`, default `not_ordered`), `vinyl_ordered_at` (TIMESTAMPTZ), and `vinyl_ordered_by` (UUID FK → `auth.users.id`). These are marker-only project fields for Deck Builder companies and are round-tripped through `SupabaseProjectDTO`; they do not create catalog orders, inventory deductions, or task materials.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `fetchAll` | `(since: Date?) -> [SupabaseProjectDTO]` | Fetch all company projects, optionally since a date |
 | `fetchOne` | `(_ id: String) -> SupabaseProjectDTO` | Fetch single project by ID |
-| `create` | `(_ dto: SupabaseProjectDTO) -> SupabaseProjectDTO` | Insert, returns created record |
-| `upsert` | `(_ dto: SupabaseProjectDTO)` | Upsert (insert or update on conflict) |
+| `create` | `(_ dto: SupabaseProjectDTO) -> SupabaseProjectDTO` | Insert, returns created record. DTO must include `created_at` (ISO8601) and `created_by` (current user id). |
+| `upsert` | `(_ dto: SupabaseProjectDTO)` | Upsert (insert or update on conflict). `created_at` and `created_by` are immutable after first insert — server preserves originals on update. |
 | `updateStatus` | `(_ projectId: String, status: String)` | Update status + updated_at |
 | `updateNotes` | `(_ projectId: String, notes: String)` | Update notes + updated_at |
 | `updateDates` | `(_ projectId: String, startDate: Date?, endDate: Date?)` | Update start/end dates |
@@ -171,7 +173,7 @@ All 15 repository classes follow the same pattern: each takes a `companyId` on i
 
 **Table**: `project_tasks`
 **Init**: `TaskRepository(companyId:)`
-**Column Notes**: `task_notes` (not `notes`), `custom_title` (not `title`), `task_color` (not `color`). Scheduling dates (`start_date`, `end_date`, `duration`) are stored directly on `project_tasks`.
+**Column Notes**: `task_notes` (not `notes`), `custom_title` (not `title`), `task_color` (not `color`). Scheduling dates (`start_date`, `end_date`, `duration`) and manual schedule ownership (`schedule_locked`) are stored directly on `project_tasks`.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -287,6 +289,7 @@ Also provides `NewCompanyPayload` struct and `generateCompanyCode()` helper (8-c
 
 **Tables**: `opportunities`, `activities`, `follow_ups`
 **Init**: `OpportunityRepository(companyId:)`
+**Priority contract**: live Supabase accepts only `low`, `medium`, or `high` for `opportunities.priority`. Client-created lead autocreation defaults to `medium`.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -454,6 +457,14 @@ After recording, if the device is connected, `OutboundProcessor.processPendingOp
 | User mutation | `recordOperation()` | Enqueue + immediate push attempt |
 | Realtime reconnect | `deltaSyncSince(disconnectedAt:)` | Incremental pull since disconnect |
 | Background refresh | `pushPending()` | Push only, no pull |
+
+**Delta cursor safety (2026-05-11):** `SyncEngine` stores the pull cursor from
+the start of a successful pull and subtracts a 5-minute overlap from each
+subsequent delta query. This prevents rows updated while a device is mid-sync
+from being skipped forever when the cursor advances after the row's
+`updated_at`. The fix specifically protects `projects.project_images` updates,
+where crew could keep seeing old project photos but miss new URLs appended
+during another device's upload.
 | Background processing | `triggerSync()` + photo uploads + cleanup | Full cycle |
 
 ---
@@ -506,7 +517,7 @@ private var taskTypeRepo: TaskTypeRepository?
 `processPendingOperations()` executes the following steps:
 
 1. **Fetch**: Queries SwiftData for all SyncOperations with `status == "pending"`, ordered by priority then creation date
-2. **Coalesce**: Multiple update operations targeting the same `(entityType, entityId)` are merged -- changed fields are unioned, payload is replaced with the latest
+2. **Coalesce**: Multiple operations targeting the same `(entityType, entityId)` are merged -- changed fields are unioned and payloads are overlaid in creation order. When a local `create` is followed by immediate updates, every update payload is merged into the create before it is pushed, so quick-add task scheduling fields (`start_date`, `end_date`, `duration`, `schedule_locked`) survive later display-order updates.
 3. **Dependency ordering**: Operations with `dependsOnId` are deferred until their dependency completes
 4. **Push**: Each operation is dispatched to the appropriate repository method based on `entityType` and `operationType`
 5. **Status update**: On success, status is set to "completed". On failure, status remains "pending", `retryCount` is incremented, and `lastError` is recorded
@@ -1171,13 +1182,13 @@ The Catalog domain replaces the legacy `inventory_*` tables. Variant families (`
 | Table | Purpose | RLS | Common reads/writes |
 |-------|---------|-----|---------------------|
 | `catalog_categories` | Nested category (parent_id self-FK, 2-level UI). `default_warning_threshold` / `default_critical_threshold` cascade to families/variants. | company_isolation | List on Catalog tab; create/edit via Categories sheet |
-| `catalog_items` | Variant family — name, description, image, default price/cost/threshold, default unit. | company_isolation | List in CATALOG tab; FAB creates new family; recipe rows reference via `catalog_item_id` |
+| `catalog_items` | Variant family — name, description, `image_url`, default price/cost/threshold, default unit. | company_isolation | List in CATALOG tab; FAB creates new family; variant sheet patches `image_url` after Storage upload to `product-thumbnails/{company_id}/{catalog_item_id}/{uuid}.jpg`; recipe rows reference via `catalog_item_id` |
 | `catalog_options` | Variant axis on a family ("Color", "Mount Type"). | via `catalog_items.company_id` | Authored at family creation; rarely edited after |
 | `catalog_option_values` | Selectable values for a CatalogOption. | via parent option | Same as above |
-| `catalog_variants` | The SKU — `catalog_item_id` + quantity + price/unit_cost overrides + threshold overrides + `unit_id` + sku. | via `catalog_items.company_id` | Quantity adjusts on stock changes; threshold reads cascade to family/category |
+| `catalog_variants` | The SKU row — `catalog_item_id` + quantity + price/unit_cost overrides + threshold overrides + `unit_id` + sku. No variant name column; display identity derives from family + ordered option values. | via `catalog_items.company_id` | Quantity adjusts on stock changes; threshold reads cascade to family/category; option-value joins can be replaced from iOS variant editor |
 | `catalog_variant_option_values` | M2M variant ↔ option_value combo. | via parent variant | Insert at variant creation; immutable after |
 | `catalog_tags` | Free-form FAMILY-level label. Legacy threshold columns preserved but unused. | company_isolation | List in tag picker; CRUD via Tags sheet |
-| `catalog_item_tags` | Junction family ↔ tag. | via `catalog_items.company_id` | Insert/delete on tag-edit |
+| `catalog_item_tags` | Junction family ↔ tag. | via `catalog_items.company_id` | Delete/reinsert on iOS family tag edit |
 | `catalog_units` | Unit of measure (ea, ft, sqft, hour, …). Exposes `dimension` and `abbreviation`. | company_isolation | Read by family/variant editors and pricing |
 | `catalog_snapshots` | Variant-aware historical stock snapshot — header. | company_isolation | Insert on manual snapshot, daily auto-snapshot |
 | `catalog_snapshot_items` | One row per variant in a snapshot, denormalized `family_name` + `variant_label`. | via parent snapshot | Insert with snapshot; never edit |
@@ -1200,9 +1211,9 @@ The Catalog domain replaces the legacy `inventory_*` tables. Variant families (`
 
 | Table | Purpose | RLS | Common reads/writes |
 |-------|---------|-----|---------------------|
-| `product_options` | Knob on a Product. `kind` ∈ `select` / `integer` / `boolean`. `affects_price` / `affects_recipe` flags. `option_default_source` (e.g. `$design.color`) read by drawing adapter. | via `products.company_id` | Authored on web; read by line-item editor + adapter |
-| `product_option_values` | Selectable values for `kind=select`. | via parent option | Authored on web |
-| `product_pricing_modifiers` | Price bump rule per option/value match. `modifier_kind` ∈ `add_per_unit` / `add_flat` / `add_per_count` / `multiply_unit_price`. | via parent option | Authored on web; read by `ProductConfigurationResolver` |
+| `product_options` | Knob on a Product. `kind` ∈ `select` / `integer` / `boolean`. `affects_price` / `affects_recipe` flags. `option_default_source` (e.g. `$design.color`) read by drawing adapter. | via `products.company_id` | Authored on web and iOS Product detail / Catalog Setup LINKS; read by line-item editor + adapter |
+| `product_option_values` | Selectable values for `kind=select`. | via parent option | Authored on web and iOS; value parent validation is strict |
+| `product_pricing_modifiers` | Price bump rule per option/value match. `modifier_kind` ∈ `add_per_unit` / `add_flat` / `add_per_count` / `multiply_unit_price`. | via parent option | Authored on web and iOS; read by `ProductConfigurationResolver` |
 
 ### Calendar Tables
 
@@ -1810,6 +1821,109 @@ All three keys fall back to `OPENAI_API_KEY` if the specific key is not set in t
 - `getImportOpenAI()` — returns client configured with `OPENAI_API_KEY_IMPORT`
 - `getSyncOpenAI()` — returns client configured with `OPENAI_API_KEY_SYNC`
 - `getDraftingOpenAI()` — returns client configured with `OPENAI_API_KEY_DRAFTING`
+
+---
+
+## SPEC Phase 1 Routes (ops-site)
+
+Public-facing SPEC funnel endpoints live in `ops-site/src/app/api/spec/`. Every customer-facing surface goes through a server route that uses the service-role Supabase client + explicit auth checks + narrow projections — see SPEC/07_ROLLOUT.md § Gate resolutions → `SPEC-SERVER-ROUTES-VS-RAW-RLS-DECISION` for the locked posture.
+
+### POST `/api/spec/create-checkout-session` (Stage C.1)
+
+**Source**: `ops-site/src/app/api/spec/create-checkout-session/route.ts`. Landed 2026-05-26 on `feat/spec-checkout-flow`.
+
+**Purpose**: Auth-gated, billing-validated entry into the SPEC deposit funnel. Returns either a Stripe Checkout Session URL (Path A) or an `awaiting_approval` signal (Path B). Master gate: `SPEC_LIVE_DEPOSITS_ENABLED=true` (default false → 503).
+
+**Request body (JSON)**:
+
+```jsonc
+{
+  "tier": "setup" | "build" | "enterprise",
+  "billing": {
+    "line1": "...",
+    "line2": "... | null",
+    "city": "...",
+    "province": "BC",          // ISO-3166-2 subdivision code
+    "postal_code": "V5K 0A1",
+    "country": "CA"
+  },
+  "attestations": {
+    "no_qc_head_office": true,
+    "no_qc_operating_address": true,
+    "no_qc_establishment": true,
+    "no_material_qc_use": true
+  },
+  "referrer_email": "..."        // optional
+}
+```
+
+**Auth**: Reads OPS user from any of: `Authorization: Bearer <token>` header, `__session` cookie, `ops-auth-token` cookie, `sb-<ref>-auth-token` cookie. Verifies via Supabase or Firebase JWKS (jose). Matches against `public.users` by auth_id → firebase_uid → email.
+
+**Status codes**:
+
+| Code | Meaning | Body |
+|---|---|---|
+| 200 | Success | `{ stripe_url }` (Path A) or `{ awaiting_approval: true }` (Path B) |
+| 400 | Bad request | `{ error, field? }` |
+| 401 | Not signed in | `{ error }` — UI redirects to OPS-Web sign-in |
+| 403 | spec_blocked_buyers hit | `{ error }` — generic message only (never discloses block reason) |
+| 409 | Company gate failed | `{ error, redirectTo, reason }` — UI navigates to `redirectTo` (`/setup?returnTo=/spec?tier=X` for no_company) |
+| 422 | Validation failed | `{ error, field, code }` — codes: `country_not_ca`, `province_quebec`, `province_invalid`, `postal_code_invalid`, `missing_field`, `attestation_not_confirmed` |
+| 500 | Internal error | `{ error }` |
+| 502 | Stripe upstream error | `{ error }` |
+| 503 | Deposits paused | `{ error, contactUrl }` — UI navigates to contact form |
+
+**Side effects on 200 (Path A)**:
+
+1. Inserts `spec_projects` row with `status='awaiting_deposit'`, `billing_*`, `quebec_eligibility_payload`, `attribution`, `is_test=(STRIPE_SECRET_KEY starts with sk_test_)`.
+2. Gets-or-creates Stripe Customer with pre-collected address; stores id on `companies.stripe_customer_id`.
+3. Creates Stripe Checkout Session per the locked SPEC-STRIPE-ADDRESS-TAX-SPIKE field set (`customer`, `automatic_tax`, `billing_address_collection='required'`, `consent_collection.terms_of_service='required'`, `phone_number_collection`, GST/HST `custom_fields`, `metadata.tos_version_hash`, attribution metadata).
+4. Updates `spec_projects` with `stripe_session_id`, `stripe_customer_id`.
+5. Writes `billing_address_submitted` + `stripe_checkout_opened` to `conversion_event_outbox`.
+
+**Side effects on 200 (Path B)**:
+
+1. Inserts `spec_projects` row with `status='awaiting_owner_approval'`, same billing/attribution fields.
+2. Inserts `spec_owner_approval_requests` row with `approval_token_hash` (SHA-256 of a high-entropy `<uuid_v4>.<32_hex_chars>` plaintext token — the plaintext is emitted only in the email link, never stored). Snapshots `approved_total_cents`, `approved_deposit_cents`, `approved_tos_version_hash`.
+3. Stamps `spec_projects.owner_approval_requested_at`.
+4. Enqueues `spec.owner_approval_required` in `spec_email_outbox` for OPS-Web (via Stage H templates + Stage C.5 cron) to dispatch.
+5. Writes `billing_address_submitted` + `owner_approval_requested` to `conversion_event_outbox`.
+
+**Locked field-set proof** (per SPEC-STRIPE-ADDRESS-TAX-SPIKE):
+
+The Checkout Session create call passes — verbatim from `route.ts`:
+
+```ts
+stripe.checkout.sessions.create({
+  mode: 'payment',
+  customer: stripeCustomerId,            // pre-collected address attached to Customer
+  automatic_tax: { enabled: true },       // CAD/GST/HST/PST per billing province
+  billing_address_collection: 'required',
+  consent_collection: { terms_of_service: 'required' },
+  phone_number_collection: { enabled: true },
+  custom_fields: [{
+    key: 'gst_hst_number',
+    label: { type: 'custom', custom: 'GST/HST number (optional)' },
+    type: 'text',
+    optional: true,
+  }],
+  customer_update: { address: 'auto', name: 'auto', shipping: 'auto' },
+  line_items: [{ price_data: { currency: 'cad', product_data: {...}, unit_amount: depositCents, tax_behavior: 'exclusive' }, quantity: 1 }],
+  metadata: { type: 'spec_deposit', spec_project_id, user_id, company_id, tier, tos_version_hash, utm_*, gclid, fbclid },
+  payment_intent_data: { metadata: { /* same */ } },
+  success_url: '${origin}/spec/confirmation?session_id={CHECKOUT_SESSION_ID}',
+  cancel_url: '${origin}/spec',
+})
+```
+
+The webhook handler extension (Stage C.2) inspects `session.customer_details.address.state` first — any `QC` or non-`CA` post-Stripe edit triggers the locked refund + cancel + block-list defense per SPEC-STRIPE-ADDRESS-TAX-SPIKE.
+
+### Stage C.1 supporting tables (Supabase migration `2026-05-26-01-spec-stage-c1-outboxes.sql`)
+
+- `public.conversion_event_outbox` — Meta CAPI + Google Enhanced events queued by ops-site; processed by the Stage C.5 cron once ad-platform credentials are provisioned (SPEC/07_ROLLOUT.md open item #8).
+- `public.spec_email_outbox` — SPEC transactional emails queued by ops-site; processed by OPS-Web via the Stage H template registry + Stage C.5 cron.
+
+Both tables are RLS-locked with a single `for all using (false)` policy; only service-role connections read/write.
 
 ---
 
