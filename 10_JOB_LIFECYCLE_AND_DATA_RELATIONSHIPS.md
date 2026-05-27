@@ -4,7 +4,7 @@
 
 **Purpose**: Defines the complete data flow for a trade job from first contact through to a paid invoice. Documents all entity relationships, automation triggers, new entities, and required changes to existing entities. This is the master reference for how leads, pipeline, clients, estimates, projects, tasks, and invoices inter-operate.
 
-**Last Updated**: May 13, 2026
+**Last Updated**: May 27, 2026
 **Designed With**: ops-web codebase + ops-software-bible review session
 
 ---
@@ -1586,6 +1586,36 @@ Current schema gaps for full provenance and company/source detail:
 - No provider message id column exists on `opportunities`; message-level proof lives on `activities.email_message_id`.
 - No explicit contact relationship column exists on opportunities for spouse/PM/site-super relationships; `sub_clients.title` can hold that relationship only after a sub-client exists.
 
+#### P3 Opportunity Relationship Matching
+
+As of Lead Lifecycle P3, provider thread id is no longer the only lifecycle unit. New provider threads are evaluated against existing opportunities before OPS creates a cold duplicate. The matching boundary is the opportunity: once a new thread is deterministically linked, `opportunity_email_threads` receives the new `(thread_id, connection_id)` link, the inbound activity attaches to the winning opportunity, correspondence counters update there, and P2 enrichment runs against that same winning opportunity without overwriting operator-entered canonical values.
+
+P3 deterministic gates:
+- **Existing provider thread link**: if `(thread_id, connection_id)` is already linked, use that opportunity deterministically.
+- **Exact known contact**: exact `clients.email`, `sub_clients.email`, or `opportunities.contact_email` can link to an existing active opportunity.
+- **Existing related contact**: an exact sub-client email relationship links to the parent client's active opportunity.
+- **Exact phone**: exact normalized phone match across opportunity/client/sub-client facts can link when the opportunity is active or the linked project is active.
+- **Same address, same active job**: exact normalized address can link when the opportunity is active (`new_lead`, `qualifying`, `quoting`, `quoted`, `follow_up`, `negotiation`) or a linked project is active (`rfq`, `estimated`, `accepted`, `in_progress`).
+- **Quoted prior-thread scope**: deterministic scope overlap can support a link only when it overlaps known prior opportunity/project text and the candidate is active. This is a strict enhancer, not a freeform guess.
+
+P3 non-linking rules:
+- Do not infer spouse, partner, property manager, or site-super relationships from first name or last name alone.
+- Do not treat platform senders such as Wix, HomeStars, or website form notification mailboxes as customer identity. Parsed submitter identity wins.
+- Do not blindly attach new work to terminal opportunities (`won`, `lost`, `discarded`, and future terminal values such as `merged`, `converted`, or `disqualified`) or archived opportunities.
+- If the same customer/address has only a completed, closed, or archived prior project and the incoming scope is distinct, create a separate opportunity.
+- If confidence is below the deterministic threshold, create a separate lead and preserve merge evidence through activity/thread/source fields rather than over-linking.
+
+Phase C boundary:
+- Phase C may improve extraction quality, relationship suggestions, and future household/project graph confidence.
+- Phase C must not be required for P3. With Phase C off, exact contact, exact phone, exact address, active opportunity state, and active project state still drive deterministic matching.
+- Phase C must not perform destructive merge, stale/archive/lost automation, or project conversion as part of P3. Those remain later lifecycle phases and operator-controlled flows.
+
+Known P3 schema gaps:
+- There is still no durable field-level provenance table for why a thread was linked to an opportunity. Current proof is spread across `opportunity_email_threads`, `activities`, `source_email_id`, and server logs/tests.
+- There is no explicit `opportunity_relationship_matches` or merge-candidate table to persist low-confidence duplicate/future-merge suggestions.
+- There is no canonical relationship type column for spouse/partner/property-manager/site-super identity unless the contact is represented as a `sub_clients` row.
+- There is no structured scope signature column for comparing "same address, new job" versus "same address, same job"; P3 uses conservative deterministic text/address/status gates only.
+
 #### Phase C Off vs Phase C On
 
 | Capability | Phase C Off | Phase C On |
@@ -1596,7 +1626,7 @@ Current schema gaps for full provenance and company/source detail:
 | Stage movement | Deterministic, conservative | Context-aware suggestions or high-confidence actions |
 | Stale detection | Opportunity-level, deterministic | Better understanding of related contacts and context |
 | Follow-up drafting | Template-based from settings | Can also create smarter contextual drafts |
-| New-thread relationship matching | Strict gates only | Better household/project graph matching |
+| New-thread relationship matching | Exact contact/phone/address/project-state gates | Better household/project graph suggestions, still non-destructive |
 | Merge decisions | Manual operator action | AI may suggest, never destructive by itself |
 | Project conversion | Manual, or high-confidence deterministic rule only | Better won-confidence detection and handoff drafting |
 
