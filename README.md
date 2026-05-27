@@ -214,6 +214,47 @@ Start with the Executive Summary to understand the business context, then procee
 
 ---
 
+### 💳 [12_SUBSCRIPTION_MANAGEMENT.md](12_SUBSCRIPTION_MANAGEMENT.md)
+**Company Subscriptions, Trials, Seats & Stripe Integration**
+
+- Stripe → Supabase → iOS data path; every column on `companies` that drives gating
+- Status / plan enums (`trial`, `active`, `grace`, `expired`, `cancelled`) and Stripe equivalents
+- Full lifecycle: sign-up → trial → active → grace → expired, with auto-seating via `join_user_to_company`
+- Writers (initial subscribe, live webhooks) and readers (gating, lockout, display)
+- `customer.subscription.*` and `invoice.payment_failed` webhook handlers
+- Reconciliation crons (`/api/cron/reconcile-stripe-subscriptions`, `/api/cron/expire-grace-periods`)
+- Seat enforcement, iOS subscription behavior, operational runbook
+
+**Start here for:** Anything billing-related — gating, trials, seats, Stripe webhooks, drift reconciliation
+
+**Lines:** ~370 | **Tables:** 1 (`companies` subscription columns) | **Webhooks:** 4 | **Crons:** 2
+
+---
+
+### 📬 [13_EMAIL_SYSTEM.md](13_EMAIL_SYSTEM.md)
+**Outbound Email: Transport, Templates, Lifecycle Drip, Campaigns, Killswitches & Deliverability**
+
+- SendGrid as sole transport; four sender identities (DISPATCH / GATE / FIELD_NOTES / PORTAL whitelabel)
+- The `gatedSend` chokepoint — pause → suppression → send → log, with auto-injected RFC 8058 headers
+- Full data model: `email_log`, `email_events`, `email_campaigns`, `email_jobs`, `email_suppressions`, `email_pause_state`, `email_pause_audit_log`, `email_audience_templates`, `email_template_versions`, `email_anomaly_log`, `trial_expiry_notifications`
+- Campaign engine — two-stage dispatcher/worker pipeline; `claim_email_jobs` RPC with `FOR UPDATE SKIP LOCKED`
+- Four registered campaigns (`product_update`, `trial_expiry_campaign`, `feature_announcement`, `reengagement`)
+- Trial-expiry lifecycle — 6 calendar-driven notifications (7/5/3/1 pre-expiry, 7/30 post-expiry) with promo codes
+- Killswitch system — three pause scopes (global / bucket / campaign) with append-only audit log + auto-resume
+- Suppression list with per-channel granularity; auto-suppress trigger fans webhook events into the list
+- Audience filter grammar (JSONB AND/OR tree, field/op allowlist enforced by `email_audience_filter` RPC)
+- Anomaly detector — bounce/spam/delivery/volume thresholds with auto-pause on critical bounce/spam spikes
+- 25 React Email templates with semver versioning enforced via build-time sha256
+- `/admin/email` console — 12 tabs (Schedule, Audience Builder, Triggers, Killswitches, Suppressions, Event Monitor, Funnels, Email Log, Templates, Newsletter, Lifecycle Config, Overview)
+- Operational runbook (pause/resume, manual suppression, replay, missed-send forensics)
+- What fires on a new signup (spoiler: no welcome email, only the 30-day trial countdown)
+
+**Start here for:** Anything outbound-email — adding a template, scheduling a campaign, debugging a missed send, pausing a bucket, investigating deliverability
+
+**Lines:** ~700 | **Tables:** 11 | **Crons:** 5 | **Templates:** 25 | **Campaigns:** 4
+
+---
+
 ### 🚀 [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)
 **Production deployment and operations**
 
@@ -277,6 +318,12 @@ Start with the Executive Summary to understand the business context, then procee
 **"I need to implement the client portal (magic links, estimates, payments, messaging)"**
 → Read [11_CLIENT_PORTAL.md](11_CLIENT_PORTAL.md)
 
+**"I need to work with billing, trials, seats, or Stripe"**
+→ Read [12_SUBSCRIPTION_MANAGEMENT.md](12_SUBSCRIPTION_MANAGEMENT.md)
+
+**"I need to send an email, add a template, schedule a campaign, pause a bucket, or debug a missed send"**
+→ Read [13_EMAIL_SYSTEM.md](13_EMAIL_SYSTEM.md)
+
 **"I need to deploy to production"**
 → Read [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)
 
@@ -284,8 +331,8 @@ Start with the Executive Summary to understand the business context, then procee
 
 ## Documentation Statistics
 
-- **Total Documents:** 12 (including this README)
-- **Total Lines:** ~10,000+ lines of documentation
+- **Total Documents:** 14 (including this README)
+- **Total Lines:** ~11,000+ lines of documentation
 - **Total Code Examples:** 130+ code snippets
 - **Coverage:** 437+ Swift files, 48 SwiftData models, 50+ Supabase tables, 18+ repositories, 50+ UI components, full financial system, complete job lifecycle, project notes system, client portal, **catalog & variant model with configurable Products + recipes + drawing→estimate adapter (Phase 13, 2026-05-07)**, photo annotations, in-app notifications
 

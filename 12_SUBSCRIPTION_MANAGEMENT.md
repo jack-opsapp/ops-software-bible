@@ -236,6 +236,8 @@ Configured in `ops-web/vercel.json`. All require `Authorization: Bearer ${CRON_S
 
 **Trial expiry is not handled by a cron** — Stripe automatically fires `customer.subscription.updated` when a trial ends and transitions the subscription to `active` (if payment succeeds) or `past_due` (if it fails). The reconcile cron catches any missed transitions.
 
+**Trial-expiry *emails* are handled by a separate cron** — `/api/cron/trial-expiry` (`0 14 * * *` UTC, 7am PT) fires the warning/discount/reengagement sequence at the 7/5/3/1 day pre-expiry and 7/30 day post-expiry marks, deduplicated via `trial_expiry_notifications`. This is independent of the Stripe-driven subscription state transitions above. See `13_EMAIL_SYSTEM.md` § Trial-Expiry Lifecycle.
+
 ---
 
 ## Seat Enforcement
