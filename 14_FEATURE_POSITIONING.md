@@ -70,8 +70,10 @@ The approved positioning lines below sit in OPS marketing voice — terse, tacti
 
 **Universal don't-say list** (applies to every feature; the per-feature "Don't say" lists add to this, never override it):
 
-- "AI-powered" — generic. Say what it actually does (e.g. "classifies emails as leads").
-- "Intelligent" / "smart [anything]" — filler. Cut it.
+- **"Contractor"** as a label for the OPS audience. OPS's audience is *subtrades* — the people who do the work. Contractors are the *clients* who hire them. Approved alternatives: subtrades, service-based businesses, blue collars, owner-operators, entrepreneurs, the trades, crews, founders, business owners, tradesmen. *Never* "tradesperson" (forced). *Never* "contractor."
+- **"AI"** as a bare claim or branding word. Don't lead with AI. Describe the actual behavior ("classifies emails as leads," "auto-advances pipeline on activity") or substitute "intelligent" / "intelligent learning" / "intelligent classification" / "intelligent pipeline management." When teasing the roadmap, the canonical line is: *"we're working on supercharging your workflows with AI."* AI is a forward-looking story, not a current top-of-funnel hook.
+- "AI-powered" — generic. Say what it actually does (e.g. "classifies emails as leads") or use the "intelligent" framing.
+- "Smart [anything]" — filler. Cut it. ("Intelligent" is the approved substitute when the framing demands an adjective.)
 - "Powerful" — vacuous. Show power with a specific.
 - "Seamless" / "frictionless" — corporate. Describe the actual friction it removes.
 - "Cutting-edge" / "revolutionary" / "disruptive" / "next-generation" — startup-speak.
@@ -80,6 +82,12 @@ The approved positioning lines below sit in OPS marketing voice — terse, tacti
 - "Streamlined" / "robust" / "scalable" — vacuous adjectives.
 - Exclamation points. Anywhere. Confidence doesn't shout.
 - Emoji in primary copy.
+
+**Forward-looking AI line** (approved for roadmap-tease use in emails, ads, blog teasers, in-app banners):
+
+> We're working on supercharging your workflows with AI.
+
+This is the only sanctioned AI claim for marketing surfaces until the AI-drafts feature ships and gets its own positioning entry. Use it sparingly — it's a tease, not a hook.
 
 ---
 
@@ -93,19 +101,21 @@ The approved positioning lines below sit in OPS marketing voice — terse, tacti
 
 **Relief after OPS** (one concrete moment): Monday morning, OPS already pulled three new lead emails out of the inbox over the weekend, matched two of them to existing clients, and parked all three in the pipeline's new-lead column. The operator's first action is reading them, not finding them.
 
-**Differentiator vs competitors**: Pipeline starts at the lead, not the booking. Most trades software (Jobber, Housecall Pro, ServiceTitan) picks up after the client is already on the hook — at the quote or the booking. OPS reads the inbox, classifies what's a lead with an LLM, matches it against the existing client roster, and inserts it into pipeline with the email thread attached. The pipeline also auto-advances on the first logged activity (`tr_activities_first_log_auto_advance` trigger, 2026-05-20) so the column you're staring at always tells the truth.
+**Differentiator vs competitors**: Pipeline starts at the lead, not the booking. Most trades software (Jobber, Housecall Pro, ServiceTitan) picks up after the client is already on the hook — at the quote or the booking. OPS reads the inbox, runs intelligent classification to identify which messages are leads, matches them against the existing client roster, and inserts them into pipeline with the email thread attached. The pipeline also auto-advances on the first logged activity (`tr_activities_first_log_auto_advance` trigger, 2026-05-20) so the column you're staring at always tells the truth. (Note: marketing copy says "intelligent classification" / "intelligent pipeline management" — never "AI." See [Voice & format rules](#voice--format-rules).)
 
 **Approved positioning lines** (verbatim, OPS voice):
 - **Headline (5–7 words)**: `PIPELINE STARTS AT THE LEAD`
 - **Subhead (1 sentence)**: Connect Gmail or Microsoft 365 and OPS pulls every quote request out of your inbox, sorts it, and drops it in pipeline.
 - **Expanded (2–3 sentences)**: Leads come in through email. They don't come in through your CRM. So OPS scans your inbox, classifies what's a lead, matches it to a client you already know — and queues it before you finish your coffee. No copy-paste. Nothing slips.
+- **Alternate headline (when emphasizing intelligence)**: `INTELLIGENT PIPELINE MANAGEMENT`
+- **Forward-looking line (roadmap tease)**: We're working on supercharging your workflows with AI.
 
 **Don't say**:
-- "AI-powered inbox" (generic; the differentiator is *pipeline auto-advance from email activity*, not the AI)
-- "Smart email" (filler)
+- "AI-powered inbox" / "AI lead capture" / any framing that leads with "AI" (use "intelligent classification" or describe behavior — see [Voice & format rules](#voice--format-rules) § Universal don't-say list)
+- "Smart email" (filler — "intelligent" is the only approved substitute, used sparingly)
 - "Email integration" (engineering-shaped; doesn't convey the value)
 - "Convert emails to leads" (too transactional; the framing is "your inbox already has the leads — OPS just routes them")
-- Anything implying OPS *replies* on the operator's behalf (the AI-drafts feature is separate and not yet positioned — see [Features intentionally not covered](#features-intentionally-not-covered))
+- Anything implying OPS *replies* on the operator's behalf (the AI-drafts feature is separate and not yet positioned — see [Features intentionally not covered](#features-intentionally-not-covered)). The only sanctioned forward-looking claim is the roadmap line above.
 
 **Where this feature is referenced today**:
 - `ops-software-bible/app-store-listing.txt` — "AI EMAIL LEAD IMPORT" + "PIPELINE STARTS AT THE LEAD, NOT THE BOOKING" sections
@@ -434,11 +444,24 @@ The following features either ship today and aren't well-suited to top-of-funnel
 
 ## Known positioning contradictions
 
-These are inconsistencies discovered while writing this chapter. Each one is a candidate for the next marketing rewrite. None block any current copy.
+These are inconsistencies discovered while writing this chapter. Items marked **MUST-FIX** block any new copy that touches those surfaces. Items marked **drift** are for the next maintenance pass.
 
-1. **Pricing-multiple claim drift.** `ops-software-bible/app-store-listing.txt` says "A THIRD THE PRICE OF JOBBER." `00_EXECUTIVE_SUMMARY.md` says "Competes with Jobber ($300+/month) at 1/3 the cost." But `ops-site/src/i18n/dictionaries/en/platform.json` `comparison.row.price.jobber` lists Jobber at **$169/mo** for 5 users vs OPS at $140/mo — a ~17% gap, not a 67% gap. Pick a canonical comparison and update the other surfaces. The platform-page number is the most recently maintained; the "1/3 the price" framing reads as legacy positioning from an earlier Jobber price point. **Canonical for now: the platform-page comparison number ($169 Jobber / $140 OPS at 5 users).** Drop the "1/3 the price" line from app-store and executive-summary copy on next revision.
-2. **Audience-naming drift.** `00_EXECUTIVE_SUMMARY.md` is explicit: OPS is for *subtrades* (the people doing the work), not general contractors. But marketing copy across `ops-site/` and the app store listing uses "trades," "trade crews," "service-based businesses," and "owner-operators" somewhat interchangeably. None of those are wrong — but "contractor" appears in some SEO-shaped places (`ops-site/src/app/page.tsx` JSON-LD description). Audit for the word "contractor" and replace with "trade" / "service-based business" / "owner-operator" where the meaning is "the people doing the work." Founder rule: *never* refer to a trade-business owner as a "tradesperson" (sounds forced) or a "contractor" (means something different).
-3. **Inbox feature naming.** Within OPS the feature is called variously "Inbox," "email lead capture," "AI email lead import," and "Gmail integration." The app store listing uses "AI EMAIL LEAD IMPORT" prominently; ops-site doesn't yet have a dedicated entry; emails reference it indirectly. **Canonical for marketing: "Inbox → pipeline"** (it's the *destination* that matters, not the source) — but accept "AI email lead import" as a longer-form fallback when SEO keywords matter.
+1. **MUST-FIX: "Contractor" is banned but currently widespread.** Per founder rule and `00_EXECUTIVE_SUMMARY.md`, OPS's audience is *subtrades* — the people who do the work. *Contractors are the clients who hire OPS users.* Calling an OPS user a contractor is technically wrong and tonally wrong; it sounds like a generic B2B SaaS app talking past the actual buyer. Approved alternatives: **subtrades, service-based businesses, blue collars, owner-operators, entrepreneurs, the trades, crews, founders, business owners, tradesmen**. Known offenders as of 2026-05-27 (`grep -rn "contractor" ops-site/src/` confirms widespread use):
+   - `ops-site/src/app/journal/page.tsx` — "Written by contractors, not consultants"
+   - `ops-site/src/app/spec/page.tsx` — "Built by a contractor, for contractors" (appears 3×)
+   - `ops-site/src/app/company/page.tsx` — "Built by a contractor who scaled from $0 to $1.6M" (appears 2×)
+   - `ops-site/src/components/home/SocialProof.tsx` — "Real testimonials from contractors"
+   - `ops-site/src/components/home/WhatIsOps.tsx` — "best job management for contractors" (in AI-SEO comment)
+   - `ops-site/src/lib/industries.ts` — "landscape contractors," "railing contractors," "fence contractors" + dozens of SEO keyword strings like `"landscape contractor app"`, `"railing contractor software"`, `"fence contractor software"`
+   - `ops-site/src/lib/seo-redirects.ts` — historical-URL slug references
+
+   The industries.ts SEO keywords need careful handling: search volume for "contractor" terms is real, so blunt find-and-replace would damage SEO. The right fix is two-track — replace audience-facing prose with approved alternatives, and convert SEO keyword strings to redirected aliases (preserve discoverability without using "contractor" in the rendered copy).
+
+2. **Pricing comparison is not seat-equivalent.** `ops-software-bible/app-store-listing.txt` says "A THIRD THE PRICE OF JOBBER." `00_EXECUTIVE_SUMMARY.md` says "Competes with Jobber ($300+/month) at 1/3 the cost." `ops-site/src/i18n/dictionaries/en/platform.json` `comparison.row.price.jobber` lists Jobber at **$169/mo** vs OPS at $140/mo. Per founder clarification (2026-05-27): the **$169 Jobber number is a 1-user price**, while OPS's $140 is for 5 seats. When normalized to a 5-seat crew, Jobber would be roughly $845/mo (or whichever multi-seat tier applies — verify before publishing) versus OPS's $140 — meaning "1/3 the price" actually understates the real gap. The platform-page comparison table is misleading as written (compares 1 Jobber seat to 5 OPS seats without disclosing). **Fix:** Restructure the comparison table to compare like-for-like seat counts (Jobber's actual 5-seat tier vs OPS's 5-seat tier), or rephrase as "Jobber per user at $169 — OPS for the whole crew at $140." Until that ships, do *not* lift the platform.json comparison numbers into new copy verbatim.
+
+3. **drift: Inbox feature naming.** Within OPS the feature is called variously "Inbox," "email lead capture," "AI email lead import," and "Gmail integration." The app store listing uses "AI EMAIL LEAD IMPORT" prominently; per the AI framing rule in [Voice & format rules](#voice--format-rules), "AI" should not lead in marketing surfaces. **Canonical for marketing: "Inbox → pipeline"** (destination-focused) or **"intelligent pipeline management"** when the framing needs an adjective. Drop "AI EMAIL LEAD IMPORT" from app-store-listing.txt on next revision.
+
+4. **drift: AI claims in current marketing surfaces.** `ops-software-bible/app-store-listing.txt` uses "AI EMAIL LEAD IMPORT" and "classifies leads with AI" prominently. Per the AI framing rule, future revisions of this listing (and any new marketing surface) should describe behavior or use "intelligent" framing; AI is positioned as forward-looking ("we're working on supercharging your workflows with AI"), not as the current lead claim.
 
 ---
 
