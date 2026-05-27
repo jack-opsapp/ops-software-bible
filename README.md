@@ -255,6 +255,22 @@ Start with the Executive Summary to understand the business context, then procee
 
 ---
 
+### 📣 [14_FEATURE_POSITIONING.md](14_FEATURE_POSITIONING.md)
+**Feature Positioning: Canonical Marketing & Onboarding Copy Reference**
+
+- Per-feature positioning entries for 10 of the most marketing-load-bearing features (inbox→lead, pipeline, project workspace, estimates + client portal, invoices, schedule, crew dispatch, field-first iOS, photo markup, site visits)
+- Each entry: source of truth for behavior, persona, pain-before / relief-after moments, real competitor differentiator, approved positioning lines (headline / subhead / expanded), per-feature "don't say" list, current references across `ops-site/`, `OPS-Web/` email templates, iOS, and app store listing
+- Voice & format rules — Jocko/Springsteen/Musk blend, OPS terse-tactical voice, universal "don't say" list
+- Features intentionally not covered (AI drafts, financial dashboard, catalog, notifications, RBAC, navigation, PIN, inventory, activity timeline) with reasons
+- Known positioning contradictions across surfaces (Jobber price-multiple drift, audience-naming drift, inbox feature naming)
+- Maintenance triggers: when new feature ships, when behavior changes, when voice rules change, when marketing surface is rewritten
+
+**Start here for:** Writing copy for any marketing surface that names an OPS feature — onboarding email, ad headline, landing-page section, app store listing refresh, in-app empty state
+
+**Lines:** ~600 | **Features covered:** 10 | **Not-covered list:** 9
+
+---
+
 ### 🚀 [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)
 **Production deployment and operations**
 
@@ -323,6 +339,9 @@ Start with the Executive Summary to understand the business context, then procee
 
 **"I need to send an email, add a template, schedule a campaign, pause a bucket, or debug a missed send"**
 → Read [13_EMAIL_SYSTEM.md](13_EMAIL_SYSTEM.md)
+
+**"I need to write copy / marketing / email / app store listing for a feature"**
+→ Read [14_FEATURE_POSITIONING.md](14_FEATURE_POSITIONING.md)
 
 **"I need to deploy to production"**
 → Read [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)
