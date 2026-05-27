@@ -1616,6 +1616,44 @@ Known P3 schema gaps:
 - There is no canonical relationship type column for spouse/partner/property-manager/site-super identity unless the contact is represented as a `sub_clients` row.
 - There is no structured scope signature column for comparing "same address, new job" versus "same address, same job"; P3 uses conservative deterministic text/address/status gates only.
 
+#### P4 Schema Foundation and Dry-Run Evaluator
+
+As of Lead Lifecycle P4-2, stale/follow-up evaluation has a first-class schema and deterministic dry-run evaluator. P4-2 is still non-destructive: it may create lifecycle proof rows at safe app-code boundaries and may produce read-only dry-run artifacts, but it must not archive opportunities, mark opportunities lost, create provider drafts in production, or send email.
+
+P4 schema contract:
+- `opportunity_correspondence_events` stores opportunity-level correspondence proof. It links to company, opportunity, optional activity, optional email connection, provider thread id, optional provider message id, direction (`inbound`/`outbound`), party role (`customer`, `ops`, `internal`, `provider`, `system`, `marketing`, `unknown`), `is_meaningful`, `noise_reason`, occurrence time, optional linked contact reference, source boundary, subject, sender, recipients, and CCs. A partial unique index protects provider message id duplication per company/connection.
+- `opportunity_follow_up_drafts` stores auditable lifecycle drafts. It links to company, opportunity, optional connection/thread, optional source correspondence event, origin (`operator`, `template_follow_up`, `phase_c`, `system_handoff`), sequence number, subject, original generated body, current body, final sent body, status (`drafted`, `sent`, `discarded`, `superseded`, `archived`), optional provider draft id, optional `ai_draft_history` id, editors, and lifecycle timestamps. At most one open `template_follow_up` draft exists per opportunity.
+- `opportunity_lifecycle_state` stores the opportunity's P4 stale state: last meaningful event/time/direction, unanswered follow-up count, second follow-up sent time, operator follow-up miss time, stale status, protected-until timestamp, and update time.
+- `lead_lifecycle_settings` stores company-level cadence and template settings. Defaults are 7 days to draft a follow-up after OPS outbound, 7 days to archive after the second unanswered follow-up, 14 days to archive when no meaningful correspondence exists, 30 days to mark beyond-qualified operator no-response as lost, and default template body `Hey there {{first_name}}, just following up on this as I didn't see anything back from you.`
+
+P4 deterministic classifier rules:
+- Customer inbound counts as meaningful only when the sender or parsed contact-form submitter is a real external customer/contact. Parsed submitter identity wins over platform sender identity.
+- OPS outbound counts as meaningful only when a real OPS account/connection sends to an external customer/contact.
+- Provider/platform senders, automated bounces, internal-only/system messages, duplicate provider message ids, and marketing/promotional messages are not meaningful. They are retained as proof rows with `is_meaningful=false` and a `noise_reason`.
+- Blank provider thread ids are never meaningful. Provider-backed lifecycle writes still follow the P1 provider-id guardrails before creating P4 events.
+- Platform senders such as website form notification mailboxes are never treated as the customer. They can support source/provenance only.
+
+P4 evaluator dry-run behavior:
+- Input is an opportunity, optional `opportunity_lifecycle_state`, meaningful correspondence events, settings, and evaluator clock.
+- Output is one dry-run decision: `create_follow_up_draft`, `archive_after_two_unanswered_followups`, `archive_no_meaningful_correspondence`, `operator_follow_up_miss`, `move_to_lost_operator_no_response`, `reactivate_on_related_inbound`, or `no_action`.
+- Won, lost, discarded, deleted, converted/project-linked, archived, and future terminal/protected opportunities are ignored for stale monitoring. `reactivate_on_related_inbound` is an event-triggered decision only when a new related meaningful inbound arrives; P4 sweeps do not keep monitoring archived opportunities.
+- Last meaningful OPS outbound past the configured threshold returns `create_follow_up_draft`. P4-2 does not create or send that draft in production.
+- Two tracked unanswered OPS follow-ups past the configured second-follow-up archive threshold returns `archive_after_two_unanswered_followups`. P4-2 does not execute archive.
+- No meaningful correspondence past the configured no-correspondence threshold returns `archive_no_meaningful_correspondence`. P4-2 does not execute archive.
+- Last meaningful inbound with no later OPS reply returns `operator_follow_up_miss`; if it is beyond the lost threshold and the opportunity is beyond qualified (`quoting`, `quoted`, `follow_up`, `negotiation`), it returns `move_to_lost_operator_no_response`. P4-2 does not execute lost mutations.
+
+Safe P4-2 write boundaries:
+- Inbound/outbound sync may create `opportunity_correspondence_events` after provider thread/message ids validate, P3 relationship matching selects the opportunity, and P2 fill-only enrichment remains intact. When the event is meaningful, P4-2 app code may also upsert `opportunity_lifecycle_state` for that opportunity: last meaningful event id/time/direction, clear stale status fields, and reset unanswered follow-up counters for meaningful inbound.
+- Email send may create an outbound meaningful correspondence event after the provider returns valid thread/message ids, then upsert `opportunity_lifecycle_state` with the outbound meaningful event when it is the newest meaningful correspondence.
+- Import/historical import may create correspondence events only where provider ids satisfy the explicit import boundary. Invalid provider ids create no P4 event and no lifecycle-state upsert.
+- P4-2 dry-run scripts are read-only against Supabase and write only a markdown artifact under `docs/data-cleanup/`.
+- P4-2 does not execute archive, lost, or reactivation mutations. Those action-execution paths remain P4-3+ only, behind guarded write paths, idempotency, audit, and operator-visible review.
+
+P4-3 action-execution boundary:
+- P4-3 may create template follow-up draft rows from `create_follow_up_draft` decisions, surface persistent operator notifications for follow-up misses/drafts, resolve stale state on meaningful inbound, and execute archive/lost mutations only after adding guarded write paths, idempotency keys, operator-visible audit, and focused tests.
+- P4-3 must still not auto-send email unless a later explicit auto-send phase is approved. It must not depend on Phase C for core stale/follow-up correctness.
+- Archive execution must remain reversible and must not monitor or mutate won, lost, discarded, deleted, converted/project-linked, or already archived opportunities except through an explicit related-inbound reactivation path.
+
 #### Phase C Off vs Phase C On
 
 | Capability | Phase C Off | Phase C On |
