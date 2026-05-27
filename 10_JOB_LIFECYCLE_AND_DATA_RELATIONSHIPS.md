@@ -1558,6 +1558,34 @@ Required behavior:
 - The contact-form parsed sender identity must remain consistent across matching, activity creation, and thread-cache writes for newly processed provider-backed emails.
 - Existing bad rows are report-only until an operator approves cleanup. The P1 dry-run artifact lives at `docs/data-cleanup/lead-lifecycle-p1-bad-thread-dry-run-2026-05-26.md`.
 
+#### P2 Canonical Enrichment
+
+As of Lead Lifecycle P2, email ingestion performs conservative canonical enrichment after provider ID validation. Inbound sync, sent-folder safety-net sync, import wizard leads, and historical Gmail import can fill missing opportunity/client fields from deterministic facts that are already present in the email or reviewed import payload.
+
+Allowed P2 writeback targets:
+- `opportunities.contact_name`, `contact_email`, `contact_phone`
+- `opportunities.address`
+- `opportunities.estimated_value` and `detected_value`
+- `opportunities.description`
+- `opportunities.source` (`email` for email pipeline ingestion)
+- `opportunities.source_email_id` (provider thread id)
+- `clients.name`, `email`, `phone_number`, `address`
+
+P2 writes only blanks or clearly weak placeholders such as empty values, unknown/new-lead markers, raw email-address names, zero estimated values, and known platform/system email addresses. It must not overwrite operator-entered client or opportunity values. Contact-form submitter identity remains preferred over the platform sender; platform sender emails such as Wix, HomeStars, or website form notifications are not written as customer email addresses.
+
+Existing provenance support:
+- `activities.email_thread_id` and `activities.email_message_id` preserve the provider thread/message proof for actual email activities.
+- `opportunity_email_threads.thread_id` + `connection_id` preserve the opportunity-to-provider-thread link.
+- `email_threads.provider_thread_id` preserves the inbox cache provider thread id.
+- `opportunities.source_email_id` can hold the provider thread id for the lead source.
+
+Current schema gaps for full provenance and company/source detail:
+- No `clients.company_name` or `opportunities.company_name` column exists. Company name can only fill weak `clients.name` values when that is safe.
+- No field-level provenance table or JSON column exists for canonical client/opportunity facts. Needed shape: entity type/id, field name, proposed value, extraction source, confidence, provider thread id, provider message id, confirmed/edited actor, and confirmed/edited timestamp.
+- No `opportunities.source_platform` / `source_platform_label` column exists for HomeStars, Wix, website form, or other lead platform names.
+- No provider message id column exists on `opportunities`; message-level proof lives on `activities.email_message_id`.
+- No explicit contact relationship column exists on opportunities for spouse/PM/site-super relationships; `sub_clients.title` can hold that relationship only after a sub-client exists.
+
 #### Phase C Off vs Phase C On
 
 | Capability | Phase C Off | Phase C On |
