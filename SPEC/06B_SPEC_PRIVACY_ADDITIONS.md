@@ -4,7 +4,7 @@ This file is the production-ready Privacy Policy additions that cover SPEC-speci
 
 Review status: Jackson-reviewed. Counsel review is recommended risk mitigation per [07_ROLLOUT.md](07_ROLLOUT.md) § Phase 1 Legal but is not a hard launch blocker.
 
-Open decision flagged inline: the scheduling subprocessor for SPEC discovery and walkthrough sessions is undecided between Calendly and Cal.com per [07_ROLLOUT.md](07_ROLLOUT.md) open items. The prose below names both. Pick one before publishing and remove the other; if both will be used in different stages, leave both named.
+Scheduling subprocessor lock (2026-05-26): Cal.com, Inc. is the sole Phase 1 scheduling subprocessor for SPEC discovery and walkthrough sessions.
 
 ---
 
@@ -16,7 +16,7 @@ The existing Privacy Policy (`legalDocuments['privacy']` in `ops-site/src/lib/le
 |---|---|
 | § 2 — What Information We Collect | New subsection 2.9 "SPEC Engagement Data" |
 | § 3 — How We Use Your Information | New row added to the purpose table for SPEC engagement processing and SPEC conversion-tracking |
-| § 4 — Third-Party Processors | New entries added to the processors table: SendGrid, Vercel, Meta (CAPI), Google Ads, Calendly and/or Cal.com |
+| § 4 — Third-Party Processors | New entries added to the processors table: SendGrid, Vercel, Meta (CAPI), Google Ads, Cal.com |
 | § 8 — Data Retention | New rows added to the retention table for SPEC engagement records, intake responses + uploads, scope docs, satisfaction ratings, and communications log |
 | § 11 — Communications | New paragraph added covering SPEC-specific commercial messages (Retainer offers, referral promotions, SPEC marketing follow-ups) |
 
@@ -75,7 +75,7 @@ Add the following entries to the processors table. Existing entries (Bubble, AWS
 | Vercel, Inc. — new | Hosting of the SPEC marketing page (/spec), the OPS-Web product surface, and the SPEC server routes that handle checkout creation, owner-approval, refund-request submission, and cron-driven nudges. Edge cache for the OPS Board public read | Request metadata, IP addresses, customer-provided form data in transit | USA, with global edge cache |
 | Meta Platforms, Inc. (Meta Conversions API) — new | Server-side conversion tracking for SPEC ad campaigns on Facebook and Instagram | Hashed email address, hashed phone number, event metadata (event name, value, currency, deduplication ID), browser cookies `fbp` and `fbc` | USA |
 | Google LLC (Google Ads Enhanced Conversions) — new | Server-side conversion tracking for SPEC ad campaigns on Google Search and YouTube | Hashed email address, hashed phone number, Google Click ID (`gclid`), event metadata | USA |
-| Calendly, LLC and/or Cal.com, Inc. — new | Scheduling discovery sessions and delivery walkthroughs for SPEC engagements. *(Open decision flagged for Jackson: SPEC will name one provider before publishing — pick Calendly or Cal.com. If both are used at different stages, both are listed.)* | Customer name, email, optional phone, scheduled session metadata, time-zone preference | USA (Calendly) or USA/EU (Cal.com, depending on instance) |
+| Cal.com, Inc. — new | Scheduling discovery sessions and delivery walkthroughs for SPEC engagements | Customer name, email, optional phone, scheduled session metadata, time-zone preference | USA/EU depending on Cal.com instance |
 
 For Meta and Google conversion tracking, we hash email and phone with SHA-256 before sending. Raw identifiers are not transmitted to the advertising platforms. We use this data solely to optimize SPEC ad campaigns; we do not allow Meta or Google to use the data for retargeting beyond the campaigns we run.
 
@@ -117,5 +117,4 @@ The SPEC referral program is link-based. We do not send commercial messages on y
 
 - The terms "engagement record," "Scope Document," "Walkthrough Date," "Support Window," "Retainer," and "Custom Modules" used here are defined in the SPEC Engagement Terms of Service at /legal?page=spec-terms. The Privacy Policy itself does not need to re-define them; readers can cross-reference.
 - The Meta and Google conversion-tracking flows are operationally implemented at `ops-site/src/lib/spec/conversion-events.ts` (per [07_ROLLOUT.md](07_ROLLOUT.md) Phase 1 file list). The hashing pre-send happens server-side in that module — confirm during porting that the implementation matches the disclosure here.
-- The Calendly vs Cal.com decision must be resolved before the Privacy Policy update goes live. Track this against the open items list in [07_ROLLOUT.md](07_ROLLOUT.md) and update the entry above accordingly.
 - The 7-year retention period for SPEC engagement records is the Canadian standard for tax and accounting records under the Income Tax Act (Canada) and the Excise Tax Act (Canada). If the OPS bookkeeping policy adopts a longer period for any record type (some compliance regimes extend to 10 years), update the retention rows to match.
