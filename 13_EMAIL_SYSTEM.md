@@ -133,7 +133,7 @@ Every typed `sendXxx()` call passes an `emailType` string into `gatedSend`. The 
 
 ## Data Model
 
-Fifteen `public.email_*` tables exist in prod. Five belong to the inbound subsystem and are documented in `04_API_AND_INTEGRATION.md` §20. The ten outbound-relevant tables are:
+Fifteen `public.email_*` tables exist in prod. Five belong to the inbound subsystem and are documented in `04_API_AND_INTEGRATION.md` §20. The eleven outbound-relevant tables — ten `email_*` tables plus the related `trial_expiry_notifications` dedup table — are:
 
 ### `email_log` *(created via Supabase dashboard pre-migration-system; documented in 083, 088, 094, 098)*
 
