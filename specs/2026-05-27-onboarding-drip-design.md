@@ -63,9 +63,9 @@ Four Supabase Edge Functions ship a lifecycle-email scaffolding that was built a
 
 This spec therefore:
 - Treats the existing edge functions as **reference material**, not running infrastructure
-- Adopts the **precise trigger conditions** the existing system already worked out (`has_completed_onboarding=false`, `!hasProjects && !hasClients`) — these are sharper than the v1 spec's "has at least one project" check
+- Adopts the **precise trigger conditions** the existing system already worked out (the dormant edge function used the pre-migration-026 boolean `has_completed_onboarding`; the spec's load-bearing §5 query uses the current JSONB column `onboarding_completed->>'web' = 'true'`, with the same project-or-client semantics) — these are sharper than the v1 spec's "has at least one project" check
 - Inherits a few **good copy patterns** from the existing templates where they're sharper than ours (specific lines noted in §6)
-- Plans a **clean cutover** that disables the 4 edge functions and deletes the `lifecycle_email_config` rows — see §14
+- Plans a **clean cutover** that disables the 4 edge functions at launch and defers `lifecycle_email_config` table cleanup (along with its admin route + panel) to a 30-day follow-up — see §14
 
 ### Why a new in-repo system instead of fixing the edge functions
 
@@ -133,7 +133,7 @@ The `updated_at < now() - interval '5 minutes'` clause is the **in-flight retry 
 
 1. **Primary join (preferred, exact)**:
    ```sql
-   SELECT id FROM email_log
+   SELECT id, metadata FROM email_log
    WHERE user_id = $1
      AND email_type = $2
      AND status = 'sent'
