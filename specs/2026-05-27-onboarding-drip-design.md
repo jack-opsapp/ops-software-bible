@@ -1,8 +1,8 @@
-# Onboarding Drip — Design Spec (v3)
+# Onboarding Drip — Design Spec (v3.1)
 
-**Date**: 2026-05-27 (v3 — revised after founder's own line-by-line review against live code)
+**Date**: 2026-05-27 (v3.1 — patches v3 for spec-internal drift + retry race surfaced by founder's second-pass review)
 **Status**: Pending re-review by founder before implementation plan.
-**Supersedes**: commit `7294f5a` (v2), which superseded `6549513` (v1). See [Revision History](#revision-history) for what changed.
+**Supersedes**: commit `baebce3` (v3), which superseded `7294f5a` (v2), which superseded `6549513` (v1). See [Revision History](#revision-history) for what changed.
 **Scope**: Replace the dormant `lifecycle-emails` / `lifecycle-cron` / `lifecycle-onboarding-complete` / `lifecycle-first-action` Supabase Edge Functions with an in-repo onboarding drip integrated into the OPS-Web `gatedSend` chokepoint. Day 0 through Day 14, then handoff to the existing trial-expiry cron at Day 23. Closes `13_EMAIL_SYSTEM.md` Known Gaps #1, #2, #8.
 
 **Source Reference**:
@@ -120,20 +120,45 @@ After Day 14 the drip ends. Trial-expiry cron handles Day 23 onward.
 **Hook point: `POST /api/setup/progress/route.ts:122`** (verified — this is the actual `companies` INSERT site, NOT `sync-user`).
 
 After the company INSERT succeeds, the route:
-1. Inserts a row into `onboarding_email_log` with `kind='day_0_welcome'`, `status='pending'`, `attempts=0`
-2. Dispatches the send asynchronously via `Promise.resolve().then(() => sendOnboardingDay0Welcome(...))` (non-awaited, non-blocking on the API response)
-3. On send success → update `onboarding_email_log` row to `status='sent'`, write `sent_at`, link `email_log_id`
+1. Inserts a row into `onboarding_email_log` with `day_slot='day_0'`, `email_type='onboarding_day_0_welcome'`, `branch=NULL`, `status='pending'`, `attempts=0`, and `day_slot_expires_at = now() + interval '24 hours'`
+2. Dispatches the send asynchronously via `Promise.resolve().then(() => sendOnboardingDay0Welcome(..., { metadata: { onboarding_email_log_id: row.id } }))` (non-awaited, non-blocking on the API response)
+3. On send success → update `onboarding_email_log` row to `status='sent'`, write `sent_at`, write `sg_message_id` from the `gatedSend` return value
 4. On send failure → update to `status='failed'`, increment `attempts`, record `last_error`
 
-**Durable retry**: the hourly cron (§3 next subsection) sweeps `onboarding_email_log WHERE day_slot='day_0' AND status IN ('pending','failed') AND attempts < 3 AND created_at > now() - interval '24 hours'` and retries.
+**Durable retry**: the hourly cron (§3 next subsection) sweeps `onboarding_email_log WHERE day_slot='day_0' AND status IN ('pending','failed') AND attempts < 3 AND now() < day_slot_expires_at AND updated_at < now() - interval '5 minutes'` and retries.
 
-**Partial-success reconciliation (added v3)**: before re-sending any pending/failed row, the cron reconciles against `email_log` to avoid double-send when SendGrid succeeded but the process died before the status update landed. Logic:
+The `updated_at < now() - interval '5 minutes'` clause is the **in-flight retry gate (added v3.1)**: it prevents the cron from racing an async Day 0 send that's still mid-dispatch. Without it, the hourly cron could fire while the post-signup `Promise.resolve().then(send)` is still in flight, find the still-`pending` row, fail to find a matching `email_log` row (because SendGrid hasn't responded yet or `logEmail` hasn't landed yet), and trigger a duplicate send. A 5-minute age gate is a generous bound: SendGrid responses are sub-second in practice; this gives us ~300x headroom against process delays.
 
-1. For each candidate retry row, query `email_log` where `recipient_email = $1 AND email_type = $2 AND sent_at > $3` where `$3` is the `onboarding_email_log.created_at` minus a 5-minute clock-skew buffer
-2. If a matching `status='sent'` row exists → mark `onboarding_email_log` row as `sent`, copy `sg_message_id` from the `email_log` metadata, do NOT resend
-3. Otherwise → attempt the send
+**Partial-success reconciliation (added v3, tightened v3.1)**: before re-sending any pending/failed row, the cron reconciles against `email_log`:
 
-This eliminates the v2 race where a Vercel function killed between SendGrid's 200 response and the local UPDATE would cause a duplicate Day 0 on the next cron tick.
+1. **Primary join (preferred, exact)**:
+   ```sql
+   SELECT id FROM email_log
+   WHERE user_id = $1
+     AND email_type = $2
+     AND status = 'sent'
+     AND metadata->>'onboarding_email_log_id' = $3
+   LIMIT 1;
+   ```
+   This works because every onboarding send passes `metadata: { onboarding_email_log_id: row.id }` into `gatedSend` (which forwards it into `email_log.metadata` via the existing `logEmail` path at `sendgrid.tsx:255`). One row id ↔ one email_log row.
+
+2. **Fallback (in case metadata is missing for historical reasons)**:
+   ```sql
+   SELECT id, metadata FROM email_log
+   WHERE user_id = $1
+     AND email_type = $2
+     AND recipient_email = $3
+     AND status = 'sent'
+     AND sent_at > ($4::timestamptz - interval '5 minutes')
+   ORDER BY sent_at DESC
+   LIMIT 1;
+   ```
+   `$4` is the `onboarding_email_log.created_at`. Filter set is `(user_id, email_type, recipient_email, status='sent', recent)` — tighter than v3's `(recipient_email, email_type, sent_at)` which could falsely match across users in pathological cases.
+
+3. If either query returns a row → mark `onboarding_email_log.status='sent'`, copy `sg_message_id` from the matched `email_log.metadata`, do NOT resend
+4. Otherwise → attempt the send
+
+This eliminates the v2 race where a Vercel function killed between SendGrid's 200 response and the local UPDATE would cause a duplicate Day 0 on the next cron tick. **Note on `sg_message_id`**: it is populated AFTER the SendGrid response, never before — `gatedSend` returns it in `GatedSendResult.messageId` at `sendgrid.tsx:233`, and the cron writes it to `onboarding_email_log.sg_message_id` only after a successful send. It is not a pre-send join key.
 
 **Skip conditions for Day 0**:
 - The user is not the new company's `account_holder_id` (canonical "is this the operator?" check — replaces the v2 `user_type === 'company'` filter which was unreliable because `users.user_type` is nullable in production and `sync-user` doesn't set it during signup; verified against schema 2026-05-27)
@@ -142,6 +167,8 @@ This eliminates the v2 race where a Vercel function killed between SendGrid's 20
 - Email is on `email_suppressions.list='global'` (handled automatically by `gatedSend`)
 
 The Day 0 hook in `setup/progress/route.ts:122` already has the new user's id in scope and writes `account_holder_id: userId` on the company INSERT (line 129), so the operator-eligibility check is a one-line comparison, not a separate query.
+
+**Type-cast note (added v3.1)**: live schema has `companies.account_holder_id` as `text` and `users.id` as `uuid` (verified against prod 2026-05-27). The Day 0 application-code comparison (`account_holder_id === user.id`) is fine because both serialize to strings in JS. **But any SQL query joining these columns needs an explicit cast** — `WHERE companies.account_holder_id = users.id::text` (or `companies.account_holder_id::uuid = users.id`, pick one and use it consistently). Same applies to `companies.admin_ids` which is `text[]` — comparisons against `users.id` need the cast. Implementation must use the cast everywhere these columns are joined (cron queries, audience resolution, eligibility checks).
 
 ### Days 1, 3, 4, 8, 14 — hourly cron with operator-local-time gating
 
@@ -158,14 +185,17 @@ The cron route `/api/cron/onboarding-drip`:
 
 **Claim-before-send dedup** (fixes v1's race condition where Day 1A and Day 1B could both fire if state flipped between cron ticks):
 
-```
+```sql
 INSERT INTO onboarding_email_log (
-  user_id, company_id, day_slot, branch, status, attempts, day_slot_expires_at
+  user_id, company_id, day_slot, branch, email_type,
+  status, attempts, day_slot_expires_at
 )
-VALUES ($1, $2, $3, $4, 'pending', 0, $5)
+VALUES ($1, $2, $3, $4, $5, 'pending', 0, $6)
 ON CONFLICT (user_id, day_slot) DO NOTHING
 RETURNING id;
 ```
+
+`email_type` is NOT NULL per §8 schema and must be in the insert — caller passes the matching `KIND_TO_LIST` key (e.g. `onboarding_day_1_no_project`) computed from `(day_slot, branch)` before the INSERT.
 
 - `day_slot` is the day number alone (`day_0`, `day_1`, `day_3`, `day_4`, `day_8`, `day_14`, `lost_you`) — **same regardless of branch**
 - `branch` records which variant was chosen (`'no_project'`, `'has_project'`, `'no_aha'`, `'has_aha'`, `'quiet'`, `'active'`, or `null` for unbranched)
@@ -851,9 +881,16 @@ Hourly fire vs daily-with-timezone-math (v1): hourly is simpler, handles DST tra
 - `OPS-Web/tests/unit/api/services/onboarding-drip-service.test.ts`
   - `computeState()` returns the correct branch for each day_slot given fixture company state
   - `processCompany()` skips on each kill condition (deleted, cancelled, expired, no admins, all-suppressed, internal-domain)
-  - `claimAndSend()` writes the correct `onboarding_email_log` row on success
+  - `claimAndSend()` writes the correct `onboarding_email_log` row on success — including `email_type` populated from `(day_slot, branch)`
   - Claim-before-send race: two concurrent invocations for the same `(user_id, day_slot)` — only one INSERT succeeds, only one send fires
   - Retry: a 'failed' row with attempts < 3 is picked up on the next sweep; with attempts = 3, it's not
+  - Retry: a 'pending' row with `updated_at` newer than `now() - 5 minutes` is **NOT** picked up (in-flight gate; prevents racing an async Day 0 dispatch)
+  - Retry: a 'pending' row past `day_slot_expires_at` is **NOT** picked up
+  - **Partial-success reconciliation (primary join)**: when an `email_log` row with `metadata->>'onboarding_email_log_id'` matching the candidate exists with `status='sent'`, the cron marks the candidate `sent` without calling `gatedSend` and copies `sg_message_id` from `email_log.metadata`
+  - **Partial-success reconciliation (fallback join)**: when metadata is absent but a matching `(user_id, email_type, recipient_email, status='sent', recent)` row exists, the cron uses the fallback path with the same outcome
+  - **Partial-success reconciliation (no match)**: when no matching `email_log` row exists, the cron proceeds to call `gatedSend` normally
+  - **Pause re-pend**: when `gatedSend` returns `paused_skipped`, the cron updates `status='pending'`, does **NOT** increment `attempts`, and the row remains eligible for the next cron tick (assuming `now() < day_slot_expires_at`)
+  - **Suppression terminal**: when `gatedSend` returns `suppression_skipped`, the cron updates `status='skipped'` (terminal); subsequent cron sweeps do NOT pick it up
   - Day 14 stats threshold: under 5, returns the no-stats variant
   - Lost You: only fires when all 5 conditions hold; doesn't fire if Day 14 already sent
 
@@ -1064,12 +1101,22 @@ Decisions captured during brainstorming + v2 revision (with the founder), in chr
 | **32** | **Vercel Hobby fallback removed; Pro+ requirement made explicit** (v3) | Founder review: Vercel docs confirm Hobby caps at once-per-day; v2's `0 */2 * * *` fallback would also fail deployment. There is no acceptable Hobby fallback for this design; Pro+ is the floor. |
 | **33** | **Cutover defers SendGrid list deletion to 30-day cleanup; admin lifecycle-config UI removed in lockstep with table drop** (v3) | Founder review: v2 deleted the SendGrid lists at T+30 min, breaking any rollback path that needed the edge functions. Also v2 dropped the table without removing the admin UI route/panel that reads it, which would 500 the admin page. Both fixed by deferring deletion and pairing teardown steps. |
 | **34** | **"5 lifecycle slugs" scoped down to just `lifecycle-emails`** (v3) | Founder review: only one of the 5 ALLOWED_SLUGS entries is lifecycle-related; the others are unrelated and stay. |
+| **35** | **§3 Day 0 wording updated to v3 schema (`day_slot='day_0'`, `email_type`, `sg_message_id`)** (v3.1) | v3 schema edit didn't fully propagate into §3's prose. Stale references to `kind='day_0_welcome'` and `email_log_id` would have confused executors. |
+| **36** | **§3 claim-before-send SQL adds `email_type` column** (v3.1) | `email_type text NOT NULL` per §8 schema; v3 SQL omitted it. Implementation would have failed on first INSERT. |
+| **37** | **In-flight retry gate (`updated_at < now() - 5 minutes`)** (v3.1) | Real race: hourly cron could fire while async Day 0 send is still mid-dispatch, find the pending row, reconcile against an email_log that doesn't have the row yet, and trigger a duplicate send. 5-minute age gate is ~300x SendGrid's typical response time. |
+| **38** | **Partial-success reconciliation tightened with metadata-id primary join + user_id + status='sent'** (v3.1) | v3 reconciliation was directionally right but loose: missing `user_id` could falsely match in pathological cases; missing `status='sent'` could match failed rows. Primary join now uses `metadata->>'onboarding_email_log_id'` (populated by passing `metadata: { onboarding_email_log_id: row.id }` into `gatedSend`); recipient/email_type/window is the fallback. |
+| **39** | **Explicit type-cast note for `companies.account_holder_id` (text) vs `users.id` (uuid)** (v3.1) | Live schema mismatch: application code is fine because both serialize to strings in JS, but SQL queries joining these columns need an explicit cast. Same applies to `companies.admin_ids` (text[]). |
+| **40** | **Tests cover partial-success reconciliation paths and pause re-pend semantics** (v3.1) | v3 test list omitted both; without explicit coverage, the load-bearing retry and dedup behaviors could regress silently. |
 
 ---
 
 ## Revision History
 
-**v3 — 2026-05-27** (this version)
+**v3.1 — 2026-05-27** (this version)
+
+Triggered by founder's second-pass review of v3 against live code. Surfaced 6 issues — 4 substantive (stale v2 wording in §3, missing `email_type` in claim INSERT, in-flight retry race, loose reconciliation filters), 2 minor (type cast note, test coverage gaps). All verified against the live codebase and Supabase schema before applying. Changes documented in decision log entries #35–40.
+
+**v3 — 2026-05-27** (commit `baebce3`)
 
 Triggered by founder's own review of v2 against the live code and schema. Surfaced 11 findings — 3 critical (schema mismatch on `has_completed_onboarding`, wrong operator filter on `user_type`, retry-pause semantics), 7 substantive (Day 1B copy mismatch, missing `email_log_id` linkage, partial-success duplication, Vercel plan limit, admin UI breakage on cleanup, cutover/rollback contradiction, wrong slug scope), 1 minor (slug count wording), 1 nit (banned word in decision log).
 
