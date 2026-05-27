@@ -4353,6 +4353,26 @@ Related: see `07_SPECIALIZED_FEATURES.md` §26 "iPhone Calendar Mirror".
 
 ---
 
+## Outbound Email Tables (Web Only)
+
+Eleven Supabase tables back the outbound email subsystem (SendGrid transport, `gatedSend` chokepoint, campaign engine, killswitches, suppression, trial-expiry lifecycle, anomaly detection, admin console). Full schemas, RLS, and lifecycle invariants are canonical in `13_EMAIL_SYSTEM.md` § Data Model — this section is a cross-reference only.
+
+- **`email_log`** — Every `gatedSend` attempt (`sent` / `failed` / `suppression_skipped` / `paused_skipped`). Created via Supabase dashboard pre-migration-system; documented in migrations 083, 088, 094, 098.
+- **`email_events`** — SendGrid Event Webhook persistence, idempotent on `(sg_message_id, event, timestamp)`. Migration 079; auto-suppression trigger `trg_email_events_auto_suppress` added by migration 081.
+- **`email_suppressions`** — Do-not-send list queried on every send. Global + per-channel scopes (`field_notes`, `product_updates`, `reengagement`, `blog`, `beta`). Migration 080; backfill 082; sweep indexes 097.
+- **`email_pause_state`** — Three-scope live killswitch (`global` | `bucket:*` | `campaign:<uuid>`), read on every send. Migration 092.
+- **`email_pause_audit_log`** — Append-only audit of every pause / resume / auto_resume. UPDATE/DELETE revoked. Migration 093; severity + `anomaly_log_id` link added migration 104.
+- **`email_campaigns`** — Operator-scheduled marketing and lifecycle campaigns with status enum + counters. Migration 086; counter RPC migration 089; audience-template FK migration 095.
+- **`email_jobs`** — Per-recipient dispatch queue (one row per `(campaign, recipient)`). Worker claims `pending` via `claim_email_jobs()` RPC. Migration 087; unique constraint migration 091; `template_version` stamp migration 099.
+- **`email_audience_templates`** — Reusable saved audience filters. Resolved by `resolve_email_audience()` RPC. Migration 095; resolve RPC migration 096.
+- **`email_template_versions`** — Append-only template version history (UPDATE/DELETE revoked). Build-time sync from `@template-version` header + sha256. Migration 102.
+- **`email_anomaly_log`** — Deliverability anomalies (`bounce_spike` / `spam_spike` / `delivery_drop` / `volume_drop`) detected by `/api/cron/email/anomaly-check`. Migration 105.
+- **`trial_expiry_notifications`** — Dedup table for the trial-expiry cron. Unique on `(company_id, notification_type)`. Migration 053. See `13_EMAIL_SYSTEM.md` § Trial-Expiry Lifecycle.
+
+The `BEFORE INSERT ON companies` trigger `initialize_company_trial` (migrations 065, 066) — which stamps `trial_end_date` and makes the trial-expiry email path possible — is documented in `13_EMAIL_SYSTEM.md` § Data Model.
+
+---
+
 ## Schema V6 — Cashflow Forecast + PhotoAnnotation.renderedPhotoURL (2026-05-19)
 
 Consolidated iOS SwiftData schema bump shipped as ops-ios merge commit `41204a5` (cashflow-forecast → main). Purely additive over V5; SwiftData lightweight migration handles the V5 store transparently because no existing column is renamed, retyped, or made non-optional.
