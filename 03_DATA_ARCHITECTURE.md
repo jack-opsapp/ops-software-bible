@@ -60,7 +60,7 @@ The OPS data layer follows a **three-tier architecture**:
 
 ### The 49 Registered Schema Models
 
-As defined in `OPSSchemaCommon.unchangedModels` + `WizardState` (per-version) + `CalendarMirrorMap` (V5+). The schema container is built via `OPSSchemaV6` in `OPSApp.swift` (latest as of 2026-05-19 — `renderedPhotoURL` on `PhotoAnnotation`, see § V6 below).
+As defined in `OPSSchemaCommon.unchangedModels` + `WizardState` (per-version) + `CalendarMirrorMap` (V5+) + additive per-version model groups. The schema container is built via `OPSSchemaV8` in `OPSApp.swift` (latest as of 2026-05-21 — catalog setup data foundation, see § V8 below).
 
 **Core Entities (11):**
 1. **User** -- Team member with role-based permissions
@@ -199,8 +199,19 @@ final class Project: Identifiable {
     // created_at       TIMESTAMPTZ — auto-populated by Supabase default
     // created_by       UUID FK → auth.users(id) — populated by iOS on insert; index idx_projects_created_by_created_at (created_by, created_at DESC) WHERE deleted_at IS NULL speeds the recency strip query.
     // updated_at       TIMESTAMPTZ — auto-maintained by Supabase trigger; read-only from iOS, drives the JobBoard "latest edited" sort (see OPS/Views/JobBoard/JobBoardProjectListView.swift `recencyStamp(for:)`).
+    // vinyl_order_status TEXT DEFAULT 'not_ordered' CHECK ∈ {not_ordered, ordered} — Deck Builder marker-only vinyl status.
+    // vinyl_ordered_at   TIMESTAMPTZ NULL — when project vinyl was marked ordered.
+    // vinyl_ordered_by   UUID FK → auth.users(id) NULL — who marked project vinyl ordered.
 }
 ```
+
+**Deck Builder Vinyl Marker (2026-05-21)**: `projects.vinyl_order_status`,
+`projects.vinyl_ordered_at`, and `projects.vinyl_ordered_by` are a
+marker-only project field gated in UI by `deck_builder`. They do not create
+catalog orders, reserve inventory, deduct stock, resolve recipes, or materialize
+`task_materials`. iOS stores an offline projection in `ProjectVinylOrderMarker`
+so the Details tab can read the marker without mutating the historical
+`Project` SwiftData model shape.
 
 **Key Computed Properties**:
 
@@ -900,6 +911,10 @@ class Opportunity: Identifiable {
 
 **Title invariant**: `opportunities.title` is `TEXT NOT NULL`. Every insert path must supply it. A `BEFORE INSERT` trigger (`trg_opportunities_default_title` — migration `add_opportunities_title_default_trigger`) populates it from `contact_name` if a client forgets, so the column constraint never fails an otherwise valid insert. Clients should still send an explicit title to match the human-readable convention used across the product (`"{contactName} - Lead"` for manual creation).
 
+**Priority invariant**: live Supabase project `ijeekuhbatykdomumfjx` enforces `opportunities.priority IN ('low', 'medium', 'high')`. iOS client-created lead autocreation must send `medium` as the default priority; `normal` is invalid and will fail the insert.
+
+**Client-created lead invariant**: iOS client creation and contact import create a matching `opportunities` row through `ClientLeadAutocreate` immediately after the client reaches Supabase. The matching lead uses `source = 'client_created'`, a customer-derived title/contact, the saved client id, and default priority `medium`. Opportunity insert failures are surfaced to the UI instead of being swallowed as a successful client save; the only allowed missing-lead success path is a pure-local client fallback where the client itself has not reached Supabase yet.
+
 **Email title invariant**: Email-created opportunities must build titles from verified customer identity, never from `subject`, AI summaries, platform sender names, company/operator identities, or company email addresses. OPS-Web centralizes this in `src/lib/email/opportunity-title.ts`. Precedence is parsed contact-form submitter / inbound sender identity, opportunity contact identity, linked client display name, then safe email local-part. Sent-folder safety-net leads treat the external recipient as the sender identity and never use the operator sender. Imported estimate leads use `"{customerName} — Estimate"`; inbound email leads use `"{customerName} — Email Inquiry"`. `New Lead` is allowed only when no safe customer identity exists. Email subjects remain on activities/thread context, and AI-generated summaries stay in `description`/`ai_summary`.
 
 ---
@@ -1264,15 +1279,16 @@ Resolver flow:
 1. **Estimate-line creation** — `ProductConfigurationResolver` reads the product's options + modifiers + the user's choices, computes `resolved_unit_price`, snapshots `configured_options` jsonb + `resolved_options_label` to the line item. Pricing is frozen at this moment.
 2. **Install-task creation** — `RecipeResolver` walks `product_materials`, applies `configured_options` to family-pinned rows via `variantSelectorJSON`, multiplies by quantity (and `scaledByOptionId` if present), emits `task_materials` rows pinned to specific `catalog_variants`. The cut list materializes here, not at estimate time.
 
-#### Authoring surface (Web)
+#### Authoring surface (Web + iOS)
 
-The configurable layer is read-only on iOS. Authoring lives in OPS-Web at:
+The configurable layer is authorable on OPS-Web and, as of iOS Catalog Setup Phase 5 Task 10, from iOS Product detail through `ProductOptionAuthoringSheet`. Catalog Setup `LINKS` presents that same iOS sheet for the selected Product so newly authored select options and values can be mapped without creating a divergent setup-only editor.
 
 - **Route**: `/products/[id]/options` (deep-link from the product list and product edit modal)
 - **Permission**: `products.manage`
 - **Sections**:
   - **Options** — list of `product_options` rows with drag-reorder (`sort_order`), inline edit, hard delete with confirmation. Modal handles create/edit including the `kind`/`affectsPrice`/`affectsRecipe`/`required`/`defaultValue`/`optionDefaultSource` fields. For `kind = select`, the modal also exposes the nested `product_option_values` editor (add / rename / drag-reorder / delete).
   - **Pricing modifiers** — list of `product_pricing_modifiers` rendered as humanized rules (e.g. "When Color = Red → +$5.00 per unit"). Modal handles create/edit with an option picker, kind-aware trigger (value picker, integer min/max range, or implicit-when-true for boolean), modifier-kind segmented control, and amount input with live preview.
+- **iOS surface**: `OPS/Views/Catalog/Products/ProductOptionAuthoringSheet.swift` is reused by `ProductDetailView` and `CatalogSetupFlowSheet` `LINKS`. It writes narrowly through `ProductRichnessRepository` against existing `product_options`, `product_option_values`, and `product_pricing_modifiers` tables only. It enforces that select values and modifier trigger values belong to the selected Product option before saving, and local cascades keep option values, pricing modifiers, and catalog/product mappings from pointing at removed option rows.
 - **Services**: `ProductOptionsService` and `ProductPricingModifiersService` in `src/lib/api/services/`. RLS enforces company isolation through the parent product (existing policies — no new RLS).
 - **Hooks**: `useProductOptions`, `useProductOptionValues`, `useProductPricingModifiers` and the matching `useCreate*` / `useUpdate*` / `useDelete*` / `useReorder*` mutations in `src/lib/hooks/`.
 
@@ -1291,6 +1307,10 @@ CREATE TABLE public.product_bundle_items (
   bundle_product_id   uuid NOT NULL REFERENCES products(id)  ON DELETE CASCADE,
   child_product_id    uuid NOT NULL REFERENCES products(id)  ON DELETE RESTRICT,
   quantity            numeric NOT NULL DEFAULT 1 CHECK (quantity > 0),
+  relationship_kind   text    NOT NULL DEFAULT 'required'
+    CHECK (relationship_kind IN ('required', 'suggested')),
+  suggestion_reason   text NULL,
+  compatibility_selector jsonb NULL,
   display_order       int     NOT NULL DEFAULT 0,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now(),
@@ -1299,7 +1319,9 @@ CREATE TABLE public.product_bundle_items (
 );
 ```
 
-Indexes on `bundle_product_id`, `child_product_id`, `company_id` (all partial `WHERE deleted_at IS NULL`). RLS: single `company_isolation` policy matching the existing pattern on `products` / `product_materials` — `company_id = (SELECT private.get_user_company_id())`. Permission gating (`catalog.products.manage`) lives in iOS/web permission_store before mutation, not in RLS.
+Indexes on `bundle_product_id`, `child_product_id`, `company_id`, and `(company_id, bundle_product_id, relationship_kind, display_order)` (all partial `WHERE deleted_at IS NULL`). RLS: single `company_isolation` policy matching the existing pattern on `products` / `product_materials` — `company_id = (SELECT private.get_user_company_id())`. Permission gating (`catalog.products.manage`) lives in iOS/web permission_store before mutation, not in RLS.
+
+`relationship_kind` separates always-included bundle children from suggested add-ons. `required` is the backward-compatible default for existing rows and old clients. Required rows participate in bundle rollup price and future materialization. Suggested rows render separately as add-ons and do not change bundle price unless the operator explicitly chooses them downstream. `suggestion_reason` is operator-facing rationale for optional rows. `compatibility_selector` is reserved JSONB for future product-option compatibility filters; current iOS sync preserves it without interpreting it after the target schema capability probe confirms the columns exist.
 
 **Pricing mode — `products.bundle_pricing_mode`**:
 
@@ -1313,11 +1335,11 @@ Nullable text column on `products`, CHECK `bundle_pricing_mode IS NULL OR bundle
 - **Bundle nesting (bundles whose children include another bundle) is disallowed for v1 in the iOS UI** — the child picker drawer filters out `kind='package'` products. Not enforced at the DB; defer to v2 if a real need emerges.
 
 **iOS surfaces**:
-- `ProductBundleItem` SwiftData @Model (`DataModels/Supabase/Catalog/ProductBundleItem.swift`) — local cache with `lastSyncedAt` + `needsSync` per the standard sync pattern.
-- `ProductBundleItemRepository` — fetch / create / update / soft-delete.
+- `ProductBundleItem` SwiftData @Model (`DataModels/Supabase/Catalog/ProductBundleItem.swift`) — V8 local cache with `relationshipKind`, `suggestionReason`, `compatibilitySelectorJSON`, `lastSyncedAt`, and `needsSync` per the standard sync pattern. V3-V7 schemas use a frozen legacy ProductBundleItem model so those fields do not rewrite historical schema fingerprints.
+- `ProductBundleItemRepository` — fetch / create / update / soft-delete. Create/update writes omit relationship columns until `CatalogSchemaCapabilityGate` proves the target has them.
 - `NewBundleSheet` — full create flow (V4 hybrid layout: inline child picker drawer + selected-children list with integer steppers + AUTO/OVERRIDE pricing segmented control).
-- `BundleCompositionEditSheet` — diff-based edit of an existing bundle's children.
-- `BundleCompositionReadOnlyView` — embedded in `ProductDetailView` when `kind == .package`, replaces the recipe section.
+- `BundleCompositionEditSheet` — diff-based edit of required bundle children. Suggested add-ons are displayed separately and preserved; they are not loaded into the required child editor or bundle rollup price.
+- `BundleCompositionReadOnlyView` — embedded in `ProductDetailView` when `kind == .package`, replaces the recipe section, and separates required rows from suggested add-ons.
 - `InboundProcessor.syncProductBundleItems` — pulls server rows, preserves pending local edits via `needsSync` guard, reconciles deletions scoped to the company's product space.
 - `SyncEntityType.productBundleItem` — priority 13, alongside other product-richness tables.
 
@@ -1412,6 +1434,8 @@ class PhotoAnnotation: Identifiable {
     var localDrawingData: Data?              // PKDrawing data for offline editing
 }
 ```
+
+**Classic markup visibility contract (verified 2026-05-25):** `project_photo_annotations.photo_url` remains the source image URL and `annotation_url` remains the transparent PencilKit overlay PNG. iOS renders classic markup overlays in the fitted display-canvas coordinate space, not raw source-photo pixels, then composites by scaling the overlay over the source image. Project detail/photo viewers must handle a cold cache by downloading both the source photo and the overlay URL before writing the composited image into `ImageCache`; otherwise another device can see only the unmarked source image after sync.
 
 ---
 
@@ -2062,7 +2086,7 @@ When building any feature with user actions, gate with `<PermissionGate>` or `ca
 
 ## Catalog & Variant Model
 
-The Catalog domain replaces the legacy file-only `Inventory*` models with a fully registered, variant-aware schema. Stockable SKUs (variants) and billable templates (Products) are separate concerns bridged by `ProductMaterial` recipe rows. All 14 catalog entities + 4 product extensions live in `OPS/DataModels/Supabase/Catalog/` and are registered in `OPSSchemaCommon.unchangedModels`.
+The Catalog domain replaces the legacy file-only `Inventory*` models with a fully registered, variant-aware schema. Stockable SKUs (variants) and billable templates (Products) are separate concerns bridged by `ProductMaterial` recipe rows. Catalog entities and Product extension models live in `OPS/DataModels/Supabase/Catalog/` and are registered through `OPSSchemaCommon` version groups.
 
 ```
 catalog_categories (nested via parent_id, 2-level UI)
@@ -2070,6 +2094,7 @@ catalog_categories (nested via parent_id, 2-level UI)
         ├─ catalog_options (variant axis: "Color", "Mount Type")
         │     └─ catalog_option_values (selectable values)
         ├─ catalog_variants (the SKU — has quantity, threshold, unit)
+        │     ├─ catalog_stock_units (physical rolls/offcuts/lots under one SKU)
         │     └─ catalog_variant_option_values (M2M: variant ↔ option_value combo)
         └─ catalog_item_tags ─→ catalog_tags (FAMILY-level free-form labels)
 
@@ -2077,6 +2102,7 @@ catalog_units (renamed from inventory_units)
 catalog_snapshots / catalog_snapshot_items (variant-aware point-in-time)
 catalog_orders / catalog_order_items (threshold-driven restock — NEW)
 company_default_products (component_type → product_id mapping — NEW)
+catalog_product_option_mappings (catalog option axis/value ↔ product option axis/value)
 ```
 
 **IMPORTANT change from legacy:** tags now apply at the **family** level, not the variant level. A "Corner" family carries tags like `discontinued`; not each variant separately. The legacy threshold columns on `catalog_tags` are preserved in storage but no longer surfaced in the iOS UI — effective-threshold compute now flows variant-override → family-default → category-default.
@@ -2136,6 +2162,8 @@ final class CatalogItem: Identifiable {
 
 **RLS**: company_isolation. **Indexes**: `(company_id, category_id, deleted_at)`.
 
+**iOS stock workflow (updated 2026-05-25)**: `CatalogItem.imageUrl` is the item/family image shown in the stock variant sheet. Uploads use the existing public `product-thumbnails` Storage bucket and the verified `{company_id}/{catalog_item_id}/{uuid}.jpg` object path; the returned public URL is patched to `catalog_items.image_url`. No variant-level image column exists.
+
 ### CatalogVariant
 
 **File**: `DataModels/Supabase/Catalog/CatalogVariant.swift`
@@ -2162,7 +2190,11 @@ final class CatalogVariant: Identifiable {
 }
 ```
 
-**Threshold fallback** (canonical): variant override → family default → category default → null. **Indexes**: `(catalog_item_id, deleted_at)`, `(sku) WHERE deleted_at IS NULL`. **RLS**: company_isolation joined via `catalog_items.company_id`.
+**Variant identity**: there is no separate `name` column on `catalog_variants`. iOS display names are derived from family name + ordered option values (`CatalogItem.name · CatalogOptionValue.value...`); SKU remains secondary metadata and duplicate-SKU warning input, not the primary distinguishing label.
+
+**Threshold fallback** (canonical): variant override → family default → category default → null. **Quantity policy**: mirrored aggregate. `catalog_variants.quantity` remains the operational value read/written by current iOS stock screens, thresholds, and catalog order fulfillment. `catalog_stock_units` provides physical roll/offcut identity; any stock-unit mutation must mirror the available aggregate back into `catalog_variants.quantity`. For dimensional roll/offcut rows, iOS mirrors area when remaining length and width are both present and share a unit (`sq ft`, `sq in`, etc.); otherwise it mirrors a single length unit when available, then falls back to count. **Indexes**: `(catalog_item_id, deleted_at)`, `(sku) WHERE deleted_at IS NULL`, unique `(company_id, lower(btrim(sku))) WHERE deleted_at IS NULL AND sku IS NOT NULL AND btrim(sku) <> ''`. **RLS**: company_isolation joined via `catalog_items.company_id`.
+
+**Duplicate identity policy (verified 2026-05-21)**: normalized SKUs are hard-unique per company at the database layer. The iOS setup validator treats duplicate SKU as warning-level so the user can correct or intentionally proceed to the DB guard; matrix option signatures are blocking in iOS before commit. Matrix signatures are not yet DB-unique: live data has an active Diverter family with two variants sharing the same option-value signature, so a DB constraint would require a separate approved cleanup first.
 
 `ThresholdStatus` enum (`.normal`, `.warning`, `.critical`) currently lives in `InventoryItem.swift` for backward source compatibility; will move to `DataModels/Enums/ThresholdStatus.swift` when the legacy file is deleted.
 
@@ -2221,6 +2253,39 @@ final class CatalogVariantOptionValue {
 
 PRIMARY KEY `(variant_id, option_value_id)`.
 
+### CatalogStockUnit
+
+**File**: `DataModels/Supabase/Catalog/CatalogStockUnit.swift`
+**Purpose**: Physical unit under one `CatalogVariant`. Used for roll/offcut/lotted inventory where variant-level `quantity` is too coarse to track actual usable material.
+
+```swift
+@Model
+final class CatalogStockUnit: Identifiable {
+    @Attribute(.unique) var id: String
+    var companyId: String
+    var catalogVariantId: String
+    var unitKind: CatalogStockUnitKind       // roll / offcut / box / each / lot / pallet / length
+    var label: String?
+    var lotCode: String?
+    var widthValue: Double?
+    var widthUnit: String?
+    var originalLengthValue: Double?
+    var remainingLengthValue: Double?
+    var lengthUnit: String?
+    var quantityValue: Double
+    var location: String?
+    var status: CatalogStockUnitStatus       // full / partial / reserved / consumed / scrapped
+    var sourceOrderItemId: String?
+    var notes: String?
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+    var deletedAt: Date?
+}
+```
+
+Only `full` and `partial` units contribute to available-unit aggregation. Roll/offcut units aggregate to area when `remainingLengthValue`, `widthValue`, `lengthUnit`, and `widthUnit` form one dimensional unit system; the mirrored label must show that basis (for example, `504 sq ft`). If area cannot be computed, length rollups are grouped by `lengthUnit`; if that also cannot produce a single scalar, `quantityValue` is the fallback. SQL migration: `migrations/2026-05-21-04-catalog-stock-units.sql`. RLS: company_isolation. Indexes: `(company_id, updated_at)`, `(catalog_variant_id)`, `(company_id, status)` for active rows.
+
 ### CatalogTag
 
 **File**: `DataModels/Supabase/Catalog/CatalogTag.swift`
@@ -2256,6 +2321,8 @@ final class CatalogItemTag {
     var lastSyncedAt: Date?
 }
 ```
+
+**iOS stock workflow (updated 2026-05-25)**: family tags can be assigned when creating a stock family and edited from the variant sheet. The write path deletes and reinserts `catalog_item_tags` for one `catalog_item_id`; RLS is enforced through the joined `catalog_items.company_id` policy.
 
 ### CatalogUnit
 
@@ -2505,6 +2572,34 @@ final class ProductMaterial: Identifiable {
 
 CHECK: `(catalog_variant_id IS NOT NULL) <> (catalog_item_id IS NOT NULL)`.
 
+**`CatalogProductOptionMapping`** — explicit bridge between stock identity axes and sellable product options.
+
+```swift
+enum CatalogProductOptionMappingKind: String, CaseIterable, Codable {
+    case axis
+    case value
+}
+
+@Model
+final class CatalogProductOptionMapping: Identifiable {
+    @Attribute(.unique) var id: String
+    var companyId: String
+    var productId: String
+    var catalogItemId: String
+    var catalogOptionId: String
+    var productOptionId: String
+    var catalogOptionValueId: String?
+    var productOptionValueId: String?
+    var mappingKind: CatalogProductOptionMappingKind
+
+    var lastSyncedAt: Date?
+    var needsSync: Bool = false
+    var deletedAt: Date?
+}
+```
+
+`axis` rows link one `catalog_options` axis to one `product_options` knob; both value IDs must be null. `value` rows link one `catalog_option_values` row to one `product_option_values` row under the already-linked axes; both value IDs must be present and belong to their parent options. Unique partial indexes prevent duplicate active axis/value mappings, and migration `migrations/2026-05-21-06-catalog-product-option-mapping-fk-indexes.sql` adds leading-column partial FK indexes for the four option/value references flagged by the Supabase advisor. SQL migration: `migrations/2026-05-21-05-catalog-setup-relationships.sql`. RLS: company_isolation.
+
 > **Legacy note:** the older `Inventory*` SwiftData files (`InventoryItem`, `InventorySnapshot`, `InventorySnapshotItem`, `InventoryTag`, `InventoryUnit`) remain on disk for compile-time references during the V2→V3 migration window but are **no longer registered in `OPSSchemaCommon`**. They are removed by Phase 4 of plan `2026-05-06-ios-catalog-variant-model.md`. SQL-side, the `inventory_*` tables are renamed to `catalog_*` by migration `2026-05-06-01-catalog-schema.sql`.
 
 ### Catalog Import RPCs (added 2026-05-08)
@@ -2541,7 +2636,7 @@ Both are gated by `private.get_user_company_id() = p_company_id`. `EXECUTE` gran
 - `category_id` / `default_unit_id` / variant `unit_id` (if set) must reference active rows in the same company.
 - All numeric fields >= 0.
 - Variant `quantity` required + numeric; `family_row_index` must reference a family in the same payload.
-- Non-empty `sku` cannot collide with an existing active variant in the company (DB has no unique constraint on SKU — the RPC enforces it).
+- Non-empty `sku` cannot collide with an existing active variant in the company. The RPC catches this before insert; the live database also has the normalized per-company SKU uniqueness guard.
 
 **Atomicity**: both functions return normally on validation failure (returning the failure object), so the implicit transaction does NOT commit when a failure path is taken. The `apply` function's INSERT statements run only inside the success path; any error during INSERT raises and rolls back the transaction. The client never sees partial state.
 
@@ -2652,6 +2747,8 @@ final class DeckDesign: Identifiable {
 
 Live schema verified 2026-05-12 in project `ijeekuhbatykdomumfjx`: `deck_designs.id`, `company_id`, `project_id`, and `created_by` are PostgreSQL `uuid` columns; `project_id` and `created_by` are nullable. iOS canonicalizes UUID strings to lowercase before queueing sync payloads so local SwiftData ids match the lowercase UUID strings returned by Postgres. Project-create capture starts with `projectId == nil`; once the project id exists, iOS records a deck-design create/upsert or update sync operation carrying the real `project_id` so the drawing does not remain a standalone sketch in Supabase. Inbound sync must also merge `project_id` onto existing local `DeckDesign` rows; otherwise devices that already cached a standalone row will continue showing it outside the project even after Supabase has the corrected association. The project Deck tab performs a targeted `fetchForProject` self-heal when no local design is attached, then inserts/merges the returned rows into SwiftData so repaired server associations appear without waiting for an app-wide sync.
 
+Live data verified 2026-05-20 in project `ijeekuhbatykdomumfjx`: active `deck_designs` rows exist for project-attached designs, and some legacy `drawing_data` payloads omit the top-level `surfaces` key while still carrying valid vertices, edges, footprint, config, levels, and level connections. Active rows also store `drawing_data.footprint.isClosed` as numeric `0`/`1`, not strict JSON booleans. Inbound iOS decoders must treat missing optional/defaulted `DeckDrawingData` fields as empty/default values and tolerate legacy numeric/string/strict boolean values for deck drawing booleans. A single legacy row must not cause the full `[SupabaseDeckDesignDTO]` pull to fail, because a fresh install depends on that inbound pass to repopulate deck designs.
+
 ### `drawingDataJSON` schema
 
 `drawingDataJSON` is the serialized form of `DeckDrawingData`. The catalog-relevant subset is:
@@ -2662,7 +2759,13 @@ Live schema verified 2026-05-12 in project `ijeekuhbatykdomumfjx`: `deck_designs
   "edges":            [ ... ],
   "footprint":        { ... },
   "surfaces":         [ ... ],
-  "config":           { ... },
+  "config":           {
+    // Optional Deck Builder vinyl default. When present, this is the
+    // active `catalog_items.id` used by Vinyl Order; the order sheet still
+    // requires the user to pick an active variant/color before it writes a
+    // `catalog_order_items` row. Missing/null means use field text color.
+    "vinylCatalogItemId": "<catalog_items.id> | null"
+  },
   "scaleFactor":      <Double>,
   "overallElevation": <Double>,
   "levels":           [ ... ],          // multi-level only
@@ -2689,8 +2792,8 @@ Live schema verified 2026-05-12 in project `ijeekuhbatykdomumfjx`: `deck_designs
 
 | `component_type` | Source in geometry | Required metadata keys |
 |---|---|---|
-| `railing` | One per `DeckEdge` with `railingConfig` | `linear_feet` (Double, edge length minus stair span minus all gate widths), `corners_count` (Int — currently always 0; corners live at vertex boundaries, not inside edges, so per-edge attribution would double-count), `color` (String, `RailingConfig.color`), `mount_type` (String, `RailingConfig.mountType`), `mount_surface` (String, `RailingConfig.mountSurface`), `edge_id` (String), optional `level_id` (String) |
-| `post_set` | One per railing — co-emitted alongside the railing component | `count` (Int, `DimensionEngine.postCount`), `height` (Double inches, `RailingConfig.postHeight`), `color` (mirrors railing), `mount_type` (mirrors railing), `edge_id`, optional `level_id` |
+| `railing` | One per deck-edge `DeckEdge` with `railingConfig`; house edges never emit railing | `linear_feet` (Double, edge length minus stair span minus all gate widths), `corners_count` (Int — currently always 0; corners live at vertex boundaries, not inside edges, so per-edge attribution would double-count), `color` (String, `RailingConfig.color`), `mount_type` (String, `RailingConfig.mountType`), `mount_surface` (String, `RailingConfig.mountSurface`), `edge_id` (String), optional `level_id` (String), optional `wall_material` (String, only for `parapet_wall`) |
+| `post_set` | One per post-supported railing; not emitted for `parapet_wall` | `count` (Int, `DimensionEngine.postCount`), `height` (Double inches, `RailingConfig.postHeight`), `color` (mirrors railing), `mount_type` (mirrors railing), `edge_id`, optional `level_id` |
 | `stair_set` | One per `DeckEdge` with `stairConfig`, plus one per `LevelConnection` (multi-level) | `tread_count` (Int, `StairConfig.calculateTreadCount` or override), `width` (Double inches, `StairConfig.width`), `color` (String, `StairConfig.color`), `mount_type` (String — vocabulary `Surface | Top | Side`, distinct from railing), `edge_id` OR `connection_id` + `level_id` (upper level) |
 | `deck_board` | One per `DeckSurface` with a detected face match (per-face area), or one per legacy footprint when surfaces empty | `sqft` (Double, `PolygonMath.realWorldArea(face) / 144.0`), `color` (String, `DeckSurface.color`), `material` (String, `DeckSurface.boardMaterial`), `surface_id` (String — the persisted DeckSurface id, or sentinel `"footprint"` for the legacy fallback), optional `level_id` |
 | `gate` | One per `isGate=true` AssignedItem on an edge | `count` (Int — 1 per row), `width` (Double inches — default 36), `color` / `mount_type` / `mount_surface` (mirror parent railing or fall back to defaults Black / Topmount / Surface), `edge_id`, optional `level_id` |
@@ -2722,6 +2825,7 @@ var color: String = "Black"
 var mountType: String = "Topmount"      // Topmount | Sidemount | Surface
 var mountSurface: String = "Surface"    // Surface | Concrete | other
 var postHeight: Double = 36.0           // inches
+var wallMaterial: HouseEdgeMaterial = .parapet // parapet wall finish
 
 // StairConfig (additions)
 var color: String = "Black"
@@ -2734,6 +2838,8 @@ var boardMaterial: String = "composite" // composite | pvc | cedar | treated | o
 // AssignedItem (additions)
 var isGate: Bool = false                // drives gate component emission
 ```
+
+`DeckEdge.edgeType` is mutually exclusive with the edge-side finish model: `house_edge` carries `houseEdgeMaterial` and no `railingConfig`; `deck_edge` may carry `railingConfig` and clears `houseEdgeMaterial`. Decoders and AR import sanitize legacy payloads that contain both.
 
 Free-text strings, not enums, because companies author option values per Product (`product_option_values.value`). The assignment sheet renders a Picker over the matching axis when the company default Product exposes one bound to `$design.<key>`; otherwise free-text.
 
@@ -3124,6 +3230,8 @@ Extension methods `toModel()` on each DTO. Key deviations documented in code com
 
 DTOs for the `products` table. The wire-field bug from earlier builds — DTOs mapping `unit_price`/`cost_price` to columns that don't exist — is fixed: `base_price` and `unit_cost` are the canonical column names. ops-web continues to read `default_price` while the Postgres mirror trigger is in place; iOS reads/writes `base_price`.
 
+iOS inbound sync must merge active and inactive `products` before `product_options`, `product_option_values`, and `catalog_product_option_mappings`; Catalog Setup `LINKS` reads its picker from local `Product` rows, so option sync without product hydration leaves the picker empty.
+
 | DTO | Purpose |
 |-----|---------|
 | `ProductDTO` | Read with all 18 fields including `kind`, `pricingUnit`, `sku`, `isFavorite`, `minimumCharge`, `minimumQuantity`, `showBomOnEstimate`, `showInStorefront`, `tieredPricing`, `unitId`. `toModel() -> Product` |
@@ -3133,7 +3241,7 @@ DTOs for the `products` table. The wire-field bug from earlier builds — DTOs m
 
 ### CatalogDTOs.swift
 
-DTOs for the 12 catalog tables and the variant ↔ option-value join. All include snake_case `CodingKeys` for Supabase column mapping.
+DTOs for the catalog tables and the variant ↔ option-value join. All include snake_case `CodingKeys` for Supabase column mapping.
 
 | DTO | Purpose |
 |-----|---------|
@@ -3148,6 +3256,7 @@ DTOs for the 12 catalog tables and the variant ↔ option-value join. All includ
 | `CatalogUnitDTO` / `CreateCatalogUnitDTO` / `UpdateCatalogUnitDTO` | `catalog_units` — exposes `dimension` and `abbreviation` (was a bug pre-V3) |
 | `CatalogSnapshotDTO` / `CreateCatalogSnapshotDTO` | `catalog_snapshots` |
 | `CatalogSnapshotItemDTO` / `CreateCatalogSnapshotItemDTO` | `catalog_snapshot_items` (variant-aware) |
+| `CatalogStockUnitDTO` / `CreateCatalogStockUnitDTO` / `UpdateCatalogStockUnitDTO` | `catalog_stock_units` (physical rolls/offcuts/lots under variants; gated by `CatalogSchemaCapabilityGate`) |
 
 ### ProductExtensionDTOs.swift
 
@@ -3155,10 +3264,12 @@ DTOs for the four Product-extension tables that drive Configurable Products.
 
 | DTO | Purpose |
 |-----|---------|
-| `ProductOptionDTO` / `CreateProductOptionDTO` | `product_options` — knob definitions |
-| `ProductOptionValueDTO` / `CreateProductOptionValueDTO` | `product_option_values` — `kind=select` selectable values |
-| `ProductPricingModifierDTO` / `CreateProductPricingModifierDTO` | `product_pricing_modifiers` — price bumps per option/value |
+| `ProductOptionDTO` / `CreateProductOptionDTO` / `UpdateProductOptionDTO` | `product_options` — knob definitions |
+| `ProductOptionValueDTO` / `CreateProductOptionValueDTO` / `UpdateProductOptionValueDTO` | `product_option_values` — `kind=select` selectable values |
+| `ProductPricingModifierDTO` / `CreateProductPricingModifierDTO` / `UpdateProductPricingModifierDTO` | `product_pricing_modifiers` — price bumps per option/value |
 | `ProductMaterialDTO` / `CreateProductMaterialDTO` / `UpdateProductMaterialDTO` | `product_materials` — recipe rows (variant-pinned or family-pinned) |
+| `CatalogProductOptionMappingDTO` / `CreateCatalogProductOptionMappingDTO` / `UpdateCatalogProductOptionMappingDTO` | `catalog_product_option_mappings` — catalog axis/value to product option/value bridge; gated by `CatalogSchemaCapabilityGate` |
+| `ProductBundleItemDTO` / `CreateProductBundleItemDTO` / `UpdateProductBundleItemDTO` | `product_bundle_items` — bundle composition; relationship fields are encoded only after the capability gate proves those columns exist |
 
 ### CompanyDefaultProductDTOs.swift
 
@@ -4260,6 +4371,23 @@ These new model types are the *real* checksum differentiator vs V5 — V6's hash
 **Migration:** `OPSMigrationPlan.addForecastModelsV5toV6` — `MigrationStage.lightweight(fromVersion: OPSSchemaV5.self, toVersion: OPSSchemaV6.self)`. No data transform.
 
 **Supabase side:** the cashflow tables already shipped earlier (`recurring_expenses`, `forecast_alerts`, additive columns on `payment_milestones` + `expense_settings` — see § Cashflow Forecast below). `renderedPhotoURL` mirrors `project_photo_annotations.rendered_photo_url` (nullable text); sync write lives in `DimensionedPhotoSyncManager`.
+
+## Schema V8 — Catalog Setup Data Foundation (2026-05-21)
+
+Current iOS SwiftData schema version after the catalog/inventory setup foundation pass. V7 introduced `ProjectVinylOrderMarker`; V8 is the next additive bump. Historical V3-V7 schemas keep a frozen legacy `ProductBundleItem` model, and V8 is the first schema stage that swaps in the live top-level `ProductBundleItem` shape with relationship metadata.
+
+**Adds two new `@Model` entities** (`OPSSchemaCommon.v8CatalogSetupModels`):
+
+- `CatalogStockUnit` — local parity for `catalog_stock_units`, the physical roll/offcut/lot layer under `catalog_variants`.
+- `CatalogProductOptionMapping` — local parity for `catalog_product_option_mappings`, the explicit bridge between catalog variant axes and Product option axes/values.
+
+**Extends `ProductBundleItem` additively** with `relationshipKind`, `suggestionReason`, and `compatibilitySelectorJSON`. Existing rows decode as `relationshipKind = .required`. Runtime sync/write paths are schema-capability gated so targets without the 2026-05-21 setup migrations skip `catalog_stock_units` / `catalog_product_option_mappings` and omit bundle relationship columns.
+
+**Migration:** `OPSMigrationPlan.addCatalogSetupModelsV7toV8` — lightweight `V7 → V8`. No data transform; the next catalog sync hydrates server rows.
+
+**Supabase side:** migrations `migrations/2026-05-21-04-catalog-stock-units.sql` and `migrations/2026-05-21-05-catalog-setup-relationships.sql` are additive and must be applied only to an approved target. The second migration intentionally does not add a DB-level matrix-signature uniqueness constraint because live preflight found an active Diverter duplicate signature. iOS validation blocks new duplicate matrix signatures before commit.
+
+**iOS setup UI:** `CatalogSetupFlowSheet` refreshes `CatalogSchemaCapabilityGate` and blocks before the first repository write if the draft includes stock units but `catalog_stock_units` is unavailable. It writes through the existing repository layer only after preflight: `CatalogRepository` creates the family, catalog axes, option values, variants, and variant-option joins; `CatalogStockUnitRepository` creates physical roll/offcut rows with label, lot code, original length, remaining length, width, unit, location, status, and notes; `CatalogProductOptionMappingRepository` creates axis/value bridges only after the capability gate confirms `catalog_product_option_mappings`; `ProductRepository` links an optional sellable Product through `products.linked_catalog_item_id`. Draft validation treats duplicate SKUs as warnings, duplicate matrix signatures as blockers, and product-option value mappings as blockers when a selected product value does not belong to the selected product option. Available stock-unit rows (`full` / `partial`) mirror their aggregate into the created `catalog_variants.quantity`; dimensional roll/offcut rows mirror area when length and width share a unit. Reserved, consumed, and scrapped rows do not inflate availability.
 
 ## Cashflow Forecast (2026-05-11)
 
