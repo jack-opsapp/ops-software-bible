@@ -2282,6 +2282,157 @@ Window states surfaced to the read-only UI: `active`, `expired`, `no_walkthrough
 
 **i18n**: `src/i18n/dictionaries/{en,es}/spec.json` — `confirmation.heading`, `confirmation.subtitle`. Per-tier `confirmation.timeline.{setup|build|enterprise}` keys retained but not currently rendered (kept for future tier-specific copy).
 
+### POST `/api/cron/spec-nudges` (Stage C.5 — ops-site)
+
+**Source**: `ops-site/src/app/api/cron/spec-nudges/route.ts` + `ops-site/src/lib/spec/cron/*`. Landed 2026-05-26 on `feat/spec-cron-nudges` (ops-site). Migration: `ops-software-bible/migrations/2026-05-26-04-spec-stage-c5-cron-columns.sql` (applied to live ops-app on 2026-05-26 via Supabase MCP).
+
+**Purpose**: SPEC Phase 1 daily nudge / status-flip / outbox-retry processor. Single Vercel cron endpoint that drives every time-anchored SPEC side effect. Replaces the placeholder cron commitment in 07_ROLLOUT.md § 12.
+
+**Vercel cron schedule** (`ops-site/vercel.json`):
+
+```json
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    { "path": "/api/cron/spec-nudges", "schedule": "0 17 * * *" }
+  ]
+}
+```
+
+`0 17 * * *` UTC ≈ 09:00 America/Vancouver during PST (UTC-8). Drifts to 10:00 local during PDT (UTC-7). The one-hour DST drift is acceptable because none of the nudges are minute-sensitive (intake-reminder copy reads "your intake is waiting", not "your intake is waiting at 9am"). Vercel cron evaluates schedules in fixed UTC; there is no native local-TZ cron expression. **Cost note**: Vercel cron is free on Pro tier. The route is invoked once per day, finishes in seconds, well under the 300s default function timeout.
+
+**Auth**: Vercel automatically attaches `Authorization: Bearer ${CRON_SECRET}` when `CRON_SECRET` is set as an env var on the project. The route validates the header with `crypto.timingSafeEqual` and 401s on mismatch. Missing `CRON_SECRET` env returns 500. The check is constant-time to avoid timing-leak inference of the secret. **Required env var for live deployment**: `CRON_SECRET`.
+
+**Response shape (200)**:
+
+```jsonc
+{
+  "status": "ok",
+  "summary": {
+    "ranAt": "2026-06-01T17:00:00.000Z",
+    "durationMs": 482,
+    "total": { "considered": 12, "fired": 7, "errored": 0 },
+    "tasks": [
+      { "task": "intake_reminders", "considered": 4, "fired": 2, "errored": 0, "details": [...] },
+      // ... 7 more
+    ]
+  }
+}
+```
+
+The route always returns 200 with this summary once `CRON_SECRET` validation passes — even if every task errored. The per-task `errored` counts surface failures without triggering Vercel's cron retry, which would compound a partial-success day.
+
+**Tasks (executed sequentially, each in its own try/catch)**:
+
+1. **`intake_reminders`** — `spec_projects` rows where `status='deposit_paid'` AND `intake_completed_at IS NULL`. Walks D14 / D21 / D28 cadence via `template_id IN (spec.intake_reminder_1, _2, _3)`. Idempotency via the new `intake_reminder_count` + `last_intake_reminder_at` columns (added by migration `2026-05-26-04`). Stages emails into `spec_email_outbox`; task 7 dispatches them on the same run.
+
+2. **`intake_no_discovery_nudges`** — `spec_projects` where `intake_completed_at IS NOT NULL` AND `discovery_scheduled_at IS NULL`. Walks D7 / D14 / D21 cadence via `template_id IN (spec.intake_completed_no_discovery_1, _2, _3)`. Idempotency via new `intake_no_discovery_reminder_count` + `last_intake_no_discovery_reminder_at` columns.
+
+3. **`owner_approval_expiry`** — `spec_owner_approval_requests` where `status='pending'` AND `expires_at < now()`. Flips approval `status='expired'`, stamps `decided_at=now()`. Flips parent `spec_projects.status='cancelled'` with `cancellation_reason='owner_approval_expired'`, `cancelled_at=now()`. The CHECK constraint `spec_projects_tos_required_after_deposit` requires TOS evidence outside the pre-deposit states; cancelling from `awaiting_owner_approval` requires stamping synthetic TOS placeholders (`tos_version_accepted='owner_approval_expired'`, `tos_accepted_at=now()`). The placeholder string is unambiguously distinguishable from real buyer-signed evidence both lexically and via the adjacent `cancellation_reason`. Sends `spec.owner_approval_expired_buyer` + `spec.owner_approval_expired_owner` (templates not yet registered in Stage H — open item below). Notifies buyer + account_holder via in-app rail + email. Notifies operators.
+
+4. **`customer_requested_hold_expiry`** — `spec_projects` where `status='on_hold'` AND `hold_type='customer_requested'` AND `on_hold_expires_at < now()`. Flips `status='stalled_on_hold'`, stamps `stalled_at` + `stalled_reason='customer_requested_hold_expired'`. Per locked capacity semantics (03_WORKFLOW.md § Capacity-consuming states), customer_requested holds already freed the slot at hold-entry — no capacity change here. Sends `spec.hold_expired_customer_requested` (template not yet registered — open item below). In-app notification + operator notification.
+
+5. **`ops_blocked_review_reminder`** — `spec_projects` where `status='on_hold'` AND `hold_type='ops_blocked'` AND `on_hold_at < now() - 14 days`. Dispatches a persistent operator notification (no customer-facing action) suggesting Jackson decide: convert to `customer_requested` (frees slot) or escalate to stall. Idempotency via new `ops_blocked_review_reminder_sent_at` column — won't refire for the same `ops_blocked` spell.
+
+6. **`non_payment_disable`** — `spec_payments` where `status IN ('invoiced','overdue')` AND `due_date < (now() - 7 days)`. For each unique `spec_project_id`, flips every `spec_module_entitlements` row that isn't already at `disabled_reason='non_payment'` to `enabled=false, disabled_reason='non_payment', disabled_at=now()`. Detects "first-time" disable by checking if any entitlement row is still `enabled=true` OR has a different `disabled_reason` — won't notify twice. Sends `spec.modules_disabled_non_payment` (template not yet registered — open item below). Persistent customer + operator notifications.
+
+7. **`spec_email_outbox_retry`** — `spec_email_outbox` rows where `status IN ('pending','failed')` AND `attempts < 5` AND `(last_attempt_at IS NULL OR last_attempt_at < now() - 1h)`. Capped at 500 rows per run. For each row, calls `dispatchSpecEmail()` which POSTs to OPS-Web's internal SPEC send endpoint (see Topology below). On success: `status='sent', sent_at=now()`. On transient failure: bump attempts, `status='failed'`. On permanent failure (4xx from OPS-Web): bump attempts; at attempt ≥ 5 mark `status='permanent_failure'` + operator notification. On not-configured (env vars missing): operator notification, task aborts without bumping attempts so a misconfiguration doesn't walk every row to permanent_failure.
+
+8. **`conversion_event_outbox_retry`** — `conversion_event_outbox` rows with the same eligibility predicate. Per 07_ROLLOUT.md open item #8 (Meta CAPI + Google Enhanced credentials not yet provisioned at Phase 1 launch), the task short-circuits with a no-op when both env credential sets are absent — rows stay pending without bumping attempts. When credentials are present, the task invokes the Meta CAPI + Google Enhanced senders (currently a stub returning a `sender_not_implemented` transient failure — to be replaced when ad-platform sender modules land). The cron loop is in place and will start succeeding the moment the senders are wired.
+
+**Run summary** is persisted via `persistRunSummary()` as a `spec_communications` system-channel row attached to the most-recently-created `spec_projects` row. The full JSON summary lands in the `body` column for replay. If there are zero `spec_projects` rows in the system, the persistence step is skipped (nothing to attach to via FK).
+
+#### Topology decision — email dispatch (locked Stage C.5)
+
+ops-site is the only place that owns `spec_email_outbox` writes (Stage C.1 onward — every checkout, webhook, owner-approval, intake-submit, refund-request path enqueues there). OPS-Web is the only place that owns SendGrid + the React Email `Spec*.tsx` templates (Stage H, commit `dec9c71d`). Rather than duplicate the template + SendGrid stack on the ops-site side OR cross-import OPS-Web modules (different repo, different package, different deploy target), the Stage C.5 cron drains `spec_email_outbox` by HTTP POSTing each pending row to OPS-Web's internal endpoint:
+
+```
+POST {OPS_WEB_INTERNAL_BASE_URL}/api/internal/spec/send-email
+Authorization: Bearer ${OPS_INTERNAL_DISPATCH_SECRET}
+Content-Type: application/json
+
+{
+  "template_id": "spec.intake_reminder_1",
+  "recipient_email": "buyer@example.com",
+  "recipient_user_id": "uuid-or-null",
+  "spec_project_id": "uuid-or-null",
+  "payload": { ... template-specific shape ... },
+  "is_test": false
+}
+```
+
+The OPS-Web endpoint (to be added as a separate sibling chip — see open items) resolves `template_id` → typed `sendSpec*()` sender from `OPS-Web/src/lib/email/sendgrid.tsx` (Stage H), invokes it, returns `{ status: 'sent' | 'suppression_skipped' | 'paused_skipped', messageId: string | null }` on 200. 4xx = permanent failure (template unknown, payload invalid). 5xx / timeout = transient failure (retry next cron run).
+
+**Required env vars** on `ops-site` for live email dispatch:
+- `OPS_WEB_INTERNAL_BASE_URL` (e.g. `https://app.opsapp.co`)
+- `OPS_INTERNAL_DISPATCH_SECRET` (high-entropy shared secret matched on the OPS-Web endpoint via constant-time compare)
+
+If either is missing, the cron logs a clear warning, posts a persistent operator notification (`spec_email_dispatch_misconfigured`), and skips the outbox-retry task — without bumping attempts. The rest of the cron (status flips, notifications, freshly-enqueued nudges) runs normally.
+
+#### Schema additions (migration `2026-05-26-04`)
+
+```sql
+alter table public.spec_projects
+  add column if not exists last_intake_reminder_at timestamptz,
+  add column if not exists intake_reminder_count int not null default 0,
+  add column if not exists last_intake_no_discovery_reminder_at timestamptz,
+  add column if not exists intake_no_discovery_reminder_count int not null default 0,
+  add column if not exists ops_blocked_review_reminder_sent_at timestamptz;
+
+alter table public.spec_owner_approval_requests
+  add column if not exists expires_at timestamptz;
+
+-- Backfill + default-on-insert for new rows
+update public.spec_owner_approval_requests
+  set expires_at = requested_at + interval '7 days'
+  where expires_at is null;
+
+alter table public.spec_owner_approval_requests
+  alter column expires_at set default (now() + interval '7 days');
+```
+
+Indexes added for the three cron candidate queries (intake-reminder lookup, no-discovery lookup, owner-approval expiry lookup). All ADDs are idempotent.
+
+#### Notification model
+
+Operator notifications fan out by reading `role_permissions` (`permission='spec.admin' AND scope='all'`) joined with `user_roles`, plus `user_permission_overrides` (`permission='spec.admin' AND granted=true`) — the same membership the `private.is_spec_operator()` function consults. Cron is service_role so it cannot call the SECURITY DEFINER function (no JWT); the explicit join is the correct approach. Operator rows are inserted with `company_id = OPS_OPERATIONS_COMPANY_ID` per the locked notification contract.
+
+Customer notifications use the project's `linked_company_id` (guaranteed non-null per `SPEC-NO-COMPANY-BUYER-FLOW-LOCK`).
+
+#### Cadence notes (documentation drift caught)
+
+03_WORKFLOW.md § "Ghosted post-deposit (no intake)" describes a D14 / D30 / D60 / D90 cadence. 06_CONTRACT_AND_EMAILS.md cron-jobs table specifies D14 / D30 / D60. The Stage H template registry ships three reminder templates (`_1`, `_2`, `_3`). The Stage C.5 cron implements D14 / D21 / D28 to match the brief and to keep the cadence inside a single calendar month for ad-funnel optics. The drift will be reconciled in the next bible consolidation pass — flagged here for awareness.
+
+#### Open items — Stage H templates not yet registered
+
+The following template_ids are enqueued by the Stage C.5 cron but are NOT in the Stage H migration `2026-05-26-02-spec-phase1-email-templates.sql`:
+
+- `spec.owner_approval_expired_buyer`
+- `spec.owner_approval_expired_owner`
+- `spec.hold_expired_customer_requested`
+- `spec.modules_disabled_non_payment`
+
+The OPS-Web internal dispatch endpoint will respond with a 4xx `invalid_template` for these until they ship; the outbox row will land in `permanent_failure` after 5 attempts and the operator notification path will surface the gap. **Follow-up chip** (`SPEC - P1-2-13` or higher): add these four templates to the Stage H registry + migration.
+
+#### Open item — OPS-Web `/api/internal/spec/send-email` endpoint
+
+The HTTP target of `dispatchSpecEmail()` does not yet exist in OPS-Web. The contract is locked above. **Follow-up chip**: implement the endpoint as a Bearer-gated route in OPS-Web that:
+
+1. Verifies `Authorization: Bearer ${OPS_INTERNAL_DISPATCH_SECRET}` via constant-time compare.
+2. Validates body shape (template_id known, recipient_email valid, payload is an object).
+3. Resolves `template_id` → typed sender from `template-registry.ts`. Calls the typed sender with the payload.
+4. Returns `{ status, messageId }` per the contract above.
+
+Until that endpoint ships, the Stage C.5 cron writes the outbox row but cannot dispatch — pending rows accumulate. The persistent operator notification keeps the gap visible.
+
+#### Verification artifacts
+
+- Migration applied to live `ijeekuhbatykdomumfjx` via Supabase MCP on 2026-05-26 (`spec_stage_c5_cron_columns`).
+- 19 unit tests in `ops-site/src/lib/spec/cron/__tests__/` cover the five critical tasks (intake reminders fire-once + thresholds + skip-rules; owner-approval expiry with synthetic-TOS placeholder; customer_requested hold expiry; non-payment 7-day threshold incl. idempotency; CRON_SECRET 401/500/200 paths). All pass.
+- `tsc --noEmit` exits clean on the worktree.
+- `npm run lint` adds zero new errors/warnings inside the new cron files (the prior 108 base-branch problems are unchanged and tracked separately).
+- `npm run build` fails on the pre-existing `/spec/confirmation` Suspense boundary issue (Stage D scope), not on Stage C.5 code. Confirmed identical failure exists on `feat/spec` HEAD without the C.5 changes.
+
 ---
 
 **End of Document**
