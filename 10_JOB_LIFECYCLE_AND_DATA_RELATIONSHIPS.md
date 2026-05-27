@@ -1533,6 +1533,161 @@ The `Project.projectImages` field (comma-separated string) is deprecated. Migrat
 
 > **Platform status**: Email integration is implemented on OPS-Web with support for both Gmail and Microsoft 365. API routes under `/api/integrations/email/`, plus a provider abstraction layer, pattern detection engine, AI classification system, webhook-driven sync, and a 5-step "Import Your Pipeline" wizard. No email integration exists on iOS. The `email_connections` table (renamed from `gmail_connections`) stores per-connection provider, tokens, sync profile, webhook subscription, and AI feature flags.
 
+### Lead Lifecycle Target Intent
+
+The email pipeline's product contract is: messy email becomes a trustworthy pipeline record. Email threads and activities are the proof trail; the opportunity is the working truth the operator uses to run the lead.
+
+Every linked inbound or outbound email should be evaluated against the opportunity, not only against the provider thread. If the opportunity is missing customer name, company name, phone, email, address/location, scope, estimated value, source/platform, contact relationship, or project context, the lifecycle should fill blank fields as that information becomes available. It must preserve source provenance: thread id, message id, extraction source, confidence, and whether a human confirmed or edited the value.
+
+Core principles:
+- **Opportunity is canonical**: `clients`, `sub_clients`, `activities`, `email_threads`, and `opportunity_email_threads` support the opportunity. They should not drift into conflicting truths.
+- **Progressive enrichment**: every new linked email can improve the opportunity. Fill blanks and improve weak inferred values; do not silently overwrite operator-entered truth.
+- **Opportunity-level staleness**: stale logic runs across all linked threads, known contacts, sub-contacts, spouses/partners, phone/email identities, and related new threads. A new thread from a related contact can reactivate the opportunity.
+- **Conservative automation**: automate facts, suggest judgments, and require operator control for destructive or ambiguous actions. If OPS cannot determine the correct action with high confidence, preserve the data and make the state clear.
+- **Phase C is optional**: the core lifecycle must remain correct with Phase C off. Phase C improves extraction, matching, drafting, and learning when enabled, but is not required for basic lifecycle correctness.
+- **Drafts are auditable**: every draft stores its origin, generated text, final sent text, linked opportunity/thread/message context, edit history, and final disposition.
+
+#### P1 Provider ID Guardrails
+
+As of Lead Lifecycle P1, provider-backed email lifecycle writes must reject blank provider identifiers before creating any new activity, `email_threads` cache row, `opportunity_email_threads` link, or correspondence-count update.
+
+Required behavior:
+- Provider-backed sync/send/backfill paths require a nonblank provider thread id and nonblank provider message id.
+- Import wizard activities are synthetic timeline records, so they may omit provider message id only through the explicit import-synthetic path. They still require a nonblank provider thread id before creating opportunities, thread links, activities, labels, or image-extraction work.
+- Rejected provider-backed emails are quarantined by skipping lifecycle writes, logging a structured server warning, and incrementing sync diagnostics. A single invalid email must not crash the entire sync cycle.
+- The contact-form parsed sender identity must remain consistent across matching, activity creation, and thread-cache writes for newly processed provider-backed emails.
+- Existing bad rows are report-only until an operator approves cleanup. The P1 dry-run artifact lives at `docs/data-cleanup/lead-lifecycle-p1-bad-thread-dry-run-2026-05-26.md`.
+
+#### Phase C Off vs Phase C On
+
+| Capability | Phase C Off | Phase C On |
+|---|---|---|
+| Email ingestion, provider thread/message proof, activity logging | Required | Required |
+| Conservative client/opportunity matching | Required | Improved by AI context |
+| Opportunity field enrichment | Deterministic only when safe | Better freeform extraction and confidence |
+| Stage movement | Deterministic, conservative | Context-aware suggestions or high-confidence actions |
+| Stale detection | Opportunity-level, deterministic | Better understanding of related contacts and context |
+| Follow-up drafting | Template-based from settings | Can also create smarter contextual drafts |
+| New-thread relationship matching | Strict gates only | Better household/project graph matching |
+| Merge decisions | Manual operator action | AI may suggest, never destructive by itself |
+| Project conversion | Manual, or high-confidence deterministic rule only | Better won-confidence detection and handoff drafting |
+
+Phase C should never be the hidden storage location for canonical lead data. If Phase C extracts a durable fact, that fact belongs on the appropriate client/opportunity/activity/thread record with provenance.
+
+#### Lifecycle States, Visibility, and Outcomes
+
+Visibility is separate from business outcome:
+
+| Concept | Meaning | Reporting impact |
+|---|---|---|
+| `active` | Visible in active pipeline | Counts as live pipeline |
+| `archived` | Hidden from active pipeline, reversible | Does not count as won/lost |
+| `won` | Valid opportunity became work | Counts as conversion |
+| `lost` | Valid, qualified opportunity did not close | Counts against close rate |
+| `disqualified` | Real inquiry, but not a fit | Counts toward lead-quality/ad-targeting analysis, not close-rate loss |
+| `discarded` | Should not have been a lead: spam, vendor, applicant, internal, platform noise, test data | Counts toward system/data-quality analysis, not sales performance |
+| `merged` | Duplicate/fork created in error and absorbed into another opportunity | Losing record is removed from normal views after its data is integrated |
+| `converted_to_project` | Won opportunity has an operational project link | Project inherits sales trail |
+
+Archive means "remove from active pipeline." It does not delete the opportunity, email threads, activities, or source proof. A matched inbound from any known or newly matched related contact should unarchive/reactivate the opportunity.
+
+Merge is different from archive. Merge means one opportunity was created in error as a fork. The merge operation must move useful data, activities, email threads, contacts/sub-contacts, field provenance, estimate/project links, and source message IDs into the winning opportunity, then remove the losing opportunity from normal data views. If hard delete is unsafe for audit or FK constraints, product behavior should still be "deleted after merge," not "archived as a normal stale/lost lead."
+
+#### Stale Lead and Follow-Up Intent
+
+Staleness belongs to the opportunity, not an individual email thread.
+
+Rules:
+- Won, lost, converted-to-project, and already archived opportunities are not monitored for stale-lead automation.
+- Meaningful correspondence excludes provider noise, automated bounces, marketing, internal-only chatter, duplicate sync rows, and system notifications. In normal client threads, actual client emails should generally count.
+- If OPS sent the last meaningful message and the configured threshold passes, mark the opportunity as needing follow-up and create a template follow-up draft.
+- Follow-up drafts are lifecycle automation, not Phase C. They are generated from configurable settings templates. Default copy may be: `Hey there {{first_name}}, just following up on this as I didn't see anything back from you.`
+- After two OPS follow-ups with no meaningful customer response, archive the opportunity 7 calendar days after the second follow-up.
+- If there has been no meaningful correspondence for 14 calendar days, archive the opportunity unless it has a terminal or protected state.
+- If the last meaningful email was inbound and unreplied, do not treat it as a cold customer. If it is under 30 calendar days old, surface it as an operator follow-up miss or archive only as a visibility action. If it is over 30 calendar days old and the lead had moved beyond qualified, move it to `lost` with a reason such as `operator_no_response`.
+- If a matched inbound arrives from any linked or high-confidence related contact, reset stale timers, unarchive if needed, enrich the opportunity, and re-evaluate stage.
+
+Settings should eventually expose follow-up cadence, follow-up templates, stale thresholds, and any manual keep-active or automation-pause control. If a keep-active/automation-pause control does not exist yet, it is a product gap, not a reason to invent hidden behavior.
+
+#### Drafting and Learning Intent
+
+Drafts can come from multiple origins:
+
+| Origin | Purpose |
+|---|---|
+| `operator` | Human-created draft |
+| `template_follow_up` | Settings-driven stale-lead follow-up |
+| `phase_c` | AI/contextual draft |
+| `system_handoff` | Future project or lifecycle handoff draft |
+
+Multiple draft origins may coexist for the same opportunity/thread. A manual draft does not block Phase C from creating a Phase C draft, and a template follow-up does not overwrite a manual draft. The operator chooses which draft to edit/send.
+
+Every generated draft must retain:
+- original generated body and subject
+- final sent body and subject
+- origin (`operator`, `template_follow_up`, `phase_c`, etc.)
+- linked opportunity id, provider thread id, and source message id where applicable
+- generated_at, edited_at, sent_at, discarded_at
+- user/editor id
+- edit diff or equivalent edit-distance representation
+- final disposition: sent, discarded, replaced, expired
+
+Phase C learns from the delta between generated drafts and the sent version. It should learn from sent emails, not abandoned drafts. Template follow-up edits are also learning signal because they show how the operator personalizes lifecycle communication.
+
+#### New Thread, Same Customer, Different Job
+
+Matching must account for repeat customers and households. The same client or same address does not automatically mean the same opportunity.
+
+When a new thread or new contact appears, matching should consider:
+- exact known client/sub-contact/participant email
+- phone number
+- shared address/location
+- spouse/partner/project-manager relationship
+- quoted prior thread content
+- subject/body scope similarity
+- timing/recency
+- existing opportunity and project state
+
+Guidance:
+- If an existing opportunity at the same address is active, RFQ, estimating, quoted, follow-up, or negotiation, the new thread is likely the same job.
+- If an existing project at the same address is active/in progress, the new thread is likely project communication or same-job context.
+- If the prior project is completed/closed and the scope is distinct, create a new opportunity.
+- If confidence is not high, create a separate lead and provide a merge path rather than over-linking.
+
+#### Automation Boundary
+
+| Action | By deterministic algorithm | Phase C-assisted | Do not automate blindly |
+|---|---|---|---|
+| Deduplicate exact provider message IDs | Yes | Not needed | - |
+| Link a message on an already-linked provider thread | Yes | Not needed | - |
+| Update correspondence counts from linked activities | Yes | Not needed | - |
+| Fill blank fields from explicit contact-form values | Yes | Can improve extraction | Do not overwrite operator truth |
+| Generate follow-up drafts from templates | Yes | Can create an alternate smarter draft | Do not auto-send unless separately enabled |
+| Reset stale timer on matched inbound | Yes | Can improve matching | Do not reset from provider noise |
+| Link a new thread to an opportunity | Only with strict high-confidence gates | Yes, improves confidence | Do not link from weak evidence |
+| Determine same customer/new job vs same job | Conservative only | Yes, materially useful | Do not collapse repeat jobs into one opportunity |
+| Move to lost for operator no-response after 30+ days beyond qualified | Yes, if state is clear | Can improve classification | Do not mark unqualified noise as lost |
+| Archive stale opportunities | Yes, if opportunity-level stale rules pass | Can improve confidence | Do not archive terminal/protected opportunities |
+| Merge opportunities | No | Suggest only | Destructive, requires operator confirmation |
+| Delete losing fork after merge | No | Not needed | Only after confirmed merge and data migration |
+| Auto-convert to project | Only on explicit high-confidence acceptance and configured conversion path | Can improve won confidence | Do not convert vague language |
+| Treat platform sender as customer | No | No | Store as source metadata only |
+
+#### Project Conversion Intent
+
+When an opportunity converts to a project, the project must inherit as much sales context as possible. The conversion contract should be maintained against the live `opportunities` and `projects` schemas and should carry over at least:
+- client and sub-contact graph
+- address/location
+- scope/description
+- estimated value and quote/estimate context
+- source/platform metadata
+- linked email threads
+- activities and source message IDs
+- attachments/photos and estimate files where applicable
+- stage/history and field provenance
+
+Project conversion must not sever the sales trail. The project should link back to the opportunity, and the opportunity should link forward to the project.
+
 ### Provider Support
 
 | Provider | Auth | Scopes | Incremental Sync | Push Notifications |
@@ -1578,7 +1733,7 @@ interface EmailProvider {
   removeLabel(threadId: string, labelId: string): Promise<void>
   listLabels(): Promise<Label[]>
 
-  // Drafts (for AI auto-draft)
+  // Drafts (template follow-up drafts and Phase C drafts)
   createDraft(to: string, subject: string, body: string, threadId?: string): Promise<string>
 
   // Push notifications
@@ -1739,16 +1894,17 @@ When `ai_email_review` is enabled (requires both product-level feature flag AND 
 
 **3D: Terminal Stage Detection Rules**
 
-AI never auto-advances to `won` or `lost`. Instead:
+Terminal actions are conservative:
 
-- Win language detected ("let's go ahead", "we'd like to proceed") → notification: "{Client} may have accepted your estimate. [Review → Won?]"
-- Loss language detected ("went with another company", "too expensive") → notification: "{Client} may have declined. [Review → Lost?]"
-
-User clicks through to existing Won/Lost confirmation dialogs.
+- High-confidence accepted-work signals may convert the opportunity to a project when the conversion path is configured and the signal is explicit enough.
+- Ambiguous win language does nothing. OPS should not create a fake review stage or force a noisy prompt from weak evidence.
+- Explicit decline/loss language may move a qualified opportunity to `lost` only when the reason can be recorded with high confidence; otherwise the operator decides.
+- If the last meaningful email was inbound and unreplied for more than 30 calendar days, and the lead had moved beyond qualified, it may be marked `lost` with reason `operator_no_response`.
+- Won, lost, converted-to-project, and archived opportunities are terminal for stale monitoring.
 
 ### 5-Tier Client Matching
 
-**Service:** `src/lib/api/services/email-matching-service.ts`
+**Service:** `src/lib/api/services/email-matching-service.ts` / `email-matching-service-v2.ts`
 
 When emails are imported or synced, each is matched against existing clients via a 5-tier cascade:
 
@@ -1769,6 +1925,8 @@ When emails are imported or synced, each is matched against existing clients via
 - Thread CC association → create sub-contact, log activity
 - AI duplicate detection → queue for user review
 - No match at any tier → create new client + opportunity
+
+**Important limitation:** client matching is not the same thing as opportunity matching. A repeat customer can have multiple real jobs over time, including at the same address. After a client/contact match, OPS must still decide whether the message belongs to an existing opportunity/project or should create a new opportunity. That decision should consider address, scope, recency, existing opportunity stage, and linked project status. If confidence is not high, create a separate lead and allow the operator to merge it later.
 
 **Public domains** (gmail.com, yahoo.com, outlook.com, shaw.ca, telus.net, icloud.com, protonmail.com, live.com, comcast.net, att.net, verizon.net, msn.com, me.com, mac.com, ymail.com, mail.com, zoho.com, gmx.com, inbox.com, etc.) are excluded from domain matching. Defined in `PUBLIC_EMAIL_DOMAINS` in `src/lib/types/pipeline.ts`.
 
@@ -1871,6 +2029,8 @@ When emails are imported or synced, each is matched against existing clients via
 | Last message outbound, no reply for X days | `follow_up` | last_message_direction = out, age > autoFollowUpDays (applies at any active stage) |
 | Client replied after quiet period | `negotiation` | previous stage was follow_up, new inbound arrived |
 
+**Stale/archival target rules:** follow-up and archive rules are opportunity-level, not thread-level. After two unanswered OPS follow-ups, archive 7 calendar days after the second follow-up. Archive opportunities with no meaningful correspondence for 14 calendar days when they are not terminal/protected. If the last meaningful email is inbound and unreplied, treat it as an operator follow-up miss; after 30 calendar days beyond qualified, move to `lost` with reason `operator_no_response`.
+
 **Limitation:** Correspondence-count rules cannot reliably distinguish "discussing scope" from "estimate was sent." They place leads in roughly the right area of the pipeline. Users can always drag to correct on the Kanban board. The AI tier handles this accurately by detecting actual pricing in outbound messages.
 
 **5B: AI Tier — Context-Aware Staging (Feature-Gated)**
@@ -1884,9 +2044,9 @@ AI reads thread content and detects:
 | User mentioned promotion/discount | `quoted` |
 | Client comparing quotes | `negotiation` |
 | Client discussing scheduling/timing | `negotiation` |
-| Client accepted | Flag → `won` prompt |
-| Client declined | Flag → `lost` prompt |
-| Client silent > 30 days, last was outbound | Flag → possible `lost` |
+| Client accepted | High-confidence project conversion, otherwise no action |
+| Client declined | High-confidence `lost` with reason, otherwise no action |
+| Operator failed to reply > 30 days, beyond qualified | `lost` reason `operator_no_response` |
 
 **AI output per thread (~20 tokens):**
 
@@ -1992,6 +2152,8 @@ When user clicks "Draft Reply" or auto-draft triggers:
 
 Each correction creates a new `agent_memories` entry with `memory_type = 'correction'` and a reference to the original memory/action being corrected. Mem0's consolidation merges corrections into the base facts over time. User edits to drafts, stage overrides, rejected client matches, and manually created leads all feed back into the memory system.
 
+Draft learning is based on sent outcomes, not abandoned drafts. The system must retain original generated draft text and final sent text for every draft origin, including template follow-ups and Phase C drafts, so Phase C can learn how the operator actually edits and sends.
+
 ### Feature Gate Architecture
 
 **Free vs Gated:**
@@ -2007,9 +2169,11 @@ Each correction creates a new `agent_memories` entry with `memory_type = 'correc
 | Initial AI stage placement (one-time) | Yes | Yes |
 | Correspondence-count stage rules | Yes | Yes |
 | Stale/follow-up time-based rules | Yes | Yes |
+| Template follow-up draft generation | Yes | Yes |
+| Draft provenance and sent-version edit tracking | Yes | Yes, feeds memory |
 | Ongoing AI classification per sync | No | `ai_email_review` |
 | Ongoing AI stage evaluation per sync | No | `ai_email_review` |
-| Win/loss detection notifications | No | `ai_email_review` |
+| Win/loss intent detection | Conservative deterministic only | `ai_email_review` improves confidence |
 | AI duplicate detection | No | `ai_email_review` |
 | Memory accumulation | No | `ai_email_memory` |
 | Draft reply suggestions (confidence >= 0.5) | No | `ai_email_memory` |
@@ -2126,7 +2290,8 @@ When a lead is created from email import:
 - `opportunity.stage` = AI-determined or correspondence-count-determined stage
 - `opportunity.winProbability` = based on stage
 - `opportunity.tags = ['email-import']`
-- Existing open opportunities are checked first — no duplicates created
+- Existing opportunities are checked first, but client match alone is not enough; same-client/same-address messages may still be separate jobs when prior work is closed or scope differs
+- If matching confidence is not high, create a separate lead and provide an operator merge path instead of over-linking
 - Correspondence tracking columns populated: `correspondence_count`, `outbound_count`, `inbound_count`, `last_inbound_at`, `last_outbound_at`, `last_message_direction`
 
 ---
