@@ -1,8 +1,8 @@
-# Onboarding Drip — Design Spec (v2)
+# Onboarding Drip — Design Spec (v3)
 
-**Date**: 2026-05-27 (revised after outside review + discovery of dormant existing system)
-**Status**: Approved by founder (Jackson) — ready for implementation plan.
-**Supersedes**: commit `6549513` (v1). See [Revision History](#revision-history) for what changed.
+**Date**: 2026-05-27 (v3 — revised after founder's own line-by-line review against live code)
+**Status**: Pending re-review by founder before implementation plan.
+**Supersedes**: commit `7294f5a` (v2), which superseded `6549513` (v1). See [Revision History](#revision-history) for what changed.
 **Scope**: Replace the dormant `lifecycle-emails` / `lifecycle-cron` / `lifecycle-onboarding-complete` / `lifecycle-first-action` Supabase Edge Functions with an in-repo onboarding drip integrated into the OPS-Web `gatedSend` chokepoint. Day 0 through Day 14, then handoff to the existing trial-expiry cron at Day 23. Closes `13_EMAIL_SYSTEM.md` Known Gaps #1, #2, #8.
 
 **Source Reference**:
@@ -125,19 +125,29 @@ After the company INSERT succeeds, the route:
 3. On send success → update `onboarding_email_log` row to `status='sent'`, write `sent_at`, link `email_log_id`
 4. On send failure → update to `status='failed'`, increment `attempts`, record `last_error`
 
-**Durable retry**: the daily cron (§3 next subsection) sweeps `onboarding_email_log WHERE kind='day_0_welcome' AND status IN ('pending','failed') AND attempts < 3 AND created_at > now() - interval '24 hours'` and retries. If a Day 0 send is lost (Vercel function killed mid-dispatch, SendGrid 503, etc.), the cron picks it up on the next tick.
+**Durable retry**: the hourly cron (§3 next subsection) sweeps `onboarding_email_log WHERE day_slot='day_0' AND status IN ('pending','failed') AND attempts < 3 AND created_at > now() - interval '24 hours'` and retries.
+
+**Partial-success reconciliation (added v3)**: before re-sending any pending/failed row, the cron reconciles against `email_log` to avoid double-send when SendGrid succeeded but the process died before the status update landed. Logic:
+
+1. For each candidate retry row, query `email_log` where `recipient_email = $1 AND email_type = $2 AND sent_at > $3` where `$3` is the `onboarding_email_log.created_at` minus a 5-minute clock-skew buffer
+2. If a matching `status='sent'` row exists → mark `onboarding_email_log` row as `sent`, copy `sg_message_id` from the `email_log` metadata, do NOT resend
+3. Otherwise → attempt the send
+
+This eliminates the v2 race where a Vercel function killed between SendGrid's 200 response and the local UPDATE would cause a duplicate Day 0 on the next cron tick.
 
 **Skip conditions for Day 0**:
-- `user_type` is not `"company"` (i.e. invited team member, not new operator)
+- The user is not the new company's `account_holder_id` (canonical "is this the operator?" check — replaces the v2 `user_type === 'company'` filter which was unreliable because `users.user_type` is nullable in production and `sync-user` doesn't set it during signup; verified against schema 2026-05-27)
 - Company `deleted_at` is set
 - Email domain matches an internal allowlist (`@opsapp.co`, `@anthropic.com`, test domains)
 - Email is on `email_suppressions.list='global'` (handled automatically by `gatedSend`)
 
-The existing `lifecycle-onboarding-complete` edge function's filter `userType === "company"` is preserved as the canonical "is this an operator?" check.
+The Day 0 hook in `setup/progress/route.ts:122` already has the new user's id in scope and writes `account_holder_id: userId` on the company INSERT (line 129), so the operator-eligibility check is a one-line comparison, not a separate query.
 
 ### Days 1, 3, 4, 8, 14 — hourly cron with operator-local-time gating
 
-**Schedule: `0 * * * *` (every hour at minute 0).** Replaces the daily `0 14 * * *` from v1 which the reviewer correctly flagged as broken — a single 14:00 UTC daily fire can't deliver to all timezones in their morning window.
+**Schedule: `0 * * * *` (every hour at minute 0).** Replaces the daily `0 14 * * *` from v1 which couldn't deliver to all timezones in their morning window.
+
+**Requires Vercel Pro+ plan** ([Vercel docs: cron usage and pricing](https://vercel.com/docs/cron-jobs/usage-and-pricing) — Hobby is restricted to once per day; hourly expressions fail deployment). OPS-Web already runs multiple sub-daily crons (`*/15`, `*/10`, `*/5`) so the plan tier is confirmed Pro+ in production, but the implementation plan MUST verify plan tier as a hard preflight before deployment. There is no acceptable Hobby fallback — every-2-hours `0 */2 * * *` would also fail deployment (still more than once per day), and a true daily cron cannot deliver to all timezones in the 8–10am window. If for any reason the plan tier changes, this design needs to be revisited; see §15 open questions.
 
 The cron route `/api/cron/onboarding-drip`:
 1. Queries `companies` where `created_at` was 1, 3, 4, 8, or 14 days ago (within a generous 25-hour bracket per offset to never miss anyone)
@@ -149,18 +159,23 @@ The cron route `/api/cron/onboarding-drip`:
 **Claim-before-send dedup** (fixes v1's race condition where Day 1A and Day 1B could both fire if state flipped between cron ticks):
 
 ```
-INSERT INTO onboarding_email_log (user_id, company_id, day_slot, branch, status, attempts)
-VALUES ($1, $2, $3, $4, 'pending', 0)
+INSERT INTO onboarding_email_log (
+  user_id, company_id, day_slot, branch, status, attempts, day_slot_expires_at
+)
+VALUES ($1, $2, $3, $4, 'pending', 0, $5)
 ON CONFLICT (user_id, day_slot) DO NOTHING
 RETURNING id;
 ```
 
-- `day_slot` is the day number alone (`0`, `1`, `3`, `4`, `8`, `14`, `lost_you`) — **same regardless of branch**
+- `day_slot` is the day number alone (`day_0`, `day_1`, `day_3`, `day_4`, `day_8`, `day_14`, `lost_you`) — **same regardless of branch**
 - `branch` records which variant was chosen (`'no_project'`, `'has_project'`, `'no_aha'`, `'has_aha'`, `'quiet'`, `'active'`, or `null` for unbranched)
 - Unique constraint on `(user_id, day_slot)` — only one row per user per slot, no matter which branch
+- `day_slot_expires_at` = operator-local 9am of the target day + 24 hours, in UTC. After this time, the cron stops retrying pending/paused rows — the send window for this day is over.
 - Only the winner of the INSERT gets a row id back; only the winner sends; the loser silently skips
 
-This is a strict improvement over v1's branch-specific dedup keys which would allow both branches to fire under a state flip.
+**Pause is retryable, suppression is terminal (added v3)**: When `gatedSend` returns `paused_skipped`, the cron does NOT mark the row terminal. It re-sets `status='pending'`, does NOT increment `attempts`, and leaves the row eligible for the next cron tick — until `day_slot_expires_at` passes. This matches the existing campaign worker pattern (`worker/route.ts:187`) where pauses are reversible operator decisions, not delivery failures. When `gatedSend` returns `suppression_skipped`, the row is terminal `status='skipped'` (the user is permanently opted out; no point retrying).
+
+This is a strict improvement over v1's branch-specific dedup keys which would allow both branches to fire under a state flip, and over v2's "all skips are terminal" which would burn legitimate retries during operator pauses.
 
 ### Behavior-triggered re-engagement
 
@@ -213,14 +228,15 @@ The dormant `lifecycle-emails` worked out more-precise branch conditions than v1
 
 | Email | State question | A | B |
 |---|---|---|---|
-| Day 1 | `users.has_completed_onboarding = true` AND (any non-deleted project OR any non-deleted client)? | **No** → "the move that gets OPS working" | **Yes** → "you're moving" |
+| Day 1 | `users.onboarding_completed->>'web' = 'true'` AND at least one non-deleted project for this company? | **No** → "the move that gets OPS working" | **Yes** → "you're moving" |
 | Day 4 | Any `notifications` row for this user where `type='task_completed'`? | **No** → "the notification you're working toward" (with mocked push card) | **Yes** → "you've heard the ping" |
 | Day 14 | Any `projects.updated_at`, `project_tasks.updated_at`, `clients.updated_at`, `opportunities.updated_at`, `estimates.updated_at`, or `invoices.updated_at` for this company within the last 7 days? | **Quiet** → "is OPS slotting in or in the way?" | **Active** → "you're 14 days in" (with live stats, gated by threshold — see below) |
 
 **Why these specific signals**:
-- Day 1's "real project with client/address or tasks" v1 check is replaced by "completed onboarding AND has projects-or-clients" — directly matches `!hasProjects && !hasClients` from `lifecycle-emails` line ~340 and `lifecycle-onboarding-complete` lines 42-49
-- Day 4's `notifications` table check is the real signal that a task_completed event actually surfaced to the admin (the v1 check "ever received a task_completed notification" was already correct; this just nails down the exact query)
-- Day 14's expanded activity signal addresses the reviewer's flag that v1 missed meaningful activation events. Uses `updated_at` across six tables, mirroring how `lifecycle-cron` aggregates project + task `updated_at` for inactivity detection.
+- **Day 1's branch** uses the current schema. v2 referenced `users.has_completed_onboarding` which **does not exist in production** — migration 026 (`026_onboarding_completed_jsonb.sql:23`) dropped that boolean column and replaced it with `onboarding_completed JSONB` containing per-platform sub-fields `{ ios: boolean, web: boolean }`. The web setup flow at `setup/complete/route.ts:58` writes `{ ...currentOnboarding, web: true }`. The Day 1 branch query must read `onboarding_completed->>'web' = 'true'`.
+- **Day 1 branch tightened to require a project (added v3)** — v2 was "onboarded AND (project OR client)" but the Day 1B copy in §6 only handles `projectCount`. A client-only state would have rendered nonsense plural ("You've already got your first project in" when they have zero projects). v3 narrows Branch B to require a project; client-only operators stay on Branch A and get nudged to create a project, which is the actual aha-path anyway.
+- **Day 4's `notifications` table check** is the real signal that a task_completed event actually surfaced to the admin.
+- **Day 14's expanded activity signal** addresses the reviewer's flag that v1 missed meaningful activation events. Uses `updated_at` across six tables, mirroring how `lifecycle-cron` aggregates project + task `updated_at` for inactivity detection.
 
 **Day 14 Active stats threshold** (fixes the "tiny stats feel surveillance-y" concern):
 - If `projectCount + taskCount + notificationCount >= 5` → render the Active branch with live stats
@@ -697,11 +713,13 @@ CREATE TABLE IF NOT EXISTS public.onboarding_email_log (
     'day_0', 'day_1', 'day_3', 'day_4', 'day_8', 'day_14', 'lost_you'
   )),
   branch text NULL,
+  email_type text NOT NULL,
   status onboarding_email_status NOT NULL DEFAULT 'pending',
   attempts int NOT NULL DEFAULT 0,
   last_error text NULL,
   sent_at timestamptz NULL,
-  email_log_id uuid REFERENCES public.email_log(id) ON DELETE SET NULL,
+  sg_message_id text NULL,
+  day_slot_expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT onboarding_email_log_unique UNIQUE (user_id, day_slot)
@@ -711,9 +729,12 @@ CREATE INDEX IF NOT EXISTS idx_onboarding_email_log_company
   ON public.onboarding_email_log (company_id);
 CREATE INDEX IF NOT EXISTS idx_onboarding_email_log_sent_at
   ON public.onboarding_email_log (sent_at DESC);
-CREATE INDEX IF NOT EXISTS idx_onboarding_email_log_pending_retry
-  ON public.onboarding_email_log (status, attempts, created_at)
+CREATE INDEX IF NOT EXISTS idx_onboarding_email_log_retry_sweep
+  ON public.onboarding_email_log (day_slot_expires_at, status, attempts)
   WHERE status IN ('pending', 'failed');
+CREATE INDEX IF NOT EXISTS idx_onboarding_email_log_sg_message_id
+  ON public.onboarding_email_log (sg_message_id)
+  WHERE sg_message_id IS NOT NULL;
 
 DROP TRIGGER IF EXISTS trg_onboarding_email_log_updated_at ON public.onboarding_email_log;
 CREATE TRIGGER trg_onboarding_email_log_updated_at
@@ -723,20 +744,29 @@ CREATE TRIGGER trg_onboarding_email_log_updated_at
 COMMENT ON TABLE public.onboarding_email_log IS
   'Dedup + state table for the onboarding drip cron. UNIQUE (user_id, day_slot) enforces one email per user per day-slot regardless of branch. Claim-before-send pattern: INSERT pending ON CONFLICT DO NOTHING RETURNING id — only the winner sends.';
 
+COMMENT ON COLUMN public.onboarding_email_log.email_type IS
+  'The KIND_TO_LIST key passed to gatedSend (e.g. onboarding_day_1_no_project). Stored here so reconciliation queries against email_log can match by (recipient_email, email_type, sent_at window) without requiring a foreign key to email_log.id (gatedSend does not return that id).';
+
 COMMENT ON COLUMN public.onboarding_email_log.branch IS
   'Which branch variant was sent. NULL for unbranched (day_0, day_3, day_8, lost_you). For branched days: no_project / has_project / no_aha / has_aha / quiet / active.';
 
+COMMENT ON COLUMN public.onboarding_email_log.sg_message_id IS
+  'SendGrid message id returned by gatedSend on successful send. Used to join against email_events for engagement metrics on this drip. NULL when status is not yet sent.';
+
+COMMENT ON COLUMN public.onboarding_email_log.day_slot_expires_at IS
+  'Hard end of the retry window for this row. Computed at insert: operator-local 9am of the target day + 24 hours, in UTC. After this time, the cron skips this row even if pending/failed — the send window for this day-slot is over.';
+
 COMMENT ON COLUMN public.onboarding_email_log.status IS
-  'pending: claim succeeded, send not yet attempted. sent: gatedSend returned status=sent. failed: send attempted and errored; retried if attempts < 3. skipped: send returned suppression_skipped or paused_skipped (terminal).';
+  'pending: claim succeeded, send not yet attempted, OR paused by gatedSend pause check (re-tried on next cron tick until day_slot_expires_at). sent: gatedSend returned status=sent. failed: send attempted and errored; retried if attempts<3 AND now()<day_slot_expires_at. skipped: gatedSend returned suppression_skipped — terminal (suppressions are permanent opt-outs, not reversible like pauses).';
 ```
 
-**Changes from v1**:
-- `kind` column replaced with `day_slot` (without branch suffix) + separate `branch` column. The UNIQUE on `(user_id, day_slot)` is what makes the claim-before-send dedup correct.
-- Added `status` ENUM (was: text status implied via presence of row)
-- Added `attempts` for retry tracking
-- Added `last_error` for debugging
-- Added the `updated_at` trigger
-- Added partial index on `(status, attempts, created_at) WHERE status IN ('pending', 'failed')` to make the retry sweep cheap
+**Schema decisions explained**:
+- `kind` column (v1) replaced with `day_slot` + separate `branch` column. The UNIQUE on `(user_id, day_slot)` is what makes the claim-before-send dedup correct.
+- `email_type text NOT NULL` (new in v3) stores the gatedSend KIND value — used by the reconciliation query (§3) to match against `email_log` rows by `(recipient_email, email_type, sent_at window)`. This replaces v2's `email_log_id` FK which couldn't be populated because `gatedSend` doesn't return the `email_log.id` (it returns `messageId` and `status` per the `GatedSendResult` type at `sendgrid.tsx:110-113`, and `logEmail` is `void` per `sendgrid.tsx:240`). Either changing gatedSend's contract or introducing a follow-up email_log query would have been more invasive than just storing the email_type here.
+- `sg_message_id text` (new in v3) captures the value gatedSend DOES return. Provides linkage to `email_events` for engagement metrics.
+- `day_slot_expires_at` (new in v3) bounds pause-retry. Without this, a perpetually-paused bucket would leave rows in 'pending' forever.
+- `status` ENUM semantics revised in v3: pause is retryable (suppression is terminal). See above column comment.
+- Partial retry-sweep index uses `(day_slot_expires_at, status, attempts)` so the cron's "find rows to retry" query is index-only.
 
 ### Additions to existing tables / config
 
@@ -772,7 +802,7 @@ One new entry in `OPS-Web/vercel.json` `crons` array:
 
 Hourly fire vs daily-with-timezone-math (v1): hourly is simpler, handles DST transitions naturally, and survives a single missed cron run with at most 1-hour delay vs 24-hour delay.
 
-**Vercel Hobby plan cron limit**: hourly crons count as 24 invocations/day. Existing email-related crons already total >40/day. Verify Vercel plan tier supports the additional load before implementing — if on Hobby with strict limits, consider every-2-hours `0 */2 * * *` instead (worst case = operator gets the email 9 or 10am local).
+**Vercel plan tier requirement**: hourly is Pro+ only ([Vercel docs](https://vercel.com/docs/cron-jobs/usage-and-pricing) — Hobby caps at once per day; any sub-daily cron expression fails deployment). OPS-Web already runs `*/5`, `*/10`, `*/15` crons in `vercel.json`, which proves Pro+ in production. There is **no acceptable Hobby fallback** for this design — `0 */2 * * *` (every 2 hours) would also fail deployment, and a true daily cron cannot deliver to all timezones in any reasonable morning window. The implementation plan must list "verify production Vercel plan tier supports hourly cron" as an explicit preflight check before deploying the migration.
 
 ---
 
@@ -911,13 +941,14 @@ After implementation lands, the following bible updates ship in the same session
 
 | Component | Disposition |
 |---|---|
-| `lifecycle-emails` edge function (v11) | Disable in Supabase Dashboard. Keep code in Supabase Functions for 30 days for rollback, then delete. |
-| `lifecycle-cron` edge function (v5) | Disable. Keep for 30 days, then delete. |
-| `lifecycle-onboarding-complete` edge function (v5) | Disable. Keep for 30 days, then delete. |
-| `lifecycle-first-action` edge function (v5) | Disable. Keep for 30 days, then delete. |
-| `lifecycle_email_config` table | All 11 rows currently `enabled=false`. Leave the table in place for 30 days post-cutover for rollback. Drop the table in a follow-up migration after the 30-day window. |
-| SendGrid Marketing Lists (`SENDGRID_LIST_*`) | **Confirmed dormant by founder on 2026-05-27** — no live Automations attached. Operator should delete the lists from the SendGrid dashboard during cutover. |
-| `lifecycle-emails` allowlist entry in `/api/admin/email/trigger/route.ts` | Remove from `ALLOWED_SLUGS` post-cutover so the admin UI can no longer manually invoke the dormant function |
+| `lifecycle-emails` edge function (v11) | Disable in Supabase Dashboard at cutover. Keep code in Supabase Functions for 30 days for rollback, then delete. |
+| `lifecycle-cron` edge function (v5) | Disable at cutover. Keep for 30 days, then delete. |
+| `lifecycle-onboarding-complete` edge function (v5) | Disable at cutover. Keep for 30 days, then delete. |
+| `lifecycle-first-action` edge function (v5) | Disable at cutover. Keep for 30 days, then delete. |
+| `lifecycle_email_config` table | All 11 rows currently `enabled=false`. Leave in place for 30 days post-cutover so the disabled edge functions remain re-enablable for rollback. Drop the table in the 30-day cleanup migration. |
+| `/api/admin/email/lifecycle-config/route.ts` + `/admin/email/_components/lifecycle-config-panel.tsx` (admin UI for the dormant config table) | Leave in place during cutover so rollback remains possible. **In the 30-day cleanup, delete both the route and the panel in lockstep with the table drop** — leaving the admin UI pointing at a dropped table would 500 the admin page. |
+| SendGrid Marketing Lists (`SENDGRID_LIST_*`) | **Confirmed dormant by founder on 2026-05-27** — no live Automations attached. **Do not delete during cutover.** The 4 edge functions reference these list IDs; if we delete the lists at cutover and need to roll back, the re-enabled functions would 4xx on every SendGrid API call. Defer list deletion to the 30-day cleanup, after the edge functions themselves are deleted. |
+| `lifecycle-emails` allowlist entry in `/api/admin/email/trigger/route.ts` `ALLOWED_SLUGS` | Remove ONLY this one slug (not the other 4 `bubble-reauth-emails` / `unverified-emails` / `newsletter-emails` / `verify-email-domains` slugs, which are unrelated to this decommission and remain in active use). |
 
 ### Cutover sequence
 
@@ -933,7 +964,7 @@ Single-session cutover on launch day:
    - Verify `vercel.json` cron is registered post-deploy
 3. **Disable the old system** (T+30 min, after smoke test passes):
    - Supabase Dashboard → Edge Functions → set status `INACTIVE` on all 4 lifecycle functions
-   - Operator deletes the SendGrid Marketing Lists from the SendGrid dashboard
+   - **Do NOT delete the SendGrid Marketing Lists at this step** — see disposition table above. List deletion happens in the 30-day cleanup so rollback remains viable.
 4. **First-hour observation** (T+1 hour):
    - Tail `email_log` for any onboarding_* sends — confirm shape matches expectations
    - Tail `onboarding_email_log` for new rows
@@ -943,9 +974,10 @@ Single-session cutover on launch day:
    - Confirm Day 1 cron tick fires and produces correct branch decisions
    - Spot-check the rendered HTML in inbox previews (Gmail web + iOS Mail)
 6. **30-day cleanup** (separate session):
-   - Drop `lifecycle_email_config` table via migration
-   - Delete the 4 edge function definitions
-   - Remove the 5 lifecycle-related slugs from `/api/admin/email/trigger/route.ts` ALLOWED_SLUGS
+   - Delete the 4 edge function definitions (`lifecycle-emails`, `lifecycle-cron`, `lifecycle-onboarding-complete`, `lifecycle-first-action`)
+   - Drop `lifecycle_email_config` table via migration AND delete `/api/admin/email/lifecycle-config/route.ts` AND delete `/admin/email/_components/lifecycle-config-panel.tsx` (and remove its mount point in the parent admin page) in lockstep — leaving the admin UI after the table drop would 500
+   - Remove ONLY the `lifecycle-emails` slug from `/api/admin/email/trigger/route.ts` `ALLOWED_SLUGS` (the other 4 slugs — `bubble-reauth-emails`, `unverified-emails`, `newsletter-emails`, `verify-email-domains` — are unrelated and remain in active use)
+   - Delete the SendGrid Marketing Lists from the SendGrid dashboard (deferred from cutover so rollback remained possible during the 30-day observation)
 
 ### Rollback plan
 
@@ -962,17 +994,25 @@ The new system can be disabled without data loss — `onboarding_email_log` rows
 
 ### Resolved during the v2 revision (no longer open)
 
-- ✅ Day 0 retry semantics — durable pending row + cron retry up to 3 attempts
+- ✅ Day 0 retry semantics — durable pending row + cron retry up to 3 attempts (further hardened in v3 with partial-success reconciliation, see §3)
 - ✅ Activity definition — multi-table `updated_at` max across projects, project_tasks, clients, opportunities, estimates, invoices
 - ✅ Push notification mockup — matches real `dispatchTaskCompleted` format; deliberately stylized to avoid Apple impersonation
 - ✅ Day 14 sender — Jack (changed from Dispatch)
 - ✅ Branch conditions — adopted precise conditions from dormant edge function
 
+### Resolved during the v3 revision (no longer open)
+
+- ✅ Vercel plan tier — Pro+ is a hard requirement (Hobby cannot run any sub-daily cron); production already runs sub-daily crons proving the tier; preflight check listed in §9
+- ✅ Schema mismatches — Day 0 operator filter and Day 1 branch query both updated to match the live `users` schema as of 2026-05-27
+- ✅ Retry / pause semantics — pause is retryable (re-pend, no attempt increment, bounded by `day_slot_expires_at`); suppression is terminal
+- ✅ Partial-success duplication — reconciliation against email_log before retry (§3)
+- ✅ Cutover/rollback contradiction — SendGrid list deletion deferred to 30-day cleanup
+- ✅ Admin UI cleanup — lifecycle-config route + panel removal added to 30-day cleanup in lockstep with table drop
+
 ### Still open
 
-1. **Vercel cron plan limit** — confirm Vercel plan tier supports the additional hourly cron. If on Hobby with strict limits, fall back to `0 */2 * * *` (every 2 hours).
-2. **`MockPushNotification` exact visual** — stylized vs. iOS-faithful is a real design decision. Default: stylized. Confirm during template implementation.
-3. **30-day cleanup of `lifecycle_email_config` table** — scheduled as a separate follow-up migration. Should not block initial launch.
+1. **`MockPushNotification` exact visual** — stylized vs. iOS-faithful is a real design decision. Default: stylized. Confirm during template implementation.
+2. **30-day cleanup migration ordering** — the cleanup migration must drop the table AND delete the admin route/panel in the same commit so the admin page never points at a missing table. Coordination detail; not a design blocker.
 
 ### Known gaps (deferred to v2 of the drip itself)
 
@@ -992,7 +1032,7 @@ Decisions captured during brainstorming + v2 revision (with the founder), in chr
 |---|---|---|
 | 1 | Reply commitment: "I read every reply" verbatim | Founder confirmed personal reply commitment at any expected volume |
 | 2 | Drip length: 6 calendar emails (revised from initial 4) | Founder wanted feature beats interleaved; settled on 6 scheduled + 1 behavior-triggered |
-| 3 | Aha moment: completion notification from the field | Founder identified — "Jake completed 5611 Batu Rd Rail Install" is the leverage moment |
+| 3 | Aha moment: completion notification from the field | Founder identified — "Jake completed 5611 Batu Rd Rail Install" is the aha moment |
 | 4 | Branched content (not skip-based) | Founder suggested branching on user state; more impactful than skipping |
 | 5 | Trigger on company creation (not Firebase signup) | Distinguishes new operators from invited team members |
 | 6 | Day 0 plain text from `jack@opsapp.co` | Must look like real personal email; styled template breaks the spell |
@@ -1014,12 +1054,30 @@ Decisions captured during brainstorming + v2 revision (with the founder), in chr
 | **22** | **Lost You threshold raised from 4 to 6 days** (v2) | Reviewer flagged: trades operators take weekends, weather days, job pushes. 4 days false-triggers across a long weekend. |
 | **23** | **Day 14 Active stats threshold (>=5)** (v2) | Reviewer flagged: tiny stats (1 project, 2 tasks) feel surveillance-y. Threshold downgrades to no-stats variant when activity is low. |
 | **24** | **Jack as documented sender identity** (v2) | Reviewer flagged: founder emails were using `jack@opsapp.co` ad hoc, not as a documented bucket. Added `JACK` to `senders.ts` + bible. |
+| **25** | **Day 0 operator-eligibility filter switched from `user_type='company'` to `account_holder_id === user.id`** (v3) | Founder review: live `users.user_type` is nullable and `sync-user` doesn't set it during signup; the previous filter would have skipped real new operators. The new check uses the column the company INSERT site already writes. |
+| **26** | **Day 1 branch uses `onboarding_completed->>'web' = 'true'`** (v3) | Founder review: v2 referenced `users.has_completed_onboarding` which migration 026 dropped in favor of the `onboarding_completed` JSONB column. The v2 query would have errored in production. |
+| **27** | **Day 1 Branch B tightened to require a project (no longer project-OR-client)** (v3) | Founder review: v2's "project OR client" branch could render Day 1B copy that talks about projects to an operator with only a client and zero projects. Tightening the branch puts client-only operators on Day 1A where the nudge is "drop your first project in." |
+| **28** | **`email_log_id` FK replaced with `email_type` + `sg_message_id` columns** (v3) | Founder review: gatedSend doesn't return the `email_log.id`; v2's FK couldn't be populated. v3 stores what gatedSend actually returns (the SendGrid message id) and uses `(recipient_email, email_type, sent_at window)` for any reconciliation against email_log. |
+| **29** | **Pause is retryable; suppression is terminal** (v3) | Founder review: v2 treated both as terminal `skipped`. Pauses are reversible operator decisions (matches the existing campaign worker pattern at `worker/route.ts:187`). Suppressions are permanent opt-outs. v3 separates the two. |
+| **30** | **`day_slot_expires_at` time-bounds pause retry** (v3) | Without an expiry, a perpetually-paused bucket would leave rows pending forever. Expiry = operator-local 9am of target day + 24 hours. |
+| **31** | **Partial-success reconciliation before retry** (v3) | Founder review: if SendGrid succeeds and the process dies before the status update, the v2 retry sweep would double-send. v3 reconciles against email_log first; if a matching sent row exists, mark sent and skip the resend. |
+| **32** | **Vercel Hobby fallback removed; Pro+ requirement made explicit** (v3) | Founder review: Vercel docs confirm Hobby caps at once-per-day; v2's `0 */2 * * *` fallback would also fail deployment. There is no acceptable Hobby fallback for this design; Pro+ is the floor. |
+| **33** | **Cutover defers SendGrid list deletion to 30-day cleanup; admin lifecycle-config UI removed in lockstep with table drop** (v3) | Founder review: v2 deleted the SendGrid lists at T+30 min, breaking any rollback path that needed the edge functions. Also v2 dropped the table without removing the admin UI route/panel that reads it, which would 500 the admin page. Both fixed by deferring deletion and pairing teardown steps. |
+| **34** | **"5 lifecycle slugs" scoped down to just `lifecycle-emails`** (v3) | Founder review: only one of the 5 ALLOWED_SLUGS entries is lifecycle-related; the others are unrelated and stay. |
 
 ---
 
 ## Revision History
 
-**v2 — 2026-05-27** (this version)
+**v3 — 2026-05-27** (this version)
+
+Triggered by founder's own review of v2 against the live code and schema. Surfaced 11 findings — 3 critical (schema mismatch on `has_completed_onboarding`, wrong operator filter on `user_type`, retry-pause semantics), 7 substantive (Day 1B copy mismatch, missing `email_log_id` linkage, partial-success duplication, Vercel plan limit, admin UI breakage on cleanup, cutover/rollback contradiction, wrong slug scope), 1 minor (slug count wording), 1 nit (banned word in decision log).
+
+All 11 findings were verified against the live codebase (sync-user, setup/progress, setup/complete, sendgrid.tsx, migration 026, admin lifecycle-config route + panel) and Vercel docs before applying fixes. None of the findings required pushback — they all held up under verification.
+
+Material changes from v2 documented in decision log entries #25–34.
+
+**v2 — 2026-05-27** (commit `7294f5a`)
 
 Triggered by outside agent review of v1 (commit `6549513`) which surfaced 23 findings across copy quality, architecture, compliance, and brand discipline. Subsequent discovery via Supabase MCP that four lifecycle-related edge functions already exist in production but are entirely dormant (`lifecycle-emails` disabled in config since 2026-03-05, zero rows in `email_log` for any of its kinds, no live SendGrid Automations confirmed by founder).
 
