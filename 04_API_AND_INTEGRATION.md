@@ -2435,6 +2435,27 @@ Until that endpoint ships, the Stage C.5 cron writes the outbox row but cannot d
 
 ---
 
+## SPEC `/admin/spec/[id]` server actions (Stage F.2.a — 2026-05-26)
+
+OPS-Web `/admin/spec/[id]` ships four server actions for the F.2.a sub-chip. Every action re-checks `isSpecOperator(userId)` server-side via the shared `requireSpecOperatorUserId()` helper in `src/app/admin/spec/[id]/_actions/_require-operator.ts` — the route layout enforces the gate for the rendered page, but server actions can be invoked by any logged-in client, so the gate is re-applied at write time. None of these endpoints accept customer callers.
+
+| Action file | Form fields | Effects |
+|---|---|---|
+| `_actions/fire-milestone.ts` | `project_id`, `milestone` (`scope_signoff` \| `midpoint` \| `delivery`) | Re-derives fireability against live data (`getMilestoneFireability`), ensures Stripe customer for `linked_company_id`, creates Stripe Invoice (`collection_method=send_invoice`, `auto_advance=true`, `days_until_due=15` = net-15 — Stripe auto-emails the hosted invoice), inserts `spec_payments` row (`status=invoiced`, `invoiced_at=now()`, `due_date=now()+15d`, `stripe_invoice_id=…`), enqueues `spec_email_outbox` row keyed `spec.p{2,3,4}_invoice` for the Stage H branded follow-up, logs a `spec_communications` system row, and inserts an operator-facing `public.notifications` row (`type='spec_invoice_fired'`, `company_id=OPS_OPERATIONS_COMPANY_ID`). Rolls back the `spec_payments` row if Stripe creation fails so the operator can retry. P1 is never accepted here (Stripe webhook owns it). |
+| `_actions/new-scope-revision.ts` | `project_id` | Reads the current `spec_scope_documents` row, stamps `superseded_at=now()` on it, inserts a new row with `version = prior + 1`, carries over `content_json` (operator can then edit externally), copies the feature acceptance scaffold from the prior version (reset to `status='pending'`). Inherits `is_test` from the project. Idempotency under concurrent operator clicks is the table's unique `(spec_project_id, version)` index — the slow writer surfaces an error. |
+| `_actions/mark-feature.ts` | `project_id`, `feature_id`, `target_status` (`passing` \| `failing` \| `pending`) | Verifies the feature row's `spec_project_id` matches the supplied project (prevents cross-project writes). Updates `status`, `verified_at` (now or null), `verified_by_user_id` (operator or null), clears `failure_notes` when transitioning away from `failing`. Logs a `spec_communications` system entry. |
+| `_actions/update-eta.ts` | `project_id`, `estimated_completion_date` (YYYY-MM-DD or empty) | Validates ISO date format, updates `spec_projects.estimated_completion_date` + `updated_at`. Empty string clears the column. Logs a `spec_communications` system entry. |
+
+**Operator-gate contract** (locked, do not deviate): never call `public.has_permission(...)` — that helper short-circuits to true for any customer-company admin via `is_company_admin`, `account_holder_id`, or `admin_ids`. Use the dedicated TS mirror `isSpecOperator(userId)` from `src/lib/admin/spec-permissions.ts`, which only consults `role_permissions(permission='spec.admin', scope='all')` via `user_roles` AND `user_permission_overrides(permission='spec.admin', granted=true)`. The shared `requireSpecOperatorUserId()` helper applies this gate identically across all four actions and returns `null` for non-operators — actions translate that into a thrown `Error("SYS :: SPEC OPERATOR GATE DENIED")`.
+
+**Email-outbox contract.** Branded SPEC milestone emails (Stage H templates `spec.p2_invoice` / `spec.p3_invoice` / `spec.p4_invoice` / `spec.scope_doc_ready` / `spec.scope_doc_signed_customer`) are queued via `spec_email_outbox` (`status='pending'`, `payload` jsonb carrying `tier`, `milestone`, `amount_cents`, `invoice_number`, `stripe_invoice_url`, `due_date`, `buyer_name`, `company_name`). Stage H's worker drains the queue. Until Stage H merges, Stripe's own hosted-invoice email (sent by `auto_advance=true` on invoice finalize) handles customer notification and the outbox rows accumulate as a clean audit trail.
+
+**Cache invalidation.** Every action ends with `revalidatePath('/admin/spec/${id}')`. Fire-milestone additionally revalidates `/admin/spec` so the overview Kanban + TODAY queue reflect the new invoiced row.
+
+**Stripe Dashboard linkout.** The Tab 5 Milestones table renders `stripe_invoice_id` as a click-through to `${NEXT_PUBLIC_STRIPE_DASHBOARD_BASE}/invoices/${id}` (defaults to `https://dashboard.stripe.com`); set the env var to `https://dashboard.stripe.com/test` in non-prod environments.
+
+---
+
 **End of Document**
 
 This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, email pipeline integration, and error management with full fidelity to the current implementation.
