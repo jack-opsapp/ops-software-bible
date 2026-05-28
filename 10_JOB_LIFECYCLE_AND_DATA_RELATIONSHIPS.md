@@ -1649,10 +1649,15 @@ Safe P4-2 write boundaries:
 - P4-2 dry-run scripts are read-only against Supabase and write only a markdown artifact under `docs/data-cleanup/`.
 - P4-2 does not execute archive, lost, or reactivation mutations. Those action-execution paths remain P4-3+ only, behind guarded write paths, idempotency, audit, and operator-visible review.
 
-P4-3 action-execution boundary:
-- P4-3 may create template follow-up draft rows from `create_follow_up_draft` decisions, surface persistent operator notifications for follow-up misses/drafts, resolve stale state on meaningful inbound, and execute archive/lost mutations only after adding guarded write paths, idempotency keys, operator-visible audit, and focused tests.
-- P4-3 must still not auto-send email unless a later explicit auto-send phase is approved. It must not depend on Phase C for core stale/follow-up correctness.
-- Archive execution must remain reversible and must not monitor or mutate won, lost, discarded, deleted, converted/project-linked, or already archived opportunities except through an explicit related-inbound reactivation path.
+P4-8 non-destructive action-execution boundary:
+- P4-8 may execute only non-destructive decisions from the P4 evaluator. `create_follow_up_draft` creates a local `opportunity_follow_up_drafts` row with `origin = 'template_follow_up'`, `status = 'drafted'`, the next template sequence number from stored lifecycle state/prior sent template follow-ups, rendered template subject/body, the triggering `source_event_id`, and optional connection/provider thread context. It does not create a Gmail/M365 provider draft and does not auto-send.
+- Template follow-up execution is idempotent. The open-template unique contract remains one open `template_follow_up` draft per opportunity. Existing operator, provider-backed, Phase C, or system-handoff drafts are not overwritten, discarded, or reused by P4-8.
+- `operator_follow_up_miss` creates a persistent operator rail notification through the existing notifications table. OPS currently has no dedicated lead-lifecycle notification type, so P4-8 uses the compatible `leads_waiting` type and deterministic title/action URL dedupe. Notifications link to the inbox thread when a provider thread id exists, otherwise to the pipeline.
+- Non-destructive actions update `opportunity_lifecycle_state` without pretending an email was sent. Template draft creation uses the live constraint-compatible stale status `follow_up_draft_due` and must persist required lifecycle state before inserting the local draft row, so a failed state update cannot leave a new template draft without the required state. Operator misses set `operator_follow_up_miss_at` and stale status to `operator_follow_up_miss`. Neither path mutates canonical `opportunities.stage`, `archived_at`, `lost_reason`, `project_id`, or project links.
+- Meaningful inbound handling clears stale status fields, resets unanswered follow-up counters, clears operator miss state, and supersedes stale open `template_follow_up` draft rows for that opportunity. Manual/operator, provider, Phase C, and system handoff drafts stay intact.
+- P4-8 dry-run/apply tooling defaults to dry-run and writes only a markdown artifact unless an explicit non-destructive apply flag is passed after approval. The artifact must count candidates, drafts to create, notifications to create, lifecycle states to update, drafts to supersede, already-existing skips, and destructive-action skips.
+- Archive, lost, and reactivation decisions remain skipped in P4-8. Archive/lost execution and related-inbound unarchive/reactivation remain P4-10+ product work behind separate approval, guarded write paths, idempotency, audit, and focused tests.
+- P4-8 must not auto-send email, create provider drafts, depend on Phase C, or start P5/P6.
 
 #### Phase C Off vs Phase C On
 
