@@ -55,13 +55,15 @@ GROUP BY email_type;
 
 Expected: Empty result (zero sends ever). If any rows exist, the dormant system has fired in production — escalate.
 
-- [ ] **PF-3: Confirm the next migration number**
+- [ ] **PF-3: Confirm the migration naming convention**
 
 ```bash
-ls /Users/jacksonsweet/Projects/OPS/OPS-Web/supabase/migrations/ | grep -E '^[0-9]+_' | sort -n | tail -3
+ls /Users/jacksonsweet/Projects/OPS/OPS-Web/supabase/migrations/ | sort | tail -3
 ```
 
-Expected: highest numbered migration is `107_…`. The new migration will be `108_onboarding_email_log.sql`. If `108` already exists, pick the next free number and update every reference in this plan.
+Expected: most recent migrations use date-stamped names like `20260527140000_lead_lifecycle_p4_foundation.sql` (NOT sequential `108_…`). The repo migrated from sequential to date-stamped naming somewhere between migration 107 and the current convention. The new migration uses `YYYYMMDDHHMMSS_onboarding_email_log.sql` — pick a fresh timestamp (e.g. `20260527150000`) that's later than any existing migration. Verify with `ls supabase/migrations/ | sort | tail` before applying.
+
+**Parallel-work check (added during pre-flight)**: `20260527140000_lead_lifecycle_p4_foundation.sql` was committed today by another agent/session working on a separate "lead lifecycle" initiative. Do not modify their migration file. Coordinate timestamps so the new onboarding migration sorts AFTER theirs.
 
 - [ ] **PF-4: Confirm the spec is the latest version**
 
@@ -85,13 +87,13 @@ This phase ships the migration, the new `JACK` sender identity, the new `KIND_TO
 ### Task 1: Migration 108 — `onboarding_email_log` table
 
 **Files:**
-- Create: `OPS-Web/supabase/migrations/108_onboarding_email_log.sql`
-- Mirror into bible: `ops-software-bible/migrations/108_onboarding_email_log.sql`
+- Create: `OPS-Web/supabase/migrations/20260527150000_onboarding_email_log.sql`
+- Mirror into bible: `ops-software-bible/migrations/20260527150000_onboarding_email_log.sql`
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- 108_onboarding_email_log.sql
+-- 20260527150000_onboarding_email_log.sql
 -- Dedup + state table for the onboarding drip cron. UNIQUE (user_id, day_slot)
 -- enforces one email per user per day-slot regardless of branch. Claim-before-send
 -- pattern: INSERT pending ON CONFLICT DO NOTHING RETURNING id — only the winner
@@ -161,7 +163,7 @@ COMMENT ON COLUMN public.onboarding_email_log.status IS
 
 - [ ] **Step 2: Apply the migration via Supabase MCP**
 
-Use `mcp__plugin_supabase_supabase__apply_migration` with project `ijeekuhbatykdomumfjx`, name `108_onboarding_email_log`, and the SQL from Step 1.
+Use `mcp__plugin_supabase_supabase__apply_migration` with project `ijeekuhbatykdomumfjx`, name `20260527150000_onboarding_email_log`, and the SQL from Step 1.
 
 Expected: success response. Verify with:
 
@@ -176,7 +178,7 @@ Should return all 13 columns from the CREATE TABLE.
 - [ ] **Step 3: Mirror the migration into the bible**
 
 ```bash
-cp /Users/jacksonsweet/Projects/OPS/OPS-Web/supabase/migrations/108_onboarding_email_log.sql \
+cp /Users/jacksonsweet/Projects/OPS/OPS-Web/supabase/migrations/20260527150000_onboarding_email_log.sql \
    /Users/jacksonsweet/Projects/OPS/ops-software-bible/migrations/
 ```
 
@@ -184,10 +186,10 @@ cp /Users/jacksonsweet/Projects/OPS/OPS-Web/supabase/migrations/108_onboarding_e
 
 ```bash
 cd /Users/jacksonsweet/Projects/OPS/OPS-Web
-git add supabase/migrations/108_onboarding_email_log.sql
+git add supabase/migrations/20260527150000_onboarding_email_log.sql
 git commit -m "feat(onboarding-drip): add onboarding_email_log dedup table (migration 108)"
 cd /Users/jacksonsweet/Projects/OPS/ops-software-bible
-git add migrations/108_onboarding_email_log.sql
+git add migrations/20260527150000_onboarding_email_log.sql
 git commit -m "docs(bible): mirror migration 108 onboarding_email_log"
 ```
 
@@ -4349,7 +4351,7 @@ Expected: `{ "ok": true, ... }` with `scanned` >= 0 (depends on operator timezon
 ### Task 37: 30-day cleanup (separate session, T+30 days)
 
 - [ ] Delete the 4 edge function definitions in Supabase Dashboard
-- [ ] Create migration `109_drop_lifecycle_email_config.sql`:
+- [ ] Create migration `20260626_drop_lifecycle_email_config.sql`:
 
 ```sql
 DROP TABLE IF EXISTS public.lifecycle_email_config;
