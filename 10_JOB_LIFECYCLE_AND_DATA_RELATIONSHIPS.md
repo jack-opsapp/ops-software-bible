@@ -1529,6 +1529,273 @@ The `Project.projectImages` field (comma-separated string) is deprecated. Migrat
 
 > **Platform status**: Email integration is implemented on OPS-Web with support for both Gmail and Microsoft 365. API routes under `/api/integrations/email/`, plus a provider abstraction layer, pattern detection engine, AI classification system, webhook-driven sync, and a 5-step "Import Your Pipeline" wizard. No email integration exists on iOS. The `email_connections` table (renamed from `gmail_connections`) stores per-connection provider, tokens, sync profile, webhook subscription, and AI feature flags.
 
+### Lead Lifecycle Target Intent
+
+The email pipeline's product contract is: messy email becomes a trustworthy pipeline record. Email threads and activities are the proof trail; the opportunity is the working truth the operator uses to run the lead.
+
+Every linked inbound or outbound email should be evaluated against the opportunity, not only against the provider thread. If the opportunity is missing customer name, company name, phone, email, address/location, scope, estimated value, source/platform, contact relationship, or project context, the lifecycle should fill blank fields as that information becomes available. It must preserve source provenance: thread id, message id, extraction source, confidence, and whether a human confirmed or edited the value.
+
+Core principles:
+- **Opportunity is canonical**: `clients`, `sub_clients`, `activities`, `email_threads`, and `opportunity_email_threads` support the opportunity. They should not drift into conflicting truths.
+- **Progressive enrichment**: every new linked email can improve the opportunity. Fill blanks and improve weak inferred values; do not silently overwrite operator-entered truth.
+- **Opportunity-level staleness**: stale logic runs across all linked threads, known contacts, sub-contacts, spouses/partners, phone/email identities, and related new threads. A new thread from a related contact can reactivate the opportunity.
+- **Conservative automation**: automate facts, suggest judgments, and require operator control for destructive or ambiguous actions. If OPS cannot determine the correct action with high confidence, preserve the data and make the state clear.
+- **Phase C is optional**: the core lifecycle must remain correct with Phase C off. Phase C improves extraction, matching, drafting, and learning when enabled, but is not required for basic lifecycle correctness.
+- **Drafts are auditable**: every draft stores its origin, generated text, final sent text, linked opportunity/thread/message context, edit history, and final disposition.
+
+#### P1 Provider ID Guardrails
+
+As of Lead Lifecycle P1, provider-backed email lifecycle writes must reject blank provider identifiers before creating any new activity, `email_threads` cache row, `opportunity_email_threads` link, or correspondence-count update.
+
+Required behavior:
+- Provider-backed sync/send/backfill paths require a nonblank provider thread id and nonblank provider message id.
+- Import wizard activities are synthetic timeline records, so they may omit provider message id only through the explicit import-synthetic path. They still require a nonblank provider thread id before creating opportunities, thread links, activities, labels, or image-extraction work.
+- Rejected provider-backed emails are quarantined by skipping lifecycle writes, logging a structured server warning, and incrementing sync diagnostics. A single invalid email must not crash the entire sync cycle.
+- The contact-form parsed sender identity must remain consistent across matching, activity creation, and thread-cache writes for newly processed provider-backed emails.
+- Existing bad rows are report-only until an operator approves cleanup. The P1 dry-run artifact lives at `docs/data-cleanup/lead-lifecycle-p1-bad-thread-dry-run-2026-05-26.md`.
+
+#### P2 Canonical Enrichment
+
+As of Lead Lifecycle P2, email ingestion performs conservative canonical enrichment after provider ID validation. Inbound sync, sent-folder safety-net sync, import wizard leads, and historical Gmail import can fill missing opportunity/client fields from deterministic facts that are already present in the email or reviewed import payload.
+
+Allowed P2 writeback targets:
+- `opportunities.contact_name`, `contact_email`, `contact_phone`
+- `opportunities.address`
+- `opportunities.estimated_value` and `detected_value`
+- `opportunities.description`
+- `opportunities.source` (`email` for email pipeline ingestion)
+- `opportunities.source_email_id` (provider thread id)
+- `clients.name`, `email`, `phone_number`, `address`
+
+P2 writes only blanks or clearly weak placeholders such as empty values, unknown/new-lead markers, raw email-address names, zero estimated values, and known platform/system email addresses. It must not overwrite operator-entered client or opportunity values. Contact-form submitter identity remains preferred over the platform sender; platform sender emails such as Wix, HomeStars, or website form notifications are not written as customer email addresses.
+
+Existing provenance support:
+- `activities.email_thread_id` and `activities.email_message_id` preserve the provider thread/message proof for actual email activities.
+- `opportunity_email_threads.thread_id` + `connection_id` preserve the opportunity-to-provider-thread link.
+- `email_threads.provider_thread_id` preserves the inbox cache provider thread id.
+- `opportunities.source_email_id` can hold the provider thread id for the lead source.
+
+Current schema gaps for full provenance and company/source detail:
+- No `clients.company_name` or `opportunities.company_name` column exists. Company name can only fill weak `clients.name` values when that is safe.
+- No field-level provenance table or JSON column exists for canonical client/opportunity facts. Needed shape: entity type/id, field name, proposed value, extraction source, confidence, provider thread id, provider message id, confirmed/edited actor, and confirmed/edited timestamp.
+- No `opportunities.source_platform` / `source_platform_label` column exists for HomeStars, Wix, website form, or other lead platform names.
+- No provider message id column exists on `opportunities`; message-level proof lives on `activities.email_message_id`.
+- No explicit contact relationship column exists on opportunities for spouse/PM/site-super relationships; `sub_clients.title` can hold that relationship only after a sub-client exists.
+
+#### P3 Opportunity Relationship Matching
+
+As of Lead Lifecycle P3, provider thread id is no longer the only lifecycle unit. New provider threads are evaluated against existing opportunities before OPS creates a cold duplicate. The matching boundary is the opportunity: once a new thread is deterministically linked, `opportunity_email_threads` receives the new `(thread_id, connection_id)` link, the inbound activity attaches to the winning opportunity, correspondence counters update there, and P2 enrichment runs against that same winning opportunity without overwriting operator-entered canonical values.
+
+P3 deterministic gates:
+- **Existing provider thread link**: if `(thread_id, connection_id)` is already linked, use that opportunity deterministically.
+- **Exact known contact**: exact `clients.email`, `sub_clients.email`, or `opportunities.contact_email` can link to an existing active opportunity.
+- **Existing related contact**: an exact sub-client email relationship links to the parent client's active opportunity.
+- **Exact phone**: exact normalized phone match across opportunity/client/sub-client facts can link when the opportunity is active or the linked project is active.
+- **Same address, same active job**: exact normalized address can link when the opportunity is active (`new_lead`, `qualifying`, `quoting`, `quoted`, `follow_up`, `negotiation`) or a linked project is active (`rfq`, `estimated`, `accepted`, `in_progress`).
+- **Quoted prior-thread scope**: deterministic scope overlap can support a link only when it overlaps known prior opportunity/project text and the candidate is active. This is a strict enhancer, not a freeform guess.
+
+P3 non-linking rules:
+- Do not infer spouse, partner, property manager, or site-super relationships from first name or last name alone.
+- Do not treat platform senders such as Wix, HomeStars, or website form notification mailboxes as customer identity. Parsed submitter identity wins.
+- Do not blindly attach new work to terminal opportunities (`won`, `lost`, `discarded`, and future terminal values such as `merged`, `converted`, or `disqualified`) or archived opportunities.
+- If the same customer/address has only a completed, closed, or archived prior project and the incoming scope is distinct, create a separate opportunity.
+- If confidence is below the deterministic threshold, create a separate lead and preserve merge evidence through activity/thread/source fields rather than over-linking.
+
+Phase C boundary:
+- Phase C may improve extraction quality, relationship suggestions, and future household/project graph confidence.
+- Phase C must not be required for P3. With Phase C off, exact contact, exact phone, exact address, active opportunity state, and active project state still drive deterministic matching.
+- Phase C must not perform destructive merge, stale/archive/lost automation, or project conversion as part of P3. Those remain later lifecycle phases and operator-controlled flows.
+
+Known P3 schema gaps:
+- There is still no durable field-level provenance table for why a thread was linked to an opportunity. Current proof is spread across `opportunity_email_threads`, `activities`, `source_email_id`, and server logs/tests.
+- There is no explicit `opportunity_relationship_matches` or merge-candidate table to persist low-confidence duplicate/future-merge suggestions.
+- There is no canonical relationship type column for spouse/partner/property-manager/site-super identity unless the contact is represented as a `sub_clients` row.
+- There is no structured scope signature column for comparing "same address, new job" versus "same address, same job"; P3 uses conservative deterministic text/address/status gates only.
+
+#### P4 Schema Foundation and Dry-Run Evaluator
+
+As of Lead Lifecycle P4-2, stale/follow-up evaluation has a first-class schema and deterministic dry-run evaluator. P4-2 is still non-destructive: it may create lifecycle proof rows at safe app-code boundaries and may produce read-only dry-run artifacts, but it must not archive opportunities, mark opportunities lost, create provider drafts in production, or send email.
+
+P4 schema contract:
+- `opportunity_correspondence_events` stores opportunity-level correspondence proof. It links to company, opportunity, optional activity, optional email connection, provider thread id, optional provider message id, direction (`inbound`/`outbound`), party role (`customer`, `ops`, `internal`, `provider`, `system`, `marketing`, `unknown`), `is_meaningful`, `noise_reason`, occurrence time, optional linked contact reference, source boundary, subject, sender, recipients, and CCs. A partial unique index protects provider message id duplication per company/connection.
+- `opportunity_follow_up_drafts` stores auditable lifecycle drafts. It links to company, opportunity, optional connection/thread, optional source correspondence event, origin (`operator`, `template_follow_up`, `phase_c`, `system_handoff`), sequence number, subject, original generated body, current body, final sent body, status (`drafted`, `sent`, `discarded`, `superseded`, `archived`), optional provider draft id, optional `ai_draft_history` id, editors, and lifecycle timestamps. At most one open `template_follow_up` draft exists per opportunity.
+- `opportunity_lifecycle_state` stores the opportunity's P4 stale state: last meaningful event/time/direction, unanswered follow-up count, second follow-up sent time, operator follow-up miss time, stale status, protected-until timestamp, and update time.
+- `opportunity_lifecycle_action_audit` stores guarded P4 action attempts/results once the P4-12 additive migration is applied. It records company, opportunity, action, approved action key, execution mode, status, guard reason, before/after values, decision reason/evidence, approval metadata, run id, and creation time. A partial unique index prevents duplicate applied rows for the same approved company/opportunity/action/key.
+- `lead_lifecycle_settings` stores company-level cadence and template settings. Defaults are 7 days to draft a follow-up after OPS outbound, 7 days to archive after the second unanswered follow-up, 14 days to archive when no meaningful correspondence exists, 30 days to mark beyond-qualified operator no-response as lost, and default template body `Hey there {{first_name}}, just following up on this as I didn't see anything back from you.`
+
+P4 deterministic classifier rules:
+- Customer inbound counts as meaningful only when the sender or parsed contact-form submitter is a real external customer/contact. Parsed submitter identity wins over platform sender identity.
+- OPS outbound counts as meaningful only when a real OPS account/connection sends to an external customer/contact.
+- Provider/platform senders, automated bounces, internal-only/system messages, duplicate provider message ids, and marketing/promotional messages are not meaningful. They are retained as proof rows with `is_meaningful=false` and a `noise_reason`.
+- Blank provider thread ids are never meaningful. Provider-backed lifecycle writes still follow the P1 provider-id guardrails before creating P4 events.
+- Platform senders such as website form notification mailboxes are never treated as the customer. They can support source/provenance only.
+
+P4 evaluator dry-run behavior:
+- Input is an opportunity, optional `opportunity_lifecycle_state`, meaningful correspondence events, settings, and evaluator clock.
+- Output is one dry-run decision: `create_follow_up_draft`, `archive_after_two_unanswered_followups`, `archive_no_meaningful_correspondence`, `operator_follow_up_miss`, `move_to_lost_operator_no_response`, `reactivate_on_related_inbound`, or `no_action`.
+- Won, lost, discarded, deleted, converted/project-linked, archived, and future terminal/protected opportunities are ignored for stale monitoring. `reactivate_on_related_inbound` is an event-triggered decision only when a new related meaningful inbound arrives; P4 sweeps do not keep monitoring archived opportunities.
+- Last meaningful OPS outbound past the configured threshold returns `create_follow_up_draft`. P4-2 does not create or send that draft in production.
+- Two tracked unanswered OPS follow-ups past the configured second-follow-up archive threshold returns `archive_after_two_unanswered_followups`. P4-2 does not execute archive.
+- No meaningful correspondence past the configured no-correspondence threshold returns `archive_no_meaningful_correspondence`. P4-2 does not execute archive.
+- Last meaningful inbound with no later OPS reply returns `operator_follow_up_miss`; if it is beyond the lost threshold and the opportunity is beyond qualified (`quoting`, `quoted`, `follow_up`, `negotiation`), it returns `move_to_lost_operator_no_response`. P4-2 does not execute lost mutations.
+
+Safe P4-2 write boundaries:
+- Inbound/outbound sync may create `opportunity_correspondence_events` after provider thread/message ids validate, P3 relationship matching selects the opportunity, and P2 fill-only enrichment remains intact. When the event is meaningful, P4-2 app code may also upsert `opportunity_lifecycle_state` for that opportunity: last meaningful event id/time/direction, clear stale status fields, and reset unanswered follow-up counters for meaningful inbound.
+- Email send may create an outbound meaningful correspondence event after the provider returns valid thread/message ids, then upsert `opportunity_lifecycle_state` with the outbound meaningful event when it is the newest meaningful correspondence.
+- Import/historical import may create correspondence events only where provider ids satisfy the explicit import boundary. Invalid provider ids create no P4 event and no lifecycle-state upsert.
+- P4-2 dry-run scripts are read-only against Supabase and write only a markdown artifact under `docs/data-cleanup/`.
+- P4-2 does not execute archive, lost, or reactivation mutations. Those action-execution paths remain P4-3+ only, behind guarded write paths, idempotency, audit, and operator-visible review.
+
+P4-8 non-destructive action-execution boundary:
+- P4-8 may execute only non-destructive decisions from the P4 evaluator. `create_follow_up_draft` creates a local `opportunity_follow_up_drafts` row with `origin = 'template_follow_up'`, `status = 'drafted'`, the next template sequence number from stored lifecycle state/prior sent template follow-ups, rendered template subject/body, the triggering `source_event_id`, and optional connection/provider thread context. It does not create a Gmail/M365 provider draft and does not auto-send.
+- Template follow-up execution is idempotent. The open-template unique contract remains one open `template_follow_up` draft per opportunity. Existing operator, provider-backed, Phase C, or system-handoff drafts are not overwritten, discarded, or reused by P4-8.
+- `operator_follow_up_miss` creates a persistent operator rail notification through the existing notifications table. OPS currently has no dedicated lead-lifecycle notification type, so P4-8 uses the compatible `leads_waiting` type and deterministic title/action URL dedupe. Notifications link to the inbox thread when a provider thread id exists, otherwise to the pipeline.
+- Non-destructive actions update `opportunity_lifecycle_state` without pretending an email was sent. Template draft creation uses the live constraint-compatible stale status `follow_up_draft_due` and must persist required lifecycle state before inserting the local draft row, so a failed state update cannot leave a new template draft without the required state. Operator misses set `operator_follow_up_miss_at` and stale status to `operator_follow_up_miss`. Neither path mutates canonical `opportunities.stage`, `archived_at`, `lost_reason`, `project_id`, or project links.
+- Meaningful inbound handling clears stale status fields, resets unanswered follow-up counters, clears operator miss state, and supersedes stale open `template_follow_up` draft rows for that opportunity. Manual/operator, provider, Phase C, and system handoff drafts stay intact.
+- P4-8 dry-run/apply tooling defaults to dry-run and writes only a markdown artifact unless an explicit non-destructive apply flag is passed after approval. The artifact must count candidates, drafts to create, notifications to create, lifecycle states to update, drafts to supersede, already-existing skips, and destructive-action skips.
+- Archive, lost, and reactivation decisions remain skipped in P4-8. Archive/lost execution and related-inbound unarchive/reactivation remain P4-10+ product work behind separate approval, guarded write paths, idempotency, audit, and focused tests.
+- P4-8 must not auto-send email, create provider drafts, depend on Phase C, or start P5/P6.
+
+P4-12 guarded destructive action-execution boundary:
+- P4-12 may execute only the remaining reviewed P4 evaluator decisions: `archive_after_two_unanswered_followups`, `archive_no_meaningful_correspondence`, `move_to_lost_operator_no_response`, and `reactivate_on_related_inbound`. Production execution is blocked unless a dry-run artifact has been reviewed and an exact opportunity/action approval list is supplied to apply mode.
+- The production script remains dry-run by default and writes only a markdown artifact under `/Users/jacksonsweet/Projects/OPS/docs/data-cleanup/`. Apply mode requires `--apply-guarded-p4-actions --approved-actions-file <json>` and refuses to run until `opportunity_lifecycle_action_audit` exists in the target schema.
+- Archive execution is reversible and may set only `opportunities.archived_at` plus the ordinary `updated_at` timestamp. It must not change stage, lost fields, project links, correspondence rows, drafts, notifications, or provider state.
+- Operator no-response lost execution is allowed only for beyond-qualified stages (`quoting`, `quoted`, `follow_up`, `negotiation`). It must skip `new_lead`, `qualifying`, won, lost, discarded, deleted, converted, and project-linked opportunities. The only allowed opportunity changes are `stage = 'lost'`, `lost_reason = 'operator_no_response'`, `lost_notes`, `actual_close_date`, and `updated_at`.
+- Related-inbound reactivation may clear only `opportunities.archived_at`. It must skip won, lost, discarded, deleted, converted/project-linked opportunities and any archived opportunity whose latest meaningful inbound is not from a related/high-confidence related contact. It does not reopen lost/discarded records and does not change stage.
+- Guarded execution is idempotent. Already archived rows, already applied approval keys, disallowed stages, deleted rows, converted/project-linked rows, missing related inbound, and current-evaluator mismatches are skipped and reported. Repeated apply must not duplicate local drafts, notifications, provider drafts, sent email, or opportunity state transitions.
+- Each applied archive/lost/reactivation writes before/after values and approval metadata to `opportunity_lifecycle_action_audit`. The existing `opportunity_lifecycle_state` table is not sufficient for this audit because it has stale status fields but no action key, mode, guard reason, before/after snapshot, or applied-result record.
+- P4-12 does not send email, does not create provider drafts, does not call provider send APIs, does not mutate historical data outside the exact approved action set, and does not start P5/P6.
+
+#### Phase C Off vs Phase C On
+
+| Capability | Phase C Off | Phase C On |
+|---|---|---|
+| Email ingestion, provider thread/message proof, activity logging | Required | Required |
+| Conservative client/opportunity matching | Required | Improved by AI context |
+| Opportunity field enrichment | Deterministic only when safe | Better freeform extraction and confidence |
+| Stage movement | Deterministic, conservative | Context-aware suggestions or high-confidence actions |
+| Stale detection | Opportunity-level, deterministic | Better understanding of related contacts and context |
+| Follow-up drafting | Template-based from settings | Can also create smarter contextual drafts |
+| New-thread relationship matching | Exact contact/phone/address/project-state gates | Better household/project graph suggestions, still non-destructive |
+| Merge decisions | Manual operator action | AI may suggest, never destructive by itself |
+| Project conversion | Manual, or high-confidence deterministic rule only | Better won-confidence detection and handoff drafting |
+
+Phase C should never be the hidden storage location for canonical lead data. If Phase C extracts a durable fact, that fact belongs on the appropriate client/opportunity/activity/thread record with provenance.
+
+#### Lifecycle States, Visibility, and Outcomes
+
+Visibility is separate from business outcome:
+
+| Concept | Meaning | Reporting impact |
+|---|---|---|
+| `active` | Visible in active pipeline | Counts as live pipeline |
+| `archived` | Hidden from active pipeline, reversible | Does not count as won/lost |
+| `won` | Valid opportunity became work | Counts as conversion |
+| `lost` | Valid, qualified opportunity did not close | Counts against close rate |
+| `disqualified` | Real inquiry, but not a fit | Counts toward lead-quality/ad-targeting analysis, not close-rate loss |
+| `discarded` | Should not have been a lead: spam, vendor, applicant, internal, platform noise, test data | Counts toward system/data-quality analysis, not sales performance |
+| `merged` | Duplicate/fork created in error and absorbed into another opportunity | Losing record is removed from normal views after its data is integrated |
+| `converted_to_project` | Won opportunity has an operational project link | Project inherits sales trail |
+
+Archive means "remove from active pipeline." It does not delete the opportunity, email threads, activities, or source proof. A matched inbound from any known or newly matched related contact should unarchive/reactivate the opportunity.
+
+Merge is different from archive. Merge means one opportunity was created in error as a fork. The merge operation must move useful data, activities, email threads, contacts/sub-contacts, field provenance, estimate/project links, and source message IDs into the winning opportunity, then remove the losing opportunity from normal data views. If hard delete is unsafe for audit or FK constraints, product behavior should still be "deleted after merge," not "archived as a normal stale/lost lead."
+
+#### Stale Lead and Follow-Up Intent
+
+Staleness belongs to the opportunity, not an individual email thread.
+
+Rules:
+- Won, lost, converted-to-project, and already archived opportunities are not monitored for stale-lead automation.
+- Meaningful correspondence excludes provider noise, automated bounces, marketing, internal-only chatter, duplicate sync rows, and system notifications. In normal client threads, actual client emails should generally count.
+- If OPS sent the last meaningful message and the configured threshold passes, mark the opportunity as needing follow-up and create a template follow-up draft.
+- Follow-up drafts are lifecycle automation, not Phase C. They are generated from configurable settings templates. Default copy may be: `Hey there {{first_name}}, just following up on this as I didn't see anything back from you.`
+- After two OPS follow-ups with no meaningful customer response, archive the opportunity 7 calendar days after the second follow-up.
+- If there has been no meaningful correspondence for 14 calendar days, archive the opportunity unless it has a terminal or protected state.
+- If the last meaningful email was inbound and unreplied, do not treat it as a cold customer. If it is under 30 calendar days old, surface it as an operator follow-up miss or archive only as a visibility action. If it is over 30 calendar days old and the lead had moved beyond qualified, move it to `lost` with a reason such as `operator_no_response`.
+- If a matched inbound arrives from any linked or high-confidence related contact, reset stale timers, unarchive if needed, enrich the opportunity, and re-evaluate stage.
+
+Settings should eventually expose follow-up cadence, follow-up templates, stale thresholds, and any manual keep-active or automation-pause control. If a keep-active/automation-pause control does not exist yet, it is a product gap, not a reason to invent hidden behavior.
+
+#### Drafting and Learning Intent
+
+Drafts can come from multiple origins:
+
+| Origin | Purpose |
+|---|---|
+| `operator` | Human-created draft |
+| `template_follow_up` | Settings-driven stale-lead follow-up |
+| `phase_c` | AI/contextual draft |
+| `system_handoff` | Future project or lifecycle handoff draft |
+
+Multiple draft origins may coexist for the same opportunity/thread. A manual draft does not block Phase C from creating a Phase C draft, and a template follow-up does not overwrite a manual draft. The operator chooses which draft to edit/send.
+
+Every generated draft must retain:
+- original generated body and subject
+- final sent body and subject
+- origin (`operator`, `template_follow_up`, `phase_c`, etc.)
+- linked opportunity id, provider thread id, and source message id where applicable
+- generated_at, edited_at, sent_at, discarded_at
+- user/editor id
+- edit diff or equivalent edit-distance representation
+- final disposition: sent, discarded, replaced, expired
+
+Phase C learns from the delta between generated drafts and the sent version. It should learn from sent emails, not abandoned drafts. Template follow-up edits are also learning signal because they show how the operator personalizes lifecycle communication.
+
+#### New Thread, Same Customer, Different Job
+
+Matching must account for repeat customers and households. The same client or same address does not automatically mean the same opportunity.
+
+When a new thread or new contact appears, matching should consider:
+- exact known client/sub-contact/participant email
+- phone number
+- shared address/location
+- spouse/partner/project-manager relationship
+- quoted prior thread content
+- subject/body scope similarity
+- timing/recency
+- existing opportunity and project state
+
+Guidance:
+- If an existing opportunity at the same address is active, RFQ, estimating, quoted, follow-up, or negotiation, the new thread is likely the same job.
+- If an existing project at the same address is active/in progress, the new thread is likely project communication or same-job context.
+- If the prior project is completed/closed and the scope is distinct, create a new opportunity.
+- If confidence is not high, create a separate lead and provide a merge path rather than over-linking.
+
+#### Automation Boundary
+
+| Action | By deterministic algorithm | Phase C-assisted | Do not automate blindly |
+|---|---|---|---|
+| Deduplicate exact provider message IDs | Yes | Not needed | - |
+| Link a message on an already-linked provider thread | Yes | Not needed | - |
+| Update correspondence counts from linked activities | Yes | Not needed | - |
+| Fill blank fields from explicit contact-form values | Yes | Can improve extraction | Do not overwrite operator truth |
+| Generate follow-up drafts from templates | Yes | Can create an alternate smarter draft | Do not auto-send unless separately enabled |
+| Reset stale timer on matched inbound | Yes | Can improve matching | Do not reset from provider noise |
+| Link a new thread to an opportunity | Only with strict high-confidence gates | Yes, improves confidence | Do not link from weak evidence |
+| Determine same customer/new job vs same job | Conservative only | Yes, materially useful | Do not collapse repeat jobs into one opportunity |
+| Move to lost for operator no-response after 30+ days beyond qualified | Yes, if state is clear | Can improve classification | Do not mark unqualified noise as lost |
+| Archive stale opportunities | Yes, if opportunity-level stale rules pass | Can improve confidence | Do not archive terminal/protected opportunities |
+| Merge opportunities | No | Suggest only | Destructive, requires operator confirmation |
+| Delete losing fork after merge | No | Not needed | Only after confirmed merge and data migration |
+| Auto-convert to project | Only on explicit high-confidence acceptance and configured conversion path | Can improve won confidence | Do not convert vague language |
+| Treat platform sender as customer | No | No | Store as source metadata only |
+
+#### Project Conversion Intent
+
+When an opportunity converts to a project, the project must inherit as much sales context as possible. The conversion contract should be maintained against the live `opportunities` and `projects` schemas and should carry over at least:
+- client and sub-contact graph
+- address/location
+- scope/description
+- estimated value and quote/estimate context
+- source/platform metadata
+- linked email threads
+- activities and source message IDs
+- attachments/photos and estimate files where applicable
+- stage/history and field provenance
+
+Project conversion must not sever the sales trail. The project should link back to the opportunity, and the opportunity should link forward to the project.
+
 ### Provider Support
 
 | Provider | Auth | Scopes | Incremental Sync | Push Notifications |
