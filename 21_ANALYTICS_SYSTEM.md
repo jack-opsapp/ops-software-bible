@@ -30,10 +30,11 @@
 ### Design Principles
 
 - **Single table, all platforms.** Every platform (iOS, Android, Web) writes to the same `analytics_events` Supabase table with a `platform` discriminator.
-- **Admin panel is the single source of truth.** No third-party analytics tools (no Mixpanel, Amplitude, PostHog). All dashboards live in the OPS admin panel at `/admin`.
+- **Admin panel is the single source of truth for product analytics.** No third-party product analytics tools (no Mixpanel, Amplitude, PostHog). Feature adoption, funnels, retention, and engagement dashboards live in the OPS admin panel at `/admin`, reading from the Supabase `analytics_events` table.
 - **No new dependencies.** Uses existing Supabase client libraries on each platform.
 - **Offline-first.** Mobile platforms queue events locally and flush when connectivity returns.
 - **Firebase Analytics stays for Google Ads only.** The 5 conversion events that feed Google Ads attribution continue to fire via Firebase Analytics. Everything else goes to Supabase.
+- **GA4 handles visit + traffic data on web surfaces only (added 2026-05-25).** Both ops-site (marketing) and OPS-Web (logged-in product) fire the GA4 gtag.js snippet client-side via `src/components/layout/GoogleAnalytics.tsx`. Captures sessions, page_view, device, geography, referrer — the visit-grade surface that product analytics is not designed to expose. Does NOT receive product-analytics events; those still go to Supabase. iOS and Android do NOT use GA4. Env var: `NEXT_PUBLIC_GA_MEASUREMENT_ID`. Operator can share one property (two data streams — recommended) or split. See § 7 for the OPS-Web install.
 
 ### Data Flow
 
@@ -500,6 +501,32 @@ export async function trackEvents(events: AnalyticsEvent[]) {
 | `src/lib/firebase/admin-sdk.ts` | Current DAU/WAU/MAU calculation (to be replaced) |
 | `src/app/admin/engagement/page.tsx` | Current engagement dashboard (to be enhanced) |
 | `src/app/admin/_components/charts/` | Chart components (line, bar, donut, funnel, sparkline, stat-card) |
+
+### GA4 Visit + Traffic Tracking (added 2026-05-25 — OPS-Web `ae429101`)
+
+In addition to the Supabase `analytics_events` pipeline above, OPS-Web fires the GA4 gtag.js snippet on every page load. This is a visit/traffic-grade surface (sessions, page_view, device, geo, referrer) that product analytics is not designed to expose. Runs in parallel to — does NOT replace — the Supabase pipeline.
+
+| Item | Value |
+|---|---|
+| Component | `src/components/layout/GoogleAnalytics.tsx` (mirror of the ops-site implementation) |
+| Mount point | `src/app/layout.tsx`, inside `<body>`, after `<Providers>` |
+| Env var | `NEXT_PUBLIC_GA_MEASUREMENT_ID` (same name as ops-site) |
+| Conditional render | Component returns `null` if env var is unset — no leakage in local dev or preview branches without the var |
+| Load strategy | `next/script` with `strategy="afterInteractive"` (post-hydration, non-blocking) |
+| Identity attachment | None. GA4 manages its own client_id cookie. Do not pipe Supabase `user_id` into `gtag('config', ..., { user_id })` without an explicit privacy review — internal UUIDs in GA dimension data create downstream PII handling obligations. |
+
+**Property strategy.** Operator decides:
+- **Same property as ops-site, two data streams** (recommended). Unified reporting across marketing + product. Filter by data stream in GA exploration.
+- **Separate property.** Cleaner audience segmentation but loses the marketing-to-product handoff in GA's funnels.
+
+The `@google-analytics/data` server SDK already wired into `src/lib/analytics/ga4-client.ts` reads from whichever property `GA4_PROPERTY_ID` points to — independent of which write target `NEXT_PUBLIC_GA_MEASUREMENT_ID` resolves to. Admin dashboards keep working either way.
+
+**Privacy.** OPS-Web URLs can contain resource UUIDs (project IDs, client IDs) which are not direct PII but should not be retained indefinitely. `anonymize_ip` is GA4-default. Query-param exclusion + path scrubbing for resource UUIDs is configured at the GA4 admin level for the OPS-Web data stream — **do not encode** this in the client-side component, since admin-level config is overridable per-stream while code changes require a redeploy.
+
+**What this does NOT replace.**
+- Feature-adoption events (project_created, task_completed, photo_uploaded, etc.) → still Supabase `analytics_events`.
+- Funnel/retention/cohort dashboards → still admin panel reading from Supabase.
+- Google Ads conversion attribution → still Firebase Analytics (§ 10), narrow scope.
 
 ---
 
