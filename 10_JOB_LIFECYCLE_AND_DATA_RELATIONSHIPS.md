@@ -1732,6 +1732,63 @@ A daily automation cron was built for the lead lifecycle: `GET /api/cron/lead-li
 - **Fragmented correspondence is skipped for destructive emission.** Opportunities whose correspondence is fragmented or quarantined — identifiable by `legacy%` synthetic thread ids (including the DW1 `legacy:<id>` stamps and `legacy-activity:*` boundaries) — are skipped for destructive candidate emission, because their correspondence truth is not clean enough to drive an archive/lost decision.
 - **Deploy/push deliberately held.** The cron cannot run in production until it is deployed. Deploy and push are deliberately held until the entire lead-lifecycle initiative completes, consistent with the initiative-wide hold-push policy.
 
+#### Update — 2026-05-29: P5 Merge/Disposition/End-States, P6 Project Conversion, Operator Review Queue, Ingestion Backstop
+
+This entry records the remaining lead-lifecycle build that landed after the P4/P5-1/P5-3 production closeouts above. Everything in this block is **committed locally on the web branch `feat/lead-lifecycle-p5-1` and NOT yet deployed or applied to production.** Six additive migrations are written but unapplied; the coordinated release runbook lives at `docs/data-cleanup/lead-lifecycle-release-runbook-2026-05-29.md`. The Phase-C learning gate `LIFECYCLE_LEARNING_ENABLED` stays off until go-live. This work implements the merge/disposition/conversion intent already described above under "Lifecycle States, Visibility, and Outcomes" (`merged`, `converted_to_project`) — it does not redefine that intent.
+
+This update supersedes the earlier "schema gaps" notes for merge candidates and dispositions: P5 introduces the `opportunity_merges` audit table, the `opportunity_dispositions` history table, and `duplicate_reviews.migration_manifest` that those gaps anticipated.
+
+##### P5 — guarded transactional merge, dispositions, and end-states (backend)
+
+Merge is implemented as two guarded `SECURITY DEFINER` RPCs, mirroring the P4-12 guarded-action boundary. Both run as a single database transaction, take `FOR UPDATE` row locks on both the winner and the loser, and roll the entire merge back on any error so a partial re-point can never be left behind.
+
+- **`public.execute_opportunity_merge_guarded(...)`** — absorbs a loser opportunity into a winner. It performs a complete FK re-point of all 14 opportunity child relations (correspondence events, lifecycle state, follow-up drafts, email-thread links, activities, comments, site visits, photos, estimates, line-item scope, lifecycle action audit, dispositions, prior merges, and notifications) onto the winner. The loser is soft-deleted (not hard-deleted), given a `merged_into_opportunity_id` pointer, and stamped with a jsonb `migration_manifest` recording exactly what moved. Lifecycle-state counters are merged conservatively (the more-cautious value wins — e.g. it never resets an unanswered-follow-up count downward), and the consolidated thread set is re-pointed so all correspondence reads against the surviving opportunity.
+- **`public.execute_client_merge_guarded(...)`** — absorbs a loser client into a winner across all 17 client references. Each reference is re-pointed on **both** the FK-backed `*_ref` column **and** the legacy text `*_id` mirror so iOS clients still reading the legacy mirror stay consistent. Portal handling is explicit: the loser's portal messages are re-pointed to the winner, and the loser's portal tokens/sessions are revoked so a stale magic link cannot resolve to the merged-away client.
+- Both RPCs are **service-role/server-only** trusted boundaries; ordinary authenticated users do not receive `EXECUTE` and must not call them through PostgREST. RLS/company checks remain defense-in-depth, not the approval gate.
+- **§2.4 dedupe** runs inside the transaction: when re-pointing would create a duplicate child (e.g. the same `(thread_id, connection_id)` link or the same provider message id on both sides), the duplicate is collapsed rather than inserted, so the merge cannot violate the existing partial-unique constraints.
+- **Idempotency** is enforced by a `merge_key` (deterministic winner/loser/key tuple recorded in `opportunity_merges`); a repeated apply with the same key is a no-op and does not double-re-point or double-soft-delete.
+- **Snapshot guard.** Like the P4-12 RPC, the merge computes its before-state from the locked live rows. A client-supplied expected snapshot is optimistic verification only; on disagreement the RPC records a guarded skip (`snapshot_mismatch`) and does not report the merge as applied.
+
+New additive tables and columns (all iOS-safe — new nullable columns and new tables only):
+
+- **`opportunity_merges`** — one row per merge: company, winner, loser, `merge_key`, jsonb manifest of moved children, actor, and timestamps. Append-only audit.
+- **`opportunity_dispositions`** — append-history of business outcomes for an opportunity. `disposition` is one of `won`, `lost`, `disqualified`, `discarded`, `merged`, `converted_to_project` (the exact vocabulary from the "Lifecycle States" table above). `reason_code` is permissive free text (not a CHECK enum) so operators are never blocked from recording a real-world reason the schema didn't anticipate. A partial-unique index enforces at most one **active** disposition row per opportunity while keeping the full history.
+- **`duplicate_reviews.migration_manifest`** — jsonb column recording what a reviewed merge moved, so the operator review queue can show the exact effect of a resolution.
+- **`merged_into_opportunity_id` / `merged_into_client_id`** — soft-delete pointers on opportunities and clients identifying the surviving record after a merge.
+
+Field-survivorship decision — **SURFACE EVERY CONFLICT.** Merge never silently overwrites a non-blank value. For each canonical field, a blank on the winner is auto-filled from the loser (fill-blank, no operator action). Every field where both sides hold a non-blank but *different* value is surfaced to the operator as a conflict the operator must resolve explicitly; nothing is auto-picked by recency, confidence, or side. The operator's resolution is submitted as `confirmedOverrides` (see frontend below) and applied inside the guarded RPC transaction.
+
+##### P6 — automatic project conversion on Won
+
+Conversion fires automatically when an opportunity moves to `won`, via a guarded transactional RPC that creates the linked project and wires the relationship both ways.
+
+- The RPC creates the `projects` row and writes the FK-backed `opportunity_ref` on the project plus the FK-backed `project_ref` on the opportunity, and writes the legacy text mirrors alongside each FK so iOS stays consistent.
+- It **re-links estimates** from the opportunity onto the new project, writing both the FK-backed `project_ref` and the legacy `project_id` text mirror on each estimate.
+- It writes an `opportunity_dispositions` row with `disposition = 'converted_to_project'`.
+- It is **idempotent**: an opportunity that already has a `project_ref` is never converted twice; a repeat call is a no-op. The opportunity remains `won`, remains linked to its project, and is **not archived** — conversion is not a removal from the pipeline, it is a hand-off that preserves the sales trail (matching the "Project inherits sales trail" intent above).
+- Additive iOS-safe `projects` columns support the link and analytics: `opportunity_ref` (FK to opportunities), `estimated_value`, `source`, and `platform_metadata` (jsonb).
+
+##### Frontend — merge conflict resolution + operator Lead Data Review Queue
+
+- **Merge conflict-resolution UI.** The `DuplicateReviewSheet` gains a **RESOLVE** step. For a candidate merge it shows each surveyed canonical field with the winner value, the loser value, and the auto fill-blank result. Where both sides conflict, the operator picks the surviving value per field; the sheet submits the operator's choices as `confirmedOverrides`, which the backend applies inside `execute_opportunity_merge_guarded` / `execute_client_merge_guarded`. Fields that were auto fill-blank require no operator action and are shown as already-resolved.
+- **Lead Data Review Queue — `/admin/data-setup`.** This is the operator surface for the DW2/DW3 review set that the P1 remediation flagged as not auto-fixable (it must not be machine-fixed; see the P1 remediation entry above). It presents the ~48 split-thread candidates and ~18 terminal/live link candidates as actionable review rows, each resolving to a merge, a re-point, or a disposition through the guarded RPCs. The ~2198 de-aggregated blank-bucket activities from DW1 are **not** actionable rows — they are surfaced only as a muted count so the operator understands the scale of what the `legacy:<id>` re-stamping already partitioned, without being asked to hand-touch each one.
+- **New notification types.** Two dedicated lead-lifecycle notification types are added to the rail: `duplicates_merged` (emitted when a merge completes) and `data_review_resolved` (emitted when an operator clears a review-queue item). These replace the earlier P4-8/P5-1 stopgap of borrowing the `leads_waiting` type for lifecycle events; the action URLs follow the P5-3 rule of storing internal inbox/pipeline ids, never provider ids.
+
+##### Ingestion backstop (CW1)
+
+The ingestion path is hardened so the blank-provider damage the P1 remediation cleaned up cannot recur, while staying iOS-safe (ingestion never rejects a write that an older iOS client depends on):
+
+- **CW1 blank-provider rewrite trigger.** A database trigger rewrites a blank (`''`) `provider_thread_id` to a synthetic `legacy:<id>` value on write rather than rejecting the row. This is the same partitioning scheme the DW1 remediation applied retroactively, now enforced at ingestion so new blank-provider rows never collapse into a shared junk bucket. It **never rejects** — rejection would break older iOS clients — it only rewrites.
+- **Dedupe-by-message-id fix.** Ingestion dedupes on provider message id so a re-synced message does not create a second activity/correspondence event.
+- **Legacy email-webhook retired.** The legacy email-webhook endpoint now returns HTTP 410 Gone; provider sync is the single supported ingestion path.
+
+##### State of play
+
+- **6 additive migrations are written but UNAPPLIED**: `opportunity_merges`, `opportunity_dispositions`, `duplicate_reviews.migration_manifest`, the `merged_into_*` pointers, the `projects` conversion columns (`opportunity_ref`/`estimated_value`/`source`/`platform_metadata`), and the CW1 ingestion trigger. All are additive and iOS-safe (new nullable columns / new tables only), consistent with the iOS↔Supabase additive-only constraint.
+- **Coordinated release runbook**: `docs/data-cleanup/lead-lifecycle-release-runbook-2026-05-29.md` sequences migration apply, edge/cron deploy, and the operator review-queue rollout.
+- **`LIFECYCLE_LEARNING_ENABLED` stays gated** (Phase C off) until go-live. Merge, disposition, conversion, the review queue, and the CW1 backstop are all deterministic and do not require Phase C.
+- **Everything is held local.** Per the no-push-until-complete directive, the web branch `feat/lead-lifecycle-p5-1` and this bible branch are committed locally only; nothing is pushed, deployed, or applied until the entire initiative is complete.
+
 #### Phase C Off vs Phase C On
 
 | Capability | Phase C Off | Phase C On |
