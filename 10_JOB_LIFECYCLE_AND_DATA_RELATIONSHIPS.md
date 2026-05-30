@@ -1706,6 +1706,32 @@ P5-3 operator usability remediation:
 - P5-3 also performed a one-time production repair of pre-existing P5 rows: 41 `leads_waiting` notification links (broken `/inbox/{providerThreadId}` rewritten to internal-thread or `/pipeline?opportunityId=...` links) and 23 empty draft subjects (backfilled to `DEFAULT_FOLLOW_UP_TEMPLATE_SUBJECT`). This is remediation of historical rows only; the live code above now prevents recurrence.
 - The repair was performed via a dry-run/apply repair script, `scripts/lead-lifecycle-p5-3-repair.ts`, with audit artifacts written under `docs/data-cleanup/`. Dry-run/apply targets are separate for notification links/resolution and draft subjects. It writes only the requested markdown artifacts and, in apply mode, only `notifications` link/resolution fields or `opportunity_follow_up_drafts.subject`/`updated_at`; it must not mutate opportunities, clients, activities, email threads, provider state, or email sending.
 
+#### Update — 2026-05-29: P1 Data-Correctness Remediation + P3 Automation Cron
+
+This entry records the 2026-05-29 work that landed alongside the P4/P5 production closeouts above: the P1 historical data-correctness remediation (applied to production), a critical correction to the email-matching model, and the P3 automation cron (built and committed locally, not yet deployed).
+
+##### P1 data-correctness remediation (APPLIED to production 2026-05-29)
+
+The P1 dry-run artifacts (see `docs/data-cleanup/`) identified three classes of historical data damage. They were remediated via paired dry-run→apply scripts under `docs/data-cleanup/`. All de-aggregation was done by re-stamping synthetic thread ids, never by splitting or deleting correspondence rows.
+
+- **DW1 — blank-thread bucket de-aggregation.** A single empty-string `provider_thread_id` thread (`dd15de37`, ~2010 messages) had become a junk aggregation bucket: every email with a blank provider thread id had collapsed into it, plus the blank join row and ~2198 blank activities. Remediation stamped each affected row with a per-opportunity synthetic `legacy:<id>` thread id so the correspondence is re-partitioned back to its true opportunity rather than co-mingled in one bucket. No correspondence rows were split or deleted. The junk aggregate shell opportunity `a760f45f` ("New Lead", blank client) was discarded and tagged `legacy-aggregate`. The one real customer opportunity caught in the bucket, `aeb65f87` (Marcia Farquhar, `negotiation`), was preserved intact and only de-linked from the junk bucket.
+- **DW3 — identity/title contamination.** 19 opportunity titles had been contaminated with the operator's own name ("Jackson Sweet"). Their titles were re-derived from the correct source facts.
+- **DW2 — link reconciliation.** 2 safe re-points were applied (a Jonathan Anderson archived-duplicate opportunity's thread link was re-pointed to its live twin). 48 split threads + 19 flagged rows could NOT be auto-fixed: they cross terminal boundaries or require operator judgment to resolve correctly. These are an **OPERATOR REVIEW QUEUE**, not an auto-remediable set, and must not be machine-fixed.
+- **Business-state guard held throughout.** Aggregate row counts were unchanged across the entire remediation — opportunities 390, clients 380, activities 3106, email_threads 3564 — confirming nothing was split, duplicated, or deleted. The only intended business change was the single `a760f45f` junk-shell discard.
+
+##### Critical matching insight — `activities.from_email` is the company's own outbound address
+
+`activities.from_email` stores the COMPANY'S OWN outbound sending address (e.g. `canprojack@gmail.com`), NOT the inbound customer address. Therefore **`from_email → customer/client` is an INVALID matching signal** and must never be used to identify or enrich the customer side of an opportunity. Matching and enrichment must rely on the canonical thread/join structure (`email_threads`, `opportunity_email_threads`) and provider message id (`activities.email_message_id`), together with parsed contact-form submitter identity — not on `from_email`. This reshapes P2 enrichment design: any P2 path that inferred a customer email/name from `from_email` is wrong and must use canonical thread structure + parsed submitter identity instead.
+
+##### P3 automation cron (BUILT, committed locally, NOT yet deployed)
+
+A daily automation cron was built for the lead lifecycle: `GET /api/cron/lead-lifecycle`, `CRON_SECRET`-gated, scheduled daily at 13:00 UTC. It is committed locally but NOT yet deployed — and by design it cannot fire in production until deployed.
+
+- **Non-destructive auto-execution only.** The cron auto-executes only the NON-destructive P4/P5 actions: creating local `template_follow_up` follow-up drafts and emitting operator-miss notifications. It is idempotent via the open-template unique index (one open `template_follow_up` draft per opportunity) and notification `dedupe_key`.
+- **Destructive actions are dry-run candidates only.** The 4 destructive actions (`archive_after_two_unanswered_followups`, `archive_no_meaningful_correspondence`, `move_to_lost_operator_no_response`, `reactivate_on_related_inbound`) are emitted as DRY-RUN candidates only. The cron never calls the guarded RPC `public.execute_opportunity_lifecycle_guarded_action(...)`; destructive execution remains operator-approved through the P4-12 dry-run→approval→guarded-RPC path.
+- **Fragmented correspondence is skipped for destructive emission.** Opportunities whose correspondence is fragmented or quarantined — identifiable by `legacy%` synthetic thread ids (including the DW1 `legacy:<id>` stamps and `legacy-activity:*` boundaries) — are skipped for destructive candidate emission, because their correspondence truth is not clean enough to drive an archive/lost decision.
+- **Deploy/push deliberately held.** The cron cannot run in production until it is deployed. Deploy and push are deliberately held until the entire lead-lifecycle initiative completes, consistent with the initiative-wide hold-push policy.
+
 #### Phase C Off vs Phase C On
 
 | Capability | Phase C Off | Phase C On |
