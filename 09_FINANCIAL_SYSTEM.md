@@ -1093,6 +1093,22 @@ isFollowUpToday(followUp)     // true if Pending and due today
 - Payment voiding: `voided_at` + `voided_by` (NOT `deleted_at`)
 - Row-Level Security (RLS) enabled on all tables
 
+### RLS / Access Model
+
+Every financial table enforces tenant isolation via a PERMISSIVE `company_isolation` policy `FOR ALL` (`company_id = (SELECT private.get_user_company_id())`); the financial/pipeline tables additionally layer RESTRICTIVE `role_scope_*` permission policies on top. Canonical per-table policy definitions live in `03_DATA_ARCHITECTURE.md` (§ Expense / Payment / Opportunity RLS Hardening, § Permissions System Tables) — the summary below is the financial-chapter cross-reference.
+
+| Table | Tenant floor | Permission ceiling |
+|-------|--------------|--------------------|
+| `estimates` | `company_isolation` | `role_scope_*` keyed off `estimates.*` permissions |
+| `invoices` | `company_isolation` | `role_scope_*` keyed off `invoices.*` permissions |
+| `payments` | `company_isolation` | `role_scope_read` → `invoices.view` (added 2026-05-31) |
+| `opportunities` | `company_isolation` | `role_scope_read` → `pipeline.view` (added 2026-05-31) |
+| `expenses` | `company_isolation` | `role_scope_read/insert/update/delete` keyed off `expenses.view/create/edit/approve/delete`; `view`/`edit` `own`-scope branch compares `submitted_by` to `private.get_current_user_id()` |
+| `expense_categories` | `company_isolation` | none (company reference data) |
+| `expense_project_allocations` | `company_isolation` via parent expense (table has no `company_id`) | `role_scope_read` inherits the parent expense's `expenses.view` scope (`own` → parent `submitted_by`) |
+
+**Security remediation (2026-05-31).** Migration `20260531200227_fix_expenses_rls_company_and_role_scope` replaced prior single permissive `USING (true)` policies on `expenses`, `expense_project_allocations`, and `expense_categories` — those policies had granted full CRUD to `anon` + `authenticated`, exposing every company's expense data to the shipped anon key with no login (cross-tenant breach). Migration `20260531200501_fix_payments_opportunities_permission_scope` added the `payments` / `opportunities` read ceiling. As a result, **expense `own`-scope (Crew / Operator) is now enforced at the database** via `submitted_by`, not app-layer-only: an `own`-scope user can no longer read or mutate another user's expense rows even by querying Supabase directly. Verified 2026-05-31 — the anon role returns 0 rows from all five tables, and an `own`-scope user sees only their own expenses.
+
 ### RPC Functions
 
 ```sql
@@ -1184,7 +1200,7 @@ Hooks are in `src/lib/hooks/`:
 ### Expense Rules
 
 1. All roles can create and submit expenses (requires `expenses.create` permission — all preset roles have it)
-2. Only users with `expenses.approve` permission can approve/reject expenses (Admin, Owner, Office by default). Enforced at app layer + Supabase RLS (migration 016)
+2. Only users with `expenses.approve` permission can approve/reject expenses (Admin, Owner, Office by default). Enforced at the app layer and at the database via the `expenses.role_scope_update` RLS policy. As of the 2026-05-31 security remediation, expense access is fully DB-enforced: `own`-scope users (Crew / Operator) can only read/edit/delete expenses where `submitted_by` matches their own user id, and the anon key can read nothing — see the § RLS / Access Model table above and `03_DATA_ARCHITECTURE.md` § Expense / Payment / Opportunity RLS Hardening (2026-05-31)
 3. Auto-approve logic: if amount < `auto_approve_threshold`, status goes directly to `approved` on submission
 4. Expenses above `admin_approval_threshold` require admin approval specifically (user must have `expenses.approve` permission)
 5. `batch_id` is null until the expense is collected into a batch by the cron Edge Function

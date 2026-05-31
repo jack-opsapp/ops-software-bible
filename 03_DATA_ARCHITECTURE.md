@@ -1717,7 +1717,7 @@ The permissions system uses three Supabase tables and an RPC function to provide
 - **`has_permission()` RPC** — Server-side permission check function
 
 **Four enforcement layers:**
-1. **Supabase RLS** — Data-level floor (financial tables only; core operational tables use company isolation only)
+1. **Supabase RLS** — Data-level floor. All tables enforce company isolation; financial / pipeline tables (`estimates`, `invoices`, `payments`, `opportunities`, `expenses`, `expense_project_allocations`) additionally layer RESTRICTIVE `role_scope_*` permission policies on top. Core operational tables use company isolation only. See § Expense / Payment / Opportunity RLS Hardening (2026-05-31) for the per-table contracts.
 2. **Client-side route guard** — Blocks navigation to unauthorized pages (web)
 3. **UI gating** — Hides unauthorized UI elements (sidebar, PermissionGate, FAB, tabs)
 4. **Server-side API checks** — Guards mutations via `checkPermission()` (web API routes)
@@ -2002,6 +2002,36 @@ $$;
 ```
 
 All RLS policies on permission tables use `private.get_current_user_id()` instead of `auth.uid()` directly.
+
+### Expense / Payment / Opportunity RLS Hardening (2026-05-31)
+
+**Context**: A Books-tab review surfaced a critical multi-tenant data-exposure surface on the expense tables. `expenses`, `expense_project_allocations`, and `expense_categories` each carried a single permissive `USING (true)` policy for role `public` with full CRUD granted to `anon` + `authenticated` — meaning the shipped anon key (no login) could read, insert, update, and delete **every company's** expense data. `payments` and `opportunities` were company-isolated but had **no** permission scoping, so a same-company user without finances / pipeline access could still read them via a direct query.
+
+Two migrations closed the gap, both replacing the old policies with the layered company-isolation + role-scope pattern already used by `invoices` / `estimates`. As with all OPS RLS, every policy targets role `public` (the app executes as the anon role — see § Auth ID Resolution and the Permission Enforcement Matrix), and the layered enforcement uses **one PERMISSIVE `company_isolation` policy `FOR ALL`** (the tenant floor) combined with **per-command RESTRICTIVE `role_scope_*` policies** (the permission ceiling). PERMISSIVE policies are OR'd together; RESTRICTIVE policies are AND'd, so a row is visible only when it passes company isolation **and** every applicable restrictive scope check.
+
+**Migration `20260531200227_fix_expenses_rls_company_and_role_scope`** — replaced the `USING (true)` policies on the three expense tables:
+
+| Table | Policy | Type / Cmd | Predicate |
+|-------|--------|------------|-----------|
+| `expenses` | `company_isolation` | PERMISSIVE · ALL | `company_id = (SELECT private.get_user_company_id())` |
+| `expenses` | `role_scope_read` | RESTRICTIVE · SELECT | `current_user_is_admin() OR CASE current_user_scope_for('expenses.view') WHEN 'all' THEN true WHEN 'own' THEN (get_current_user_id() = submitted_by) ELSE false END` |
+| `expenses` | `role_scope_insert` | RESTRICTIVE · INSERT | `WITH CHECK current_user_has_permission('expenses.create','all')` |
+| `expenses` | `role_scope_update` | RESTRICTIVE · UPDATE | `current_user_is_admin() OR current_user_has_permission('expenses.approve','all') OR CASE current_user_scope_for('expenses.edit') WHEN 'all' THEN true WHEN 'own' THEN (get_current_user_id() = submitted_by) ELSE false END` |
+| `expenses` | `role_scope_delete` | RESTRICTIVE · DELETE | `current_user_is_admin() OR current_user_has_permission('expenses.delete','all')` |
+| `expense_categories` | `company_isolation` | PERMISSIVE · ALL | `company_id = (SELECT private.get_user_company_id())` — company reference data, no per-user scope |
+| `expense_project_allocations` | `company_isolation` | PERMISSIVE · ALL | `EXISTS (SELECT 1 FROM expenses e WHERE e.id = expense_project_allocations.expense_id AND e.company_id = (SELECT private.get_user_company_id()))` — table has no `company_id`; isolation rides the parent expense |
+| `expense_project_allocations` | `role_scope_read` | RESTRICTIVE · SELECT | `current_user_is_admin() OR EXISTS (SELECT 1 FROM expenses e WHERE e.id = expense_project_allocations.expense_id AND CASE current_user_scope_for('expenses.view') WHEN 'all' THEN true WHEN 'own' THEN (get_current_user_id() = e.submitted_by) ELSE false END)` — read scope inherits the parent expense's `expenses.view` scope |
+
+**Expense `own`-scope is now enforced at the database.** Crew and Operator hold `expenses.view` / `expenses.edit` / `expenses.delete` at `own` scope (see § Preset Role Permission Summary); the `submitted_by = get_current_user_id()` branches above mean those users can no longer read or mutate another user's expense rows even via a direct Supabase query — enforcement is no longer app-layer-only. `expense_project_allocations` carries no `role_scope_insert/update/delete`; allocation writes are gated by the parent expense's restrictive policies plus the application's delete-and-reinsert path (§ `09_FINANCIAL_SYSTEM.md` Expense Rules).
+
+**Migration `20260531200501_fix_payments_opportunities_permission_scope`** — added a permission ceiling to two already-isolated tables (their existing `company_isolation` PERMISSIVE `FOR ALL` policies were left intact):
+
+| Table | Policy | Type / Cmd | Predicate |
+|-------|--------|------------|-----------|
+| `payments` | `role_scope_read` | RESTRICTIVE · SELECT | `current_user_has_permission('invoices.view','all')` |
+| `opportunities` | `role_scope_read` | RESTRICTIVE · SELECT | `current_user_has_permission('pipeline.view','all')` |
+
+**Verification (2026-05-31)**: executed as the anon role, all five tables now return 0 rows; an `own`-scope user sees only expenses where `submitted_by` matches their own user id. Migration SQL is mirrored in `migrations/` and the per-table contracts are echoed in `09_FINANCIAL_SYSTEM.md` (Expense Tracking System, Supabase Schema Reference).
 
 ### Web Implementation Reference
 
