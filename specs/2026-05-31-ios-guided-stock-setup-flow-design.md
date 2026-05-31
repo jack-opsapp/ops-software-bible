@@ -260,12 +260,12 @@ Coach-mark-specific audit phases (glow targets, instruction-bar, exit-notificati
 | Selling uses stock | `products`, `catalog_*` | `product_materials` (recipe) |
 | Package | `products` | `products.kind=package`, `product_bundle_items` (+ required/suggested per capability) |
 
-## 18 · Open decisions for the plan
+## 18 · Decisions (resolved 2026-05-31 against prod schema; see PLAN)
 
-- **D1 — commit orchestration:** per-family `catalog_setup_save` loop vs bulk `catalog_import_apply`. Resolve by reading the import contract.
-- **D2 — unit handling:** does `catalog_setup_save` create `catalog_units` inline, or must the flow ensure they exist? Read RPC + `CatalogUnit` seeding.
-- **D3 — clustering algorithm + threshold:** exact tokenization, similarity metric, threshold — set with tests against realistic name lists (vinyl colors, screw sizes, paint, lumber).
-- **D4 — required/suggested bundle children:** confirm whether `product_bundle_items` carries `relationship_kind` (the 2026-05-21 spec flagged it as a possible additive column). If absent and packages are in P1, an additive migration may be needed (iOS-sync-safe: nullable column only).
+- **D1 — commit orchestration: RESOLVED → per-family loop over `catalog_setup_save`.** `catalog_import_apply` only inserts flat `catalog_items` + `catalog_variants` (no attributes, option values, variant joins, stock units, products, or bundles), so it cannot build the guided graph. The loop is atomic per family, idempotent, and resumable.
+- **D2 — unit handling: RESOLVED → units must pre-exist; flow ensures them.** `catalog_import_validate` (and the save path) reject a `unit_id` that isn't an active `catalog_units` row for the company. The flow maps measurement → dimension (piece→`count`/each, length→`length`/ft, area→`area`/sq ft) and creates the unit if missing before commit. Exact `CatalogRepository` create method confirmed in PLAN Phase 4.
+- **D3 — clustering algorithm + threshold:** owned by PLAN Task 3.1 — normalized-token stem + Jaccard similarity, threshold tuned by tests (vinyl colors, screw sizes, two-dimension cases, all-distinct).
+- **D4 — required/suggested bundle children: RESOLVED → no migration.** `product_bundle_items` already carries `relationship_kind` (default `'required'`), `suggestion_reason`, and `compatibility_selector`. Use the existing columns.
 
 ## 19 · Pre-implementation checklist (acceptance criteria)
 
