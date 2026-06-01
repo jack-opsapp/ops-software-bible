@@ -1021,13 +1021,17 @@ Syncs an approved expense to connected accounting system(s). Called by iOS app a
 - **Sage mapping**: OPS expense → Sage `OtherPayment` with contact lookup/create, category → `LedgerAccountId`
 - **Retry**: 3x exponential backoff on 429/5xx
 
-### accounting-batch-create
+### accounting-batch-create *(deprecated 2026-05-08; fully superseded 2026-06-01)*
 
-Cron-triggered (daily at 00:00 UTC). Creates expense batches based on each company's `review_frequency`.
+This cron-driven Edge Function was the original lazy batcher. It was deprecated 2026-05-08 (it had a latent bug — references to a nonexistent `expense_count` column and `accounting_sync_log` table made every invocation fail silently) and is **fully superseded** by the server-authoritative expense-batching brain shipped 2026-06-01. It should be removed via the Supabase dashboard.
 
-**Flow**: Query `expense_settings` → check if batch due → collect unbatched `submitted` expenses → create `expense_batch` → assign `batch_id` → calculate total → log.
+Batching is now entirely in-database (Postgres), so no client version can strand an expense:
 
-**Optional env var**: `CRON_SECRET` for authenticated cron invocations.
+- **Placement** — `trg_place_expense` (AFTER INSERT/UPDATE OF status, expense_date, batch_id on `expenses`) → `place_expense(uuid)`: files every non-draft, unbatched expense into its per-person/per-period envelope (`expense_batches`, status `open`) by the expense's date, rolling forward when the home period's envelope is already approved.
+- **Auto-send + reconciliation** — `pg_cron` job `expense_envelope_sweep_daily` (15:15 UTC) → `expense_envelope_sweep()`: auto-sends each `open` envelope past `period_end + expense_settings.auto_submit_grace_days` (flip to `pending_review` + one `expense_submitted` notification per envelope to `expenses.approve` holders), sweeps in completed drafts, adopts any orphaned `submitted/NULL` expense (the permanent safety net), and rolls stragglers forward.
+- **Period math** — `public.expense_envelope_period(date, text)` (SQL port of `ExpenseBatchPeriod.swift`).
+
+Server functions (`place_expense`, `expense_envelope_sweep`) are locked to `service_role` (REVOKEd from public/anon/authenticated). Full lifecycle: `09_FINANCIAL_SYSTEM.md § Server-Authoritative Expense Envelopes (2026-06-01)`. Migrations: `migrations/20260601210311_expense_envelope_schema.sql` … `20260601211914_expense_batches_rls_approve_scope.sql`.
 
 ---
 
