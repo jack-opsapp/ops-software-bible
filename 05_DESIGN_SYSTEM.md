@@ -1020,7 +1020,7 @@ SegmentedControl(
 
 ### Icon System
 
-OPS has adopted the **IBM Carbon Design System** icon set off-the-shelf across all surfaces — Apache-2.0 (free; commercial use and modification permitted, retain the license/NOTICE file in each repo), ~2,300 icons, monochrome. Carbon replaces the prior mix: web `lucide-react`, iOS Apple SF Symbols, marketing-site hand-drawn SVGs.
+OPS has adopted the **IBM Carbon Design System** icon set off-the-shelf as the icon **target** across all surfaces — Apache-2.0 (free; commercial use and modification permitted, retain the license/NOTICE file in each repo), ~2,300 icons, monochrome. Carbon is intended to replace the current per-surface mix, but **as of 2026-06-01 it is not yet implemented on any surface**: web still ships `lucide-react` (`@carbon/icons-react` is not installed), iOS Apple SF Symbols, marketing-site hand-drawn SVGs. The per-surface delivery below is the **target** state; the swap is a separate, not-yet-scheduled migration.
 
 Per surface:
 

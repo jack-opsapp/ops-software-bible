@@ -67,7 +67,7 @@ All styling decisions live in the centralized design system — not in CLAUDE.md
 - **Voice:** OPS copy is terse and tactical. `// OPERATOR :: JACKSON`, not "Welcome back!". No emoji, no exclamation points, sentence case for content / UPPERCASE for authority. See `ops-design-system/project/README.md` § CONTENT FUNDAMENTALS.
 - **Numbers:** Always JetBrains Mono, tabular-lining, slashed zero. Always formatted (`87%`, never `86.5671641`). Empty state is `—`, not "N/A".
 - **Motion:** One easing curve `cubic-bezier(0.22, 1, 0.36, 1)`. No spring physics, no bounce (exception: drag-and-drop reorder). Always honor `prefers-reduced-motion`.
-- **Icons:** IBM Carbon Design System — `@carbon/icons-react` (web), SF Symbols custom symbols (iOS), Carbon SVGs (marketing site). Sizes 16/20/24/32; monochrome, `currentColor`. No emoji, no decorative icons. OPS-concept → Carbon-icon mapping: `OPS-ICON-SET-BRIEF.md` at the OPS project root.
+- **Icons:** IBM Carbon Design System is the adopted icon **direction** — `@carbon/icons-react` (web), SF Symbols custom symbols (iOS), Carbon SVGs (marketing site); OPS-concept → Carbon mapping in `OPS-ICON-SET-BRIEF.md` at the OPS project root. **Status (2026-06-01): adopted but NOT yet implemented on any surface.** Until the migration lands, use the library each surface ships today — **web: `lucide-react`** (do not import `@carbon/icons-react`; it is not installed), **iOS: SF Symbols via `OPSStyle.Icons`**, **marketing: hand-drawn inline SVG**. The Carbon swap is a separate, not-yet-scheduled migration. Sizes 16/20/24/32; monochrome, `currentColor`. No emoji, no decorative icons.
 
 ### Claude Design Handoff Protocol
 
