@@ -4439,6 +4439,30 @@ Current iOS SwiftData schema version after the catalog/inventory setup foundatio
 
 **iOS setup UI:** `CatalogSetupFlowSheet` refreshes `CatalogSchemaCapabilityGate` and blocks before the first repository write if the draft includes stock units but `catalog_stock_units` is unavailable. It writes through the existing repository layer only after preflight: `CatalogRepository` creates the family, catalog axes, option values, variants, and variant-option joins; `CatalogStockUnitRepository` creates physical roll/offcut rows with label, lot code, original length, remaining length, width, unit, location, status, and notes; `CatalogProductOptionMappingRepository` creates axis/value bridges only after the capability gate confirms `catalog_product_option_mappings`; `ProductRepository` links an optional sellable Product through `products.linked_catalog_item_id`. Draft validation treats duplicate SKUs as warnings, duplicate matrix signatures as blockers, and product-option value mappings as blockers when a selected product value does not belong to the selected product option. Available stock-unit rows (`full` / `partial`) mirror their aggregate into the created `catalog_variants.quantity`; dimensional roll/offcut rows mirror area when length and width share a unit. Reserved, consumed, and scrapped rows do not inflate availability.
 
+## Expense Auto-Batching — Envelope Schema (2026-06-01)
+
+Additive schema deltas for the server-authoritative expense-batching brain (full behavior in `09_FINANCIAL_SYSTEM.md § Server-Authoritative Expense Envelopes`; RPCs in `04_API_AND_INTEGRATION.md`). All additive — respects the iOS cross-release sync constraint; 3.0.2 unaffected.
+
+### `expense_batches.status` — new value `open`
+
+`expense_batches.status` is plain `text` (no enum, no CHECK constraint, verified on prod), so the new filling-phase value needs no type change. Lifecycle: `open` (filling) → `pending_review` (auto-sent) → `approved` / `auto_approved` (done). `auto_approved` envelopes live in History.
+
+### Widened active-envelope unique index
+
+`expense_batches_open_unique` — partial unique index on `(company_id, submitted_by, period_start, period_end, scope_project_id)` `NULLS NOT DISTINCT`, widened from `WHERE status = 'pending_review'` to **`WHERE status IN ('open','pending_review') AND amendment_number = 0`** so the new `open` (filling) phase is also one-active-envelope-per-scope (race-safe get-or-create). Migration `migrations/20260601210311_expense_envelope_schema.sql`.
+
+### Additive column on `expense_settings`
+
+| Table | Column | Type | Default | Purpose |
+|-------|--------|------|---------|---------|
+| `expense_settings` | `auto_submit_grace_days` | `integer NOT NULL` | `7` | Days after a period ends before its `open` envelope auto-sends. Read by `expense_envelope_sweep()`. Short cadences (weekly/biweekly) would set 1–2. |
+
+### Placement trigger, sweep, RLS
+
+- `trg_place_expense` (AFTER INSERT or UPDATE OF status, expense_date, batch_id on `expenses`) → `place_expense(uuid)` files every non-draft, unbatched expense into its envelope by the expense's date. `migrations/20260601210846_place_expense_trigger.sql`.
+- pg_cron `expense_envelope_sweep_daily` (15:15 UTC) → `expense_envelope_sweep()` auto-sends due envelopes, adopts orphans (safety net), rolls stragglers forward. `migrations/20260601213757_expense_envelope_sweep_deep_link_expense.sql`.
+- `expense_batches_approve_scope` — RESTRICTIVE UPDATE RLS policy gating `approved`/`auto_approved` transitions to `expenses.approve` holders. `migrations/20260601211914_expense_batches_rls_approve_scope.sql`.
+
 ## Cashflow Forecast (2026-05-11)
 
 Supabase schema deltas for the Cashflow Forecast feature (Card 6 of the BOOKS hero carousel). All deltas are **additive** — no rename, retype, or drop. Detailed semantics in `09_FINANCIAL_SYSTEM.md § Cashflow Forecast`. iOS SwiftData parity ships in `OPSSchemaV6` (consolidated with the PhotoAnnotation rendered-deliverable property — see § Schema V6 above).
