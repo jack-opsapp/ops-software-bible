@@ -791,9 +791,31 @@ Company-configurable via `expense_settings`:
 2. **Admin approval threshold**: Expenses above this amount require admin (not just office crew)
 3. Expenses between the two thresholds require office crew or admin approval
 
+### Server-Authoritative Expense Envelopes (2026-06-01)
+
+Batching and submission are owned by the **database**, not the client, so no app version can strand an expense and envelopes auto-submit for review on a per-org schedule. This replaced the client-authoritative "always-bundle on submit" model (and the dead `accounting-batch-create` cron) below.
+
+**Envelope lifecycle** (`expense_batches.status`):
+
+| Phase | `status` | Meaning | Accepts new items? |
+|---|---|---|---|
+| Filling | `open` *(value added 2026-06-01)* | Current period, silently accruing | Yes |
+| With the office | `pending_review` | Auto-sent on schedule | Yes — same-period late items, until approved |
+| Done | `approved` / `auto_approved` | Office approved (auto-approved envelopes live in History) | No → late items roll forward |
+
+**Placement (instant, server-side).** `trg_place_expense` (AFTER INSERT or UPDATE OF status, expense_date, batch_id on `expenses`) → `place_expense(uuid)`: for any non-draft, unbatched expense it derives the period from the expense's *date* + the company's `review_frequency` (`expense_envelope_period`), finds the not-yet-approved envelope for `(submitted_by, period, scope_project_id)` or creates one `open` (`get_or_create_open_batch`), attaches the expense, and recalculates the envelope total. If the home-period envelope is already `approved`, it **rolls forward** into the current period's open envelope. `draft` expenses are never placed.
+
+**Daily sweep.** `expense_envelope_sweep()` via pg_cron `expense_envelope_sweep_daily` (15:15 UTC) does three jobs: (1) **safety net** — adopts any expense left `submitted / batch_id = NULL` (orphans from any client/version) and places it; (2) **auto-send** — every `open` envelope past `period_end + expense_settings.auto_submit_grace_days` flips to `pending_review`, sweeping in that person's completed (`amount > 0`) drafts first, then firing **one** `expense_submitted` notification per envelope to `expenses.approve` holders (see `07_SPECIALIZED_FEATURES.md §14.3.4`); (3) **roll-forward** — stragglers whose home period is already approved move to the current open envelope. The `open → pending_review` flip is the idempotency guard — a sent envelope is never re-picked.
+
+**Grace / cadence.** `expense_settings.auto_submit_grace_days` (int, default 7) = days after a period ends before its envelope auto-sends. `per_job` envelopes have no calendar period (they send on job completion / manual send, not a calendar).
+
+**Security.** `place_expense` and `expense_envelope_sweep` are `SECURITY DEFINER` locked to `service_role` (REVOKEd from public/anon/authenticated). `get_or_create_open_batch` stays broadly executable (shipped iOS clients still call it on submit during the transition). Direct client writes that move an envelope to `approved`/`auto_approved` are gated to `expenses.approve` holders by the `expense_batches_approve_scope` RESTRICTIVE RLS policy.
+
+**Back-compat.** All changes additive — the iOS cross-release sync constraint holds; 3.0.2 keeps working, it simply starts seeing its expenses batched. Migrations `20260601210311_expense_envelope_schema` … `20260601213757_expense_envelope_sweep_deep_link_expense` + the cron. A one-time backfill (`20260601212520_backfill_expense_orphans`) placed the 53 pre-existing orphans.
+
 ### Batch Review Workflow
 
-**Always-bundle on submit (post-2026-05-08).** Every submitted expense is attached to an open batch (`expense_batches.status = 'pending_review'`) at the moment of submission. The `review_frequency` setting controls how the open batch is *scoped*:
+**Envelope scoping by cadence (server-authoritative since 2026-06-01).** Placement files every non-draft, unbatched expense into an envelope (`expense_batches`, created `open`) by the expense's *date*. The `review_frequency` setting controls how an envelope is *scoped*:
 
 | Frequency | Batch scope | Period window |
 |---|---|---|
@@ -803,17 +825,17 @@ Company-configurable via `expense_settings`:
 | `monthly` | One batch per `(submitted_by, month)` | First-to-last day of the month containing `expense_date` |
 | `quarterly` | One batch per `(submitted_by, quarter)` | First-to-last day of the quarter containing `expense_date` |
 
-Subsequent expenses by the same user falling into the same scope accumulate into the same open batch until an admin acts on it (approve / send back / reject). At that point the batch is closed and a new submission opens a fresh one.
+Subsequent expenses by the same user in the same scope accumulate into the same not-yet-approved envelope (whether still `open` or already auto-sent to `pending_review`) until it is **approved**. Once approved, further same-scope expenses **roll forward** into the current period's open envelope (created on demand) — see § Server-Authoritative Expense Envelopes above.
 
-**Atomic get-or-create.** iOS submits via the `public.get_or_create_open_batch(p_company_id, p_submitted_by, p_period_start, p_period_end, p_scope_project_id)` RPC. A partial unique index on `(company_id, submitted_by, period_start, period_end, scope_project_id) WHERE status='pending_review' AND amendment_number=0` (NULLS NOT DISTINCT) makes concurrent submissions safe.
+**Atomic get-or-create.** Placement (and iOS submit, during the transition) go through `public.get_or_create_open_batch(p_company_id, p_submitted_by, p_period_start, p_period_end, p_scope_project_id)`, which now creates the envelope as **`open`** and matches an existing `open` *or* `pending_review` envelope. The race-safety partial unique index `expense_batches_open_unique` on `(company_id, submitted_by, period_start, period_end, scope_project_id)` (NULLS NOT DISTINCT) was widened to `WHERE status IN ('open','pending_review') AND amendment_number=0` so the filling phase is also one-per-scope.
 
 **Per-expense auto-approve preserved.** If `amount < expense_settings.auto_approve_threshold`, the expense bypasses the batch entirely: `draft → approved` directly with `approvedBy = 'auto'` and immediate `accounting-sync-expense` call. No notification, no batch, matching the pre-existing semantics.
 
 **Notification dispatch.** On above-threshold submission, recipients are looked up via `public.users_with_permission(company_id, 'expenses.approve')` — never by `users.role`. Sites that previously filtered by role (`AppState.swift`, `ExpenseViewModel.swift`, `TimeOffRequestSheet.swift`, `QuantityAdjustmentSheet.swift`) now use this permission-gated lookup, honoring custom roles and per-user overrides.
 
-**Orphan recovery.** Pre-fix client versions can leave expenses in `submitted` status with `batch_id = NULL`. `ExpensesListView` shows an orphan-recovery banner whenever any exist for the company; tapping `BUNDLE` re-runs always-bundle for each orphan, attaching it to the appropriate open batch (one notification per resulting batch, not per expense).
+**Orphan recovery — now server-side and permanent.** The placement trigger fires for every client/version, and the daily sweep's safety net adopts any expense left `submitted / batch_id = NULL` and places it — permanently ending the stranding class of bug regardless of app version. The iOS `ExpensesListView` `BUNDLE` banner remains as a manual belt-and-suspenders but is no longer load-bearing. A one-time backfill on 2026-06-01 placed the 53 pre-existing orphans (`migrations/20260601212520_backfill_expense_orphans.sql`); Maverick's 51 historical orphans were filed to History (`auto_approved`) per operator decision so its approvers weren't blasted with back-dated review notifications.
 
-**`accounting-batch-create` Edge Function** *(deprecated 2026-05-08)* — the cron-driven lazy batcher is no longer the source of truth. The function had a latent bug in production (references to nonexistent column `expense_count` and table `accounting_sync_log` made every invocation fail silently — verified zero batches with `status='pending'` ever existed). With always-bundle, lazy batching is unnecessary. The function should be removed via the Supabase dashboard.
+**`accounting-batch-create` Edge Function** *(deprecated 2026-05-08; fully superseded 2026-06-01)* — the cron-driven lazy batcher is gone. It had a latent bug (references to a nonexistent `expense_count` column and `accounting_sync_log` table made every invocation fail silently — zero batches with `status='pending'` ever existed). It is replaced by the in-database placement trigger + `expense_envelope_sweep` pg_cron job; remove it via the Supabase dashboard. See `04_API_AND_INTEGRATION.md § accounting-batch-create`.
 
 ### Receipt OCR (Apple Vision)
 
@@ -843,7 +865,7 @@ Expenses can be attributed to zero or more projects via `expense_project_allocat
 | `expense_project_allocations` | Many-to-many linking expenses to projects with percentage split |
 | `expense_categories` | Company-configurable categories with icons (9 defaults seeded) |
 | `expense_settings` | Per-company settings (review frequency, thresholds, policy toggles) |
-| `expense_batches` | Groups of expenses for batch review by office/admin. **`scope_project_id` (nullable uuid)** identifies per-job batches; NULL for period batches |
+| `expense_batches` | Per-person/per-period **envelopes**. `status`: `open` (filling) → `pending_review` (sent) → `approved` / `auto_approved` (done; auto-approved live in History). **`scope_project_id` (nullable uuid)** identifies per-job envelopes; NULL for period envelopes. One active (`open`/`pending_review`) envelope per scope via `expense_batches_open_unique` |
 | `accounting_category_mappings` | Maps OPS categories to external chart of accounts (QB/Sage) |
 
 ### Supabase Functions (expense-related)
@@ -851,7 +873,10 @@ Expenses can be attributed to zero or more projects via `expense_project_allocat
 | Function | Purpose |
 |---|---|
 | `public.users_with_permission(p_company_id, p_permission, p_required_scope)` | Returns user IDs in a company holding a permission. Honors role grants, per-user overrides, and the `is_company_admin`/`account_holder_id`/`admin_ids` escape hatches. **Use for all recipient lookups — never filter by `users.role`.** |
-| `public.get_or_create_open_batch(p_company_id, p_submitted_by, p_period_start, p_period_end, p_scope_project_id)` | Always-bundle helper — returns the user's open batch matching the scope or creates one atomically (race-safe via partial unique index + on-conflict re-select). |
+| `public.get_or_create_open_batch(p_company_id, p_submitted_by, p_period_start, p_period_end, p_scope_project_id)` | Returns the user's not-yet-approved envelope for the scope (matching `open` **or** `pending_review`) or creates one as **`open`** (race-safe via `expense_batches_open_unique` + on-conflict re-select). `migrations/20260601210601_get_or_create_open_batch_v2.sql`. |
+| `public.expense_envelope_period(p_expense_date date, p_review_frequency text)` | Returns `(period_start, period_end)` for an expense given its date + cadence — SQL port of `ExpenseBatchPeriod.swift` (Postgres week starts Monday). `migrations/20260601210428_expense_envelope_period_fn.sql`. |
+| `public.place_expense(p_expense_id uuid)` *(service_role)* | Files one non-draft, unbatched expense into its envelope by date; rolls forward if the home period is approved. Invoked by the `trg_place_expense` trigger. `migrations/20260601210846_place_expense_trigger.sql`. |
+| `public.expense_envelope_sweep()` *(service_role)* | Daily pg_cron `expense_envelope_sweep_daily` (15:15 UTC): auto-sends due `open` envelopes (one `expense_submitted` notification each), sweeps in completed drafts, adopts orphans (safety net), rolls stragglers forward. `migrations/20260601213757_expense_envelope_sweep_deep_link_expense.sql`. |
 | `public.recalculate_expense_batch_total(p_batch_id)` | Recomputes and persists `expense_batches.total_amount` from non-deleted attached expenses. Called after attaching expenses on submission. |
 | `public.has_permission(p_user_id, p_permission, p_required_scope)` | Single-user permission check. Note: does NOT currently apply `user_permission_overrides` — only `user_roles → role_permissions` plus the admin escape hatches. iOS `PermissionService.fetchPermissions` applies overrides client-side. (Latent inconsistency — flagged for follow-up.) |
 | `public.get_next_expense_batch_number(p_company_id)` | Returns next sequential batch number, format `EXP-BATCH-NNNN`. |
