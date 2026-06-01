@@ -3501,6 +3501,25 @@ The Quick Actions tab replaces the prior bottom-right circular FAB (`floating-ac
 - Long-press edit mode (replaced by routed customize)
 - The bottom-right 52px circular FAB position
 
+### §14.3.4 Expenses Ready for Review — server-side auto-send (2026-06-01)
+
+Emitted by the daily envelope sweep (`public.expense_envelope_sweep()`, pg_cron `expense_envelope_sweep_daily` at 15:15 UTC) when an `open` expense envelope passes `period_end + expense_settings.auto_submit_grace_days` and is auto-sent (flipped `open → pending_review`). **One notification per envelope per approver** — not per expense. This is the server-authoritative replacement for the iOS client's on-submit notification: even a stale app version's expenses now get an envelope and a single review notification when the sweep sends. See `09_FINANCIAL_SYSTEM.md § Server-Authoritative Expense Envelopes (2026-06-01)`.
+
+| Field | Value |
+|-------|-------|
+| `type` | `expense_submitted` |
+| `title` | `Expenses ready for review` |
+| `body` | `<batch_number> — <Mon YYYY> (<total>)` — e.g. `EXP-BATCH-0003 — May 2026 ($59.32)` |
+| `deep_link_type` | `expense` |
+| `action_url` | `/expenses?batch=<batch_id>` |
+| `action_label` | `REVIEW` |
+| `batch_id` | the envelope's id |
+| `dedupe_key` | `expense_batch_review:<batch_id>` — per-envelope, so multiple envelopes auto-sent to one approver in a single sweep don't collide on `notifications_unread_title_dedup_without_key` (the title-dedup index for keyless rows); a non-null key routes dedup to `notifications_open_dedupe_key (user_id, company_id, type, dedupe_key)` instead. Insert uses `ON CONFLICT DO NOTHING` so the daily cron can never abort on a duplicate. |
+| Recipients | `public.users_with_permission(company_id, 'expenses.approve')` — never by `users.role` |
+| `persistent` | `false` (dismissible) |
+
+Migration: `migrations/20260601213757_expense_envelope_sweep_deep_link_expense.sql` (supersedes the initial `…211633` cut that used the non-routable `invoice_detail`).
+
 ### §14.4 Email infrastructure (typed React Email)
 
 OPS-Web sends every transactional and marketing email through
