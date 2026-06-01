@@ -1552,13 +1552,15 @@ protocol ExpenseOCRServiceProtocol {
 
 ### iOS BOOKS Tab (Phase 3 — Mission Deck, May 2026)
 
-**Status:** Visual rebuild landed 2026-05-19 on branch `feat/books-mission-deck` (spec `ops-ios/docs/superpowers/specs/2026-05-19-books-tab-mission-deck-rebuild.md`, Phases A–H; Phase I is build verification + this bible update). The Phase 2 carousel architecture — 5-card hero + 3-segment list — is unchanged; every visual treatment was rebuilt against the approved "Mission Deck" design, and an entire new state layer was added (sync banner, skeletons, card-level error, drill filter chip, scope-hint badges, per-card empty states). No schema or migration changes — all Phase 3 ViewModel additions are computed. Lineage: Phase 1 4-segment hub (2026-05-07) → Phase 2 carousel command center (2026-05-11) → Phase 3 Mission Deck visual rebuild (2026-05-19).
+**Status:** Visual rebuild landed 2026-05-19 on branch `feat/books-mission-deck` (spec `ops-ios/docs/superpowers/specs/2026-05-19-books-tab-mission-deck-rebuild.md`, Phases A–H; Phase I is build verification + this bible update). The Phase 2 carousel architecture — 5-card hero + 3-segment list — is unchanged; every visual treatment was rebuilt against the approved "Mission Deck" design, and an entire new state layer was added (sync banner, skeletons, card-level error, drill filter chip, scope-hint badges, per-card empty states). No schema or migration changes — all Phase 3 ViewModel additions are computed. Lineage: Phase 1 4-segment hub (2026-05-07) → Phase 2 carousel command center (2026-05-11) → Phase 3 Mission Deck visual rebuild (2026-05-19) → Phase 6 condensed-card + expand-sheet UX overhaul (2026-06-01).
+
+**Phase 6 overhaul (2026-06-01, branch `feat/books-ux-overhaul`, spec `2026-06-01-books-condensed-cards-ux-overhaul-design.md`):** the hero carousel was rebuilt from inline full-rich cards (variable height) into **condensed cards + expand-to-sheet** — each lens is now a uniform-height compact L2 glance tile (headline metric + one signature mini-viz + a sub-stat) that taps to open its full content in a reused half-sheet (`ExpandedCardSheet`; A/R opens the merged `ARDetailSheet`). The in-card drill actions moved into the sheet. The below-picker area became a **single-scroll page** (embedded lists drop their inner `ScrollView`) with a **pinned section header** (picker + drill chip + `// SEGMENT · count` + hairline). The carousel paging bleed was fixed (`containerRelativeFrame(count:span:spacing:)`), and the redundant in-view expense FAB was removed in favour of the global `FloatingActionMenu` (with a new `opsExpensesDidChange` notification so embedded lists refresh after a global-FAB create). No `MoneyDashboardViewModel` math changed — purely presentation/interaction.
 
 **Surface:**
 - Rendered by `MainTabView` (tab icon `chart.line.uptrend.xyaxis`); container `BooksTabView` (`OPS/Views/Books/BooksTabView.swift`). Header `AppHeader.HeaderType.books` (title "BOOKS").
-- Top-to-bottom: AppHeader → optional sync banner → `HeroCarousel` → `CashflowForecastCard` (when `finances.view`) → inset-pill segmented control → optional drill filter chip → selected segment's list. On scroll-collapse the carousel is swapped for `CollapsedCarouselStrip` and the segmented control + filter chip stick to the top.
+- Top-to-bottom in **one scroll surface** (P6): AppHeader → optional sync banner → `HeroCarousel` (condensed glance strip) → `CashflowForecastCard` (when `finances.view`) → a **pinned section header** (`Section` header inside a `LazyVStack(pinnedViews: [.sectionHeaders])`) carrying the inset-pill segmented control + optional drill filter chip + a `// SEGMENT · count` label + a hairline → the selected segment's list rendered **inline** (no nested `ScrollView`). On scroll the carousel collapses to `CollapsedCarouselStrip` shown inside the pinned header.
 
-**Hero carousel** — `HeroCarousel` (`OPS/Views/Books/HeroCarousel.swift`): swipeable 5-card paged surface, `ScrollView(.horizontal)` + `.scrollTargetBehavior(.paging)` + `.scrollPosition` (iOS 17+), **not** `TabView(.page)` (avoids spring physics per the OPS motion rule). Light impact haptic on each swap. Cards are permission-filtered; the last-viewed card persists via `@AppStorage("books.lastViewedCard")`.
+**Hero carousel** — `HeroCarousel` (`OPS/Views/Books/HeroCarousel.swift`): swipeable 5-card paged surface of **condensed glance tiles** (one uniform L2 height), `ScrollView(.horizontal)` + `.scrollTargetBehavior(.paging)` + `.containerRelativeFrame(.horizontal, count: 1, span: 1, spacing:)` (P6 — paging width accounts for the inter-card gap, fixing the cumulative rightward bleed) + `.scrollPosition` (iOS 17+), **not** `TabView(.page)` (avoids spring physics per the OPS motion rule). Each tile shows the lens's headline metric + one signature mini-viz + a sub-stat; **tapping it opens the lens's full content in a half-sheet** (`ExpandedCardSheet`, or the merged `ARDetailSheet` for A/R) — the drill actions live in the sheet. Light impact haptic on each swap, `.selection` on tap. Cards are permission-filtered; the last-viewed card persists via `@AppStorage("books.lastViewedCard")`.
 
 | Card | Question | Period scope | Permission |
 |------|----------|--------------|------------|
@@ -1635,6 +1637,38 @@ Per-card composition (`OPS/Views/Books/Cards/`):
 - Phase 3 Mission Deck visual rebuild: `ops-ios/docs/superpowers/specs/2026-05-19-books-tab-mission-deck-rebuild.md`.
 - Phase 2 carousel architecture: `ops-ios/docs/superpowers/specs/2026-05-11-books-ui-reconstruction-design.md` + plan `2026-05-11-books-ui-reconstruction.md`.
 - Phase 1 (superseded): `ops-ios/docs/superpowers/specs/2026-05-07-books-tab-design.md`.
+
+---
+
+## Home Billable This Week Rollup (2026-05-25)
+
+**Status:** iOS Home implementation landed for `IOS BUG BACKLOG - P1-7`. This is a Home-level billing-context surface, separate from the BOOKS carousel. It answers: "what should I be invoicing this week?" without forcing the operator into Books or project detail.
+
+**Surface:**
+- `HomeBillableThisWeekRollupEngine` computes the model from local SwiftData `Project`, `ProjectTask`, `Invoice`, and `Estimate` rows.
+- `HomeView` recomputes after the Home project load finishes, then renders `HomeBillableThisWeekCard` when the operator has `finances.view`.
+- The card stays live all week and has two sections: `CLOSING` and `READY TO BILL`.
+- Row tap priority: draft invoice detail when present, else estimate detail when present, else project detail.
+
+**Week rules:**
+- The week is Monday-start through Sunday-end, using the device calendar/time zone.
+- `CLOSING` includes active projects whose remaining non-cancelled tasks all have `endDate` inside the current week.
+- `READY TO BILL` includes projects whose non-cancelled tasks are all complete.
+- Deleted projects/tasks are ignored. Archived and closed projects are ignored.
+- A project with any posted invoice is excluded from both sections. Posted means any non-draft, non-void invoice. Draft invoices are allowed and are treated as billable work not yet posted.
+
+**Amount priority:**
+1. Newest draft invoice total.
+2. Approved or converted estimate total.
+3. Sent or viewed estimate total.
+4. Draft estimate total.
+5. No amount: show the project title and task count with `—` for the dollar value.
+
+**Monday notification:**
+- iOS dispatches one Monday notification per user/company/week when the rollup has items and the user has `finances.view`.
+- Local notification + in-app rail type: `billable_this_week`.
+- `deep_link_type = billableThisWeek`, `action_url = ops://home/billable-this-week?weekStart=YYYY-MM-DD`, `action_label = OPEN HOME`.
+- The in-app rail route and local push tap both switch to Home so the operator lands on the same live rollup card.
 
 ---
 
@@ -1722,6 +1756,6 @@ Recipients lookup via `public.users_with_permission(company_id, 'finances.view')
 
 ---
 
-**Last Updated**: 2026-05-20
+**Last Updated**: 2026-05-25
 **Document Version**: 1.5
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `OPS/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.

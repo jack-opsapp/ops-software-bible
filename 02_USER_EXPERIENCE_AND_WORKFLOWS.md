@@ -1226,7 +1226,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 ### BooksTabView (Books Tab Container)
 
-**Purpose:** Money command center for trades operators. The hero is a swipeable 5-card financial carousel; below it sits a 3-segment list of the underlying documents (Invoices · Estimates · Expenses). Visually rebuilt 2026-05-19 against the "Mission Deck" design (Phase 3); the Phase 2 carousel architecture is unchanged.
+**Purpose:** Money command center for trades operators. The hero is a swipeable 5-card financial carousel of **condensed glance tiles** (uniform height; headline metric + one signature mini-viz) that tap to expand into a detail half-sheet; below it, in one continuous scroll, sits a 3-segment list of the underlying documents (Invoices · Estimates · Expenses) under a pinned section header. Visually rebuilt 2026-05-19 ("Mission Deck", Phase 3), then reworked into the condensed-card + expand-sheet pattern 2026-06-01 (Phase 6).
 
 **Source:** `Views/Books/BooksTabView.swift` (Phase 3 — Mission Deck, 2026-05-19)
 
@@ -1234,7 +1234,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 1. **AppHeader** — `.books` header type, "BOOKS" title.
 2. **Sync banner** (`BooksSyncBanner`) — present only when the dashboard is not fully synced: a pulsing `SYS :: SYNC · HH:mm` while a refresh is in flight, or `SYS :: OFFLINE · CACHED HH:mm` / `SYS :: ERROR · LAST HH:mm` with a RETRY button when the network is down or the last fetch failed.
-3. **`HeroCarousel`** — 5-card swipeable, paged carousel. Swiping fires a light haptic, updates the inline header label and the dot pagination, and persists the last-viewed card for next launch.
+3. **`HeroCarousel`** — 5-card swipeable, paged carousel of **condensed glance tiles** (one uniform L2 height). Each tile shows the lens's headline metric + one signature mini-viz + a sub-stat; **tapping a tile opens its full content in a half-sheet** (`ExpandedCardSheet`; A/R opens the merged `ARDetailSheet`), where the per-card detail and drill actions live. Swiping fires a light haptic, a tap fires `.selection`; the inline header label, dot pagination, period pill, and scope-hint badges all track the active tile; the last-viewed card persists for next launch. The card descriptions below are the **expanded (sheet)** content; the condensed face surfaces the headline number + mini-viz only.
    - **Card 1 — `PLCard`** ("Am I making money?") — net-cash hero number, a margin meter with a `X% MARGIN` caption, a `PAYMENTS IN` / `EXPENSES OUT` row, and `OUTSTANDING` / `FORECAST` drill tiles.
    - **Card 2 — `CashFlowCard`** ("What's my cash rhythm?") — net-cash hero plus a weekly-net sparkline; any week where money out beat money in gets a rose marker. Tiles: `SALES`, `AVG/WK`, `DAYS`.
    - **Card 3 — `ARCard`** ("Who do I need to chase?") — total-outstanding hero, an aging ramp (0–30 / 31–60 / 61–90 / 90+) with a bucket grid, and a full-width `TOP CHASE` tile. Always all-open — ignores the period.
