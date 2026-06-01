@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Implemented (2026-06-01) on branch `feat/guided-stock-setup-build` — all 7 phases landed via TDD (subagent-driven-development), device-target build clean, guided test suite green. Documented in `07_SPECIALIZED_FEATURES.md` § 13b. Awaiting human push/merge (pushes require explicit permission).
+
 **Goal:** Ship the iOS **Guided Stock Setup** flow — a conversational, multiple-choice, first-run inventory setup that captures everything an operator stocks/sells, infers the correct catalog structure across the whole list, teaches the OPS equivalent at each step, and creates the data through the existing atomic catalog engine.
 
 **Architecture:** A new self-contained full-screen SwiftUI flow (`GuidedStockSetup*`) builds the same `CatalogSetup*Draft` structs the Advanced flow uses and commits **per-family** through a new shared `CatalogSetupCommitService` (extracted from `CatalogSetupFlowSheet`) via the atomic `catalog_setup_save` RPC. Deterministic name-clustering proposes structure; the operator confirms via multiple choice. Reuses `CatalogSetupWorkflow.generateVariantDrafts` + `makeSavePayload`. No parallel write path. Steel-blue `primaryAccent` styling (NOT the coach-mark `wizardAccent`).

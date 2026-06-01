@@ -680,6 +680,13 @@ Phase 3 on `OPS-Web/src/app/(dashboard)/calendar/`. Spec at `docs/superpowers/sp
 - Team member filtering
 - Project task filtering
 - Date range selection with visual feedback
+- Day-detail inspector for the focused day/range, showing scheduled task context without leaving the sheet
+
+**Schedule Entry Contracts (iOS):**
+- Task schedule writes use `DataController.updateTaskSchedule(task:startDate:endDate:)` and write `project_tasks.start_date` / `project_tasks.end_date`.
+- Project rows are not manual scheduling targets. Project start/end dates are computed from the project's task schedule span; `projects.start_date` / `projects.end_date` are maintained as task-derived sync/cache fields, not operator-editable schedule inputs.
+- Universal Search project-row quick schedule only targets active, non-deleted, non-terminal tasks. If the project has zero schedulable tasks, the schedule control is hidden/disabled. If it has one schedulable task, the scheduler opens that task. If it has multiple schedulable tasks, the operator must choose the task before the scheduler opens.
+- `UnscheduledTaskReviewView` auto-schedule placement failures are persistent recovery states: the toast uses operator-readable copy and opens `CalendarSchedulerSheet` for manual task scheduling instead of ending at a no-action error.
 
 **Core Implementation:**
 ```swift
@@ -2524,6 +2531,8 @@ The following features are planned but not yet implemented:
 ### Overview
 PencilKit-based photo annotation feature that allows crew members to draw on project photos and attach text notes. Annotations render as transparent PNG overlays stored in S3, with the drawing data kept locally in SwiftData for offline editing. Backed by the `project_photo_annotations` Supabase table.
 
+Classic markup overlays are rendered in the fitted display-canvas coordinate space, then composited by scaling the transparent overlay over the original source image. Do not render the PencilKit drawing at the raw source-photo pixel size unless the display canvas size is unavailable; doing so makes marks appear tiny or misaligned on other devices.
+
 ### Architecture Components
 
 #### PhotoAnnotation Model (iOS)
@@ -2556,10 +2565,10 @@ class PhotoAnnotation: Identifiable {
 #### PhotoAnnotationView (iOS)
 **Location:** `OPS/OPS/Views/Components/Images/PhotoAnnotationView.swift`
 
-Full-screen annotation view with three layers:
-1. **Original photo** -- AsyncImage loaded from the photo URL
-2. **Existing annotation overlay** -- rendered PNG from S3, shown when not editing
-3. **PencilKit canvas** -- active drawing surface, shown in editing mode
+Full-screen annotation view with a zoomable photo/canvas pair:
+1. **Original photo** -- loaded from local image cache when available, otherwise from the normalized photo URL (`//` URLs become `https:`)
+2. **PencilKit canvas** -- fitted to the same aspect-fit rect as the photo and zoomed/panned with it
+3. **Display-canvas size binding** -- persisted into the save path so the overlay PNG matches the coordinate space where the crew actually drew
 
 **UI elements:**
 - **Toolbar:** Close button, Undo stroke, Clear all, Cancel editing, Done (save)
@@ -2572,16 +2581,20 @@ Full-screen annotation view with three layers:
 - Transparent background (`.clear`, `.isOpaque = false`)
 - Coordinator that syncs `canvasViewDrawingDidChange` back to the SwiftUI `@Binding`
 - Tool picker visibility managed via `showToolPicker` binding
+- `ZoomablePhotoAnnotationCanvas` reports its fitted canvas size back to SwiftUI. `PhotoAnnotationRenderGeometry.renderSize(displayedCanvasSize:sourceImageSize:)` uses that fitted size first and falls back to source image size only when the view has not laid out yet.
 
 #### PhotoAnnotationSyncManager (iOS)
 **Location:** `OPS/OPS/Network/PhotoAnnotationSyncManager.swift`
 
 Singleton (`PhotoAnnotationSyncManager.shared`) that handles:
-1. **Rendering** -- `renderDrawingToPNG(drawing:size:)` uses `UIGraphicsImageRenderer` to render `PKDrawing` strokes onto a transparent PNG at the image's native size
+1. **Rendering** -- `renderDrawingToPNG(drawing:size:)` uses `UIGraphicsImageRenderer` to render `PKDrawing` strokes onto a transparent PNG at the fitted annotation canvas size
 2. **S3 upload** -- Requests a presigned URL from `AppConfiguration.apiBaseURL/api/uploads/presign`, then PUTs the PNG to S3 with content type `image/png`. Files stored at `annotations/{companyId}/{projectId}/annotation_{timestamp}.png`
 3. **Supabase record** -- Creates or updates a row in `project_photo_annotations` via `PhotoAnnotationRepository`
 4. **Offline fallback** -- If S3 upload fails, the `PKDrawing` data is stored locally in `localDrawingData`, and `needsSync` is set to `true`
 5. **Pending sync** -- `syncPendingAnnotations(modelContext:)` fetches all annotations where `needsSync == true`, re-renders and uploads them
+6. **Visibility composite** -- `preCompositeAnnotations(projectId:modelContext:)` normalizes source/overlay URLs, loads the original source image from local cache or remote URL, loads the overlay from local cache or remote URL, scales the overlay over the original source image, writes the composited result to `ImageCache`, then posts `.annotationsComposited`.
+
+When updating an existing annotation id, the save path updates the existing SwiftData row instead of creating a second remote row. If the local row is missing but the remote id is known, iOS recreates the local SwiftData model with that id so follow-up edits remain attached to the same Supabase row.
 
 #### PhotoAnnotationRepository (iOS)
 **Location:** `OPS/OPS/Network/Supabase/Repositories/PhotoAnnotationRepository.swift`
@@ -2646,7 +2659,7 @@ STOCK
   │   LIST  = variant-aware list (cards)
   │   GRID  = pinch-to-zoom grid
   │   TABLE = NEW (Bug 217c3d1f) — rows=variants, columns=family attributes
-  ├─ Sort/filter: category · tags · threshold · search
+  ├─ Sort/filter: category · tags · option values · threshold · sort · search
   ├─ Category sections (collapsible, nested 2-level):
   │     // HARDWARE
   │       ▸ HARDWARE LEVEL
@@ -2674,11 +2687,27 @@ PRODUCTS
 
 ### Variant-Aware View Modes
 
-**LIST** (default) — `CatalogVariantCard` per row. Renders family name, variant label ("Black · Topmount"), quantity colored by threshold status, unit, SKU. Long-press → action sheet (Adjust, Edit, Delete, Move to Order).
+**LIST** (default) — `CatalogVariantCard` per row. Renders family name, variant label ("Black · Topmount"), quantity colored by threshold status, unit, SKU. Tap opens `VariantDetailView`.
 
-**GRID** — pinch-to-zoom grid. `@AppStorage("catalogCardScale")` range 0.8–1.5. Same progressive-disclosure rules as legacy Inventory: at scale ≥ 0.9 show family tags; at scale ≥ 1.0 show SKU + threshold badge.
+**GRID** — pinch-to-zoom grid. `@AppStorage("catalogCardScale")` range 0.8–1.5. Same progressive-disclosure rules as legacy Inventory: at scale ≥ 0.9 show family tags; at scale ≥ 1.0 show SKU + threshold badge. Tap opens `VariantDetailView`.
 
-**TABLE** (NEW per Bug 217c3d1f) — rows are variants, columns are family attributes (Family · Option 1 · Option 2 · … · Quantity · Threshold · Unit · SKU). Designed for fast bulk audits where a user wants to compare every "Bracket" SKU across Color × Mount Type. Horizontal scroll for families with 5+ option values; column truncation deferred to interface-design pass.
+**TABLE** (NEW per Bug 217c3d1f) — rows are variants, columns are family attributes (Family · Option 1 · Option 2 · … · Quantity · Threshold · Unit · SKU). Designed for fast bulk audits where a user wants to compare every "Bracket" SKU across Color × Mount Type. Horizontal scroll for families with 5+ option values; tap opens `VariantDetailView`.
+
+### Stock Filtering, Sorting, and Detail Editing (iOS)
+
+`StockView` builds `EnrichedVariantRow` from `CatalogVariant`, `CatalogItem`, unit, category, tags, and option-value join rows. The STOCK filter rail supports:
+- Category filter
+- Tag filter
+- Threshold filter
+- Dynamic option-value filters keyed by option name (for example Color, Mount Type, Finish)
+- Sort modes: Family, Low Stock, Quantity
+- Search across family name, description, SKU, unit, category, tags, and option values
+
+Low-stock sorting ranks rows by `quantity / effective_threshold`, using variant warning threshold first, then critical threshold as the fallback reference when no warning threshold exists. TABLE mode includes a `THRESH` column that shows the percent of threshold and the current delta from the threshold reference.
+
+`VariantDetailView` is the quick-count surface opened from LIST, GRID, TABLE, and Universal Search. It supports preset deltas, exact set count, and custom add/subtract quantities without requiring a new variant form. SKU, unit, warning threshold, and critical threshold remain editable inline.
+
+Variant identity is option-value based. `catalog_variants` does not have a separate display-name column, so editing the human-readable variant label opens `VariantFormSheet` and replaces the variant's `catalog_variant_option_values` join rows. Variant images are family-level images stored on `catalog_items.image_url`; the detail surface displays and uploads that family image rather than writing an image field to `catalog_variants`.
 
 ### Threshold-Driven Order Suggestions (NEW per Bug e08c63a2)
 
@@ -2688,7 +2717,7 @@ Variants where `quantity < effective_warning_threshold` (variant override → fa
 2. **Suggested orders sheet** — groups undersupplied variants by a heuristic (preferred-supplier convention from `catalog_tags` if present, else single combined order). Each row shows variant label, current quantity, effective threshold, restock target (default: 2× warning threshold).
 3. **Persistent notification rail** entry — when first computed, the rail surfaces a `persistent: true` notification "// 6 items below threshold — review orders" with `actionUrl` deep-linking to the Orders sheet. Resolved when the user drafts/sends the order.
 
-`CatalogOrder` lifecycle: `suggested` (computed on demand) → `draft` (user committed from Suggested sheet) → `sent` (PO emitted to supplier) → `fulfilled` (stock arrives; `catalog_variants.quantity` increments by `quantity_requested`) → `cancelled`.
+`CatalogOrder` lifecycle: `suggested` (computed on demand) → `draft` (user committed from Suggested sheet) → `sent` (PO emitted to supplier) → `fulfilled` (stock arrives; `catalog_variants.quantity` increments by `quantity_requested`). When `catalog_stock_units` is live, receiving flows also create/update physical unit rows and mirror their available aggregate back to the same variant quantity. Final state: `cancelled` for abandoned orders.
 
 ### Drawing → Estimate Adapter (NEW)
 
@@ -2732,7 +2761,7 @@ Missing `company_default_products` mapping → adapter skips the component silen
 
 **Legacy pass** (`OPS/DeckBuilder/Engine/EstimateGeneratorService.swift`):
 
-Walks the same drawing geometry (vertices/edges/surfaces/levels/connections) and emits flat `GeneratedLineItem` rows with categories `Surface`, `Substructure`, `Railing`, `Stairs`, `Connecting Stairs`, `Other`. Carries warning rows the adapter cannot produce (missing elevation, AR accuracy notes, multi-level connection narratives).
+Walks the same drawing geometry (vertices/edges/surfaces/levels/connections) and emits flat `GeneratedLineItem` rows with categories `Surface`, `Substructure`, `Railing`, `Stairs`, `Connecting Stairs`, `Other`. Carries warning rows the adapter cannot produce (missing elevation, AR accuracy notes, multi-level connection narratives). House edges are cladding/wall boundaries, not railing targets, so they do not emit railing rows. `parapet_wall` is the built-in deck-edge railing default and emits a continuous railing/wall row without a paired `post_set`.
 
 **Merge** (`OPS/Services/CatalogEstimateMerger.swift`):
 
@@ -2755,35 +2784,62 @@ Groups merged rows by `taskTypeId` via `CatalogEstimateMerger.groupByTaskType` (
 
 ### Vinyl Auto Order (iOS — added 2026-05-20)
 
-**Entry point:** Deck Builder canvas → select one or more closed surfaces → toolbar `Order Vinyl` → `VinylOrderSheet`.
+**Entry points:**
+- Selected surfaces: Deck Builder canvas → select one or more closed surfaces → toolbar `Order Vinyl` → `VinylOrderSheet`.
+- Whole design: Deck Builder settings → `ORDER ALL VINYL` → `VinylOrderSheet` with all surfaces on all levels.
 
-The sheet converts selected deck surfaces into a vinyl membrane cut list and order draft for field ordering. It supports single-level and multi-level drawings by resolving selected persisted `DeckSurface` ids back to detected face polygons after `DeckBuilderViewModel.reconcileSurfaces()`.
+The sheet converts selected deck surfaces, or every surface in the design, into a vinyl membrane cut list and order draft for field ordering. It supports single-level and multi-level drawings by resolving persisted `DeckSurface` ids back to detected face polygons after `DeckBuilderViewModel.reconcileSurfaces()`.
 
 **Defaults:**
 - Roll width: 72 in
 - Seam overlap: 1.5 in
 - Edge wrap: 6 in
 - Run direction: `automatic`
-- Color: field-confirmed free text
+- Direction changes: locked to one run direction by default; field user can allow turned runs for solid/non-linear colors.
+- Product / variant: optional. Deck Builder settings stores `drawingData.config.vinylCatalogItemId` as the default active catalog product for vinyl. In the Vinyl Order sheet the user then picks one active variant; that variant supplies the order color and optional catalog order item. If no product is selected in settings, color stays a field-confirmed free-text input and no catalog item is written.
 
 **Cut-list engine:** `OPS/OPS/DeckBuilder/Engine/VinylCutListEngine.swift`
 
-For each selected surface, the engine:
-1. Expands the measured face width/length by edge wrap.
-2. Resolves run direction. `automatic` compares lengthwise vs widthwise strip counts and waste, then chooses the lower-waste option.
-3. Computes strip count, strip length, cut area, purchased square feet, waste square feet, and seam line placement.
-4. Produces cross-surface offcut reuse notes when a full smaller surface can fit inside another surface's offcut. Full reused target surfaces are subtracted from purchased order area.
-5. Renders an order-note block with project, design, color, cut list, and offcut sections.
+For each order scope, the engine:
+1. Expands measured face geometry by edge wrap and sweeps the actual polygon by roll-width bands.
+2. Emits variable-length cuts by band. L-shaped and stepped surfaces do not collapse to one repeated maximum length.
+3. Resolves run direction. `automatic` compares lengthwise vs widthwise waste. When directional changes are allowed, rectilinear sub-regions may rotate runs if that lowers purchased cut area.
+4. Packs all cuts across all ordered surfaces against purchased roll offcut lanes. Reuse is allowed only when one continuous offcut lane has enough width and full length for the target cut; no butt-to-butt joints are planned.
+5. Computes cut count, purchased square feet, reused square feet, waste square feet, and offcut reuse notes.
+6. Renders length-only cut-list lines for the sheet, text handoff, and order-note cut-list section. Cut lengths render as feet/inches. Square-foot metrics stay in the summary/order totals, not in the cut-list rows.
+7. Exposes each cut's band/run geometry and each face's perimeter edge types so the sheet preview can draw clipped cut bands, length labels, house-edge labels, and deck/house lap callouts with leader lines instead of evenly dividing the surface bounds.
+
+**Preview contract:** `VinylCutPreview` uses `VinylPreviewAnnotationPlanner` for callout geometry. House-edge wrap bands use neutral gray hatching/strokes, compact monospaced labels, and a small inside offset from the house edge. Lap leader lines terminate before the text bounds rather than drawing through the label center. This applies to non-right-angle polygons as well as rectilinear layouts because all anchors derive from the selected perimeter edge midpoint plus its outward normal.
 
 **Order persistence:** `VinylOrderSheet.createOrderAndNote()`
 
 On `CREATE ORDER + NOTE`, iOS writes:
 - `catalog_orders` row with status `draft`, title `VINYL ORDER - <PROJECT>`, and the full cut list in `notes`. If the item or project-note write fails after order creation, iOS rolls back the item and soft-deletes the draft order to avoid orphan drafts.
-- Optional `catalog_order_items` row only when a local active company catalog variant matches vinyl membrane material. Matching requires text containing `vinyl` plus one of `membrane`, `deck`, `roll`, or `sheet`, and excludes `diverter`. This prevents Canpro's `Vinyl Diverter` SKU from being misused as membrane roll material.
+- Optional `catalog_order_items` row only when the user explicitly configured a local active company catalog product and picked one of its active variants. The prior heuristic text match is not used for ordering because vinyl colors/SKUs must come from the user's inventory selection.
 - `project_notes` row containing the cut list and created order id.
 - Standard `notifications` row for the current user with `type = catalog_order_drafted`, `deep_link_type = catalogOrders`, and `action_url = ops://catalog/orders?tab=draft`.
 
-**Text handoff:** The sheet can open `MFMessageComposeViewController` with the cut list and the project's effective client phone. If the device cannot send SMS, it copies the same cut-list text to the clipboard.
+**Project marker:** The project Details tab and the Vinyl Order sheet expose a
+Deck Builder-gated `VINYL` marker. Users with project edit access can toggle
+`projects.vinyl_order_status` between `not_ordered` and `ordered`; `ordered`
+also stamps `vinyl_ordered_at` and `vinyl_ordered_by`. This marker is a status
+field only. It does not create catalog orders, inventory deductions, recipes, or
+task material rows.
+
+**Text handoff:** The sheet can open `MFMessageComposeViewController` with no prefilled recipients. The user chooses the contact. The default message body contains only color and purchased cut lengths:
+
+```
+Color: [color]
+[cuts]
+```
+
+The default cut row template is:
+
+```
+-[quantity] @ [length]
+```
+
+The `// TEXT TEMPLATE` section in `VinylOrderSheet` lets the user edit the message template, the per-cut row template, and the cut joiner (`lines` or `comma`). Message tokens: `[color]`, `[cuts]`, `[cut_count]`. Cut row tokens: `[quantity]`, `[length]`, `[surface]`, `[roll_width]`. Legacy `{{color}}`, `{{cuts}}`, and `{{cut_count}}` tokens still render. If the device cannot send SMS, it copies the rendered text to the clipboard.
 
 ### Cut-List Materialization (NEW)
 
@@ -2805,20 +2861,71 @@ Recipes resolve at install-task creation, **not** at estimate creation. When a p
 
 Top-level container hosting the STOCK / PRODUCTS segmented control + kebab menu. Drives the threshold banner + persistent notification.
 
-#### CatalogStockListView / CatalogStockGridView / CatalogStockTableView (iOS)
+#### CatalogStockListView / CatalogStockGridView / CatalogStockTableView / VariantDetailView (iOS)
 **Location:** `OPS/OPS/Views/Catalog/Stock/`
 
-Three view modes for the variant list. Share `CatalogStockViewModel` for sort/filter/search state; differ in row rendering. TABLE mode uses `Grid` with horizontal scroll for wide families.
+Three view modes for the variant list share `EnrichedVariantRow` for sort/filter/search state and differ in row rendering. TABLE mode uses `Grid` with horizontal scroll for wide families. `VariantDetailView` is the row drill-in for quick quantity changes, exact count entry, custom deltas, SKU/unit/threshold edits, family image upload, and variant option-value editing.
 
-#### CatalogVariantFormSheet (iOS)
-**Location:** `OPS/OPS/Views/Catalog/Stock/CatalogVariantFormSheet.swift`
+#### VariantFormSheet (iOS)
+**Location:** `OPS/OPS/Views/Catalog/Stock/VariantFormSheet.swift`
 
 Form for creating/editing a variant. Sections:
 - **Variant Details** (always expanded): family picker (`CatalogItem`), option-value selectors per option on the family, quantity, unit, SKU.
 - **Pricing & Thresholds** (collapsible): price override, unit cost override, warning/critical threshold (with effective-threshold preview from family/category fallback).
 - **Notes**.
 
-Family creation deep-link: tap "+ add family" within the family picker to open `CatalogFamilyFormSheet`.
+Family creation deep-link: tap "+ add family" within the family picker to open `CatalogFamilyFormSheet`. Editing an existing variant replaces its option-value join rows through `CatalogRepository.replaceVariantOptionValues`.
+
+#### Catalog Setup Data Foundation (iOS — data only, added 2026-05-21)
+
+Phase 2 of the catalog/inventory setup redesign adds the local/server data surface required for the future setup UI without changing the visible catalog screens.
+
+**Server migrations**:
+- `migrations/2026-05-21-04-catalog-stock-units.sql` creates `catalog_stock_units` for physical rolls/offcuts/lots under `catalog_variants`.
+- `migrations/2026-05-21-05-catalog-setup-relationships.sql` adds `product_bundle_items.relationship_kind`, `suggestion_reason`, `compatibility_selector`, creates `catalog_product_option_mappings`, and leaves the existing normalized SKU database guard aligned with live production.
+
+**iOS data layer**:
+- SwiftData V8 adds `CatalogStockUnit` and `CatalogProductOptionMapping` through `OPSSchemaCommon.v8CatalogSetupModels`; V3-V7 keep a frozen legacy `ProductBundleItem` model so the V8 relationship fields do not alter historical schema fingerprints.
+- `ProductBundleItem` sync carries `relationshipKind`, `suggestionReason`, and `compatibilitySelectorJSON` only after `CatalogSchemaCapabilityGate` proves the target has those columns. Legacy targets still write required bundle rows without the new columns.
+- `SyncEntityType` includes `catalogStockUnit`, `catalogProductOptionMapping`, and `productBundleItem`; `InboundProcessor` and `DataActor` merge/tombstone those rows with the standard `needsSync` guard. `catalogStockUnit` and `catalogProductOptionMapping` are skipped until `CatalogSchemaCapabilityGate` proves the target tables exist.
+- `CatalogStockUnitAggregator` rolls up available physical units by variant. Only `full` and `partial` units count as available; consumed/reserved/scrapped rows remain synced history but do not inflate availability. Roll/offcut units mirror area when remaining length and width share a unit; otherwise they mirror one length unit or fall back to count.
+- `CatalogStockQuantityPolicy` is mirrored aggregate: current stock/order screens keep reading and writing `catalog_variants.quantity`; stock-unit mutations must mirror their available aggregate back to that variant quantity with the basis shown to the operator.
+- `ProductBundleCompositionGrouping` groups bundle rows into required vs suggested children. Required rows participate in bundle rollup pricing/materialization; suggested rows render as add-ons and are preserved separately by the edit surface.
+- `CatalogProductOptionMappingValidator` and `CatalogVariantIdentityValidator` enforce mapping shape and duplicate matrix signature conflicts. Duplicate SKUs are warning-level in the iOS setup helper because live DB uniqueness remains the final write guard.
+
+**Identity policy**: normalized SKU is database-unique per company on live production, so submitting a duplicate can still fail server-side. iOS setup validation warns on duplicate SKU but does not treat it like a matrix blocker. Matrix signatures are blocked in iOS only for now; no DB uniqueness constraint is applied because live Supabase verification on 2026-05-21 found an active Diverter family with duplicate option-value signatures that would fail the constraint.
+
+#### Catalog Setup Flow (iOS — added 2026-05-21)
+
+`OPS/Views/Catalog/Stock/CatalogSetupFlowSheet.swift` is the field setup surface launched from Catalog `SETUP -> Stock Setup` and the stock FAB. It is additive to the existing single-family and single-variant sheets.
+
+- Family step captures the stock family name, description, image URL, category, default unit, and default thresholds.
+- Attributes step creates company-defined axes and values. The flow is generic; vinyl membrane is only one possible material system.
+- Matrix step generates variant drafts from the cartesian product and lets the operator mark invalid value combinations before variants exist.
+- Variant step assigns SKUs, unit overrides, and threshold overrides. Duplicate SKU conflicts render as warning-level; duplicate matrix signatures block commit.
+- Stock step adds physical roll/offcut/unit rows per enabled variant, including label, lot code, original length, remaining length, width, unit, quantity, location, status, notes, and an on-screen mirrored quantity summary. For dimensional roll/offcut rows, the summary states that variant quantity mirrors area when length and width use the same unit.
+- Product Link step can link the new family to a sellable Product and, when the schema capability gate is live, map catalog axes/values to existing Product option axes/values. It also opens the shared iOS Product option authoring sheet for the selected Product so newly authored `select` options and values become available to the mapping pickers without changing the Catalog Setup commit boundary.
+- Review step summarizes axes, variants, units, SKU warnings, and matrix blockers. Offline and save-error states keep the draft on screen and do not dismiss the sheet.
+
+Commit order is repository-backed and normal app-path only. Before the first write, `CatalogSetupFlowSheet` refreshes `CatalogSchemaCapabilityGate`; if the draft has stock units and `catalog_stock_units` is unavailable, commit is blocked before family/options/variants can be created. Product-option mappings are validator-backed before commit so stale value selections cannot write bridges under the wrong product option. Current Phase 5 iOS save uses the `saveCatalogSetup` RPC boundary; Product option authoring is a separate explicit Product workflow through `ProductRichnessRepository` and existing tables. Suggested bundle add-ons remain outside required rollup pricing via `ProductBundleCompositionGrouping.requiredRollupTotal`, and the bundle edit/read-only surfaces continue to render suggested rows separately.
+
+**Local runtime QA** (DEBUG only): launch the iOS app with environment `OPS_CATALOG_SETUP_QA_LOCAL_ONLY=1` or argument `-OPS_CATALOG_SETUP_QA_LOCAL_ONLY` to mount `CatalogSetupQALocalHost` instead of the authenticated production shell. The host uses an in-memory SwiftData V8 container, generic panel-system fixture data, local catalog permissions, and no Supabase repositories. In this mode `CatalogSetupFlowSheet` preloads a draft that reaches Family, Attributes, Matrix, Variants, Stock, Links, and Review; the final button runs a no-write QA check and leaves live catalog data untouched. The switch is compiled to `false` in non-DEBUG builds.
+
+#### Estimate-to-Job Inventory Mode (iOS — Phase 6 draft, added 2026-05-27)
+
+Phase 6 separates booked material demand from actual stock deduction so a company can decide whether OPS should track physical inventory before the estimate-to-job flow starts writing stock planning rows.
+
+- `company_inventory_settings` stores the explicit company mode: `off` or `tracked`. The mode is managed through `public.set_company_inventory_mode(p_company_id, p_inventory_mode)`, derives the actor server-side, and requires `catalog.manage`.
+- `project_material_demands` stores accepted-job demand as projected planning pressure. These rows do not deduct stock and do not mutate `catalog_variants.quantity`.
+- `task_material_allocations` links demand and task cut-list rows to `catalog_stock_units`. Projected and overrun allocation rows are reservation/planning evidence only; consumption is written by `public.complete_project_task` through the private material helper so task status and stock movement share one transaction.
+- `project_material_snapshots` and `project_material_snapshot_items` store immutable booking, release, crew-adjustment, and completion snapshots. Snapshot items keep a JSON stock-unit snapshot so later roll/offcut edits cannot rewrite what was visible when the job was booked.
+- Missing product-to-stock mappings are warnings, not blockers. The workflow inserts keyed persistent `catalog_mapping_needed` notifications for operators with `catalog.manage`; resolving the mapping gap resolves only matching notification `dedupe_key` rows.
+- Estimate acceptance itself is not gated by `catalog.manage`. Material projection is authorized by the acceptance transaction, same-company checks, and estimate/project/task/pipeline permissions; `catalog.manage` remains the setup permission and notification-recipient filter.
+
+#### UniversalSearchSheet Inventory Search (iOS)
+**Location:** `OPS/OPS/Views/JobBoard/UniversalSearchSheet.swift`
+
+Universal Search includes active catalog variants from the V3 catalog model before legacy inventory rows. Search text uses the same `EnrichedVariantRow.searchText` contract as STOCK, and tapping a catalog result opens `VariantDetailView`.
 
 #### CatalogProductsListView (iOS)
 **Location:** `OPS/OPS/Views/Catalog/Products/CatalogProductsListView.swift`
@@ -2847,7 +2954,7 @@ Defaults: `pricing_unit = flat_rate`, `type = OTHER`, `kind = service`, `is_acti
 Three-tab sheet: Suggested · Drafts · Sent.
 - **Suggested** — variants below threshold, grouped by supplier heuristic. Bulk action: "Draft all" → creates a `catalog_orders` row with status `.draft`.
 - **Drafts** — editable orders not yet sent. Per-order actions: edit lines, send (status → `.sent`), cancel.
-- **Sent** — read-only history. Per-order action: mark fulfilled (status → `.fulfilled`, increment `catalog_variants.quantity` by each `quantity_requested`).
+- **Sent** — read-only history. Per-order action: mark fulfilled (status → `.fulfilled`, increment `catalog_variants.quantity` by each `quantity_requested`; when stock units are live, receiving also creates/updates physical unit rows and mirrors the aggregate back to the variant).
 
 #### CatalogSnapshotListView (iOS)
 **Location:** `OPS/OPS/Views/Catalog/Snapshots/CatalogSnapshotListView.swift`
@@ -2882,9 +2989,9 @@ Result schema: success → `{success: true, created_family_ids, created_variant_
 
 **Validation rules** (enforced by both RPCs):
 - Family `name` non-empty after trim; `category_id` / `default_unit_id` (if set) must resolve to active rows in the same company; numeric fields >= 0.
-- Variant `quantity` required, numeric, >= 0; `family_row_index` must reference a family in the same payload; `sku` collisions against active variants in the company are a hard error (DB has no unique constraint on SKU — the RPC enforces it).
+- Variant `quantity` required, numeric, >= 0; `family_row_index` must reference a family in the same payload; `sku` collisions against active variants in the company are rejected by the RPC before insert and by the live normalized per-company SKU uniqueness guard if they reach the database.
 
-**SKU collision policy**: any non-empty SKU that matches an existing active variant in the company is rejected. Fix the CSV (or remove the SKU column from the mapping) and retry. Revisit when we have a duplicate-SKU policy.
+**CSV SKU collision policy**: any non-empty SKU that matches an existing active variant in the company is rejected. Fix the CSV (or remove the SKU column from the mapping) and retry. This stricter import policy is separate from the interactive setup helper, where duplicate SKUs are warning-level until submit.
 
 **What gets created**: one `catalog_items` row per unique `family_name` (case-insensitive after trim) + one `catalog_variants` row per CSV data row, pointing at the new family. Family-level fields are taken from the FIRST CSV row that introduces a given family_name; later rows for the same family contribute additional variants only.
 
@@ -3003,10 +3110,78 @@ iOS exposes options/modifiers/recipe rows as **read-only** in `ProductDetailView
 
 ---
 
+## 13b. Guided Stock Setup (iOS, 2026-06-01) — Bug 5b3d4c39
+
+### Overview
+A conversational, multiple-choice, first-run inventory setup flow. The Advanced flow (`CatalogSetupFlowSheet`, § 13) is organized around the **schema** (FAMILY / ATTRIBUTES / MATRIX / VARIANTS / STOCK) and only makes sense to an operator who already thinks in OPS terms (founder rating 4/10). The reporter hit the exact failure: setting up Vinyl, they could not model "how many cuts at what lengths," and building one item at a time invites the **structure trap** (log "black vinyl", log "white vinyl", then realize too late it should have been one Vinyl family with color as a variant). Guided Stock Setup asks about the operator's physical reality in plain English, infers the correct catalog structure across the **whole** list, teaches the OPS equivalent at each step (`// IN OPS:` lines), and creates the data through the proven engine.
+
+**Positioning:** This is a self-contained full-screen flow, a sibling to the Advanced sheet. It is **NOT** an OPS *Wizard* (the coach-mark / instruction-bar system in `OPS/Wizard/`). It uses steel-blue `OPSStyle.Colors.primaryAccent` on the single bottom CTA per screen and **never** `wizardAccent` (orange stays reserved for coach-marks). It registers no `WizardDefinition`. Colloquially the team calls it "the wizard"; in code it is `GuidedStockSetup*`.
+
+### Flow
+Full-screen push (MOBILE.md § 6.3). Five stages, driven by `GuidedStockSetupModel.stage`:
+```
+entry ─▶ PRIME ─▶ CAPTURE ─▶ STRUCTURE ─▶ BLUEPRINT ─▶ DONE
+         intro    brain-dump  conversational  confirm    commit + summary
+                  everything  per-group Qs    + warnings  + notification
+```
+- **PRIME** — sets expectation, removes fear. `START →`.
+- **CAPTURE** — brain-dump every item (name + `STOCK · SELL · BOTH` chip). Prevents the structure trap by getting the full list out first. `ORGANIZE →` enabled at ≥1 named item.
+- **STRUCTURE** — the anti-trap engine. Deterministic clustering proposes groupings; the operator confirms via multiple choice. Internal sub-steps (single self-contained sub-flow with its own back/CTAs): **grouping** (per cluster: `YES — ONE ITEM` / `NO — KEEP SEPARATE`; per single: `ONE THING` / `DIFFERENT VERSIONS`) → **attributes** (multi-select difference chips → editable value lists, prefilled from clustering; shows resulting variant count) → **measurement** (`BY THE PIECE` / `BY LENGTH` / `BY AREA`) → **stock** (per-variant counts, or full-unit dims + count + repeating offcut lengths) → **products** (capability-gated, § below).
+- **BLUEPRINT** — per-family review cards (variant count, stock summary, non-blocking warnings, product/bundle summary); tap a card to route back to STRUCTURE. `BUILD IT →` (disabled offline / when nothing committable).
+- **DONE** — `STOCK SYSTEM BUILT` + summary line (`2 families · 6 variants · 7 rolls · 1 offcut · 1 product · 1 bundle`), success haptic, completion notification (§ 14), actions `DONE` / `REFINE IN ADVANCED` / `ADD MORE`.
+
+### Architecture — reuse the engine, no parallel write path
+All new code under `OPS/Services/Catalog/` and `OPS/Views/Catalog/Stock/GuidedStockSetup/`:
+
+| File | Responsibility |
+|---|---|
+| `CatalogSetupCommitService.swift` | **Shared** commit + reconcile, extracted verbatim from `CatalogSetupFlowSheet`. `commit(payload:saveAttempt:)` → atomic, idempotent RPC; `reconcile(payload:response:)` → merge server ids into SwiftData. Used by **both** Advanced and Guided. Conforms to `CatalogSetupCommitting` (a test seam). |
+| `GuidedStockSetupModel.swift` | `@MainActor ObservableObject` state machine + the guided data types (`GuidedStockStage`, `GuidedCapturedItem`/`GuidedItemKind`, `GuidedStructuredGroup`, `GuidedAttribute`, `GuidedMeasurement`, `GuidedStockEntry`, `GuidedProductAnswers`/`GuidedBundleChild`, `GuidedCommitProgress`, `GuidedStockSummary`). Owns `commitAll(...)`. |
+| `GuidedStockSetupDraftStore.swift` | File-based JSON snapshot (mirrors `CatalogSetupDraftStore`), `Documents/GuidedStockSetupDrafts/`, context key company+user+`guided` (distinct from Advanced — never clobbers). |
+| `GuidedStockStructuring.swift` | Pure deterministic clustering (normalize → leading-stem buckets → similarity threshold → differing-token positions). Proposes; never auto-merges. |
+| `GuidedStockDraftBuilder.swift` | Pure: confirmed group → `[CatalogSetupAttributeDraft]` + variant matrix (via `generateVariantDrafts`) + per-variant stock-unit drafts. **Deterministic client ids** (no `UUID()`) so rebuilt payloads fingerprint identically (idempotent retries). |
+| `GuidedStockUnitResolver.swift` | D2: maps measurement → dimension (piece→`count`/ea, length→`length`/ft, area→`area`/sq ft), finds an active `catalog_units` row or creates one via `CatalogRepository.createUnit`. |
+| `GuidedStockProductBuilder.swift` | Pure: group product answers → `[CatalogSetupSavePayload.ProductPayload]` (sell-link, recipe, bundle) using **client-id references**. |
+| `GuidedStockSetupFlow.swift` + `GuidedStock{Prime,Capture,Structure,Blueprint,Done}View.swift` | Full-screen container + stage views; `primaryAccent`, top progress, offline/permission banners, resume guard, one curve (`OPSStyle.Animation.page`, reduced-motion fallback). |
+
+**Commit orchestration (D1 — per-family loop).** `commitAll` loops confirmed groups (non-bundle families first, then bundles), per family: `GuidedStockDraftBuilder` (stock core via `makeSavePayload(selectedProduct: nil, …)`) + `GuidedStockProductBuilder` (product section injected into `payload.products`) → `CatalogSetupSaveAttempt.resolve` → `service.commit` → `service.reconcile`. Each call is atomic + idempotent, so the loop is **resumable** (committed group ids recorded in the draft; retry re-sends only unfinished families). `CommitProgress`: `idle → running(done,total) → complete(summary)` or `partial(failedGroupIds)`. Offline → held (no calls).
+
+**Why client-id references (verified against the `catalog_setup_save` RPC 2026-06-01):** the Advanced flow only ever *links existing* products, so `makeSavePayload`'s product builder emits server ids. Guided creates everything first-run, so the product section is built directly: new products via `id:nil` + `client_id` (RPC upserts by id), product→family link via `linked_catalog_item_client_id`, recipe (`product_materials`) pinned to the new family/variant via `catalog_item_client_id` / `catalog_variant_client_id`, bundle children via `child_product_id` (sibling product's resolved **server** id — bundles commit after their children). Same structs, same RPC, same commit service — not a parallel write path.
+
+### Deterministic structuring (no LLM)
+Normalize each captured name (lowercase, trim, tokenize). Bucket by leading token; propose a merge when `sharedLeadingTokenCount / minMemberTokenCount ≥ threshold`. Stem → family-name candidate; differing token positions → candidate attributes; differing tokens → candidate values. Confirmation is mandatory; over-grouping is safe (`NO — KEEP SEPARATE`), under-grouping is safe (singles fall to the one-thing/versions path). Singular/plural are NOT stemmed ("screws" ≠ "screw gun").
+
+### The Vinyl fix (stock reality)
+By-length/area, **each full unit and each offcut is its own `catalog_stock_units` row** (`.roll`/`.full` and `.offcut`/`.partial`, qty 1, `remaining_length` = its own length). This is required because the mirrored-quantity aggregate (`CatalogStockUnitVariantAggregate`) sums each row's `remaining_length` **once** (it does not multiply by `quantity_value`); seven 75 ft rolls must be seven rows to aggregate to 525 ft. By-the-piece is one `.each` row with `quantity_value` = on-hand count. Zero/blank answers produce no row (never a zero-quantity unit; `CatalogSetupWorkflow.validateStockQuantities` is the commit-path guard).
+
+### Permissions (granular — never role)
+- `catalog.manage` — required to enter; gates the entry points + the flow itself.
+- `catalog.products.manage` — gates the products/bundles/recipes sub-step (silently skipped if absent; stock-only path completes cleanly).
+- `catalog.stock.adjust` — stock counts (held in practice by anyone who can run setup).
+
+### Entry points
+All post `Notification.Name("OpenGuidedStockSetup")`, which `CatalogView` presents as a `.fullScreenCover`: Stock empty state `SET UP STOCK` (with `// ADVANCED` posting `OpenCatalogSetup`); the FAB catalog section `Guided Setup`; and the Advanced sheet toolbar `GUIDED` (so a stuck operator can switch down).
+
+### Existing-flow hardenings (shipped here, benefit both flows)
+1. **Reconcile-after-success is not a failure** — if local reconcile throws *after* `response.ok`, the server already committed; the service logs, requests a catalog resync, and returns `.resynced` (success), never reports a committed save as failed.
+2. **Capability-probe transient errors** — `CatalogSchemaCapabilityGate` distinguishes a definitively-missing table (`.missing` → capability false) from a transient network error (`.unknown` → keep last-known), so a flaky network can't block a stock commit.
+3. **Positive stock-unit quantity** — `validateStockQuantities` rejects ≤ 0 before commit.
+
+### Tests
+`OPSTests/Catalog/`: `CatalogSetupCommitServiceTests`, `CatalogSchemaCapabilityGateTests`, `CatalogSetupWorkflowValidationTests`, `GuidedStockSetupModelTests`, `GuidedStockStructuringTests`, `GuidedStockDraftBuilderTests`, `GuidedStockUnitResolverTests`, `GuidedStockUnitDraftTests`, `GuidedStockProductBuilderTests`, `GuidedStockCommitOrchestrationTests` (multi-family success, mid-loop partial + resume, idempotent retry, offline hold, bundle ordering).
+
+### Android conversion notes
+Mirror the deterministic structuring + the per-family idempotent commit loop. The structuring engine + draft builders are pure (no SwiftUI/SwiftData) and port directly. Reuse the same `catalog_setup_save` RPC with client-id references for new products/recipes/bundles.
+
+---
+
 ## 14. Notification System
 
 ### Overview
 Multi-layer notification system combining local (UNUserNotificationCenter), push (OneSignal), and in-app (Supabase `notifications` table) notifications. Features batching during sync, deep linking to projects, unread tracking, quiet hours, and per-type preference controls.
+
+**In-app rail events (iOS-originated)** are created with `NotificationRepository.createNotification(_:)` (Supabase `notifications` table) followed by a `NotificationCenter.default.post(name: .notificationReceived, object: nil)` to refresh the rail. Current iOS-originated rail events:
+- **Stock system built (Guided Stock Setup, 2026-06-01):** on a fully-successful guided build, a **standard** notification — title `STOCK SYSTEM BUILT`, body the summary counts (e.g. `2 families · 6 variants · 7 rolls · 1 offcut`), `action_url` `/catalog?segment=stock`, `action_label` `VIEW STOCK`, `deep_link_type` `catalog_stock`. Partial commits post **no** success notification (the in-flow RETRY governs). See § 13b.
 
 ### Architecture Components
 
@@ -3171,10 +3346,12 @@ Every notification inserted into the `notifications` table MUST satisfy this con
 | `type` | Specific event type (e.g. `expense_submitted`, `email_sync_complete`, `projects_needing_tasks`) — NOT a catch-all like `"mention"` or `"update"`. Must exist in `NOTIF_TYPE_META` (web) and the `notificationIcon(for:)` switch (iOS). |
 | `title` | ≤ 32 chars, sentence case for content / UPPERCASE for authority (matches OPS voice). Names what happened, not the system that did it. |
 | `body` | ≤ 140 chars. Includes at least one **concrete reference** the user can act on: a sender name, a count + unit, an amount, a deadline, an entity name. Never bare counts ("3 new"). |
-| `deep_link_type` | Required when the action is anything other than "mark read". Free-form short identifier — both clients route on it. Current values: `subscription` / `trial_expiry` / `paymentReview` / `taskReview` / `unscheduledReview` / `photoStorage` / `catalogOrders` / `expense` / `invoice` / `inbox` / `projectsNeedingTasks` / `email_sync_complete` / `cashflow_forecast`. |
+| `deep_link_type` | Required when the action is anything other than "mark read". Free-form short identifier — both clients route on it. Current values: `subscription` / `trial_expiry` / `paymentReview` / `taskReview` / `unscheduledReview` / `photoStorage` / `catalogOrders` / `expense` / `invoice` / `inbox` / `projectsNeedingTasks` / `billableThisWeek` / `email_sync_complete` / `cashflow_forecast`. |
 | `action_url` | Web URL or `ops://` deep link. Web reads it directly, iOS uses it as supplementary info (e.g. `?tab=...` query strings). |
 | `action_label` | UPPERCASE imperative verb phrase (e.g. `REVIEW`, `VIEW PLAN`, `PLAN THE WORK`). The action button label. |
 | `persistent` | `true` only for long-running operations the user is waiting on (scans, imports, threshold rail entries that auto-clear). `false` (dismissible) for everything else. |
+| `dedupe_key` | Required for persistent notifications that represent a specific unresolved condition. The key must identify the condition, not the title, so several open rows can share copy without blocking each other. |
+| `resolved_at` / `resolved_by` / `resolution_reason` | Required for self-resolving persistent notifications. Resolution must be written by the server path that recomputes the condition as closed. |
 | Entity FKs | Set `project_id` / `expense_id` / `batch_id` / `note_id` whenever the underlying object exists. Routing fallbacks use these (e.g. an `expense_submitted` row with no `deep_link_type` still resolves to the expense list). |
 
 **iOS routing order (NotificationListView.handleNotificationTap):**
@@ -3193,6 +3370,20 @@ Every notification inserted into the `notifications` table MUST satisfy this con
    - `OPS/OPS/Views/Notifications/NotificationListView.swift` (`handleNotificationTap`)
    - `OPS/OPS/AppDelegate.swift` (push handler) — only if you also fire pushes for it
 3. Document the type + deep_link in the table above.
+
+**`catalog_mapping_needed` (Phase 6 estimate-to-job catalog flow):**
+
+| Field | Value |
+|-------|-------|
+| `type` | `catalog_mapping_needed` |
+| `deep_link_type` | `catalogSetup` |
+| `action_label` | `FIX MAPPING` |
+| `action_url` | `ops://catalog/setup?missingMapping=<encoded-key>` |
+| `persistent` | `true` |
+| `dedupe_key` | Deterministic mapping-gap key emitted by the estimate acceptance resolver. |
+| Recipients | `public.users_with_permission(company_id, 'catalog.manage', 'all')` |
+
+This notification is non-blocking. Estimate acceptance can continue with warning payloads, but every unresolved mapping gap gets a keyed persistent row. When Catalog Setup or product mapping save closes the gap, the server recomputes mapping existence and resolves only matching `dedupe_key` rows by setting `resolved_at`, `resolved_by`, `resolution_reason`, and `is_read = true`.
 
 ### §14.3.2 Forecast Dip Notification (2026-05-11)
 
@@ -3232,6 +3423,28 @@ Looked up via `public.users_with_permission(p_company_id, 'finances.view')` — 
 **Where the recompute runs:**
 
 iOS-only for v1. The engine + dispatcher live on-device; the dispatcher writes to the `notifications` table directly via the Supabase client. Edge-Function-based recompute is a v2 consideration when OPS-Web parity lands.
+
+---
+
+### §14.3.3 Billable This Week Notification (2026-05-25)
+
+Monday-morning summary for the Home `BILLABLE THIS WEEK` rollup (see `09_FINANCIAL_SYSTEM.md § Home Billable This Week Rollup`). It is dismissible because the card itself remains live on Home all week.
+
+**Notification shape:**
+
+| Field | Value |
+|-------|-------|
+| `type` | `billable_this_week` |
+| `deep_link_type` | `billableThisWeek` |
+| `title` | `BILLABLE THIS WEEK` |
+| `body` | `N jobs / $X billable` when a known amount exists; otherwise `N jobs ready for billing`. |
+| `action_url` | `ops://home/billable-this-week?weekStart=YYYY-MM-DD` |
+| `action_label` | `OPEN HOME` |
+| `persistent` | `false` |
+
+**iOS routing:** `NotificationListView` routes `billableThisWeek` to Home via `NavigateToMap`; `AppDelegate` mirrors that route for push/local notification taps. `NotificationManager` also schedules the local iOS notification under `BILLABLE_THIS_WEEK_NOTIFICATION`.
+
+**Trigger:** `HomeBillableThisWeekNotificationDispatcher` fires at most once per user/company/week, only on Monday, only when the rollup has items and the current user has `finances.view`. It first confirms or creates the in-app notification row for the current user, then schedules the local iOS notification and commits the weekly UserDefaults suppression key. Failed remote lookups or creates must leave the week retryable so the notification rail cannot permanently miss the row.
 
 ---
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-31
 **Project:** IOS GUIDED STOCK SETUP - P1
-**Status:** Design approved (PM-delegated). Ready for implementation planning.
+**Status:** Implemented (iOS, 2026-06-01) on branch `feat/guided-stock-setup-build`. See `07_SPECIALIZED_FEATURES.md` § 13b. Awaiting human push/merge.
 **Repos in scope:** `ops-ios`, `ops-software-bible`
 **Source bug records (Supabase `bug_reports`, project `ijeekuhbatykdomumfjx`):**
 - `5b3d4c39-b05e-4733-b613-8fa1aff27804` — feature_request, ios, `Catalog.Stock.List`, 2026-05-30. "Need to build a wizard to help the user set up their inventory… a series of questions in plain English… at each step we tell the user the equivalent property in OPS."
