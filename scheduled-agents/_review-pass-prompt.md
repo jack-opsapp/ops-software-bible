@@ -25,7 +25,7 @@ Commit: {{commit_sha}}
 
 ## How to review
 
-1. Read the bug row in full. Not just the summary — the console logs, breadcrumbs, expected vs. actual behavior, steps to reproduce. Understand what the user was trying to do.
+1. Read the bug row in full — the **text signals**: description, console logs, breadcrumbs, network log, state snapshot, expected vs. actual behavior, steps to reproduce. Understand what the user was trying to do. **Do NOT fetch `screenshot_url` or `additional_attachments` by default** — they are images and cost 1000–2000+ vision tokens each. Only fetch the primary `screenshot_url` if your review concern is specifically visual (layout / alignment / visibility) AND text signals plus the diff are insufficient. Follow `_shared-triage-logic.md` § "Screenshot fetch policy" — never iterate `additional_attachments`.
 2. Read the diff. For each changed region, ask:
    - **Race conditions:** Does this introduce or rely on ordering? Is there a concurrent path that invalidates the assumption?
    - **Offline / poor-network:** If the user is offline when this code runs, what happens? Silent failure? Crash? Stale data?

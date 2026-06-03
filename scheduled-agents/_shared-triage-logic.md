@@ -106,6 +106,35 @@ Constraints:
 
 ---
 
+## Screenshot fetch policy
+
+Bug rows include `screenshot_url` (text URL) and `additional_attachments` (array of URLs). **These point to images. Reading them costs vision tokens — typically 1000–2000+ tokens per image, sometimes more for hi-res mobile captures.** Treat them as expensive, not free. A nightly run that blindly fetches every screenshot can burn 10–50× the tokens of a text-only run on the same backlog.
+
+**Default: do NOT fetch the screenshot.** Triage from text signals first:
+
+- `description` (bug_reports) / `title` + `steps` + `expected_behavior` + `actual_behavior` (qa_bugs)
+- `console_logs`, `breadcrumbs`, `network_log`, `state_snapshot`
+- `screen_name` / `page_or_screen` / `url`
+- `suspected_file`, `suspected_component` (qa_bugs)
+
+Most bugs — auth flow errors, crash stacks, data-layer issues, copy changes, console warnings, missing API calls — triage cleanly from text alone. Visual context adds nothing.
+
+**Fetch the primary `screenshot_url` ONLY when ALL of these hold:**
+
+1. Text signals are insufficient to locate the relevant file/component or understand what went wrong.
+2. The bug is plausibly visual — `category = 'ui_issue'`, OR the description references layout / spacing / alignment / color / visibility / "looks wrong" / "see attached" / "this" / "here" without naming the element.
+3. You have made one good-faith pass at identifying the file/component from text and the result was ambiguous.
+
+If those don't all hold, do not fetch. Proceed with the fix using text alone.
+
+**Never fetch `additional_attachments`.** Iterating an array of images is catastrophic for token cost. If the primary screenshot is insufficient context, escalate via `POST /api/cron/bug-triage/update` with `requires_human_review = true` and reason `"Visual context beyond primary screenshot needed — human triage required."` Do NOT loop through attachments.
+
+**Never re-fetch the same screenshot within a batch.** Read it once, hold it in working context for the remainder of that bug.
+
+**Audit trail:** When you DO fetch the screenshot, include a single line in `fix_notes`: `"Screenshot consulted: {one-line reason}."` This is the evidence that the policy was applied deliberately.
+
+---
+
 ## Orchestrator loop (you, the cron agent)
 
 You are the orchestrator. **You do NOT fix bugs yourself.** You delegate fixes to fresh sub-agents so your context stays lean across a long backlog drain.

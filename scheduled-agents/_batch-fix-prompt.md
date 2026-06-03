@@ -27,8 +27,8 @@ Each bug entry includes: id, source ('bug_reports' or 'qa_bugs'), summary, categ
 2. `git fetch origin && git checkout main && git pull origin main`
 3. `git checkout -b nightly/bugs-{{platform}}-{{yyyy_mm_dd}}-batch-{{NN}}`
 4. **For each bug in the list (in order):**
-   a. Fetch the full row: `GET https://app.opsapp.co/api/cron/bug-triage/bug?id={{bug_id}}&source={{table}}` (with `Authorization: Bearer {{BUG_TRIAGE_AGENT_TOKEN}}`). Read console_logs, breadcrumbs, state_snapshot, steps, expected/actual behavior.
-   b. Analyze. Locate the file(s) to change. If you cannot locate it with confidence, escalate via `POST /api/cron/bug-triage/update` with `updates: { requires_human_review: true, human_review_reason: "Could not locate the relevant code with confidence" }` and move on.
+   a. Fetch the full row: `GET https://app.opsapp.co/api/cron/bug-triage/bug?id={{bug_id}}&source={{table}}` (with `Authorization: Bearer {{BUG_TRIAGE_AGENT_TOKEN}}`). Read the **text signals** — description, console_logs, breadcrumbs, network_log, state_snapshot, steps, expected/actual behavior, suspected_file, suspected_component. **Do NOT fetch `screenshot_url` or `additional_attachments` by default** — those are images and cost 1000–2000+ vision tokens each. Follow the criteria in `_shared-triage-logic.md` § "Screenshot fetch policy" — most bugs triage cleanly from text alone. If you do fetch the screenshot under the policy, note it in `fix_notes`.
+   b. Analyze. Locate the file(s) to change. If text signals alone leave the bug ambiguous and the policy criteria are met, fetch the primary `screenshot_url` once. If you still cannot locate the code with confidence, escalate via `POST /api/cron/bug-triage/update` with `updates: { requires_human_review: true, human_review_reason: "Could not locate the relevant code with confidence" }` and move on.
    c. Write the fix. Follow the platform's design-system / code conventions (`OPSStyle.swift` for iOS; `.interface-design/system.md` for web).
    d. Run the build: `{{build_command}}`.
       - Passes: continue.
