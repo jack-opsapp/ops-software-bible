@@ -4054,24 +4054,39 @@ CREATE TABLE email_templates (
 Tracks AI-generated email drafts for edit tracking and writing profile learning. Each draft records the original AI output and the final user-edited version, enabling edit distance computation and auto-send confidence scoring.
 
 ```sql
+-- Live schema (verified against prod 2026-06-03). Columns below reflect the
+-- additive P4-B provenance + mailbox-draft migrations layered onto the original.
 CREATE TABLE ai_draft_history (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id UUID NOT NULL,
-  user_id UUID NOT NULL,
-  opportunity_id UUID,
-  connection_id UUID,
-  thread_id TEXT,
-  original_draft TEXT NOT NULL,
-  final_version TEXT,
-  status TEXT NOT NULL DEFAULT 'drafted' CHECK (status IN ('drafted','sent','discarded')),
-  sent_without_changes BOOLEAN DEFAULT false,
-  edit_distance INT DEFAULT 0,
-  changes_made JSONB DEFAULT '{}',
-  sent_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id            UUID NOT NULL,
+  user_id               UUID NOT NULL,
+  opportunity_id        UUID,
+  connection_id         UUID,
+  thread_id             TEXT,                  -- provider thread the draft belongs to (see notes)
+  original_draft        TEXT NOT NULL,
+  final_version         TEXT,
+  edit_distance         INT DEFAULT 0,
+  changes_made          JSONB DEFAULT '[]',
+  sent_without_changes  BOOLEAN DEFAULT false,
+  status                TEXT NOT NULL DEFAULT 'drafted'
+                          CHECK (status IN ('drafted','sent','discarded','auto_drafted',
+                                            'superseded','sent_from_mailbox','discarded_in_mailbox')),
+  profile_type          TEXT NOT NULL DEFAULT 'general',
+  subject               TEXT,                  -- derived reply/outreach subject (P4-B)
+  subject_source        TEXT CHECK (subject_source IS NULL OR subject_source IN ('generated','operator')),
+  source_message_id     TEXT,                  -- provider id of the inbound msg replied to (P4-B)
+  origin                TEXT CHECK (origin IS NULL OR origin IN ('operator','template_follow_up','phase_c','system_handoff')),
+  mailbox_draft_id      TEXT,                  -- provider Drafts-folder id once pushed (Gmail/M365)
+  sent_at               TIMESTAMPTZ,
+  edited_at             TIMESTAMPTZ,
+  discarded_at          TIMESTAMPTZ,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
+
+- **`mailbox_draft_id`** (migration `20260602000000`): the provider Drafts-folder id once OPS pushes the draft into the user's real Gmail/Outlook, written alongside `status='auto_drafted'`. Reply-path idempotency keys on `(connection_id, thread_id)`; the forwarded contact-form **new-thread** path keys on `(connection_id, opportunity_id)`.
+- **`status` CHECK** expanded (migration `20260602010000`) beyond the original `drafted/sent/discarded`: `auto_drafted` (pushed to mailbox, awaiting outcome), `sent_from_mailbox` (user sent it from their own mail client → reconciliation "used"), `discarded_in_mailbox` (deleted without sending, past TTL), `superseded` (user wrote a fresh reply). Always verify new status values against the live constraint — vitest mocks do not enforce CHECKs.
+- **`thread_id`** is the provider thread the draft belongs to. Ordinary replies: the inbound thread. **Forwarded contact-form** auto-draft (2026-06-03): the *new* thread minted by `provider.createNewThreadDraft` (Gmail `message.threadId` / M365 `conversationId`), stamped by `placeNewThreadDraft` so `reconcilePendingMailboxDrafts` (keyed on `thread_id`) still matches the client's reply; that thread is also linked in `opportunity_email_threads`.
 
 - `edit_distance`: Word-level Levenshtein distance between `original_draft` and `final_version`.
 - `changes_made`: Structured diff — `{ greeting?: {from, to}, closing?: {from, to}, tone?: string }`.
