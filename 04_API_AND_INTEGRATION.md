@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: May 25, 2026
+**Last Updated**: June 2, 2026
 **iOS Reference**: `OPS/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -82,6 +82,29 @@ iOS App (SwiftData)                   OPS Web (Next.js)
 3. Supabase creates or matches a user, returns a session JWT
 4. All subsequent Supabase requests use the session JWT automatically (anon key + RLS)
 5. Server-side API calls to OPS-Web pass the Supabase `accessToken` as `Bearer` header
+
+### Cross-Platform Onboarding & Signup Contract
+
+Onboarding completion is server-authoritative across OPS-Web, ops-site handoff paths, and OPS iOS. A user is not considered fully onboarded by any client unless the server-backed `users.onboarding_completed` map confirms the relevant platform and the user also has a valid `company_id` and `user_type`.
+
+**Web setup routes (`OPS-Web`):**
+
+| Route | Purpose | Contract |
+|-------|---------|----------|
+| `POST /api/setup/progress` | Persist web setup drafts and partial progress | Idempotent per step. Reuses an existing owner company by `companies.account_holder_id` before creating a new company. Company creation/updates are limited to company users who are owner/admin-capable. Runs `initialize_company_defaults(company_id)` on company-step retry so interrupted setup can self-heal missing defaults. |
+| `POST /api/setup/complete` | Complete owner/company web setup | Requires a company-attached owner/admin-capable user. Rejects employee users. Merges `onboarding_completed.web=true`; clients must not mark web onboarding complete locally until this response succeeds. |
+| `POST /api/auth/join-company` | Join an existing company by code | Calls `join_user_to_company(p_user_id, p_company_id, p_company_code)` and must pass the normalized company-code proof. |
+| `POST /api/onboarding/complete` | Complete iOS onboarding through the web API gateway | Accepts Firebase `idToken`/`token` plus `platform:"ios"`, verifies the OPS user, requires `company_id` and `user_type`, rejects non-admin company users when completing company-owner onboarding, merges `onboarding_completed.ios=true`, and records `setup_progress.steps.ios_onboarding=true`. |
+
+**Database RPC hardening:** `public.join_user_to_company` takes `(p_user_id uuid, p_company_id uuid, p_company_code text default null)`. For authenticated callers, `auth.uid()` must match `p_user_id`, `p_company_code` is required, and the normalized proof must match the locked `companies.company_code`. Service-role callers may still perform controlled server-side joins.
+
+**Client rules:**
+
+- Partial web setup is resume-safe. `/setup` writes each step before advancing; if the network drops, the UI stays on the current step and keeps the draft local instead of skipping ahead.
+- Web setup accepts a sanitized `redirect`/`continue` destination. Production only permits same-origin or explicit OPS-owned destinations; development-only localhost allowances are disabled when `NODE_ENV` or `NEXT_PUBLIC_VERCEL_ENV` is production.
+- iOS must call `/api/onboarding/complete` and wait for the server ACK before setting local onboarding completion. A cached `companyId` is not proof of completion.
+- iOS and web both pass company-code proof when joining an existing company. Company ID alone is not enough for user-initiated joins.
+- Login/account-type handoffs preserve the safe continuation URL so ops-site, OPS-Web auth, and onboarding can interoperate without dropping the intended destination.
 
 ---
 

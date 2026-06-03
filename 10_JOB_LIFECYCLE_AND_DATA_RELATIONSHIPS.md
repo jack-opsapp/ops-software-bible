@@ -777,8 +777,8 @@ task_materials rows pinned to concrete catalog_variant_ids
 
 | Component | Metadata keys |
 |---|---|
-| `railing` | `linear_feet`, `corners_count`, `color`, `mount_type`, `mount_surface`, `edge_id`, optional `level_id` |
-| `post_set` | `count`, `height`, `color`, `mount_type`, `edge_id`, optional `level_id` |
+| `railing` | `linear_feet`, `corners_count`, `color`, `mount_type`, `mount_surface`, `edge_id`, optional `level_id`, optional `wall_material` for `parapet_wall` |
+| `post_set` | `count`, `height`, `color`, `mount_type`, `edge_id`, optional `level_id`; omitted for `parapet_wall` |
 | `stair_set` | `tread_count`, `width`, `color`, `mount_type`, `edge_id` OR `connection_id`, `level_id` (multi-level) |
 | `deck_board` | `sqft`, `color`, `material`, `surface_id`, optional `level_id` |
 | `gate` | `count`, `width`, `color`, `mount_type`, `mount_surface`, `edge_id`, optional `level_id` |

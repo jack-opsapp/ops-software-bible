@@ -454,6 +454,9 @@ The Job Board uses a role-based section system. Each role sees a different set o
 - **As an admin**, I want to set warning and critical quantity thresholds so that I know when to reorder supplies
 - **As an admin**, I want to organize inventory with tags so that I can categorize materials by type or use
 - **As an admin**, I want to import inventory from spreadsheets (CSV/XLSX) so that I can onboard existing inventory quickly
+- **As an admin**, I want to set up a stock family with attributes, valid option combinations, SKUs, thresholds, units, images, and physical rolls/offcuts so that field inventory can match the material systems my company actually uses
+- **As an admin**, I want duplicate SKUs to warn but duplicate option matrices to block so that existing labels are visible without allowing two variants with the same physical meaning
+- **As an admin**, I want suggested bundle add-ons to stay separate from required bundle children so that optional accessories do not inflate required rollup pricing
 - **As an admin**, I want to adjust quantities with quick +/- buttons so that inventory updates are fast on site
 - **As an admin**, I want to view inventory snapshots so that I can see historical inventory levels
 
@@ -1076,9 +1079,9 @@ The app must function fully without internet connectivity. All features must be 
 ### 14. Pipeline / CRM (iOS & OPS Web)
 
 #### Pipeline Board — OPS Web
-- **Focused Mode (default)** — One active stage is centered as the working column. Adjacent stages render as compact spine rails; Won/Lost render as terminal targets. The toolbar provides `[ MODE: SPATIAL ▸ ]`, and `V` toggles between focused and spatial when the user is not typing, dragging, or inside modal/menu keyboard scope.
+- **Focused Mode (default)** — One active stage is centered as the working column. Adjacent stages render as compact spine rails; Won/Lost render as terminal targets. The single bottom-left toolbar provides `[ MODE: SPATIAL ▸ ]`, search, stage filter, assignment filter, and lead creation controls. `V` toggles between focused and spatial when the user is not typing, dragging, or inside modal/menu keyboard scope.
 - **Spatial Mode** — Pannable/zoomable canvas view for scanning the full pipeline. Active stages are stack regions; Won/Lost are terminal regions. The toolbar provides `[ MODE: FOCUSED ▸ ]`.
-- **Drag-and-Drop** — Move opportunities between stages via @dnd-kit. Focused cards drop onto spine rails or terminal targets and use the same stage move path as spatial drops.
+- **Drag-and-Drop** — Move opportunities between stages via @dnd-kit. Focused cards drop onto intentional spine rails or terminal targets and use the same stage move path as spatial drops; neutral focused release cancels without changing stage.
 - **Empty Canvas Drop** — Dropping on empty spatial canvas cancels the drag. Pipeline cards do not persist Finder-style custom positions; the layout engine remains canonical.
 - **Stage Transitions** — Every stage move recorded as immutable history
 - **Win Probability** — Per-stage default + per-opportunity override

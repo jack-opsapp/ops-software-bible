@@ -682,6 +682,8 @@ final class User {
 
 **NOTE**: Properties are `firstName`/`lastName`, NOT `nameFirst`/`nameLast` (those are Bubble field names, not model properties).
 
+**Onboarding completion contract (June 2, 2026):** `hasCompletedAppOnboarding` mirrors server-backed platform completion and must be evaluated together with `companyId` and `userType`. A cached `companyId` by itself is not completion proof. OPS iOS completion is acknowledged through `POST /api/onboarding/complete`, which merges `users.onboarding_completed.ios=true`; OPS-Web owner setup uses `POST /api/setup/complete` to merge `users.onboarding_completed.web=true`.
+
 **PERMISSION SYSTEM (March 2026)**: The legacy fields `role`, `isCompanyAdmin`, `inventoryAccess`, `specialPermissions`, and `devPermission` on the User model are being superseded by a proper RBAC+ABAC permissions system stored in Supabase (see [Permissions System Tables](#permissions-system-tables) below). The new system uses three dedicated tables (`roles`, `role_permissions`, `user_roles`) with 5 preset roles and ~55 granular permissions. The legacy fields remain on the User model for backward compatibility during the transition but are no longer the source of truth for access control. UI gating should use the `PermissionStore` (web) or equivalent iOS permission service, not these fields.
 
 ---
@@ -2921,6 +2923,91 @@ task_materials
 
 **RLS**: company_isolation joined via `project_tasks → projects.company_id`. The legacy `inventory_item_id` column is preserved for back-compat — it is null on all new rows.
 
+### `company_inventory_settings` (Phase 6 draft)
+
+**Purpose**: Explicit company inventory mode for estimate-to-job material behavior. This is the only source of truth for whether accepted estimates create projected material demand.
+**SwiftData**: not yet registered locally.
+**Schema**:
+
+```sql
+company_inventory_settings
+  company_id      uuid PK FK companies(id)
+  inventory_mode  text NOT NULL DEFAULT 'off'      -- 'off' | 'tracked'
+  enabled_at      timestamptz NULL
+  disabled_at     timestamptz NULL
+  updated_by      uuid FK users(id) NULL
+  created_at      timestamptz NOT NULL
+  updated_at      timestamptz NOT NULL
+```
+
+**RLS**: company isolation on `company_id`. Writes require `catalog.manage` and the `public.set_company_inventory_mode(p_company_id, p_inventory_mode)` RPC boundary so the actor is derived server-side and open projected demand is released when tracking is turned off.
+
+### `project_material_demands` (Phase 6 draft)
+
+**Purpose**: Accepted-job material demand. These rows are projected planning pressure, not stock movement.
+**SwiftData**: not yet registered locally.
+**Schema highlights**:
+
+```sql
+project_material_demands
+  id                            uuid PK
+  company_id                    uuid FK companies(id)
+  project_id                    uuid FK projects(id)
+  task_id                       uuid FK project_tasks(id) NULL
+  estimate_id                   uuid FK estimates(id) NULL
+  line_item_id                  uuid FK line_items(id) NULL
+  product_id                    uuid FK products(id) NULL
+  product_material_id           uuid FK product_materials(id) NULL
+  catalog_variant_id            uuid FK catalog_variants(id) NULL
+  unit_id                       uuid FK catalog_units(id) NULL
+  demand_key                    text NOT NULL
+  source                        text NOT NULL DEFAULT 'estimate_acceptance'
+  status                        text NOT NULL DEFAULT 'projected'
+  required_quantity             numeric NOT NULL
+  available_quantity_at_booking numeric NULL
+  projected_overrun_quantity    numeric NOT NULL DEFAULT 0
+  resolver_payload              jsonb NOT NULL DEFAULT '{}'
+  warning_payload               jsonb NOT NULL DEFAULT '{}'
+  deleted_at                    timestamptz NULL
+```
+
+**RLS and guards**: company isolation plus same-company guards for project, task, estimate, line item, product, recipe, variant, and unit references. Writes require the `ops.project_material_workflow` guard and either inventory-mode release through `public.set_company_inventory_mode` with `catalog.manage`, or estimate acceptance through `public.accept_estimate_to_job` with same-company and acceptance-adjacent permission checks. Direct ad hoc writes remain blocked. Valid statuses are `projected`, `warning`, `allocated`, `consumed`, `released`, and `superseded`.
+
+### `project_material_snapshots` and `project_material_snapshot_items` (Phase 6 draft)
+
+**Purpose**: Immutable material history for booking projection, inventory-mode release, crew adjustment, task-completion consumption, and release events.
+**SwiftData**: not yet registered locally.
+
+Snapshot item rows include `stock_unit_snapshot jsonb NOT NULL DEFAULT '{}'`. This JSON captures the stock-unit label, lot, dimensions, remaining quantity, location, status, and related source event data at snapshot time. It is historical evidence; it is never recomputed from the mutable `catalog_stock_units` row.
+
+**RLS and guards**: headers are company-isolated by `company_id`; items must match the snapshot company and every referenced demand, task material, allocation, deduction, variant, stock unit, stock event, and unit must belong to that same company.
+
+### `task_material_allocations` (Phase 6 draft)
+
+**Purpose**: Link projected demand and task cut-list rows to physical stock units without deducting stock until task completion.
+**SwiftData**: not yet registered locally.
+**Schema highlights**:
+
+```sql
+task_material_allocations
+  id                       uuid PK
+  company_id               uuid FK companies(id)
+  task_material_id          uuid FK task_materials(id) NULL
+  demand_id                 uuid FK project_material_demands(id) NULL
+  catalog_variant_id        uuid FK catalog_variants(id) NULL
+  catalog_stock_unit_id     uuid FK catalog_stock_units(id) NULL
+  inventory_deduction_id    uuid FK inventory_deductions(id) NULL
+  allocation_key            text NOT NULL
+  allocation_status         text NOT NULL DEFAULT 'projected'
+  allocated_quantity        numeric NOT NULL DEFAULT 0
+  consumed_quantity         numeric NOT NULL DEFAULT 0
+  overrun_quantity          numeric NOT NULL DEFAULT 0
+  stock_unit_snapshot       jsonb NOT NULL DEFAULT '{}'
+  deleted_at                timestamptz NULL
+```
+
+**RLS and guards**: company isolation plus same-company checks for task material, demand, variant, stock unit, and deduction. `projected` and `overrun` allocations do not write `inventory_deductions` or `catalog_stock_unit_events`; `consumed` allocations are tied to the task-completion stock movement.
+
 ### `line_item_materials`
 
 **Purpose**: Optional per-line-item materials snapshot. Used by line items that need a frozen materials list distinct from the recipe template (e.g., a one-off custom build where the user manually overrode the BOM).
@@ -2935,16 +3022,22 @@ task_materials
 ```sql
 inventory_deductions
   id                  uuid PK
-  catalog_variant_id  uuid FK catalog_variants(id) NOT NULL  -- renamed from inventory_item_id
+  company_id          uuid FK companies(id) NOT NULL
+  inventory_item_id   uuid NULL                              -- legacy column name
+  catalog_variant_id  uuid FK catalog_variants(id) NULL
+  project_id          uuid FK projects(id) NULL
   task_id             uuid FK project_tasks(id) NULL
-  quantity            numeric NOT NULL                       -- positive = deducted, negative = returned
-  reason              text                                   -- 'consumed' | 'returned' | 'manual_adjust' | 'snapshot'
-  created_by_id       uuid FK users(id)
-  created_at          timestamptz NOT NULL
+  line_item_id        uuid FK line_items(id) NULL
+  quantity_deducted   double precision NOT NULL
+  previous_quantity   double precision NOT NULL
+  new_quantity        double precision NOT NULL
+  reason              text NOT NULL DEFAULT 'task_completion'
+  deducted_by         uuid FK users(id) NULL
+  deducted_at         timestamptz NOT NULL
   notes               text
 ```
 
-**RLS**: company_isolation joined via `catalog_variants → catalog_items.company_id`. **Migration note**: the table is empty as of the catalog migration (0 rows globally), so the FK rename + re-FK to `catalog_variants` carries no data risk.
+**RLS**: company isolation by `company_id` with same-company expectations for variant/task/project references. Phase 6 projected material demand does not write this table; it is reserved for actual stock movement such as task completion consumption, returns, manual adjustments, and snapshots.
 
 ### `client_product_overrides`
 

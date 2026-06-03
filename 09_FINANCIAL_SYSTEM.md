@@ -119,6 +119,8 @@ interface Opportunity {
   lostNotes: string | null;
 
   address: string | null;
+  latitude: number | null;
+  longitude: number | null;
 
   // Denormalized
   lastActivityAt: Date | null;
@@ -169,6 +171,7 @@ The store persists only mode, focused stage, and sort state under `opsPipeline:v
 - Horizontal wheel and Shift+wheel snap the focused stage. Trackpad pinch-out (`ctrl` wheel with positive `deltaY`) switches to spatial after the virtual zoom threshold.
 - The `V` shortcut toggles focused/spatial unless a drag is active or the user is typing in an input/menu/modal.
 - The accessibility model is a real tablist/tabpanel pair. Active stages and terminal Won/Lost entries are `role="tab"` controls; exactly one tab is `aria-selected="true"` and exactly one tab owns `tabIndex=0`. The single `role="tabpanel"` is labelled by the selected tab.
+- Focused cards do not open detail from the card body. The explicit toolbar details action is the only focused-card entry path into the detail window. Card title, client name, and site address are independent inline controls: title saves through `useUpdateOpportunity`, client linking searches existing clients or creates a new client before attaching it through `attachClientToOpportunity`, and address editing uses the existing `opportunities.address`, `latitude`, and `longitude` fields with the shared Mapbox address autocomplete component, biased by the opportunity's current coordinates when present.
 - Focused cards expose compact adjacent-stage reassignment controls when the user can manage pipeline stages. Controls are disabled for read-only users and terminal moves still route through the transition dialog.
 - Focused drag to an active spine target moves the opportunity. Focused drag to Won/Lost opens the transition dialog before any terminal mutation.
 
@@ -189,7 +192,7 @@ The store persists only mode, focused stage, and sort state under `opsPipeline:v
 
 ### OPS-Web Pipeline V2 Detail Panel
 
-**Status:** Phase 11 verified 2026-05-13; focused-window correction verified 2026-05-19. The old tethered multi-window opportunity detail popover/window system was retired for `/pipeline`; `detail-popover.tsx`, `detail-popover-store.ts`, and `detail-popover-tether.tsx` were deleted. Opportunity detail state now lives in `usePipelineModeStore` via `detailPanelOpportunityId`, `detailPanelActiveTab`, `openDetailPanel`, `closeDetailPanel`, and `setDetailPanelActiveTab`.
+**Status:** Phase 11 verified 2026-05-13; focused-window correction verified 2026-05-19; focused card interaction correction verified 2026-05-26. The old tethered multi-window opportunity detail popover/window system was retired for `/pipeline`; `detail-popover.tsx`, `detail-popover-store.ts`, and `detail-popover-tether.tsx` were deleted. Opportunity detail state now lives in `usePipelineModeStore` via `detailPanelOpportunityId`, `detailPanelActiveTab`, `openDetailPanel`, `closeDetailPanel`, and `setDetailPanelActiveTab`.
 
 **Components:**
 - `src/app/(dashboard)/pipeline/_components/pipeline-focused-detail-window.tsx` — focused-mode window wrapper.
@@ -198,6 +201,7 @@ The store persists only mode, focused stage, and sort state under `opsPipeline:v
 - `src/stores/window-store.ts` — includes `pipeline-detail` window type and sizing.
 
 - Focused mode renders opportunity detail as a separate `ProjectWorkspaceWindow` surface via the shared window store (`pipeline-detail:<opportunityId>`). It is portaled to `document.body`, uses the same dense glass, traffic-light chrome, drag/resize, z-index, focus, minimize, and mobile sizing model as project details, and never renders inline beside the focused stage list.
+- Focused detail is opened only by the explicit card details action. The focused window subtitle and contact strip surface the opportunity site address when present, followed by phone and email.
 - Opening focused detail must not apply split-width classes or collapse the focused list. The focused card/list frame remains full width while the detail window floats above the Pipeline canvas.
 - Spatial mode always renders the portal drawer. It does not attempt inline/push layout because transformed canvas measurement is brittle.
 - Focused window close paths (traffic-light close, `Escape`, external window-store close) synchronize back to `usePipelineModeStore.closeDetailPanel()`. Spatial drawer close paths remain close button, `Escape`, and backdrop.

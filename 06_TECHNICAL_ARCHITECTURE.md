@@ -2506,6 +2506,19 @@ func defaultSection(for user: User?) -> JobBoardSection {
 | `.kanban` | `JobBoardKanbanView` | Project distribution across statuses as proportional bars |
 | `.pipeline` | `PipelineView()` | CRM pipeline — uses `@EnvironmentObject`, takes no init parameters |
 
+### Shared JobBoard List Rules
+
+```
+File: OPS/Utilities/JobBoardListRules.swift
+```
+
+- `JobBoardTaskFiltering.visibleTasks(from:)` is the source of truth for the office/admin `.tasks` section.
+- Task cards are shown only when the parent project is non-deleted and in an active operational status: `.rfq`, `.estimated`, `.accepted`, `.inProgress`.
+- Tasks from `.completed`, `.closed`, `.archived`, or soft-deleted projects are hidden from active task lists.
+- Task rows are deduplicated by `ProjectTask.id` before rendering.
+- `ProjectListOrdering.activeFirst(_:)` is the source of truth for client/contact project lists. It drops soft-deleted projects, sorts active lifecycle projects first, then `.closed`, then `.archived`, with newest project dates first inside each group.
+- RFQ and Estimated remain active lifecycle statuses in iOS list filtering. Their removal is not implemented until the lifecycle decision is explicitly unshelved.
+
 ### JobBoardMyTasksView
 
 ```
@@ -2551,22 +2564,20 @@ File: Views/Components/Common/DirectionalDragModifier.swift
 Resolves the scroll-vs-swipe gesture conflict on `UniversalJobBoardCard` inside `ScrollView`.
 
 ```swift
-// Commits to a drag axis within the first 10pt of movement:
-// - Horizontal intent → captures the swipe for status change
-// - Vertical intent → releases gesture to ScrollView for normal scrolling
+// Commits only after movement exceeds 12pt:
+// - Horizontal intent requires width > height * 3
+// - Vertical or diagonal intent releases the row to the ScrollView
 struct DirectionalDragModifier: ViewModifier {
     let isEnabled: Bool
     var onChanged: ((CGFloat) -> Void)?
     var onEnded: ((CGFloat) -> Void)?
 
-    @GestureState private var dragState: DragAxisState = .undecided
-    private let threshold: CGFloat = 10
-
-    // dragState is still valid in onEnded — @GestureState resets AFTER onEnded fires
+    @State private var resolvedAxis: DirectionalDragAxis = .undecided
 }
 ```
 
 Used via the `.directionalDrag(isEnabled:onChanged:onEnded:)` View extension.
+The axis decision is centralized in `DirectionalDragClassifier`, and long-press menus on `UniversalJobBoardCard` require a 0.55s stationary press with a 12pt maximum distance so slow vertical scrolling does not open the menu.
 
 ### AppState.showingJobBoardSearch
 

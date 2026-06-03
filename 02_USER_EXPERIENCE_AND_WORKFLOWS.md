@@ -262,6 +262,16 @@ Root
 
 ## Onboarding Flows
 
+### Cross-Platform Completion Rules
+
+OPS has one cohesive signup/onboarding contract across ops-site, OPS-Web, and OPS iOS:
+
+- **Server state wins.** `company_id` alone never means onboarding is complete. Clients require server-backed onboarding completion, a valid `company_id`, and a valid `user_type` before entering the main product.
+- **Interrupted setup resumes.** If a user loses connection mid-onboarding, the client keeps local draft input, does not advance past the failed server write, and resumes from the last confirmed server step.
+- **Company joins require code proof.** User-initiated joins pass both `company_id` and the normalized company code to the hardened `join_user_to_company` RPC.
+- **Completion is acknowledged by the backend.** Web completion uses `/api/setup/complete`; iOS completion uses `/api/onboarding/complete` through the OPS-Web API gateway.
+- **Handoffs preserve intent.** ops-site and OPS-Web auth/onboarding routes preserve sanitized continuation URLs so signup, login, account-type selection, and setup return users to the route that initiated the flow.
+
 ### Company Creator Flow (Owner/Admin)
 
 Presented on first launch when user has no account.
