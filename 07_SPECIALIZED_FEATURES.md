@@ -1174,6 +1174,69 @@ private func syncImagesForProject(projectId: String, uploads: [PendingImageUploa
 }
 ```
 
+### Synced `project_photos` gallery store (V9)
+
+**Problem (fixed 2026-06-04).** The gallery carousel historically rendered only
+`projects.project_images` — a comma-separated CSV column on the project row. That
+CSV is unreliable: it is a whole-array overwrite (clobber-prone), its update is
+gated by the project-edit RLS, the web app does not maintain it, and the update
+does not bump `updated_at`. The uploader saw their own photo only because the app
+*optimistically* appends the new URL to its **local** `projectImagesString`. Other
+assigned crew sync the server CSV, which never received the new URL — so a
+teammate's photo appeared in **comments** (which read the canonical
+`project_photos` table) but was **missing from the gallery list**.
+
+**Fix.** `project_photos` is now a first-class **synced entity**, mirroring
+`project_notes`. The carousel unions the synced rows with the legacy CSV.
+
+| Piece | Location |
+|-------|----------|
+| `@Model ProjectPhoto` | `OPS/DataModels/Supabase/ProjectPhoto.swift` |
+| `ProjectPhotoDTO` (read; optional-heavy decode) | `OPS/Network/Supabase/DTOs/ProjectPhotoDTOs.swift` |
+| `ProjectPhotoRepository` (`fetchAll(since:)`, `fetchForProject`) | `OPS/Network/Supabase/Repositories/ProjectPhotoRepository.swift` |
+| `SyncEntityType.projectPhoto` → `project_photos`, priority 7 | `OPS/Network/Sync/SyncTypes.swift` |
+| SwiftData schema **V9** (additive lightweight V8→V9) | `OPS/DataModels/Migrations/OPSSchemaV9.swift`, `OPSSchemaCommon.v9ProjectPhotoModels`, `OPSMigrationPlan` |
+| Inbound full/delta sync | `InboundProcessor` (`syncProjectPhotos`/`mergeProjectPhoto`) **and** `DataActor` (actor copy) |
+| Realtime | `RealtimeProcessor` (legacy + actor-dispatch paths, `upsertProjectPhoto`) + `DataActor.RealtimeUpdate.projectPhoto` / `softDeleteFromRealtime` |
+| Logout wipe + project-purge cascade | `OPS/Utilities/DataController.swift` |
+| Merged gallery source of truth | `Project.mergedGalleryImageURLs(...)` in `OPS/DataModels/Project+Gallery.swift` |
+
+**Read-only from the sync engine.** Photo rows are still *written* exclusively by
+`ImageSyncManager.insertProjectPhotoRows`; nothing locally creates a `ProjectPhoto`
+with `needsSync = true`, so the OutboundProcessor never pushes it. Per-photo
+client-portal visibility continues to round-trip through
+`project_photos.is_client_visible` (`setPhotoClientVisibility` /
+`refreshClientVisibility`).
+
+**Carousel + viewer.** `ProjectPhotosCarousel` (Activity tab) reads a live
+`@Query` of `ProjectPhoto` (filtered `projectId`, `deletedAt == nil`, sorted
+`createdAt`) and merges via `Project.mergedGalleryImageURLs(syncedPhotoURLs:)` —
+legacy CSV order first, then synced-only URLs, deduped by URL. The full-screen
+viewer (`photoViewerContent` → `PhotoCommentViewer`) uses the **same** merge
+(`mergedGalleryImageURLs(using:)`) so a tapped index opens the correct photo.
+`isImageSynced` (no spurious fail badge — teammates have an empty
+`unsyncedImagesString`) and `isImageClientVisible` work unchanged on merged URLs.
+
+**Required DB migration (applied 2026-06-04, prod `ijeekuhbatykdomumfjx`).**
+`project_photos` had no `updated_at`, which incremental sync (`.gte("updated_at", since)`)
+needs. Added additively, mirroring `update_project_notes_timestamp`:
+
+```sql
+ALTER TABLE public.project_photos ADD COLUMN IF NOT EXISTS updated_at timestamptz;
+UPDATE public.project_photos SET updated_at = COALESCE(created_at, now()) WHERE updated_at IS NULL;
+ALTER TABLE public.project_photos ALTER COLUMN updated_at SET DEFAULT now();
+ALTER TABLE public.project_photos ALTER COLUMN updated_at SET NOT NULL;
+CREATE TRIGGER update_project_photos_timestamp
+  BEFORE UPDATE ON public.project_photos
+  FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+```
+
+`project_photos` columns: `id` (uuid), `project_id` (text), `company_id` (text),
+`url` (text), `thumbnail_url`, `rendered_url`, `source` (`photo_source` enum),
+`site_visit_id` (uuid), `uploaded_by` (text), `taken_at`, `caption`, `deleted_at`,
+`created_at`, `updated_at`, `is_client_visible` (bool). RLS is company-wide read
+(`company_isolation`), so every teammate can read all rows.
+
 ### Android Conversion Notes
 
 **Required Components:**
