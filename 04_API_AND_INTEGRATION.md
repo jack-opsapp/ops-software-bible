@@ -393,12 +393,15 @@ Also provides `NewCompanyPayload` struct and `generateCompanyCode()` helper (8-c
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
+| `fetchAll` | `(since: Date?) -> [PhotoAnnotationDTO]` | Sync pull via the `get_photo_annotations_since` SECURITY DEFINER RPC (lets tombstones flow to local SwiftData). Used by `InboundProcessor`/`DataActor` delta + full sync. |
 | `fetchForProject` | `(_ projectId: String) -> [PhotoAnnotationDTO]` | All annotations for a project |
 | `fetchForPhoto` | `(projectId:, photoURL:) -> PhotoAnnotationDTO?` | Single annotation for a specific photo |
 | `upsert` | `(_ dto: UpsertPhotoAnnotationDTO) -> PhotoAnnotationDTO` | Upsert annotation |
 | `create` | `(_ dto: UpsertPhotoAnnotationDTO) -> PhotoAnnotationDTO` | Insert annotation |
 | `updateAnnotation` | `(_ annotationId:, annotationUrl:, note:)` | Update annotation URL and note |
 | `softDelete` | `(_ annotationId: String)` | Soft delete |
+
+> **Sync contract — `updated_at` must never be NULL (fixed 2026-06-04).** Delta sync pulls filter on `updated_at` (`get_photo_annotations_since` uses `updated_at >= p_since`; `project_notes` uses `.gte("updated_at", since)`). A freshly inserted row with `updated_at = NULL` fails `NULL >= p_since` and is **silently excluded from every delta sync** — the author sees it (composited locally) but it never reaches other devices ("local only"). Root cause: `project_photo_annotations.updated_at` and `project_notes.updated_at` lacked a DEFAULT and update trigger. Fix migration `fix_photo_annotation_and_note_updated_at_propagation`: both columns now `DEFAULT now()` + a `BEFORE UPDATE … update_timestamp()` trigger (matching `projects`/`expenses`), existing NULL rows backfilled to `created_at`, and `get_photo_annotations_since` hardened to `COALESCE(updated_at, created_at) >= p_since`. The `rendered_photo_url` column referenced by the DTOs does **not** exist on the table (harmless for PencilKit markup — nil optionals are omitted on encode — but the dimensioned-capture write path needs review).
 
 ### 15. NotificationRepository
 
