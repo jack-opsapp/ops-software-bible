@@ -116,7 +116,7 @@ When implementing designs exported from Claude Design (handoff bundles), agents 
   - Do **not** modify shared build artifacts (DerivedData, lockfiles, migrations, generated types) that a parallel session may be writing to. Check `lsof` or running processes if uncertain.
   - When uncertain whether parallelism applies, ask before acting.
 - **Atomic commits.** One logical change per commit. Do not mix unrelated scopes (e.g. a feature + a docs update) in a single commit; split them, even within the same branch.
-- **Branch scope discipline.** A feature branch (e.g. `nightly/...`, `feat/...`) is for that feature only. Drop unrelated commits (docs, policy, tooling) onto `main` directly or on their own short-lived branch — not onto someone else's feature branch.
+- **New branches are for large feature buildouts only.** Don't spin up a branch for a minor change, bug fix, or docs/policy/tooling tweak — commit it directly onto the branch already checked out (or `main`). A small fix may ride on an unrelated `feat/...` branch; that is expected and preferred over branch sprawl. Only large, multi-step features get a dedicated branch. (Keep each commit atomic, stage by name, and never commit over a sibling session's pre-existing WIP.)
 - **Never include Claude as co-author.** No `Co-Authored-By: Claude`, no `noreply@anthropic.com`, no AI attribution of any kind in commit messages or trailers.
 - **Stage by name, not bulk.** Never `git add -A` or `git add .` — name the specific files. Bulk-staging risks pulling in unrelated WIP, secrets (`Secrets.xcconfig`, `.env*`), or another session's files.
 - **Conventional-commit style.** `feat(scope): …`, `fix(scope): …`, `docs(scope): …`, `refactor(scope): …`. Describe what changed and why, not how.
