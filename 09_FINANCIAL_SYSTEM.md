@@ -943,7 +943,19 @@ interface AccountingConnection {
 }
 ```
 
-Located at `src/lib/api/services/accounting-service.ts`. Stores OAuth connections for QuickBooks and Sage. Full sync implemented via Supabase Edge Functions.
+Located at `src/lib/api/services/accounting-service.ts`. Stores OAuth connections for QuickBooks and Sage. Expense push runs via Supabase Edge Functions (below); the read-only QuickBooks draw runs in `ops-web` (see *QuickBooks Read-Only Sync*).
+
+**Additional columns (2026-06, not in the legacy interface above):** `sync_direction text NOT NULL DEFAULT 'pull_only'` (CHECK ∈ {`pull_only`, `push_only`, `bidirectional`}) governs which half of the sync engine may run — a `pull_only` connection can never push to the provider; `realm_id_lookup text` (SHA-256 hex of the realm id) is the deterministic routing column for inbound webhooks, since `realm_id` itself is encrypted. **Token security:** `access_token` / `refresh_token` / `realm_id` are AES-256-GCM encrypted at rest (`token-cipher.ts`, key env `QB_TOKEN_ENC_KEY`, fail-closed); decryption is centralized in `AccountingTokenService.getValidToken`. The web client reads this table as the anon role, so an anon company-scoped `SELECT` policy gated on `accounting.view` exists alongside the `service_role` write policy (migration `20260603010000_accounting_connections_read_policy.sql`, bug `eb70d803`).
+
+### QuickBooks Read-Only Sync (pull-only) — 2026-06-04
+
+The **inbound** side of QuickBooks: a read-only Pull → Stage → Review → Apply draw that imports a company's QuickBooks customers, invoices, estimates, and payments into OPS so iOS Books shows real money. It is the inverse of the push-only `accounting-sync-expense` function below — it issues **zero** writes to Intuit. Full engineering reference (services, routes, apply order, schema, token security, webhook, review UI): **`04_API_AND_INTEGRATION.md § QuickBooks Read-Only Sync — Pull → Stage → Review → Apply`**.
+
+Financial-data view:
+
+- **Customer mapping** — a QB customer with a `CompanyName` becomes a parent `clients` row (named the company) **plus** a `sub_clients` contact (the person), idempotent on `sub_clients.qb_id`; individuals stay flat. Invoices/payments attach to the **parent client** only. QB Jobs/sub-customers are recorded but not converted to projects this phase. (bug `d6951b82`.)
+- **What lights up in iOS Books** — **P&L** (`payments in`, 24-mo window), **Cash Flow** (weekly net from imported payments), **A/R aging** (open invoices, balances reconciled to QB's authoritative `Balance` in apply STEP 5). The per-job profit (Jobs) card does **not** populate — QB invoices carry no OPS `project_id` (the boundary that motivates Sub-project B).
+- **Apply correctness** — payments insert before the final invoice reconcile so `trg_payment_balance → update_invoice_balance()` and the QB-authoritative `Balance` reconcile agree; voided/zero-total QB invoices are skipped, never imported as live A/R.
 
 ### Edge Functions (3)
 

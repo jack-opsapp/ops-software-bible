@@ -26,13 +26,15 @@
 12. [OneSignal Push Notifications](#onesignal-push-notifications)
 13. [Firebase Analytics](#firebase-analytics)
 14. [Stripe Subscription Integration](#stripe-subscription-integration)
-15. [Error Handling & Retry Logic](#error-handling--retry-logic)
-16. [Rate Limiting & Debouncing](#rate-limiting--debouncing)
-17. [Supabase Table Reference](#supabase-table-reference)
-18. [Bubble.io (Legacy)](#bubbleio-legacy)
-19. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
-20. [Email Pipeline Integration Routes (24 Routes)](#email-pipeline-integration-routes-24-routes)
-21. [OpenAI API Key Separation](#openai-api-key-separation)
+15. [Accounting Edge Functions (Expense Push)](#accounting-edge-functions)
+16. [QuickBooks Read-Only Sync — Pull → Stage → Review → Apply](#quickbooks-read-only-sync--pull--stage--review--apply-2026-06-04)
+17. [Error Handling & Retry Logic](#error-handling--retry-logic)
+18. [Rate Limiting & Debouncing](#rate-limiting--debouncing)
+19. [Supabase Table Reference](#supabase-table-reference)
+20. [Bubble.io (Legacy)](#bubbleio-legacy)
+21. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
+22. [Email Pipeline Integration Routes (24 Routes)](#email-pipeline-integration-routes-24-routes)
+23. [OpenAI API Key Separation](#openai-api-key-separation)
 
 ---
 
@@ -1055,6 +1057,172 @@ Batching is now entirely in-database (Postgres), so no client version can strand
 - **Period math** — `public.expense_envelope_period(date, text)` (SQL port of `ExpenseBatchPeriod.swift`).
 
 Server functions (`place_expense`, `expense_envelope_sweep`) are locked to `service_role` (REVOKEd from public/anon/authenticated). Full lifecycle: `09_FINANCIAL_SYSTEM.md § Server-Authoritative Expense Envelopes (2026-06-01)`. Migrations: `migrations/20260601210311_expense_envelope_schema.sql` … `20260601211914_expense_batches_rls_approve_scope.sql`.
+
+---
+
+## QuickBooks Read-Only Sync — Pull → Stage → Review → Apply (2026-06-04)
+
+A guaranteed **read-only, pull-only** draw from a company's QuickBooks Online (QBO) file into OPS — the inverse of the push-only `accounting-sync-expense` edge function above. It pulls customers, invoices, estimates, payments (+ the item catalog), lands them in per-run `qbo_*` staging tables, lets an owner review proposed customer matches and a QB-vs-OPS reconciliation, and — on approval — writes them into the live `clients` / `sub_clients` / `estimates` / `invoices` / `line_items` / `payments` tables so iOS Books (P&L, Cash Flow, A/R) shows real money. It issues **zero** create/update/delete calls to Intuit; every QB call is a `GET`, and a `qb_write_calls` counter that must stay `0` is asserted and persisted per run.
+
+This is "Sub-project A" of a two-part initiative (Sub-project B = profit/revenue-per-employee, gated after A). It lives entirely in `ops-web` (Next.js + Supabase); iOS is an unchanged read consumer of the resulting `invoices`/`payments`.
+
+### Architecture & data flow
+
+```
+QuickBooks Online (READ ONLY, GET /v3/company/{realmId}/query)
+        │
+[1] PULL   QuickBooksPullService (GET-only; qb_write_calls must stay 0)
+        ▼
+[2] STAGE  qbo_staging_* tables (per run_id) + computed customer matches
+        ▼
+[3] REVIEW /accounting → "QuickBooks Import" tab: reconciliation strip + match table; owner picks link/create/skip
+        ▼
+[4] APPLY  idempotent on (company_id, qb_id) → live clients/sub_clients/estimates/invoices/line_items/payments
+        ▼
+iOS Books lights up with real money
+```
+
+- **The engine is service-role.** `QuickBooksImportService` and the apply path use `getServiceRoleClient()` (RLS bypassed). The review UI reads staging back as the **anon** role (Firebase-bridged), so every `qbo_*` table + `accounting_connections` carries a company-scoped, `accounting.view`-gated anon `SELECT` policy (see *Schema → RLS*).
+- **Pull-only is enforced four ways:** `accounting_connections.sync_direction = 'pull_only'` (set at OAuth callback); a separate import entry point (no push code path); `sync_enabled = false` (no scheduler/cron); and the apply step only writes Supabase, never Intuit. The legacy bidirectional `POST /api/sync` returns `409` for a `pull_only` connection.
+
+### Pull service (read-only)
+
+`QuickBooksPullService` (`src/lib/api/services/quickbooks-pull-service.ts`) is a GET-only client for the QBO query API.
+
+- **Construction:** `new QuickBooksPullService(realmId, accessToken, environment, fetchImpl = fetch)`. `baseUrl = ${host}/v3/company/${realmId}`; queries hit `${baseUrl}/query?query=<url-encoded SQL>`.
+- **Host by environment:** `host` = `https://quickbooks.api.intuit.com` only when `environment === "production"`, else `https://sandbox-quickbooks.api.intuit.com`. `getQuickBooksEnvironment()` (`quickbooks-config.ts`) is the single source of truth — unset/empty `QB_ENVIRONMENT` → `sandbox` (dev-safe default); explicit `production`/`sandbox` honored; any other value throws.
+- **GET-only guarantee:** `qboQuery(sql)` issues `GET` with `Authorization: Bearer`. The instance tracks `qbWriteCalls` (must stay `0`); the import service throws `Read-only violation: QB write calls = N` after a pull if non-zero, and persists the value to `qbo_import_runs.qb_write_calls`.
+- **Pagination:** `paginate(baseSql, entityKey)` appends `STARTPOSITION n MAXRESULTS 1000` (1-based) and loops until a short page.
+- **Entities & windows** (cutoff = today − 24 months, a bare `YYYY-MM-DD` validated by regex before interpolation):
+  - `pullCustomers()` → `SELECT * FROM Customer` (all)
+  - `pullInvoices(cutoff)` → union of `WHERE TxnDate >= '<cutoff>'` **and** `WHERE Balance > '0'` (all still-open), deduped by `Id`
+  - `pullEstimates(cutoff)` / `pullPayments(cutoff)` → `WHERE TxnDate >= '<cutoff>'`
+  - `pullItems()` → `SELECT * FROM Item` (all; feeds the Item.Id→Item.Type map)
+- **`fetchEntityById(entityType, id)`** — single-record fetch used by the webhook. Hard-guarded: `entityType` ∈ `{Customer, Invoice, Payment, Estimate}` (allowlist) and `id` matches `/^\d+$/` (SQL-injection guard); otherwise throws.
+
+### Import service: lifecycle & apply order
+
+`QuickBooksImportService` (`src/lib/api/services/quickbooks-import-service.ts`). Constants: `FUZZY_THRESHOLD = 0.6`, `HISTORY_MONTHS = 24`.
+
+| Method | Responsibility |
+|---|---|
+| `startImportRun(companyId)` | Insert `qbo_import_runs` (`status: 'pending'`, `history_cutoff` = today−24mo, `qb_write_calls: 0`). |
+| `pullAndStage(runId)` | Resolve connection + a valid token (`AccountingTokenService.getValidToken`), pull all entities, normalize (`qbo-normalize`), **upsert** customers/estimates/invoices/payments on `onConflict: "run_id,qb_id"` and **insert** line items. On a mid-pull 401, refresh the token once and re-run; assert `qbWriteCalls === 0`. Ends the run `staged`. |
+| `computeCustomerMatches(runId)` | Propose a match per staged customer via `resolveCustomerMatch`; upsert `qbo_customer_matches` on `onConflict: "run_id,customer_qb_id"`. Writes nothing to `clients`. |
+| `getImportReview(runId)` | Aggregate `{ run, matches, matchCounts, stagedCounts, reconciliation }` (`qbo-reconcile`), joining each match to its staged customer for the company/contact label. |
+| `applyImport(runId, decisions)` | Apply the staged run in the locked order below; finish `applied` with `totals` = counts and `error` = `;`-joined non-fatal warnings (subtotal divergence, rejected cross-tenant links). Zero QB calls. |
+
+**Apply order** (a `toShape(cust)` adapter maps each snake_case staged row to the `CustomerShape` consumed by the shared field-shaping helpers):
+
+1. **STEP 1 — Clients (link / create / skip).** Per the owner's `customer_qb_id` decision (default `skip`): `skip`/`needs_review` → null client id; `link` → verify the target client belongs to `companyId` (cross-tenant link rejected + warned), then write **only** `qb_id` onto it (never overwrite name/email/phone/address); `create` → idempotent on `(company_id, qb_id)`, upsert `...clientFieldsFromCustomer(toShape(cust))`. Builds `clientIdByCustomerQbId`.
+2. **STEP 1b — Contact sub_clients.** Upsert one `sub_clients` row per company-type customer keyed `(company_id, qb_id)` with `...subClientFieldsFromCustomer(toShape(cust))`. Runs for linked **and** created parents; null for individuals, contact-less companies, and QB Jobs.
+3. **STEP 2 — Estimate + invoice headers.** Upsert on `(company_id, qb_id)` with QB-authoritative `subtotal`/`tax_amount`/`tax_rate`/`total`; status via `mapEstimateStatus`/`deriveInvoiceStatus` (provisional). Doc number falls back to `QB-<qb_id>`; `issue_date` sent only when QB supplies `txn_date` (else `CURRENT_DATE` default — never null); invoice `due_date` falls back to `txn_date`. Voided/zero-total invoices (`derived_status = 'skipped'`) are never applied.
+4. **STEP 3 — Line items (delete-by-parent, then reinsert).** `type` = `MATERIAL` for QB `Inventory`/`NonInventory`, else `OTHER`. `line_total` is omitted (GENERATED column on `line_items`).
+5. **STEP 4 — Payments.** One OPS `payments` row per applied invoice line, composite `qb_id = "<paymentQbId>:<invoiceQbId>"`, upsert on `(company_id, qb_id)`. Each insert fires `trg_payment_balance → update_invoice_balance()`.
+6. **STEP 5 — Reconcile invoices to QB Balance.** `amount_paid = round(total − balance, 2)`, `balance_due = balance`, `status = deriveInvoiceStatus(...)`, `paid_at` set when `balance <= 0` — aligning OPS to QB's authoritative `Balance`.
+
+### Company → client + contact → sub_client mapping
+
+A QB Customer with a `CompanyName` imports as a **parent `clients` row (named the company) + a `sub_clients` contact (the person)**; individuals stay flat. (bug `d6951b82`, 2026-06-04.) The shaping is two pure helpers in `qbo-normalize.ts`, used as the **single source of truth by BOTH `applyImport` and the inbound webhook** so a customer can never import two different ways:
+
+- **`normalizeCustomer`** derives `company_name` (`CompanyName`), `display_name` (`DisplayName`), `contact_name` (`GivenName`+`FamilyName`, falling back to `DisplayName` **only** when it is a real person — differs from the company name, contains no `:` path, and is not a Job), `is_job` (`Job === true`), `parent_qb_id` (`ParentRef.value`). `contact_title` is always `null` (QB `Title` is a salutation, not a job role).
+- **`clientFieldsFromCustomer(c)`** → `{name, email, phone_number, address}`. Company **with** a contact (`company_name` + `contact_name` + not a Job): `name = CompanyName`, `email`/`phone_number = null` (they move to the contact), `address` kept. Contact-less company: `name = CompanyName`, email/phone kept on the client. Individual: `name = display_name` (else `"QuickBooks customer"`), all kept.
+- **`subClientFieldsFromCustomer(c)`** → contact row, or `null` for individuals (no `company_name`), contact-less companies (no `contact_name`), and **all QB Jobs** (`is_job === true`).
+- **Invoices/payments attach to the parent client only** — there is no `sub_client_id` on the money tables; the contact is metadata.
+- **QB Jobs / sub-customers are recorded, not acted on** (`parent_qb_id`, `is_job` captured in staging; surfaced as a non-blocking review flag) — they do not become projects or contacts this phase.
+
+### Field mappings, matching & shared helpers
+
+`qbo-normalize.ts` (pure QB→OPS shaping), `qbo-match.ts` (match resolver), `qbo-reconcile.ts` (review aggregation) — all pure, no I/O.
+
+**Customer / Invoice / Estimate / Payment / line mappings** (selected; full source in `qbo-normalize.ts`):
+
+| OPS staging | QB source |
+|---|---|
+| customer `address` | `BillAddr` joined `"Line1, City, CountrySubDivisionCode PostalCode"` |
+| invoice `subtotal` | `SubTotalLineDetail` line `Amount` |
+| invoice/estimate `tax_amount` / `tax_rate` | `TxnTaxDetail.TotalTax` / `TaxLine[0].TaxLineDetail.TaxPercent` |
+| invoice `total` / `balance` | `TotalAmt` / `Balance` |
+| invoice `estimate_qb_id` | `LinkedTxn[]` where `TxnType = "Estimate"` |
+| estimate `txn_status` | `mapEstimateStatus`: Accepted→approved, Closed→converted, Rejected→declined, Pending→sent/expired |
+| payment `applied_lines[]` | per `Line[].LinkedTxn[TxnType="Invoice"]` → `{invoice_qb_id, amount, reference_number}` |
+| line `name` / `qty` / `unit_price` / `amount` | `Description ?? ItemRef.name`, `Qty` (def 1), `UnitPrice` (def 0), `Line.Amount ?? qty*unitPrice` |
+| line `is_taxable` | `TaxCodeRef.value` present and `!= "NON"` |
+| line `qb_item_type` | `ItemRef.value` resolved via the Item.Id→Item.Type map |
+
+Only `SalesItemLineDetail` lines are kept (`GroupLineDetail` flattened; `SubTotal`/`Discount`/`DescriptionOnly` skipped). Invoices are **skipped** when `total <= 0` (zero_total) or voided (`Voided === true` / `PrivateNote` contains "voided"). Header totals are **not** recomputed from lines — they come from QB; the staging tables store a non-generated `amount` per line (the GENERATED `line_total` is only on the live `line_items` apply target).
+
+**Match algorithm** (`resolveCustomerMatch`, fed `company_name ?? display_name` as the match name):
+
+1. **Email exact** (trim/lowercase) → `link`, `high`.
+2. **Normalized-name exact** (`normalizeCompanyName`: suffix-strip/lowercase/alphanumeric) — single hit → `link`, `medium`; multiple → `needs_review`, `medium`.
+3. **Fuzzy** (`pg_trgm` ≥ 0.6 via RPC `qbo_match_customer_candidates`, only called when no email hit) → `link`, `low`.
+4. **No match** → `create`, `none`.
+
+`match_basis` ∈ {email, name_exact, name_fuzzy, none}; `proposed_action` ∈ {link, create, skip, needs_review}. (Note: the RPC ranks on raw `lower(name)` while the in-process exact step uses suffix-stripped `normalizeCompanyName` — a deliberate asymmetry.)
+
+**Reconciliation & counts** (`qbo-reconcile.ts`): `buildReconciliation` → `qbOpenAr` (Σ open balances), `openInvoiceCount`, `collectedInWindow` (Σ applied-line amounts), `opsToBeOpenAr = qbOpenAr` (QB authoritative), `arMatched`. `buildStagedCounts` → `subClientsToCreate` (company + contact, **excluding Jobs**) and `jobsDetected` (`is_job === true`), mirroring the helper's Job exclusion.
+
+### Schema
+
+All staging/run/match data is service-role-written; the `qbo_*` tables expose only company-scoped `SELECT` gated on `accounting.view`. The `qbo_*` tables are **web-only / service-role** staging (not iOS SwiftData models), so they are catalogued here rather than in `03_DATA_ARCHITECTURE.md`; the additive columns on iOS-synced tables (`sub_clients.qb_id`, the `qb_id` link columns) are noted in `03_DATA_ARCHITECTURE.md`.
+
+- **`qbo_import_runs`** — one row per cycle: `status` CHECK ∈ {pending, pulling, staged, applying, applied, error}, `qb_write_calls` (must stay 0), `history_cutoff`, `totals jsonb`, `error`, `created_by`, `finished_at`. Staging/match tables FK `run_id → qbo_import_runs(id) ON DELETE CASCADE`.
+- **`qbo_staging_customers`** — `qb_id`, `display_name`/`email`/`phone`/`address`, `active`, `raw jsonb`, **+ `company_name`, `contact_name`, `contact_title`, `parent_qb_id`, `is_job`** (added for the company/sub-client mapping). UNIQUE `(run_id, qb_id)`.
+- **`qbo_staging_invoices`** — `qb_id`, `doc_number`, `customer_qb_id`, `estimate_qb_id`, `txn_date`, `due_date`, `subtotal`/`tax_amount`/`tax_rate`/`total`/`balance`, `derived_status`, `raw`. UNIQUE `(run_id, qb_id)`.
+- **`qbo_staging_estimates`** — like invoices + `expiration_date`, `txn_status`. UNIQUE `(run_id, qb_id)`.
+- **`qbo_staging_line_items`** — `parent_type` CHECK ∈ {invoice, estimate}, `parent_qb_id`, `qb_line_id`, `name`/`description`, `quantity`/`unit_price`/`amount`, `is_taxable`, `qb_item_type`, `sort_order`. **PK only** (no `(run_id, qb_id)` unique; re-running uses a fresh `run_id`).
+- **`qbo_staging_payments`** — `qb_id`, `customer_qb_id`, `txn_date`, `total_amt`, `unapplied_amt`, `applied_lines jsonb` (per-invoice allocations), `raw`. UNIQUE `(run_id, qb_id)`.
+- **`qbo_customer_matches`** — `customer_qb_id`, `proposed_action` CHECK ∈ {link, create, skip, needs_review}, `matched_client_id`, `match_basis` CHECK ∈ {email, name_exact, name_fuzzy, none}, `confidence` CHECK ∈ {high, medium, low}, `candidates jsonb`, `decided_action`/`decided_client_id` (reviewer overrides). UNIQUE `(run_id, customer_qb_id)`.
+- **`accounting_connections`** (direction guard): `sync_direction text NOT NULL DEFAULT 'pull_only'` CHECK ∈ {pull_only, push_only, bidirectional} (a CHECK-constrained text column, **not** a Postgres enum); `realm_id_lookup text` (SHA-256 hex of the realm id — `realm_id` itself is encrypted/unqueryable). `company_id` is **text** here (cast `::text` in joins).
+- **Idempotency indexes** — partial unique `(company_id, qb_id) WHERE qb_id IS NOT NULL` on `clients`, `invoices`, `estimates`, `payments`, **and `sub_clients`** (`sub_clients_company_qb_id_uniq`). `sub_clients.qb_id` is nullable text — non-QB contacts (the majority) keep `qb_id = NULL` and never collide.
+- **RPC** `qbo_match_customer_candidates(p_company_id uuid, p_name text, p_threshold numeric DEFAULT 0.6)` — SQL, `SECURITY DEFINER`, returns ≤10 ranked active-client candidates where `similarity(lower(name), lower(p_name)) >= 0.6` (requires `pg_trgm`).
+
+**RLS.** All seven `qbo_*` tables + `accounting_connections` have RLS enabled and carry a `{public}`/anon `SELECT` policy `company_id = (SELECT private.get_user_company_id()) AND has_permission((SELECT private.get_current_user_id()), 'accounting.view', 'all')` (so the anon-role web client can read the review; `accounting_connections` casts company to text and stores only ciphertext). There are deliberately **no** anon write policies — all writes go through the service role. `sub_clients` keeps its existing `company_isolation` ALL policy.
+
+### Routes, OAuth/token security & inbound webhook
+
+All routes under `src/app/api/integrations/quickbooks/`:
+
+| Route | Methods | Purpose |
+|---|---|---|
+| `route.ts` | POST / DELETE | OAuth initiate (build Intuit authorize URL + store CSRF state) / disconnect (revoke + clear tokens) |
+| `callback/route.ts` | GET | Exchange auth code → tokens, persist **encrypted**, set `sync_direction='pull_only'`, `sync_enabled=false` |
+| `import/route.ts` | POST / GET | Pull→stage→match (`POST` → `{ runId }`) / review aggregate (`GET ?runId=`) |
+| `import/apply/route.ts` | POST | Apply an owner-reviewed run + emit `accounting_import_complete` notification |
+| `webhook/route.ts` | POST | Inbound Intuit change-event receiver (unauthenticated, signature-verified) |
+
+`src/middleware.ts` excludes `api` from its matcher, so Intuit's unauthenticated webhook reaches the route directly; the authenticated `import`/`import/apply` routes self-gate (`verifyAdminAuth` → `findUserByAuth` → company-scope + run-ownership → `checkPermissionById(userId, "accounting.manage_connections")`).
+
+- **Token-at-rest encryption** (`token-cipher.ts`): AES-256-GCM, envelope `enc:v1:<iv>:<tag>:<ciphertext>` (base64), key from env `QB_TOKEN_ENC_KEY` (base64, must decode to 32 bytes). **Fail-closed** — `getKey()` throws on missing/invalid key, so a token can never be silently persisted in plaintext. `decryptToken` tolerates legacy plaintext (no `enc:v1:` prefix returned as-is). `realmIdLookup(realmId) = SHA-256 hex`.
+- **Centralized token read** (`accounting-token-service.ts`): `getValidToken(supabase, connectionId)` decrypts + refreshes within a 5-min pre-expiry buffer; refresh retries once on 429/5xx; `400 invalid_grant` → flips `is_connected=false` and throws `ReconnectRequiredError`. Raw provider bodies are never logged.
+- **`sync_direction` enforcement:** `POST /api/sync` returns `409` for a `pull_only` connection; `sync-orchestrator` derives `canPush = syncDirection !== 'pull_only'`.
+- **Inbound webhook** (`webhook/route.ts` + `quickbooks-webhook-apply-service.ts`): verifies base64 `HMAC-SHA256(rawBody)` keyed by `QB_WEBHOOK_VERIFIER_TOKEN` against the `intuit-signature` header with `timingSafeEqual` (fail-closed: missing verifier → 500, bad/missing signature → 401). Routes by `realm_id_lookup`. For changed `Customer`/`Invoice`/`Payment`/`Estimate` it GET-fetches the one record (`fetchEntityById`, asserts `qbWriteCalls === 0`) and applies it via the **same** canonical mapping as `applyImport` (`applyCustomer` writes both `clients` and a contact `sub_clients`). Delete/Void are soft (invoice→`status='void'`, customer→`deleted_at`). Verified requests always `200 {received, processed}` (per-entity errors caught + logged to `accounting_sync_log` so a poison record can't trigger Intuit's retry storm); all responses send `Cache-Control: no-store`. **Never writes to QB.**
+
+**Env vars:** `QB_CLIENT_ID`, `QB_CLIENT_SECRET`, `QB_REDIRECT_URI` (default `${appUrl}/api/integrations/quickbooks/callback`), `QB_ENVIRONMENT` (`production` → prod host; else sandbox), `QB_TOKEN_ENC_KEY` (32-byte base64, fail-closed), `QB_WEBHOOK_VERIFIER_TOKEN` (HMAC key, fail-closed). Sage shares the same connection table/token service/cipher.
+
+### Review UI & access control
+
+The **"QuickBooks Import"** tab of `/accounting` (`src/app/(dashboard)/accounting/page.tsx`, `?tab=import`) renders `QuickBooksImportTab` (`src/components/accounting/qbo/`), composing `reconciliation-strip.tsx` + `customer-match-table.tsx`. Data flows through `use-qbo-import.ts` (review/apply) and `use-accounting.ts` (connection).
+
+- **PULL** → `useStartImport` → `POST …/import` (`startImportRun` → `pullAndStage` → `computeCustomerMatches`). Header shows connection dot, last-pulled time, and a read-only badge: olive "0 — read-only confirmed" when `qbWriteCalls === 0`, rose "{n} — read-only breach" otherwise.
+- **Review** → `useImportReview(runId)` polls `GET …/import?runId=`. Renders: the **reconciliation strip** (QB-vs-OPS open A/R [the only independent pair], open-invoice count, collected-24mo, customers — olive when equal to the cent, rose on delta); the **records grid** (estimates/invoices/payments/line items/skipped/orphans) with a **non-blocking jobs flag** when `jobsDetected > 0`; the **customer match table** — name cell shows `companyName ?? displayName` with a **contact sub-line** (`qbo.customers.contactLabel`) when both company + contact exist, an action `<select>` offering link/create/skip (`needs_review` is a disabled, system-proposed value — never an operator choice), and a candidate picker for link/needs_review rows.
+- **APPLY** → `useApplyImport` → `POST …/import/apply` with `{ runId, decisions }`. **Hard-blocked while any decision is still `needs_review`** (inline `qbo.needsReviewBlock` hint). The apply route inserts the completion notification server-side and invalidates the Books queries.
+- **Permission gating (never role-filtered):** route access to `/accounting` requires `accounting.view`; the Import + Integrations tabs require `accounting.manage_connections`; all three import routes re-check `accounting.manage_connections` server-side. The whole surface is also behind the global `accounting` feature flag (currently `enabled=false`; per-user `feature_flag_overrides` unlock it) — both flag and permission must pass; the flag store fails closed.
+- **i18n:** all strings under the `qbo.*` namespace in `src/i18n/dictionaries/{en,es}/accounting.json` (at parity), via `useDictionary("accounting")`.
+
+### Migrations (repo files)
+
+| File | Contents |
+|---|---|
+| `20260602000000_qbo_readonly_sync_a0_schema.sql` | 7 `qbo_*` tables + RLS, `accounting_connections.sync_direction`, owner flag override |
+| `20260602100000_qbo_match_customer_candidates_rpc.sql` | `qbo_match_customer_candidates` `pg_trgm` RPC |
+| `20260602200000_qbo_qb_id_unique_indexes.sql` | partial `(company_id, qb_id)` unique indexes on clients/invoices/estimates/payments |
+| `20260603000000_qbo_realm_lookup.sql` | `accounting_connections.realm_id_lookup` + index |
+| `20260603010000_accounting_connections_read_policy.sql` | anon `SELECT` policy on `accounting_connections` (fixes bug `eb70d803` — connected-but-shows-NOT-CONNECTED) |
+| `20260603100000_qbo_company_subclient_mapping.sql` | `sub_clients.qb_id` + partial index; staging-customer `company_name`/`contact_name`/`contact_title`/`parent_qb_id`/`is_job` |
+
+All applied to prod (schema verified present). Note: these were applied via the Supabase MCP, which records its own apply-time version in `supabase_migrations.schema_migrations`, so the tracked versions differ from these filenames — **treat the repo files as canonical**. Every migration is additive (nullable columns / new tables / new indexes, `IF NOT EXISTS`), hence iOS-sync-safe and idempotent. Archived in `migrations/`.
 
 ---
 

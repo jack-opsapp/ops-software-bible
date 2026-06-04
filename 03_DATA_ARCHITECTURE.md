@@ -633,6 +633,8 @@ final class SubClient: Identifiable {
 }
 ```
 
+**Supabase-only column (not on the iOS model):** `sub_clients.qb_id text` (nullable), added in migration `20260603100000_qbo_company_subclient_mapping.sql` with a partial unique index `sub_clients_company_qb_id_uniq ON (company_id, qb_id) WHERE qb_id IS NOT NULL`. It links a sub-client to the QuickBooks Customer it was imported from, so the read-only QB sync can upsert one canonical contact per `(company, QB customer)`. Additive/nullable → iOS-sync-safe (the SwiftData model above does not map it and ignores it). A QB customer with a `CompanyName` imports as a parent `clients` row + this `sub_clients` contact; see `04_API_AND_INTEGRATION.md § QuickBooks Read-Only Sync`.
+
 ---
 
 ### 6. User
