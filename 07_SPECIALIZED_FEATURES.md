@@ -3448,6 +3448,26 @@ Monday-morning summary for the Home `BILLABLE THIS WEEK` rollup (see `09_FINANCI
 
 ---
 
+### §14.3.4 Project collaboration notifications (iOS, 2026-06-04)
+
+Three field-crew collaboration events were silently notifying nobody — only @mentions reached teammates. All three are now created client-side on iOS via `NotificationRepository.createNotification(_:)` (in-app rail) + `OneSignalService` (push), matching the existing mention pattern. Recipients are the project's assigned crew (`Project.getTeamMemberIds()`); the actor and anyone already @mentioned are excluded so a single action never double-notifies.
+
+| Event | `type` | Recipients | Source |
+|-------|--------|-----------|--------|
+| New project comment/note (activity tab) | `project_note` | assigned crew − author − @mentioned | `ProjectNotesViewModel.sendNoteAddedNotifications` |
+| Photos added to project (gallery) | `photo_uploaded` | assigned crew − uploader | `ImageSyncManager.notifyCrewOfAddedPhotos` (fires from `saveImages`; the note-attachment path passes `notifyCrew: false`) |
+| Comment on a photo | `photo_comment` | photo's `uploaded_by` (− commenter − @mentioned) | `PhotoCommentsViewModel.sendPhotoOwnerNotification` (resolves the uploader from `project_photos.uploaded_by`) |
+
+All three set `deep_link_type = projectNotes` and `project_id`, so both clients route them to the project. iOS rail icons added to `NotificationListView.notificationIcon(for:)` — `photo_uploaded` → `photo.on.rectangle`, `photo_comment` → `text.bubble`.
+
+**Removed gate (bug fix):** `sendNoteAddedNotifications` was gated behind a `notifyProjectNoteAdded` UserDefaults flag that was never written and had no settings UI — it suppressed every team note/comment notification. The gate is removed; assigned crew are always notified of new comments (on by default, no toggle).
+
+**Push deep-link cold-start fix:** `AppDelegate`'s push-tap handler previously posted `OpenProjectDetails` directly to `NotificationCenter` after a fixed 0.5 s delay. On a cold launch (app still booting through splash/sync/PIN) no observer is mounted yet, so the post was dropped and the app landed on Home — the "notification opens the main screen, not the project" bug. Project taps now route through `DeepLinkCoordinator.receive(entity: "projects", …)`, which stashes the intent and is re-drained by `MainTabView.onAppear` / PIN-unlock. Only projects route this way (`openProjectWithSync`/`denyProject` clear the stash); client/invoice/estimate/task taps remain direct posts because their handlers do not clear it.
+
+**Web parity (NOT yet done):** `ops-web` does not generate these three notifications (it only notifies on project-note @mentions), and `photo_uploaded` / `photo_comment` are not yet in the web `NOTIF_TYPE_META` registry. A comment/photo posted from the desktop app will not notify iOS crew, and web-rail rows for these two types fall back to default rendering, until web parity lands.
+
+---
+
 **`schedule_change` notification (Phase 3 — 2026-04-27):**
 - Emitted by `useUpdateTask` when the union of (`startDate`, `endDate`, `startTime`, `endTime`, `allDay`) changes on a task. Recipients = union of prior + new `team_member_ids` so removed crew also see the move.
 - Emitted by `/api/cron/recurrence-generate` for each newly-materialized occurrence — one row per assigned crew member.
