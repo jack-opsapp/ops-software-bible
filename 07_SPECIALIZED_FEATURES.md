@@ -6803,4 +6803,55 @@ The two caps are independent on purpose. A photo with 4 transient failures acros
 
 ---
 
+## 27. Project Priority Queue & Auto-Schedule (iOS, 2026-06-04)
+
+The Priority Queue is an office/admin screen that ranks **active projects** and
+auto-schedules each ranked project's unscheduled tasks in priority order. It
+superseded the earlier task-level priority queue (the pivot removed
+`ScheduleRequest.Mode.taskPriorityQueue` and all task-level `priority_rank`
+plumbing; `project_tasks.priority_rank` still exists in Postgres but is **dead**
+— it is no longer read or written by iOS).
+
+### Data contract
+
+| Column | Type | Semantics |
+|--------|------|-----------|
+| `projects.priority_rank` | `double precision`, nullable | Company-wide manual rank. **Lower = higher priority.** `NULL` = unranked. Fractional indexing (`FractionalRank`, default step 1024) so a single drag dirties a single row. Synced via `SupabaseProjectDTO.priorityRank` ↔ `priority_rank`. |
+
+Ranking is local-first: drag writes go through `DataController.reorderProjectPriority` / `bulkSetProjectPriority` (SwiftData save + `recordOperation`), then sync to Supabase. The waterline UI splits projects into **ranked** (above, numbered) and **unranked** (below, default order).
+
+### Engine — `AutoScheduleManager`
+
+Pure logic, no DB writes (returns a `SchedulePlan` the caller commits). The queue uses `Mode.projectPriorityQueue(orderedProjectIds:)` → `scheduleBatch(respectOrder: true)`. Per project, in caller order, it places each **active, still-unscheduled** task (`start_date == nil || end_date == nil`) through `placeNext`:
+
+1. **Dependency floor** — earliest start from predecessors (matched by `taskTypeId` via `effectiveDependencies`), considering both DB tasks and already-placed batch tasks. *Note: as of 2026-06, no company has any task-type dependencies configured, so this pass is a no-op in practice and sequencing rides entirely on crew availability.*
+2. **Crew availability** — `findAvailableSlot` scans forward for the first contiguous block where every assigned crew member is free, treating existing DB commitments **and** earlier batch placements that share crew as booked. Same-crew tasks serialize; different-crew tasks run in parallel.
+3. **Geographic grouping** — optional later alternative when same-crew work clusters within `proximityGroupingRadiusKm`.
+4. **Gap days** — reported in `ScheduleMetadata`.
+
+**Granularity & rules:**
+- **Whole-day** placements only. `start_time`/`end_time` are not set by the batch path; `SchedulingWindow`/`preciseScheduling` are built into `ScheduleConstraints` but not yet applied here.
+- `skipWeekends` defaults to **true** (`Company.skipWeekendsInAutoSchedule`). End dates are computed in **weekdays** when skip-weekends is on — a 2-day task starting Friday ends the following Monday (the days it actually reserves), never Saturday.
+- Only `status == .active` tasks are placed; completed/cancelled tasks with null dates are excluded but remain visible as commitments.
+- **No crew assigned:** the task is still placed (a `noCrewAssigned` conflict is attached as a warning) on the dependency floor; multiple crewless tasks **within the same project** stack back-to-back rather than colliding, while crewless work **across** projects still parallelizes. (Design decision — crew can be assigned after the plan is committed.)
+- Anchor is clamped to `max(startOfDay(anchorDate), today)` — auto-schedule never places in the past.
+
+### Workflow
+
+- **SCHEDULE ALL** → `buildPlan()` builds a `SchedulePlan` over ranked (plus unranked when **INCLUDE UNRANKED** is on) → preview sheet (`PrioritySchedulePreviewSheet`, grouped task + project + dates + conflicts) → commit writes each placement via `DataController.updateTaskSchedule(... manualEdit: false)` (system-driven, does not lock the task). A confirmation banner shows the committed count.
+- **SCHEDULE NEXT** → `tapToPlaceNext()` schedules the single top ranked project that still has unscheduled tasks (`autoScheduleProjectV2`).
+- Both run buttons are gated on whether a candidate project actually has a schedulable task (`hasSchedulableTask`), so neither enables when there is nothing to place, and **SCHEDULE ALL respects INCLUDE UNRANKED.**
+
+### Key files (iOS)
+
+- `OPS/Views/Components/Scheduling/PriorityQueueView.swift` — waterline list + run bar
+- `OPS/Views/Components/Scheduling/PrioritySchedulePreviewSheet.swift` — review/commit sheet
+- `OPS/ViewModels/PriorityQueueViewModel.swift` — ranked/unranked state, run orchestration
+- `OPS/Utilities/AutoScheduleManager.swift` — placement engine
+- `OPS/Utilities/ScheduleTypes.swift` — `ScheduleRequest` / `SchedulePlan` / provider protocol
+- `OPS/Utilities/DataController.swift` — `ScheduleDataProvider` conformance + priority writes
+- `OPSTests/PriorityQueueSchedulingTests.swift` — engine regression tests
+
+---
+
 **End of Document**
