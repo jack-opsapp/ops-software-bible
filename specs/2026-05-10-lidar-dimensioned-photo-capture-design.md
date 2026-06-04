@@ -186,6 +186,20 @@ COMMENT ON COLUMN project_photo_annotations.dimensions IS
 ALTER TYPE photo_source ADD VALUE IF NOT EXISTS 'measurement';
 ```
 
+**Migration: add rendered-deliverable URL columns (§3.7)** — *added during verification, 2026-06-04*
+
+The §3.7 rendered PNG deliverable is stored in dedicated columns on **both** the photo row (web portal gallery) and the annotation row (iOS gallery + dimension badge). This migration was authored as `20260519000000_dimensioned_photo_rendered_deliverable.sql` (committed to ops-web 2026-05-19) but **was not applied to production until 2026-06-04**. The gap meant every dimensioned-capture insert failed with PostgREST `PGRST204` — `DimensionedPhotoSyncManager` sends both keys as **non-optional** strings (unlike the PencilKit DTOs, where nil optionals are omitted on encode, so the markup path was unaffected). Both columns are additive + nullable (safe under the iOS additive-sync constraint).
+
+```sql
+ALTER TABLE project_photos
+  ADD COLUMN IF NOT EXISTS rendered_url text;
+
+ALTER TABLE project_photo_annotations
+  ADD COLUMN IF NOT EXISTS rendered_photo_url text;
+```
+
+This also resolves the §3.7 open item ("`project_photos.thumbnail_url` is a wrong field for this — use a new column or a sibling row with `source = 'measurement_rendered'`; pick one and document"): **the implementation uses dedicated columns** (`project_photos.rendered_url` + `project_photo_annotations.rendered_photo_url`), not a `measurement_rendered` sibling row.
+
 **`dimensions` JSONB shape:**
 
 ```json
@@ -641,6 +655,7 @@ If crashes are tied to a specific device model, ship a device-blocklist update v
 **Migrations (Supabase):**
 - `add_dimensions_jsonb_to_project_photo_annotations.sql`
 - `add_measurement_to_photo_source_enum.sql`
+- `20260519000000_dimensioned_photo_rendered_deliverable.sql` — adds `project_photos.rendered_url` + `project_photo_annotations.rendered_photo_url` for the §3.7 rendered deliverable. **Committed to ops-web 2026-05-19 but not applied to prod until 2026-06-04** — the omission caused `PGRST204` on every dimensioned-capture insert until then (see §4.1).
 
 ## 12. Open questions for user before implementation
 
