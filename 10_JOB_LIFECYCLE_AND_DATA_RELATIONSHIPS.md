@@ -284,12 +284,17 @@ Client has replied but not approved. Price or scope discussion in progress.
 #### `won`
 Estimate approved. Project goes live.
 
-**What happens automatically** (implemented in `convert_lead_to_project` RPC — see §09 LeadConversionService, migrations `2026-05-19-convert-lead-to-project-rpc.sql` + `2026-05-20-extend-convert-lead-to-project-site-visit-photos.sql`):
-1. `opportunity.stage = won`
-2. `opportunity.actualCloseDate = now`
-3. `project.status = Accepted`
-4. Site visit photos → auto-attached to project as ProjectPhotos with `source='site_visit'`, `site_visit_id` back-linked, `uploaded_by = site_visit.created_by` (implemented 2026-05-20)
-5. Task Generation modal opens (or silent auto-generate if toggle enabled — v1 is silent auto-generate on iOS; the modal UI remains deferred)
+**What happens automatically** — since 2026-06-03 both platforms call the unified `convert_opportunity_to_project` RPC (one atomic transaction; see §09 LeadConversionService → Unified conversion brain, migration `20260603020000_won_conversion_dedup_naming`). The legacy iOS `convert_lead_to_project` is now a thin shim over it (migration `20260603020001`), so the App-Store iOS build converges with no release.
+1. `opportunity.stage = won`, `stage_entered_at = now`, `stage_manually_set = true`, plus one `stage_transitions` row — **idempotent**: skipped when the opp is already `won` (the estimate-approval path wins without converting), so converting an already-won deal never writes a second transition.
+2. `opportunity.actualCloseDate = now`; `actual_value` recorded.
+3. A `projects` row is created (`status = Accepted`) carrying `address` **and `latitude`/`longitude`** (the geocode is no longer dropped) — or, when the operator links instead of creates, an existing project is linked without touching its status/title.
+4. Estimates relinked (`project_ref` + text `project_id` mirror); LABOR line items materialized as `project_tasks`; non-deleted site-visit photos attached as `project_photos` (`source='site_visit'`, `site_visit_id` back-linked, `uploaded_by = site_visit.created_by`). Tasks and photos are deduped by source, so a link-existing or a retry never double-inserts.
+5. A `'converted_to_project'` disposition row is written.
+6. Task Generation modal remains deferred — v1 silently materializes every LABOR line item with no per-task toggle.
+
+**Dedup at convert (2026-06-03).** Before the dialog/sheet commits, both platforms call the read-only `get_conversion_preflight` (§09): it surfaces any project this opp already converted to (open it — no new project), likely-duplicate projects for the client by normalized address (high = same client + address; medium = same address, different client — **link** instead of create), and the client's other projects. This replaces the old iOS local-SwiftData-cache dedup (which missed unsynced projects) and closes the web gap that silently minted duplicate projects on repeat-client wins.
+
+**Auto-naming (2026-06-03).** The new project's name is a self-healing pointer to its address (`projects.title_is_auto` + the `projects_autoname_biud` trigger — see §03). The operator never types a name in the common path; it is derived from the site address (street line → `{Client}'s Project` → `New project`), re-derives if the address is corrected, and auto-disambiguates same-name collisions with a silent ` #N`. A hand-typed name freezes it (`title_is_auto = false`).
 
 **Card shows (PROJECT DATA):**
 ```

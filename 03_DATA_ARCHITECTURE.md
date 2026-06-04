@@ -1675,6 +1675,40 @@ ALTER TABLE projects
 
 **NULL semantics** — `NULL` = unset (legacy projects created before this migration). The IdentityTab leaves the field optional in editing mode for them, required when creating a new project.
 
+### `projects.title_is_auto` + auto-naming trigger (Migration `20260603020000_won_conversion_dedup_naming`)
+
+Makes `projects.title` a self-healing pointer to `projects.address`. The won→project conversion and the manual create form stop asking the operator to name a project — the name is derived from the site address and re-derives whenever the address (or client) changes, until the operator types their own name.
+
+```sql
+ALTER TABLE public.projects
+  ADD COLUMN IF NOT EXISTS title_is_auto boolean NOT NULL DEFAULT false;
+
+CREATE INDEX IF NOT EXISTS projects_company_title_active
+  ON public.projects (company_id, title) WHERE deleted_at IS NULL;
+```
+
+**`title_is_auto` semantics** — `true` = the name is auto-managed (a pointer to the address); `false` (the column default) = a hand-set name that is never auto-modified. **The default `false` is the iOS-safe default**: a naive insert from the App-Store iOS build in the field (which knows nothing of this column) is treated as hand-set, so the trigger never clobbers an operator-typed name. Auto-naming is opt-in — set `true` only by the conversion/create paths that want it.
+
+**`private.derive_project_name(p_address, p_client_name)` (IMMUTABLE)** — the pure base-name rule (no `#N` suffix):
+
+| State | Auto name |
+|---|---|
+| Address present | **street line** = substring before the first comma, trimmed (`1240 W 6th Ave`); a comma-less address falls back to the whole string |
+| No address, client known | **`{Client}'s Project`** |
+| No address, no client | **`New project`** |
+
+**`projects_autoname_biud` trigger** (`BEFORE INSERT OR UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION private.projects_autoname()`) — the **enforce-always-while-auto** invariant. When `NEW.title_is_auto = true` the trigger body **always** overwrites `NEW.title` with `derive_project_name(NEW.address, client.name)`, on every insert and every update, regardless of which column changed. Consequences:
+
+- A caller that writes a bare `title` to an auto project (an iOS sync push, a stray `UPDATE projects SET title=…`) **cannot make it stick** — the trigger reverts it to the derived name. The only way to set a custom title is to write `title_is_auto = false` in the **same** statement; to revert to auto, set `title_is_auto = true` (optionally null the title) and the next write re-derives.
+- **Name collisions → silent `#N`** (auto names only): when the derived base name already exists for another non-deleted project in the same `company_id`, the trigger appends the lowest free ` #2`, ` #3`, … . The collision scan excludes the row itself, so re-deriving an existing `… #2` is idempotent/stable (it does not climb). Hand-set names are never silently suffixed — a hand-set collision is surfaced as a `DUPLICATE NAME` warning in the UI and the operator decides.
+- **Silent** — the trigger only sets `title`; it writes no `project_notes` activity row and dispatches no notification.
+- **Trigger ordering** — named `projects_autoname_biud` so it sorts alphabetically before `update_projects_timestamp` (both `BEFORE`); they touch disjoint columns. The `projects_company_title_active` partial index keeps the per-write collision scan O(log n).
+- **Self-heal** — a project born `Acme's Project` (no address) automatically becomes `1240 W 6th Ave` the instant any writer — web, iOS, or the email-lifecycle address backfill — fills in the address, because the trigger catches *every* writer. This is why the rule lives in the DB, not app code (app-layer logic would have to be re-implemented in each path and would drift).
+
+**SQL normalizers** — `private.normalize_address(p)` / `private.normalize_title(p)` (same migration) are the single source of truth for duplicate matching, used by `get_conversion_preflight` (§09) and mirrored token-for-token by the TS `normalizeAddress`/`normalizeTitle` (`OPS-Web/src/lib/utils/name-normalization.ts`) the nightly duplicate scan uses — shared test vectors (`OPS-Web/tests/unit/name-normalization.test.ts`) guard the parity. `normalize_address` canonicalizes directionals (`w`↔`west`, `ne`↔`northeast`, …) and street types (`ave`↔`avenue`, `st`↔`street`, `rd`↔`road`, `blvd`, `dr`, `cres`, `hwy`, …) to one token; `normalize_title` returns `''` for the auto-name placeholders (`New project` / `proyecto nuevo` / `{Client}'s Project`) so two unnamed projects never produce a false `same_title` signal.
+
+**iOS-additive contract** — `title_is_auto` is nullable-equivalent (`NOT NULL DEFAULT false`); existing rows backfilled `false`; **no existing project name changed on apply** (0 renames on the 293 prod projects). The App-Store iOS build ignores the unknown column; iOS opts in on its next release (`OPS/DataModels/Project.swift` `titleIsAuto`).
+
 ### `project_pipeline_summary(p_project_id UUID)` RPC (Migration `20260506130000`)
 
 Single-call aggregate that powers the workspace ACCOUNTING tab's 4-cell pipeline. Returns one row with:
