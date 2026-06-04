@@ -146,12 +146,36 @@ CREATE INDEX idx_analytics_events_session ON analytics_events (session_id, creat
 CREATE INDEX idx_analytics_events_platform_created ON analytics_events (platform, created_at DESC);
 ```
 
-### RLS Policy
+### RLS Policy & Grants
 
-RLS is enabled with NO policies. This means:
-- Anonymous and authenticated Supabase clients have NO access
-- Writes use a dedicated API endpoint with service-role key (or the Supabase client with elevated privileges as determined per platform)
-- Reads are admin-only via `getAdminSupabase()` (service role) in the admin panel
+RLS is **enabled**, with an append-only write model. OPS clients authenticate with
+Firebase and reach PostgREST through the **`anon`** database role (the Firebase JWT
+bridge — `auth.uid()` is NULL, `persistSession:false`), so client writes must be
+permitted for `anon` — **not** `authenticated`.
+
+| Policy | Command | Roles | Check | Purpose |
+|--------|---------|-------|-------|---------|
+| `analytics_events_client_insert` | INSERT | `anon`, `authenticated` | `WITH CHECK (true)` | Client-side event ingestion. Append-only. |
+| `analytics_events_ops_admin_all` | ALL | `authenticated` | `private.is_ops_admin()` | Ops-admin management/read of all events. |
+
+Table grants: `anon` has **INSERT only** (write-only — no SELECT/UPDATE/DELETE);
+`authenticated` and `service_role` retain full DML. This means:
+- **iOS app** writes events **directly** to the Data API as the Firebase-bridged `anon`
+  role, via `INSERT ... ON CONFLICT (id) DO NOTHING` (idempotent retry on the
+  client-generated UUID `id`; see `AnalyticsService.swift`).
+- **Web app** buffers events and writes through a **service-role** server action /
+  `/api/analytics/flush` endpoint (`getAdminSupabase()`), which bypasses RLS.
+- **Reads are admin-only** — via `getAdminSupabase()` (service role) in the admin panel,
+  or for ops admins through the `is_ops_admin()` policy. No client role can read events.
+
+> **History / gotcha:** Legacy migration `048` created the table `TO authenticated`
+> only, with no grant for `anon`. Because every OPS client connects as the
+> Firebase-bridged `anon` role, the iOS app's direct appends were rejected with
+> `42501 permission denied for table analytics_events` (~every 30s, per device) until
+> migration `20260604201500_grant_anon_insert_analytics_events` added the `anon` INSERT
+> grant + the `analytics_events_client_insert` policy — mirroring the
+> `onboarding_analytics` / `tutorial_analytics` client-sink pattern. The web pipeline
+> was never affected because it writes on the service role.
 
 ---
 
