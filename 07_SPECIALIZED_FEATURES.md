@@ -2757,7 +2757,7 @@ STOCK
   │       ▸ HARDWARE STAIR
   │     // FASTENERS
   │       • 2" Screw — Black · 3000
-  └─ FAB: + add variant · + add family · + import
+  └─ ⋮ STOCK: Guided Setup · Stock Setup · Add Variant · Add Family · Import · Snapshots
 
 PRODUCTS
   ├─ Filter: type · kind · "has recipe"
@@ -2766,21 +2766,23 @@ PRODUCTS
   │     • PICKET RAIL · $2500 · flat
   │     • Custom Composite Railing · $48/ft · 4 options · 7 recipe rows
   │     • Service Call · $150/hr · service
-  └─ FAB: + quick add (3 fields) · + full setup (web)
+  ├─ Empty state: `// NO PRODUCTS YET` + `SET UP PRODUCTS`
+  └─ ⋮ PRODUCTS: Guided Setup · New Service · New Good · New Bundle
 
 ⋮ menu (grouped):
-  ── STOCK ──     Snapshots · Categories… · Tags… · Units… · Thresholds…
+  ── STOCK ──     Guided Setup · Stock Setup · Add Variant · Add Family · Import · Snapshots
+  ── PRODUCTS ──  Guided Setup · New Service · New Good · New Bundle
+  ── MANAGE ──    Categories… · Tags… · Units… · Thresholds… · Defaults…
   ── ORDERS ──    Suggested · Drafts · Sent
-  ── SETUP ──     Defaults (component_type → product_id) · Import… · Export…
 ```
 
 ### Variant-Aware View Modes
 
-**LIST** (default) — `CatalogVariantCard` per row. Renders family name, variant label ("Black · Topmount"), quantity colored by threshold status, unit, SKU. Tap opens `VariantDetailView`.
+**LIST** (default) — `CatalogVariantCard` per row. Renders family name, variant label ("Black · Topmount"), quantity colored by threshold status, unit, SKU. Tap opens the medium-detent `StockQuickAdjustSheet`; the sheet's detail control and row context menu open `VariantDetailView`.
 
-**GRID** — pinch-to-zoom grid. `@AppStorage("catalogCardScale")` range 0.8–1.5. Same progressive-disclosure rules as legacy Inventory: at scale ≥ 0.9 show family tags; at scale ≥ 1.0 show SKU + threshold badge. Tap opens `VariantDetailView`.
+**GRID** — pinch-to-zoom grid. `@AppStorage("catalogCardScale")` range 0.8–1.5. Same progressive-disclosure rules as legacy Inventory: at scale ≥ 0.9 show family tags; at scale ≥ 1.0 show SKU + threshold badge. Tap opens `StockQuickAdjustSheet`.
 
-**TABLE** (NEW per Bug 217c3d1f) — rows are variants, columns are family attributes (Family · Option 1 · Option 2 · … · Quantity · Threshold · Unit · SKU). Designed for fast bulk audits where a user wants to compare every "Bracket" SKU across Color × Mount Type. Horizontal scroll for families with 5+ option values; tap opens `VariantDetailView`.
+**TABLE** (NEW per Bug 217c3d1f) — rows are variants, columns are family attributes (Family · Option 1 · Option 2 · … · Quantity · Threshold · Unit · SKU). Designed for fast bulk audits where a user wants to compare every "Bracket" SKU across Color × Mount Type. Horizontal scroll for families with 5+ option values; tap opens `StockQuickAdjustSheet`.
 
 ### Stock Filtering, Sorting, and Detail Editing (iOS)
 
@@ -2794,7 +2796,7 @@ PRODUCTS
 
 Low-stock sorting ranks rows by `quantity / effective_threshold`, using variant warning threshold first, then critical threshold as the fallback reference when no warning threshold exists. TABLE mode includes a `THRESH` column that shows the percent of threshold and the current delta from the threshold reference.
 
-`VariantDetailView` is the quick-count surface opened from LIST, GRID, TABLE, and Universal Search. It supports preset deltas, exact set count, and custom add/subtract quantities without requiring a new variant form. SKU, unit, warning threshold, and critical threshold remain editable inline.
+`StockQuickAdjustSheet` is the default row tap surface for LIST, GRID, and TABLE. It opens at a medium detent for preset deltas, exact set count, and custom add/subtract quantities. `VariantDetailView` is the full detail/edit surface opened from the quick-adjust sheet, row context menu, and Universal Search; SKU, unit, warning threshold, and critical threshold remain editable inline there.
 
 Variant identity is option-value based. `catalog_variants` does not have a separate display-name column, so editing the human-readable variant label opens `VariantFormSheet` and replaces the variant's `catalog_variant_option_values` join rows. Variant images are family-level images stored on `catalog_items.image_url`; the detail surface displays and uploads that family image rather than writing an image field to `catalog_variants`.
 
@@ -2807,6 +2809,25 @@ Variants where `quantity < effective_warning_threshold` (variant override → fa
 3. **Persistent notification rail** entry — when first computed, the rail surfaces a `persistent: true` notification "// 6 items below threshold — review orders" with `actionUrl` deep-linking to the Orders sheet. Resolved when the user drafts/sends the order.
 
 `CatalogOrder` lifecycle: `suggested` (computed on demand) → `draft` (user committed from Suggested sheet) → `sent` (PO emitted to supplier) → `fulfilled` (stock arrives; `catalog_variants.quantity` increments by `quantity_requested`). When `catalog_stock_units` is live, receiving flows also create/update physical unit rows and mirror their available aggregate back to the same variant quantity. Final state: `cancelled` for abandoned orders.
+
+### Deck Builder Viewer + Selection Editing (iOS — updated 2026-06-06)
+
+**Selection editing contract:** The Deck Builder toolbar exposes `Properties` as the single canonical selection editor. Material assignment is still available, but it opens from inside the Properties sheet rather than as a second peer toolbar option. Edge material operations batch across every compatible selected edge in one undoable change:
+
+- House-edge cladding applies only to selected `houseEdge` edges.
+- Parapet finish applies only to selected deck edges that already have `RailingType.parapetWall`.
+- Built-in deck material/gate selections continue to assign catalog-backed `AssignedItem` rows to the selected geometry.
+
+Mixed selections route through Properties so field users do not have to choose between two competing editor modes.
+
+**Copy/paste contract:** Selection toolbars expose Copy. When a clipboard exists, Paste stages a semi-transparent preview above the drawing instead of immediately committing geometry into the model. The user can drag the staged preview, then choose `Place` to commit one undoable insert or `Cancel` to discard it. Cloned vertices, edges, surfaces, assigned items, edge types, railings, stairs, labels, house materials, and surface materials receive new ids while preserving their geometry and metadata.
+
+**Project Details 2D viewer:** `DeckTab2DView` resolves every detected surface face back to persisted `DeckSurface` payloads, including disconnected faces. The viewer provides two read-only field tools:
+
+- Ruler mode: tap two points to show distance in feet/inches.
+- Surface inspect mode: tap a face to show its square footage, perimeter, material summary, and level.
+
+**Project Details 3D viewer:** House/wall edges render as roughly 8 ft tall walls above the deck plane. When the deck level is elevated above grade, the same house/wall edge also renders a lower wall-to-grade panel from ground level up to the deck elevation, so elevated decks do not visually float away from the house face.
 
 ### Drawing → Estimate Adapter (NEW)
 
@@ -2950,10 +2971,10 @@ Recipes resolve at install-task creation, **not** at estimate creation. When a p
 
 Top-level container hosting the STOCK / PRODUCTS segmented control + kebab menu. Drives the threshold banner + persistent notification.
 
-#### CatalogStockListView / CatalogStockGridView / CatalogStockTableView / VariantDetailView (iOS)
+#### CatalogStockListView / CatalogStockGridView / CatalogStockTableView / StockQuickAdjustSheet / VariantDetailView (iOS)
 **Location:** `OPS/OPS/Views/Catalog/Stock/`
 
-Three view modes for the variant list share `EnrichedVariantRow` for sort/filter/search state and differ in row rendering. TABLE mode uses `Grid` with horizontal scroll for wide families. `VariantDetailView` is the row drill-in for quick quantity changes, exact count entry, custom deltas, SKU/unit/threshold edits, family image upload, and variant option-value editing.
+Three view modes for the variant list share `EnrichedVariantRow` for sort/filter/search state and differ in row rendering. TABLE mode uses `Grid` with horizontal scroll for wide families. `StockQuickAdjustSheet` is the default tap target and stays focused on stock count changes. `VariantDetailView` is the full detail drill-in for SKU/unit/threshold edits, family image upload, and variant option-value editing.
 
 #### VariantFormSheet (iOS)
 **Location:** `OPS/OPS/Views/Catalog/Stock/VariantFormSheet.swift`
@@ -2986,7 +3007,7 @@ Phase 2 of the catalog/inventory setup redesign adds the local/server data surfa
 
 #### Catalog Setup Flow (iOS — added 2026-05-21)
 
-`OPS/Views/Catalog/Stock/CatalogSetupFlowSheet.swift` is the field setup surface launched from Catalog `SETUP -> Stock Setup` and the stock FAB. It is additive to the existing single-family and single-variant sheets.
+`OPS/Views/Catalog/Stock/CatalogSetupFlowSheet.swift` is the field setup surface launched from Catalog `⋮ -> STOCK -> Stock Setup`. It is additive to the existing single-family and single-variant sheets.
 
 - Family step captures the stock family name, description, image URL, category, default unit, and default thresholds.
 - Attributes step creates company-defined axes and values. The flow is generic; vinyl membrane is only one possible material system.
@@ -3019,23 +3040,32 @@ Universal Search includes active catalog variants from the V3 catalog model befo
 #### CatalogProductsListView (iOS)
 **Location:** `OPS/OPS/Views/Catalog/Products/CatalogProductsListView.swift`
 
-List of `Product` rows showing pricing summary ($X / unit), option count, recipe row count. Filters by type / kind / "has recipe". Tap row → `ProductDetailView`.
+List of `Product` rows showing pricing summary ($X / unit), option count, recipe row count. Filters by type / kind / "has recipe". Tap row → `ProductDetailView`. When the company has no active products and the operator has `catalog.products.manage`, the empty state exposes `SET UP PRODUCTS` and opens the guided product setup flow.
+
+#### GuidedProductSetupFlow (iOS)
+**Location:** `OPS/OPS/Views/Catalog/Products/GuidedProductSetupFlow.swift`
+
+First-run product setup flow launched from Catalog `⋮ -> PRODUCTS -> Guided Setup` or the no-products empty state. It is a six-stage full-screen wizard:
+1. Prime the operator on the product setup target.
+2. Pick the setup mix: services, goods, bundles.
+3. Create a service row with name, price, unit, category, and required task-type linkage.
+4. Create a good row with name, sell price, optional unit cost, unit, and category.
+5. Assemble a bundle from saved service/good children with AUTO or OVERRIDE pricing and optional task-type linkage.
+6. Review the rows saved in this run and finish.
+
+The flow commits directly through the same repository/DTO contracts used by the tailored product sheets: `ProductRepository.create` for service/good/bundle rows and `ProductBundleItemRepository.create` for bundle child rows. It writes `task_type_id` and `task_type_ref` for guided service rows, supports optional bundle task-type linkage, and inserts returned DTOs into SwiftData immediately so later stages can use newly-created children. Bundle child partial failures keep the bundle row and expose a retry path for unflushed children rather than silently losing composition.
+
+The guide includes explicit `EXIT`, per-stage back/skip behavior, validation copy in the fixed footer, a completion notification (`PRODUCT SETUP COMPLETE`), a `DONE` close action, and a `SET UP STOCK` bridge for operators who need physical inventory after the sellable rows exist. Product creation is disabled while offline because product rows write through Supabase repositories rather than a queued draft path.
 
 #### ProductDetailView (iOS — view + light edits)
 **Location:** `OPS/OPS/Views/Catalog/Products/ProductDetailView.swift`
 
 iOS exposes light edits only — full configurable-Product authoring lives on web. Quick-edit fields: name, base_price, pricing_unit, type, taxable, active. Read-only sections (collapsed if empty): Options · Pricing modifiers · Recipe. Recipe rows are tappable → drill to the linked `CatalogVariant` or family selector.
 
-#### ProductQuickAddSheet (iOS)
-**Location:** `OPS/OPS/Views/Catalog/Products/ProductQuickAddSheet.swift`
+#### Product Create Sheets (iOS)
+**Location:** `OPS/OPS/Views/Catalog/Products/NewServiceSheet.swift`, `NewGoodSheet.swift`, `NewBundleSheet.swift`
 
-The friction-floor flow for barebones Products — three required fields:
-- Name
-- Price
-- Unit (radio: flat / each / ft / sqft / hour)
-- Taxable (checkbox)
-
-Defaults: `pricing_unit = flat_rate`, `type = OTHER`, `kind = service`, `is_active = true`. Total time: ~8s. An "Advanced ▾" disclosure exposes type/kind/category/sku for the user who wants them; default-collapsed.
+Tailored product create sheets remain the dedicated freeform creation surfaces from the PRODUCTS menu. Guided setup uses the same repository/DTO save contract in a staged onboarding flow rather than opening the sheets. Services lock `kind='service'` and `type='LABOR'`; goods lock `kind='material'` and `type='MATERIAL'`; bundles lock `kind='package'`, support composition through `product_bundle_items`, and support richer task-type linkage in `NewBundleSheet`.
 
 #### CatalogOrdersSheet (iOS)
 **Location:** `OPS/OPS/Views/Catalog/Orders/CatalogOrdersSheet.swift`
@@ -3059,7 +3089,7 @@ Variant-aware snapshot history. Detail view shows family name + variant label pe
 - Repository: `OPS/OPS/Network/Supabase/Repositories/CatalogImportRepository.swift`
 - RPC SQL: `OPS/OPS/Migrations/2026-05-08-catalog-import-rpc.sql`
 
-Atomic CSV import of catalog families + variants. Replaces the prior `CatalogImportStub` placeholder. Entry points: catalog FAB "Import" action and catalog kebab "Setup → Import…" — both gated on `catalog.import`.
+Atomic CSV import of catalog families + variants. Replaces the prior `CatalogImportStub` placeholder. Entry point: catalog `⋮ -> STOCK -> Import`, gated on `catalog.import`.
 
 Four-step flow, single sheet, large detent:
 1. **PICK** — `.fileImporter` for `.csv` files (single file at a time). UTF-8 / ASCII decoding.
@@ -3249,7 +3279,7 @@ By-length/area, **each full unit and each offcut is its own `catalog_stock_units
 - `catalog.stock.adjust` — stock counts (held in practice by anyone who can run setup).
 
 ### Entry points
-All post `Notification.Name("OpenGuidedStockSetup")`, which `CatalogView` presents as a `.fullScreenCover`: Stock empty state `SET UP STOCK` (with `// ADVANCED` posting `OpenCatalogSetup`); the FAB catalog section `Guided Setup`; and the Advanced sheet toolbar `GUIDED` (so a stuck operator can switch down).
+All post `Notification.Name("OpenGuidedStockSetup")`, which `CatalogView` presents as a `.fullScreenCover`: Stock empty state `SET UP STOCK` (with `// ADVANCED` posting `OpenCatalogSetup`); Catalog header `⋮ -> STOCK -> Guided Setup`; and the Advanced sheet toolbar `GUIDED` (so a stuck operator can switch down). Catalog/Product creation actions no longer live in the global FAB.
 
 ### Existing-flow hardenings (shipped here, benefit both flows)
 1. **Reconcile-after-success is not a failure** — if local reconcile throws *after* `response.ok`, the server already committed; the service logs, requests a catalog resync, and returns `.resynced` (success), never reports a committed save as failed.
@@ -3435,7 +3465,7 @@ Every notification inserted into the `notifications` table MUST satisfy this con
 | `type` | Specific event type (e.g. `expense_submitted`, `email_sync_complete`, `projects_needing_tasks`) — NOT a catch-all like `"mention"` or `"update"`. Must exist in `NOTIF_TYPE_META` (web) and the `notificationIcon(for:)` switch (iOS). |
 | `title` | ≤ 32 chars, sentence case for content / UPPERCASE for authority (matches OPS voice). Names what happened, not the system that did it. |
 | `body` | ≤ 140 chars. Includes at least one **concrete reference** the user can act on: a sender name, a count + unit, an amount, a deadline, an entity name. Never bare counts ("3 new"). |
-| `deep_link_type` | Required when the action is anything other than "mark read". Free-form short identifier — both clients route on it. Current values: `subscription` / `trial_expiry` / `paymentReview` / `taskReview` / `unscheduledReview` / `photoStorage` / `catalogOrders` / `expense` / `invoice` / `inbox` / `projectsNeedingTasks` / `billableThisWeek` / `email_sync_complete` / `cashflow_forecast`. |
+| `deep_link_type` | Required when the action is anything other than "mark read". Free-form short identifier — both clients route on it. Current values: `subscription` / `trial_expiry` / `paymentReview` / `taskReview` / `unscheduledReview` / `photoStorage` / `catalogOrders` / `expense` / `invoice` / `lead` / `leads` / `opportunity` / `opportunities` / `inbox` / `projectsNeedingTasks` / `billableThisWeek` / `email_sync_complete` / `cashflow_forecast`. |
 | `action_url` | Web URL or `ops://` deep link. Web reads it directly, iOS uses it as supplementary info (e.g. `?tab=...` query strings). |
 | `action_label` | UPPERCASE imperative verb phrase (e.g. `REVIEW`, `VIEW PLAN`, `PLAN THE WORK`). The action button label. |
 | `persistent` | `true` only for long-running operations the user is waiting on (scans, imports, threshold rail entries that auto-clear). `false` (dismissible) for everything else. |
@@ -3449,6 +3479,8 @@ Every notification inserted into the `notifications` table MUST satisfy this con
 3. Final fallback: `project_id` → `viewProjectDetailsById`.
 
 **iOS push routing (AppDelegate):** mirrors the in-app switch by posting `NotificationCenter` events (`OpenExpenses`, `OpenInvoices`, `OpenJobBoard`, etc.). Every posted event MUST have a corresponding listener mounted on `MainTabView` — a post with no listener is a dead deep link (the original 8ed0d2ed bug).
+
+Lead and opportunity notifications route through `OpenLeadDetails`. iOS resolves IDs from `ops://leads/<id>`, `ops://opportunities/<id>`, or query parameters named `leadId`, `opportunityId`, or `id`, switches to the Pipeline tab, loads the current opportunities, and opens the matching detail sheet. If the ID is missing or inaccessible, iOS falls back to the Job Board or access-denied rail instead of dropping the tap.
 
 **When adding a new notification type:**
 1. Pick an explicit `type` string and add it to:
@@ -6616,7 +6648,8 @@ One-way mirror from OPS schedule rows to a dedicated `OPS` calendar in the user'
 ### Excluded
 
 - `SiteVisit` — iOS model is unwired (no DTO, no repository, no sync wiring; 0 production rows). Re-add as a follow-up once SiteVisit sync ships.
-- Two-way sync — researched and deferred; the spec at `ops-ios/docs/superpowers/specs/2026-05-10-iphone-calendar-mirror-design.md` documents the rejected design space.
+- Direct Google Calendar / Outlook OAuth sync — provider credentials, token storage, consent copy, and per-provider write semantics belong to the backend integrations layer. iOS uses EventKit; Apple, Google, and Outlook accounts are supported when they are configured in the device Calendar app and exposed as writable EventKit sources.
+- Two-way sync — researched and rejected for the iOS EventKit mirror; the spec at `ops-ios/docs/superpowers/specs/2026-05-10-iphone-calendar-mirror-design.md` documents the rejected design space.
 
 ### Sync direction
 
@@ -6624,7 +6657,7 @@ One-way (OPS → device). Edits the user makes inside iPhone Calendar are **sile
 
 ### Calendar destination
 
-Dedicated `OPS` calendar, iCloud (CalDAV) source preferred; falls back to local source when no iCloud account. Calendar is recreated automatically if the user deletes it from iOS Calendar. Color: `OPSStyle.Colors.opsAccent` (#6F94B0 steel blue — iCloud may normalize slightly).
+Dedicated `OPS` calendar, created in the device's default writable calendar source when possible. If no default source is available, iOS prefers CalDAV, then Exchange, then local storage. This lets the mirror land in Apple/iCloud, Google, or Outlook/Exchange when the user has configured that account as a writable iOS Calendar source. Calendar is recreated automatically if the user deletes it from iOS Calendar. Color: `OPSStyle.Colors.opsAccent` (#6F94B0 steel blue — iCloud may normalize slightly).
 
 ### Permission API
 
