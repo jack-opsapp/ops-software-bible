@@ -91,6 +91,14 @@ Google Ads should receive a conversion ladder, not only the final deposit event.
 
 The campaign should not optimize directly on low-value visits once enough deeper events exist.
 
+Google Ads conversion actions must be split into primary and secondary actions:
+
+- **Primary conversion action:** `stripe_checkout_completed` only. This is the paid-deposit event and is the only conversion action included in bidding once live-deposit data exists.
+- **Secondary conversion actions:** package/card expansion, pay-deposit click, billing-address submission, checkout opened, intake submitted, discovery booked, and default OPS signup from SPEC. These are observation and diagnostic signals until the operator deliberately promotes one.
+- **Internal-only events:** Quebec rejection and refund invocation. These must not be included in Google Ads bidding.
+
+This prevents the campaign from optimizing toward cheap micro-actions instead of actual deposit revenue.
+
 ## 6. Analytics Requirements
 
 The launch requires a SPEC-specific analytics command page inside OPS-Web admin. It should be built as an operator cockpit, not a generic analytics dashboard.
@@ -108,10 +116,11 @@ If the SPEC admin surface has not yet been merged into the active shipping branc
 | Source | Current state | Required launch state |
 |---|---|---|
 | `spec_projects` | Live table exists; rows are currently 0 | Read project status, tier, deposit, attribution, intake, discovery, `is_test` |
-| `conversion_event_outbox` | Live table exists; rows are currently 0 | Read all SPEC funnel events and export raw payloads |
+| `conversion_event_outbox` | Live table exists; rows are currently 0 | Read all SPEC funnel events and export payloads according to the selected export mode |
 | `ads_daily_account` | Live table exists; rows are currently 0 | Daily spend, clicks, impressions, conversions |
 | `ads_daily_campaign` | Live table exists; rows are currently 0 | Campaign-level spend and conversion performance |
 | `ads_daily_keyword` | Live table exists; rows are currently 0 | Keyword performance and waste detection |
+| `ads_daily_search_term` | Not yet present | Search-term spend, clicks, impressions, conversions, and waste flags |
 | Google Ads live API | Admin client exists | Pull current-day data and conversion action breakdown |
 | GA4 Data API | Admin client exists | Pull `/spec` traffic, source, page path, device, engagement |
 | Vercel Analytics | Marketing helper emits Vercel events | Use as supporting page-event source |
@@ -121,8 +130,8 @@ If the SPEC admin surface has not yet been merged into the active shipping branc
 
 The launch funnel must support these canonical event names:
 
-- `spec_page_view`
-- `spec_package_expand`
+- `page_view`
+- `spec_card_expand`
 - `pay_deposit_click`
 - `billing_address_submitted`
 - `quebec_rejected`
@@ -133,10 +142,15 @@ The launch funnel must support these canonical event names:
 - `intake_started`
 - `intake_submitted`
 - `discovery_booked`
-- `spec_to_default_signup`
+- `spec_default_ops_cta_click`
+- `spec_default_ops_signup_started`
+- `spec_default_ops_signup_completed`
+- `spec_default_ops_trial_activated`
 - `refund_invoked`
 
-The code already includes server-side SPEC conversion event names for most deposit and intake steps. It does not yet prove a complete client-side page-view/package-expansion/default-signup bridge.
+These names extend the existing `SPEC/04_CUSTOMER_UX.md` event contract instead of inventing a parallel taxonomy. `page_view` and `spec_card_expand` remain the canonical client-side page/card events. The four `spec_default_ops_*` events are the default-product crossover funnel. Analytics consumers may aggregate them under a display label such as "SPEC to default OPS," but the stored event names must remain explicit.
+
+The code already includes server-side SPEC conversion event names for most deposit and intake steps. It does not yet prove a complete client-side page-view/card-expansion/default-signup bridge.
 
 ### 6.4 Metrics
 
@@ -169,7 +183,7 @@ The admin page should be dense and operational:
 3. **Spend vs signal:** daily bar/line pairing spend with deepest conversion reached that day.
 4. **Campaign/keyword table:** sorted by spend, with CTR, CPC, conversions, and waste flags.
 5. **Traffic table:** `/spec` sources, devices, top paths, and default OPS crossover.
-6. **Raw event ledger:** filterable event stream for SPEC events and project IDs.
+6. **Event ledger:** filterable event stream for SPEC events and project IDs.
 7. **Export rail:** CSV and JSON export buttons for the whole readout package.
 
 Use existing OPS-Web admin chart components and OPS design-system tokens. Do not introduce a new dashboard design language.
@@ -186,6 +200,7 @@ The admin page should expose one ZIP download containing:
 - `ads_daily_account.csv`
 - `ads_daily_campaign.csv`
 - `ads_daily_keyword.csv`
+- `ads_daily_search_term.csv`
 - `ga4_spec_traffic.csv`
 - `conversion_event_outbox.csv`
 - `spec_projects.csv`
@@ -212,7 +227,12 @@ The admin page should expose one ZIP download containing:
 
 ### 7.3 Privacy Boundary
 
-Raw exports may include emails, phone numbers, billing province, attribution, and project status because the owner may send them to an analysis agent. The export UI must label the file as sensitive operational data. Do not include intake free-text responses or uploaded file contents in the default analytics export.
+Exports must support two modes:
+
+- **Default analysis export:** redacts direct identifiers. Email and phone are normalized and SHA-256 hashed server-side before export. Billing address is reduced to province and country. Stripe IDs, checkout tokens, intake free-text responses, uploaded file metadata, uploaded file contents, and internal notes are excluded.
+- **Sensitive owner export:** includes direct identifiers needed for owner-operated investigation. This mode requires an explicit confirmation, writes an audit log row, marks the archive as sensitive personal data in `manifest.json`, and is not the default button.
+
+Both modes may include project status, tier, timestamps, attribution, campaign data, and funnel events. Do not include intake free-text responses or uploaded file contents in either analytics export mode unless a separate evidence-package export is built for dispute handling.
 
 ## 8. Default OPS Conversion Capture
 
@@ -241,20 +261,23 @@ The SPEC analytics page must report these separately from SPEC deposits.
 Full Phase 1 launch is blocked until every item below passes.
 
 1. SPEC admin/operator surface is reconciled into the active shipping OPS-Web branch.
-2. `/admin/spec/analytics` exists, is gated by `private.is_spec_operator()`, and can export the raw readout package.
+2. `/admin/spec/analytics` exists, is gated by `private.is_spec_operator()`, and can export both default analysis and sensitive owner readout packages.
 3. Google Ads account sync is configured and writes non-test rows to ads history tables.
-4. GA4 is configured for opsapp.co and can report `/spec` traffic.
-5. SPEC conversion sender is no longer a stub for Google Ads Enhanced Conversions at minimum.
-6. `spec_to_default_signup` attribution is implemented and visible in the admin page.
-7. `ops-site` production build passes with real Vercel environment variables.
-8. `ops-web` production build passes on the actual shipping branch that contains SPEC admin.
-9. Stripe test-mode deposit succeeds end to end for account-holder purchase.
-10. Owner-approval path succeeds end to end.
-11. Quebec rejection succeeds before Stripe and post-Stripe defense is verified.
-12. Refund path is verified in test mode.
-13. Final SPEC ToS / Privacy / DPA are live and linked in Stripe Checkout.
-14. Supabase security advisor warnings are triaged so no paid launch runs against known public-data exposure.
-15. `SPEC_LIVE_DEPOSITS_ENABLED` is flipped only after all evidence is recorded.
+4. Google Ads search-term sync exists and writes non-test rows to `ads_daily_search_term`.
+5. GA4 is configured for opsapp.co and can report `/spec` traffic.
+6. SPEC conversion sender is no longer a stub for Google Ads Enhanced Conversions at minimum.
+7. Google Ads conversion actions are configured with `stripe_checkout_completed` as primary and all micro-events as secondary.
+8. Default OPS crossover attribution is implemented through the `spec_default_ops_*` events and visible in the admin page.
+9. Cal.com scheduling is configured for SPEC discovery, the scheduling webhook is verified, and `discovery_booked` writes back to the SPEC project.
+10. `ops-site` production build passes with real Vercel environment variables.
+11. `ops-web` production build passes on the actual shipping branch that contains SPEC admin.
+12. Stripe test-mode deposit succeeds end to end for account-holder purchase.
+13. Owner-approval path succeeds end to end.
+14. Quebec rejection succeeds before Stripe and post-Stripe defense is verified.
+15. Refund path is verified in test mode.
+16. Final SPEC ToS / Privacy / DPA are live and linked in Stripe Checkout.
+17. Supabase security advisor warnings are triaged so no paid launch runs against known public-data exposure.
+18. `SPEC_LIVE_DEPOSITS_ENABLED` is flipped only after all evidence is recorded.
 
 ## 10. Customer-Facing Page Review
 
@@ -338,9 +361,11 @@ The Phase 1 paid validation launch is ready when:
 - A production build of `ops-site` passes with real launch env.
 - A production build of the shipping `ops-web` branch passes with SPEC admin and analytics.
 - Supabase SPEC schema, RLS posture, cron, and storage are verified live.
-- Google Ads sync and GA4 reads are verified with non-test data.
+- Google Ads account, campaign, keyword, search-term sync, and GA4 reads are verified with non-test data.
 - SPEC conversion outbox rows are dispatched to Google Ads, not only stored.
-- The admin analytics page displays launch metrics and exports raw data.
+- Google Ads primary/secondary conversion action configuration is verified against the launch rule.
+- Cal.com booking creates or updates a SPEC discovery booking record and fires `discovery_booked`.
+- The admin analytics page displays launch metrics and exports both default analysis and sensitive owner readout packages.
 - Production customer-facing pages pass desktop and mobile browser review.
 - Stripe test-mode proof covers account-holder purchase, owner approval, Quebec rejection, confirmation, intake, and refund.
 - Final legal pages are live and linked from checkout.
