@@ -1748,6 +1748,38 @@ class ImageCache {
 - Supabase Realtime WebSocket subscriptions for 9 entity types
 - Field-level merge protection same as InboundProcessor
 - Tracks disconnect/reconnect timestamps for catch-up delta sync on reconnect
+- `calendar_user_events` events are merged live on the actor path (own-user rows
+  only, matching `fetchForUser` visibility) via `RealtimeUpdate.calendarUserEvent`
+  with a Supabase-tolerant date decoder (`SupabaseDate.makeISODecoder()`), and
+  iPhone-Calendar mirror parity (mirrorEvent / unmirrorEvent / reconcileAll)
+  matches the legacy path on task and user-event upserts/deletes
+
+**Inbound change signal (InboundChangeSignal.swift, 2026-06-09):**
+- Problem it solves: SwiftUI `@Query` screens pick up in-place updates from
+  background saves natively, but snapshot caches do not.
+  `CalendarViewModel.dayTaskCache` buckets tasks per day once and only rebuilt
+  on LOCAL edit signals — a teammate's reschedule landed in SwiftData but never
+  repainted the schedule until week-change / pull-to-refresh / relaunch.
+- Contract: every inbound merge path (Realtime, delta, full sync — DataActor
+  AND legacy InboundProcessor/RealtimeProcessor) posts `.inboundDataMerged`
+  with the merged SwiftData model class names after a successful save.
+  Realtime merges post per-event; batch syncs accumulate per entity type and
+  post ONCE after `linkAllRelationships()` so a repaint can never observe
+  unlinked relationships.
+- `InboundChangeRouter` (owned by DataController, main-confined) coalesces
+  bursts — trailing 250 ms debounce with a 1 s max-latency starvation guard —
+  and fans out to the EXISTING refresh chains only:
+  - `ProjectTask` / `Project` / `TaskType` → `DataController.scheduledTasksDidChange`
+    (ScheduleView → `reloadCalendarData()`, MonthGridView, CalendarDaySelector
+    already observe it)
+  - `CalendarUserEvent` → `"CalendarUserEventsDidChange"` notification
+    (ScheduleView `loadUserEvents()`, MonthGridView, CalendarDaySelector)
+- `.calendarUserEvent` was also restored to DataActor's `syncOrder` (it existed
+  only in legacy InboundProcessor's order, so user events never synced inbound
+  while `FeatureFlags.useDataActor` — default true — was on).
+- Tests: `OPSTests/Network/InboundChangeRouterTests.swift` (coalescing, routing,
+  starvation guard) and `InboundChangeSignalDataActorTests.swift` (merge → signal
+  integration, user-event merge semantics).
 
 **Photo uploads (PhotoProcessor.swift):**
 - Adaptive concurrency: 3 concurrent uploads on WiFi, 1 on cellular
