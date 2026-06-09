@@ -3302,6 +3302,26 @@ Multi-layer notification system combining local (UNUserNotificationCenter), push
 **In-app rail events (iOS-originated)** are created with `NotificationRepository.createNotification(_:)` (Supabase `notifications` table) followed by a `NotificationCenter.default.post(name: .notificationReceived, object: nil)` to refresh the rail. Current iOS-originated rail events:
 - **Stock system built (Guided Stock Setup, 2026-06-01):** on a fully-successful guided build, a **standard** notification — title `STOCK SYSTEM BUILT`, body the summary counts (e.g. `2 families · 6 variants · 7 rolls · 1 offcut`), `action_url` `/catalog?segment=stock`, `action_label` `VIEW STOCK`, `deep_link_type` `catalog_stock`. Partial commits post **no** success notification (the in-flow RETRY governs). See § 13b.
 
+### Task Reschedule → Push (cross-client, both origins)
+
+When a task's schedule changes, assigned crew are notified on **both** clients — and the push is fired **server-side (ops-web → OneSignal REST)**, so it reaches a backgrounded/locked teammate independent of the Realtime socket (which iOS tears down ~30s after backgrounding). This is the background-delivery counterpart to the live foreground repaint (ops-ios `deafa95f`).
+
+**iOS-originated** — `DataController.updateTaskSchedule(task:startDate:endDate:manualEdit:)`:
+1. On a real date change of a **non-terminal** task, inserts one `notifications` row per assigned member **except the editor** (`memberId != currentUserId`) via `NotificationRepository.createNotification` → web rail.
+2. Calls `OneSignalService.notifyScheduleChange(...)` → `POST {apiBaseURL}/api/notifications/send` (Firebase bearer) → `sendOneSignalPush` → OneSignal REST `include_aliases:{external_id}`, `target_channel:"push"`. Push `data:{type:"scheduleChange", taskId, projectId, screen:"taskDetails"}`.
+
+**Web-originated** — `useUpdateTask` → `dispatchScheduleChange` → `POST /api/notifications/dispatch`:
+- Fires on start/end **date, time, or all-day** change of a non-terminal task; recipients = union(prior, new `team_member_ids`).
+- The dispatch route inserts `notifications` rows, checks `notification_preferences` (`schedule_changes` channel + global `push_enabled`), then sends the OneSignal push. The route is shared by other event types (`task_assigned`, `task_completed`, `project_*`, `mention`, `expense_*`).
+
+**Identity (critical):** OneSignal `external_id` == `project_tasks.team_member_ids[]` == `notifications.user_id` == `public.users.id` (uuid). The JWT `sub` is a **Firebase uid** (iOS bridges its Firebase token into Supabase via the `accessToken` callback; ops-web verifies Firebase/Supabase tokens) and is **NOT** `users.id` (auth uid matches 0/204 rows; `firebase_uid` populated for ~51/204). Editor self-exclusion must therefore key off an explicit app-level `users.id`, never the token `sub`. This is also why the reschedule push is client-initiated rather than a `project_tasks` DB trigger — a trigger only sees the token `sub` and cannot reliably resolve the editor.
+
+**Editor self-exclusion + terminal skip (2026-06-09):**
+- `/api/notifications/dispatch` now excludes a client-supplied `actorUserId` (the actor's `users.id`, stamped centrally in `notification-dispatch.ts` from `useAuthStore`), with the token uid kept as a backstop. Previously it filtered only on `user.uid` (the Firebase `sub`), which never matched the `users.id` recipients — so a crew member rescheduling their own task on web self-notified.
+- Both clients now **skip terminal tasks** (`completed`/`cancelled`) for the schedule-change ping (iOS `TaskStatus.isTerminal`; web case-insensitive status check).
+
+**Deprecated:** the `send-push-notification` Edge Function (project `ijeekuhbatykdomumfjx`) is **orphaned** — zero callers, legacy `include_external_user_ids`/`users.device_token` targeting, inserts no rail row. Superseded by `/api/notifications/send` (iOS) and `/api/notifications/dispatch` (web). Safe to delete.
+
 ### Architecture Components
 
 #### NotificationManager (iOS)
