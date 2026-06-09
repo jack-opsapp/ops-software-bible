@@ -1060,6 +1060,29 @@ All-day task schedule dates (`project_tasks.start_date` / `end_date`) are `times
 
 **Web read / pagination.** The web calendar grid and unscheduled tray paged tasks by a non-unique `ORDER BY` (`display_order` / `start_date`) with `.range()`; tied rows reshuffled across 100-row page boundaries, so tasks intermittently vanished from the tray/grid (looked like data loss; was a read bug). Fixed with a primary-key tiebreaker `.order("id")` in `TaskService.fetchTasks` (web commit `6321f6da`).
 
+### Project Team Membership Derivation (2026-06-09)
+
+**Invariant: a project's team is the derived union of its non-deleted tasks' crews — never a separately-maintained list.** `projects.team_member_ids` (`text[]`) is a denormalized **cache**, not a source of truth: trigger `project_tasks_sync_project_team_member_ids` (AFTER INSERT/DELETE/UPDATE OF `team_member_ids, deleted_at, project_id` on `project_tasks`) calls `private.recompute_project_team_member_ids(project_id)`, which **full-recomputes** the column as `array_agg(distinct member_id)` over that project's non-deleted tasks (idempotent; writes only on change; recomputes both old & new project on a task move). A table trigger cannot be bypassed by any DML source, so the cache cannot drift. (DB origin: migration `20260512234121_projects_table_v2_phase1_foundation`.)
+
+- **Authorization derives only from the live task union.** `private.current_user_in_project(project_id)` = `EXISTS(non-deleted task WHERE current_user = ANY(team_member_ids))` — the `projects.team_member_ids` cache is **not** consulted for access (migration `20260609180659_derive_project_membership_from_task_union`). Fail-safe: a hypothetically stale cache can never *grant* access. It gates project view/edit (`current_user_can_view_project` / `current_user_can_edit_project`), task read/update (`project_tasks` policies), team assignment (`current_user_can_assign_team_on_project`), and `estimates` / `invoices` / `clients` "assigned"-scope reads. Removing a user from their last task → trigger recomputes → cache and union both exclude them → access revoked.
+- **Mention-based view is a separate branch, untouched.** `current_user_can_view_project` = `current_user_in_project(id) OR EXISTS(project_notes mention)`. A user named in a non-deleted comment (`project_notes.mentioned_user_ids`) can view that project (and its tasks, via the task SELECT policy's `OR current_user_can_view_project`) even with no task assignment. Mentions grant **view only**, never edit. This is deliberate: an "assigned"-scope crew member (113 of 171 role-holders) is otherwise hard-blocked from projects they aren't on — a mention is the one exception, not a navigational nicety.
+- **The cache is for LIST filters only.** "My projects" reads still use `projects.team_member_ids` for speed (iOS `DataController.getProjects`; web `ProjectService.fetchUserProjects` `.contains("team_member_ids", [userId])`). These run on RLS-filtered data, so the cache is a non-authoritative convenience; correctness comes from the trigger keeping it == the union.
+- **Both clients are fenced from writing the cache.** Crew changes flow through the `assign_project_team_member` / `remove_project_team_member` RPCs (which mutate `project_tasks`; the trigger then recomputes). iOS: `ProjectRepository.updateTeamMembers` is `@available(*, unavailable)`, and `team_member_ids` is excluded from `validProjectColumns` on both sync paths (it is in `validProjectTaskColumns`). Web: `ProjectService.mapToDb` no longer maps `data.teamMemberIds` onto the projects row (web commit `3fc096a7`).
+
+**Production state (2026-06-09): 0 drift across 294 live projects; 0 access change from the RLS migration (proven over 330 grants); all 12 mention-only view grants preserved.** Reusable drift-regression check (must return 0):
+
+```sql
+with task_union as (
+  select pt.project_id pid, array_agg(distinct m) tm
+  from project_tasks pt cross join lateral unnest(coalesce(pt.team_member_ids,'{}'::text[])) m
+  where pt.deleted_at is null group by pt.project_id
+), proj as (select id pid, coalesce(team_member_ids,'{}'::text[]) pm from projects where deleted_at is null)
+select count(*) filter (where not (pm <@ coalesce(tm,'{}') and pm @> coalesce(tm,'{}'))) as drifting
+from proj left join task_union on task_union.pid = proj.pid;
+```
+
+Legacy `project_team_members` / `task_team_members` join tables are empty + unused (no triggers, no client refs); their `sync_*` functions are orphaned Bubble-era scaffolding.
+
 ### Per-Screen ViewModels
 
 **Pattern**: ViewModels handle screen-specific state and business logic.
