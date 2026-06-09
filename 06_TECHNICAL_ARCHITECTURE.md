@@ -1051,6 +1051,15 @@ struct ContentView: View {
 
 **Known followup.** At dev-account scale, `MainContextRefreshBridge.model(for:)` force-registration adds small per-row overhead with no amortizing benefit (no main-thread pin to relieve at <50 rows). Tracked as Supabase `bug_reports` `914b3945-27f5-4823-9e4b-d42f0407fcc2`; resolved at mid-size scale.
 
+### Task Schedule Write Integrity (2026-06-08)
+
+All-day task schedule dates (`project_tasks.start_date` / `end_date`) are `timestamptz` stored at **local midnight** (→ `07:00Z` PDT / `08:00Z` PST). A midnight-UTC (`00:00Z`) value renders the task one calendar day early on web. Two invariants keep writes correct, each enforced at a choke point so no caller can violate them:
+
+- **Date convention.** Both outbound paths — `DataActor.handleProjectTask` (active; `FeatureFlags.useDataActor` default true) and the legacy `OutboundProcessor.handleProjectTask` — route the task payload through the shared `SupabaseDate.anchoringScheduleDates(_:)`, which re-anchors `start_date`/`end_date` to local midnight (idempotent). Fixing only one path would be dormant in production. `all_day` is always true today and is not in the synced column set; gate the anchor on `all_day` when timed tasks ship.
+- **Persistence.** Task sync is driven only by the `recordOperation` queue; `needsSync` is a conflict-resolution flag with **no** outbound sweep for tasks (only photos have one). Schedule writes must go through `DataController.updateTaskSchedule` (records an op). Safety net: `SyncEngine.enqueueOrphanedTaskWrites()` (run at the top of `pushPending`) re-enqueues + logs any task that is `needsSync` with no pending op, so a future bypass self-heals and surfaces instead of silently dropping the write. (iOS commit `281f99ff`.)
+
+**Web read / pagination.** The web calendar grid and unscheduled tray paged tasks by a non-unique `ORDER BY` (`display_order` / `start_date`) with `.range()`; tied rows reshuffled across 100-row page boundaries, so tasks intermittently vanished from the tray/grid (looked like data loss; was a read bug). Fixed with a primary-key tiebreaker `.order("id")` in `TaskService.fetchTasks` (web commit `6321f6da`).
+
 ### Per-Screen ViewModels
 
 **Pattern**: ViewModels handle screen-specific state and business logic.
