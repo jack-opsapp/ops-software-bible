@@ -315,6 +315,45 @@ final class ProjectTask {
   — predecessor movements no longer auto-shift them. The lock is reset only by
   deleting & recreating the paired task (no UI to unlock manually).
 
+**Scheduling push & cascade semantics** (iOS; rewritten 2026-06-10 — bugs 6aad9984, efb57ffc):
+- **Push engine** (`OPS/Utilities/SchedulingEngine.swift`): `pushByDays(task:days:skipWeekends:)`
+  is the day-nudge path; `pushByCalendarWeeks(task:weeks:)` is the week path. A **week push**
+  ("+1 week" on every surface — Project/Task details, the review reschedule sheet, the
+  month-grid "Push 1 week", and the day-canvas single + bulk push) adds `.weekOfYear` —
+  exactly +7 calendar days, **weekday-preserving, never weekend-normalized**. The old
+  behavior (+7 days then weekend-skip) over-advanced a weekend-anchored task to +9
+  (Sat→Mon) on some surfaces; routing every week affordance through `pushByCalendarWeeks`
+  unified it. Week-count is derived as `days / 7` everywhere (sign-preserving).
+- **Weekend skip by default** (added 2026-06-10): every manual **day** push honors
+  `companies.skip_weekends_in_auto_schedule` (default **true** — most trades don't work
+  weekends), not just the auto-scheduler. A +1/+2/+3-day nudge that lands on Sat/Sun
+  advances to the next weekday unless the company has enabled weekend work. Threaded into
+  the views via `DataController.currentCompanySkipsWeekends` (defaults to skip when no
+  company is loaded). Week pushes stay no-skip.
+- **Dependency cascade** (`calculateCascade`): when a task moves, downstream tasks whose
+  `effectiveDependencies` point at a moved predecessor shift forward to satisfy
+  `TaskTypeDependency.earliestStart(...)`. Skips `schedulingLocked` tasks; weekend-normalizes
+  shifted starts when the company skips weekends. Scoped to the pushed task's **project**
+  (predecessors match by `taskTypeId`, so a company-wide set would invent cross-project links).
+- **Crew cascade — forward-only consolidate** (added 2026-06-10, bug efb57ffc): pushing a
+  task via an explicit **Cascade** action also ripples that task's crew. Every other active,
+  unlocked task that shares ≥1 `team_member_id` (evaluated **company-wide / across projects**)
+  and starts on/after the pushed task's original day packs tightly **forward** to close the
+  gap, but is **never pulled earlier than its current day** (the field-safe direction —
+  pushing later is safe, pulling earlier can break a customer/material commitment). Locked
+  crew jobs stay put and act as obstacles the moved jobs pack around; completed/cancelled
+  jobs are excluded; collisions among auto-moved jobs are impossible by construction.
+  Implemented as `calculateCrewConsolidation(...)`; the dependency cascade then runs **on
+  top** (seeded with the crew dates via `calculateCascade(seededDates:)`) and can only push
+  a task later, never earlier. `DataController.planCascade` computes the merged result once
+  for both the preview and the commit, so they cannot diverge. Each
+  `CascadeResult.TaskDateChange` carries a `reason` (`.crew` / `.dependency`) driving the
+  "Same crew" vs "Dependent tasks" groups in `CascadePreviewSheet`. Trigger is the explicit
+  Cascade actions only — plain push, swipe, and month-grid push stay single-task. Cross-project
+  dependents of a crew-shifted job are **not** recursively cascaded (v1 boundary).
+- **Undo** (`DataController.undoCascade`): restores every task in the merged result from the
+  company-wide set (any status) using the pre-push dates captured in the change records.
+
 **Phase 3 — Time precision semantics** (added 2026-04-27):
 - `allDay = true` → the task is treated as a date-only block. `startTime` and `endTime` are stored but ignored by the calendar grid, conflict detection, and notifications. Pre-Phase-3 rows default to `true` regardless of the historical `08:00–17:00` time values.
 - `allDay = false` → `startTime` and `endTime` are authoritative local-clock times (no timezone — the company's local clock). Hourly Day view kicks in when at least one event on a day is timed.
