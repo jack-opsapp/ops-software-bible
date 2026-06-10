@@ -3045,17 +3045,18 @@ List of `Product` rows showing pricing summary ($X / unit), option count, recipe
 #### GuidedProductSetupFlow (iOS)
 **Location:** `OPS/OPS/Views/Catalog/Products/GuidedProductSetupFlow.swift`
 
-First-run product setup flow launched from Catalog `⋮ -> PRODUCTS -> Guided Setup` or the no-products empty state. It is a six-stage full-screen wizard:
+First-run product setup flow launched from Catalog `⋮ -> PRODUCTS -> Guided Setup` or the no-products empty state. It is a seven-stage full-screen wizard:
 1. Prime the operator on the product setup target.
 2. Pick the setup mix: services, goods, bundles.
 3. Create a service row with name, price, unit, category, and required task-type linkage.
 4. Create a good row with name, sell price, optional unit cost, unit, and category.
 5. Assemble a bundle from saved service/good children with AUTO or OVERRIDE pricing and optional task-type linkage.
-6. Review the rows saved in this run and finish.
+6. Write the recipe/material requirements for the saved product or bundle. The recipe stage explains the rail-install pattern explicitly: package -> task link -> required stock rows such as posts, rails, brackets, screws, and caps. It can pick existing stock variants or open the draft material sheet to create/select stock-backed requirements from scratch before saving `product_materials`.
+7. Review the rows saved in this run, including recipe row count, and finish.
 
-The flow commits directly through the same repository/DTO contracts used by the tailored product sheets: `ProductRepository.create` for service/good/bundle rows and `ProductBundleItemRepository.create` for bundle child rows. It writes `task_type_id` and `task_type_ref` for guided service rows, supports optional bundle task-type linkage, and inserts returned DTOs into SwiftData immediately so later stages can use newly-created children. Bundle child partial failures keep the bundle row and expose a retry path for unflushed children rather than silently losing composition.
+The flow commits directly through the same repository/DTO contracts used by the tailored product sheets: `ProductRepository.create` for service/good/bundle rows, `ProductBundleItemRepository.create` for bundle child rows, and `ProductRichnessRepository.createMaterial` for variant-pinned recipe rows. It writes `task_type_id` and `task_type_ref` for guided service rows, supports optional bundle task-type linkage, and inserts returned DTOs into SwiftData immediately so later stages can use newly-created children. Bundle child partial failures keep the bundle row and expose a retry path for unflushed children rather than silently losing composition. Recipe row partial failures keep only the failed draft rows in the stage so the operator can retry without duplicating successful material requirements.
 
-The guide includes explicit `EXIT`, per-stage back/skip behavior, validation copy in the fixed footer, a completion notification (`PRODUCT SETUP COMPLETE`), a `DONE` close action, and a `SET UP STOCK` bridge for operators who need physical inventory after the sellable rows exist. Product creation is disabled while offline because product rows write through Supabase repositories rather than a queued draft path.
+The guide includes explicit `EXIT`, per-stage back/skip behavior, validation copy in the fixed footer, a completion notification (`PRODUCT SETUP COMPLETE`), a `DONE` close action, and a `SET UP STOCK` bridge for operators who want to bulk-build physical inventory after the sellable rows exist. Product and recipe creation are disabled while offline because these rows write through Supabase repositories rather than a queued draft path.
 
 #### ProductDetailView (iOS — view + light edits)
 **Location:** `OPS/OPS/Views/Catalog/Products/ProductDetailView.swift`
@@ -3446,25 +3447,32 @@ User notification preferences stored in `@AppStorage`:
 The web app surfaces notifications via a right-edge vertical drawer, triggered by a reusable `<EdgeTab>` primitive. Replaces the 2026-03-09 horizontal topbar rail. See `docs/superpowers/specs/2026-04-23-vertical-notification-system.md` for design rationale.
 
 **Components:**
-- `src/components/ui/edge-tab.tsx` + `edge-tab.types.ts` — reusable 28px right-edge tab primitive (consumed by Notifications and Quick Actions)
+- `src/components/ui/edge-tab.tsx` + `edge-tab.types.ts` + `edge-rail-layout.ts` — reusable 28px right-edge tab primitive and shared rail geometry (consumed by Notifications, Quick Actions, and Bug Report)
 - `src/components/layouts/notifications-tab.tsx` — Notifications-specific tab wrapper (count + accent + `N` shortcut)
-- `src/components/layouts/notifications-drawer.tsx` — 360px drawer with chip-filter buckets (ALL/CRITICAL/ATTENTION/AMBIENT), row list, header actions (mute/clear-all), footer
+- `src/components/layouts/notifications-drawer.tsx` — 360px panel-anchored drawer with chip-filter buckets (ALL/CRITICAL/ATTENTION/AMBIENT), row list, header actions (mute/clear-all), footer
 - `src/components/layouts/notifications-row.tsx` — expandable row (icon + title + timestamp; click expands body + action buttons + dismiss)
+- `src/components/layouts/quick-actions-tab.tsx` + `quick-actions-drawer.tsx` — Quick Actions tab and action drawer
+- `src/components/ops/bug-report-tab.tsx` + `bug-report-drawer.tsx` — Bug Report tab and report form drawer
+- `src/components/layouts/edge-tab-outside-dismiss.tsx` — single outside-click dismiss listener for the right-edge rail
 - `src/lib/notifications/notification-meta.ts` — NOTIF_TYPE_META registry mapping 18 NotificationType values to `{label, icon, tone}`
 - `src/lib/notifications/translate-copy.ts` — i18n-keyed notification content translator (shared util)
-- `src/stores/edge-tab-store.ts` — Zustand single-slot mutual-exclusion store (`activeTab: 'notifications' | 'quick-actions' | null`)
+- `src/stores/edge-tab-store.ts` — Zustand single-slot mutual-exclusion store (`activeTab: 'notifications' | 'quick-actions' | 'bug-report' | null`)
 
 **States:**
-- **Closed (default):** 28px edge tab flush right. Vertical "NOTIFICATIONS" wordmark + count badge + bell glyph. Left accent stripe is rose if any CRITICAL, tan if any ATTENTION, steel-blue (accent) otherwise.
-- **Open:** 360px drawer slides in from right (260ms); tab grows to drawer-area height, glyph rotates to ×, wordmark reads "CLOSE". Drawer shows chip filters, scrollable row list, footer.
+- **Closed (default):** 28px edge tab flush right. Vertical wordmark + glyph. Notifications also renders a count badge. The three-tab closed stack is centered in the rail with 8px gaps: Notifications `stackOffset=-124`, Quick Actions `+34`, Bug Report `+166`.
+- **Hover reveal:** closed tabs use a modest `hoverHeight` preview separate from drawer height. Hover reveal only registers when the tab can actually grow, so an inactive tab never pushes or shifts an active drawer.
+- **Open:** drawer slides in from right (260ms); tab grows to the paired drawer height, glyph rotates to ×, wordmark reads "CLOSE". Drawers are clamped inside the right rail (`top:72`, `bottom:16`) so short viewports do not push the tab or panel off-screen.
 - **Row expanded:** click any row to inline-expand body + inline actions (ACTION button, SNOOZE stub, DISMISS).
+- **Surface:** all right-edge rail tabs/drawers use `var(--glass-dense)`, `var(--glass-border)`, no box shadow, square right edge, restrained left radius, and the shared OPS easing curve.
 
 **Keyboard:**
 - `N` toggles the drawer (global; suppressed in inputs/textareas/contenteditable).
+- `Q` toggles Quick Actions.
+- `` ` `` toggles Bug Report.
 - `Escape` closes the drawer.
 - Arrow `Up`/`Down` move focus between rows.
 
-**Mutual exclusion:** `useEdgeTabStore` ensures only one edge tab drawer is open at a time. Opening Notifications atomically closes Quick Actions and vice versa.
+**Mutual exclusion:** `useEdgeTabStore` ensures only one edge tab drawer is open at a time. Opening Notifications, Quick Actions, or Bug Report atomically closes any other active edge-tab drawer. `EdgeTabOutsideDismiss` closes the active drawer when the operator clicks outside the tab, drawer, or a portaled child menu/dialog.
 
 **Data Model:** unchanged — existing `AppNotification` + `notifications` table (columns `persistent`, `action_url`, `action_label` already present).
 
@@ -3620,25 +3628,25 @@ All three set `deep_link_type = projectNotes` and `project_id`, so both clients 
 
 #### Web Quick Actions Edge Tab (OPS Web — 2026-04-25)
 
-The Quick Actions tab replaces the prior bottom-right circular FAB (`floating-action-button.tsx`, removed 2026-04-25). It mounts on the right edge below Notifications and pairs with a 308×452 panel-anchored drawer. Spec source: `ops-design-system-v2/project/fab/variants.jsx` V1 — selected per the design brief at `ops-design-system-v2/project/fab/FAB Redesign.html` for "lowest intrusion / ops-iest shape." Long-press edit mode is dropped in favor of a persistent `CUSTOMIZE →` footer routing to `/settings?tab=quick-actions`.
+The Quick Actions tab replaces the prior bottom-right circular FAB (`floating-action-button.tsx`, removed 2026-04-25). It mounts on the right edge between Notifications and Bug Report and pairs with a 308px panel-anchored drawer whose height is content-driven and floored at the resting tab height. Spec source: `ops-design-system-v2/project/fab/variants.jsx` V1 — selected per the design brief at `ops-design-system-v2/project/fab/FAB Redesign.html` for "lowest intrusion / ops-iest shape." Long-press edit mode is dropped in favor of a persistent `CUSTOMIZE →` footer routing to `/settings?tab=quick-actions`.
 
 **Components:**
-- `src/components/layouts/quick-actions-tab.tsx` — wraps `<EdgeTab>`. `restHeight=132`, `stackOffset=+94` (mirrors notif `-94`), accent always `--ops-accent`, plus glyph rotates 0°→45° on open. `Q` keyboard shortcut.
-- `src/components/layouts/quick-actions-drawer.tsx` — 308×452 panel-anchored drawer. Header `// QUICK ACTIONS` + `Q` KeyHint, action list (icon + label + 3-letter hint), footer `CUSTOMIZE →`.
+- `src/components/layouts/quick-actions-tab.tsx` — wraps `<EdgeTab>`. `restHeight=132`, `hoverHeight=188`, `stackOffset=+34`, accent always `--ops-accent`, plus glyph rotates 0°→45° on open. `Q` keyboard shortcut.
+- `src/components/layouts/quick-actions-drawer.tsx` — 308px panel-anchored drawer. Header `// QUICK ACTIONS` + `Q` KeyHint, action list (icon + label + 3-letter hint), footer `CUSTOMIZE →`.
 - `src/lib/hooks/use-quick-actions.ts` — returns the user's filtered actions (permission + feature-flag + user-prefs filtering, lifted from the deleted FAB component).
 - `src/lib/constants/fab-actions.ts` — extended with `hintCode` field per action: `EXP / LED / EST / INV / CLI / PRJ / TSK / TTY / ITM`.
 
-**Drawer surface (denser than Notifications by spec):**
-- Background: `rgba(32, 34, 38, 0.92)` (denser, slightly lighter tone for action-list legibility)
-- Border: `1px solid rgba(255, 255, 255, 0.18)`, `border-right: none`
+**Drawer surface:**
+- Background: `var(--glass-dense)`
+- Border: `1px solid var(--glass-border)`, `border-right: none`
 - Backdrop: `blur(28px) saturate(1.3)`
 - Top-edge highlight gradient applied (matches all glass surfaces)
-- Position: anchored to tab vertical center via `stackOffset` math, NOT full-rail like Notifications
+- Position: anchored to tab vertical center via shared `edge-rail-layout.ts` math and clamped inside the rail
 
 **States:**
 - **Closed:** 28×132 tab. Vertical "QUICK ACTIONS" wordmark + `+` glyph. Steel-blue (`--ops-accent`) accent stripe always.
 - **Open:** drawer slides in from right (260ms); tab grows to drawer height, glyph rotates 45° → `×`, wordmark reads "CLOSE". Drawer shows action list + customize footer.
-- **Hover (closed):** tab brightens, glow shadow on accent stripe, tooltip with `Q` KeyHint flies out left.
+- **Hover (closed):** tab reveals to `hoverHeight=188` when no other edge drawer is active, and shows tooltip with `Q` KeyHint.
 
 **Action click:**
 1. Permission check (`usePermissionStore.can(action.requiredPermission)`).
@@ -3680,6 +3688,26 @@ Emitted by the daily envelope sweep (`public.expense_envelope_sweep()`, pg_cron 
 | `persistent` | `false` (dismissible) |
 
 Migration: `migrations/20260601213757_expense_envelope_sweep_deep_link_expense.sql` (supersedes the initial `…211633` cut that used the non-routable `invoice_detail`).
+
+### §14.3.5 Lead / Opportunity lifecycle notification contract (2026-06-09)
+
+Hardens the **write contract** for every lead/opportunity lifecycle notification (types `leads_waiting` and `role_needed`) so a lead is recoverable from the row alone — no `email_threads` join at tap time. Prompted by an iOS lead-notification deep-link bug (`bug_reports` `2c51ca25-a718-4cfe-977f-4ecd31d74ccc`, fixed iOS-side in ops-ios `1ff9c2dc`): production rows shipped `deep_link_type = NULL` with an `action_url` pointing at an inbox *thread* id, so the only reliable opportunity id lived in the trailing UUID of `dedupe_key`. iOS is now self-sufficient (it resolves the opportunity from `action_url` query params, the `dedupe_key` UUID, or an `email_threads.opportunity_id` lookup); this change removes the dependency on that last, brittle fallback by making the web builders stamp the id and a routable `deep_link_type` directly. **iOS was not changed.**
+
+**Four OPS-Web builders write these rows. All now stamp a non-null `deep_link_type`; the three lifecycle/classification builders also carry the entity id in `action_url`:**
+
+| Builder | Notification | `deep_link_type` | `action_url` |
+|---------|-------------|------------------|--------------|
+| `opportunity-lifecycle-action-service.ts` → `createOperatorFollowUpMissNotification` | `Lead reply waiting // <id>` (persistent) | `lead` | `/inbox/<thread>?opportunityId=<id>` when a thread resolves, else `/pipeline?opportunityId=<id>` |
+| `lead-lifecycle-cron-service.ts` → `emitDestructiveReviewNotification` | `REVIEW // <disposition> — <lead>` (persistent) | `lead` | same inbox-or-pipeline shape, both carrying `?opportunityId=<id>` |
+| `email-thread-service.ts` → `fireThreadNotifications` | `New lead: <sender>` / `Platform bid: <x>` / `Urgent reply needed` (the last is type `role_needed`) | `inbox` | `/inbox?thread=<thread_id>` (+ `&opportunityId=<id>` when the thread is already linked) |
+| `settings/integrations-tab.tsx` (web onboarding CTA) | `You have leads waiting` (persistent) | `inbox` | `/settings?tab=integrations` — fires pre-import, before any opportunity entity exists, so it carries no `opportunityId`; the `inbox` deep link keeps it out of the legacy NULL fallback |
+
+**Rules baked in:**
+- The two **lifecycle** builders own a definite opportunity, so they route `lead` and always append `?opportunityId=<id>` — even when the primary link is the inbox thread surface (web keeps the thread; iOS routes to the lead via `deep_link_type`).
+- The **thread-classification** builder fires the moment a conversation lands; an opportunity may not exist yet, so it routes `inbox` (the always-present thread id is the resolution key) and attaches `opportunityId` only when the thread is already linked.
+- `dedupe_key` is unchanged (`lead_lifecycle:operator_follow_up_miss:<id>`, `lead_lifecycle:destructive_candidate:<id>:<action>`); the id it carries now also lives in `action_url`.
+
+**RPC change.** The thread-classification builder writes through `create_notification_if_new` (the `ON CONFLICT DO NOTHING` dedup RPC). Migration `20260609181500_create_notification_if_new_deep_link_type.sql` drops the 9-arg signature and recreates it with a trailing `p_deep_link_type text default null` that persists the column, re-granting `execute` to `anon, authenticated, service_role`. The new arg defaults to null, so the currently-deployed 9-arg callers (stripe webhook, join-company, data-setup, inventory-deduction) keep resolving to it unchanged. **No backfill** — the ~257 pre-existing rows keep `deep_link_type = NULL` and are already covered by the iOS fallbacks; only new rows get the hardened contract.
 
 ### §14.4 Email infrastructure (typed React Email)
 
