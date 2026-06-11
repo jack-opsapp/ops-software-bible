@@ -1287,6 +1287,29 @@ ClientProjectBadges(client: client)
 
 ---
 
+### In-App Feedback (Toast) — the single transient-feedback surface (iOS)
+
+`ToastCenter` is the **one** way the iOS app confirms a transient "something happened" moment (save succeeded, sync failed, item deleted). Every feature routes through it — there are no per-feature toast systems.
+
+**Architecture**
+- `OPS/Styles/Components/Toast.swift` — the `Toast` value, `ToastTone` (success/warning/error), `ToastAction` (optional tap-through), the glass-dense pill view, and `ToastCenter.shared` (a `@MainActor` singleton with a FIFO queue). Mounted once via `.toastHost()` on `MainTabView`.
+- `OPS/Styles/Components/Feedback.swift` — the **catalog**: every feedback event as `Feedback.<Domain>.<event>` (≈135 events) plus `Feedback.Err.*` error labels. All toast copy lives here — call sites reference symbols, never inline strings. One `ops-copywriter` pass governs the whole set. `FeedbackCatalogTests` guards the voice contract (`// ` prefix, UPPERCASE).
+- `OPS/Styles/Components/View+ErrorToast.swift` — `.errorToast($vm.error, label:)` and the single-action variant; replaces the old `.alert("Error", isPresented:)` boilerplate.
+
+**Queue behavior** — single toast visible at a time; identical consecutive labels coalesce (a burst reads as one); a backlog drains on a compressed interval; error toasts with `autoDismissAfter: 0` hold until tapped.
+
+**Tones** — success = olive (nominal/done), warning = tan (attention: rejected/flagged/archived/expiring), error = rose (failure).
+
+**Tiered-error policy** — FYI errors → auto-dismiss error toast; single recoverable action (Retry / Open Settings) → manual-dismiss error toast with a tap-through; **2+ choice decisions, destructive confirms, and critical/blocking errors stay modal** (`.alert` / `.confirmationDialog`), never a toast.
+
+**Action-boundary rule (load-bearing)** — a toast fires **once**, at the user-action boundary (the public ViewModel method's success path, or the view handler). Never inside a loop, a low-level data primitive, or an inbound-sync / merge / restore path (those would spam toasts when server data arrives). Bulk actions emit one summary toast (`// 5 ITEMS DELETED`), not N.
+
+**What stays separate (by design)** — blocking confirmations; the Supabase-backed **notification inbox** (`NotificationListView`, bell icon — an inbox, not a transient event); ambient/persistent status (`NetworkStatusIndicator`, avatar sync overlay, `SyncStatusSection`, `ImageSyncProgressView`, `GracePeriodBanner`); server-driven full-screen notices (`AppMessageView`); wizard chrome; the geofence action banner.
+
+**Usage** — `ToastCenter.shared.present(Feedback.Invoice.sent)`; errors via `.errorToast($vm.error, label: Feedback.Err.saveFailed)`. Parameterized factories carry glanceable context where it matters (e.g. `Feedback.Task.scheduledFor(start:end:)` → `// SCHEDULED FOR MON JAN 27 – WED JAN 29`).
+
+---
+
 ## 8. Form Patterns
 
 ### Form Sheet Architecture
