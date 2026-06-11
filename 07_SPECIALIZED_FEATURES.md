@@ -3442,39 +3442,39 @@ User notification preferences stored in `@AppStorage`:
 - **Priority filter:** "all", "important", "critical"
 - **Temporary mute:** mute for N hours
 
-#### Web Notifications Drawer (OPS Web — 2026-04-23)
+#### Web Notifications Drawer (OPS Web — rebuilt 2026-06-11, WEB OVERHAUL P2)
 
-The web app surfaces notifications via a right-edge vertical drawer, triggered by a reusable `<EdgeTab>` primitive. Replaces the 2026-03-09 horizontal topbar rail. See `docs/superpowers/specs/2026-04-23-vertical-notification-system.md` for design rationale.
+The web app surfaces notifications via a right-edge vertical drawer, triggered by a reusable `<EdgeTab>` primitive. Rebuilt in the P2 shell overhaul (`OPS-Web/docs/specs/2026-06-11-web-overhaul-p2-shell-design.md` §4.4) — the earlier hover-grow + sibling-push choreography was removed as an approved design decision: tabs are fixed-height instruments and hover only brightens + shows a tooltip.
 
 **Components:**
-- `src/components/ui/edge-tab.tsx` + `edge-tab.types.ts` + `edge-rail-layout.ts` — reusable 28px right-edge tab primitive and shared rail geometry (consumed by Notifications, Quick Actions, and Bug Report)
-- `src/components/layouts/notifications-tab.tsx` — Notifications-specific tab wrapper (count + accent + `N` shortcut)
-- `src/components/layouts/notifications-drawer.tsx` — 360px panel-anchored drawer with chip-filter buckets (ALL/CRITICAL/ATTENTION/AMBIENT), row list, header actions (mute/clear-all), footer
-- `src/components/layouts/notifications-row.tsx` — expandable row (icon + title + timestamp; click expands body + action buttons + dismiss)
-- `src/components/layouts/quick-actions-tab.tsx` + `quick-actions-drawer.tsx` — Quick Actions tab and action drawer
-- `src/components/ops/bug-report-tab.tsx` + `bug-report-drawer.tsx` — Bug Report tab and report form drawer
-- `src/components/layouts/edge-tab-outside-dismiss.tsx` — single outside-click dismiss listener for the right-edge rail
-- `src/lib/notifications/notification-meta.ts` — NOTIF_TYPE_META registry mapping 18 NotificationType values to `{label, icon, tone}`
+- `src/components/ui/edge-tab.tsx` + `edge-tab.types.ts` + `edge-rail-layout.ts` — 28px fixed-height right-edge tab primitive + shared rail geometry/z constants (consumed by Notifications, Quick Actions, and Bug Report)
+- `src/components/layouts/notifications-tab.tsx` — Notifications tab wrapper (count + severity accent/tint + `N` shortcut)
+- `src/components/layouts/notifications-drawer.tsx` — 360×520 glass-dense panel: `// NOTIFICATIONS` + count header, segmented tone filters (ALL/CRIT/ATTN/INFO), row list, `SYS :: SYNC hh:mm` + CLEAR ALL footer
+- `src/components/layouts/notifications-row.tsx` — row with hover-revealed primary action + dismiss × (one step); click expands body + actions for keyboard/touch
+- `src/components/layouts/quick-actions-tab.tsx` + `quick-actions-drawer.tsx` — Quick Actions tab and action drawer (content-driven height, capped 452; actions carry i18n labelKeys from `quick-actions.json`)
+- `src/components/ops/bug-report-tab.tsx` + `bug-report-drawer.tsx` — Bug Report tab and report form drawer (shares the rail constants)
+- `src/components/layouts/edge-tab-outside-dismiss.tsx` — the single outside-click dismiss listener for the rail (drawer-local duplicates were removed)
+- `src/lib/notifications/notification-meta.ts` — NOTIF_TYPE_META registry mapping NotificationType values to `{label, icon, tone}`
 - `src/lib/notifications/translate-copy.ts` — i18n-keyed notification content translator (shared util)
 - `src/stores/edge-tab-store.ts` — Zustand single-slot mutual-exclusion store (`activeTab: 'notifications' | 'quick-actions' | 'bug-report' | null`)
 
 **States:**
-- **Closed (default):** 28px edge tab flush right. Vertical wordmark + glyph. Notifications also renders a count badge. The three-tab closed stack is centered in the rail with 8px gaps: Notifications `stackOffset=-124`, Quick Actions `+34`, Bug Report `+166`.
-- **Hover reveal:** closed tabs use a modest `hoverHeight` preview separate from drawer height. Hover reveal only registers when the tab can actually grow, so an inactive tab never pushes or shifts an active drawer.
-- **Open:** drawer slides in from right (260ms); tab grows to the paired drawer height, glyph rotates to ×, wordmark reads "CLOSE". Drawers are clamped inside the right rail (`top:72`, `bottom:16`) so short viewports do not push the tab or panel off-screen.
-- **Row expanded:** click any row to inline-expand body + inline actions (ACTION button, SNOOZE stub, DISMISS).
-- **Surface:** all right-edge rail tabs/drawers use `var(--glass-dense)`, `var(--glass-border)`, no box shadow, square right edge, restrained left radius, and the shared OPS easing curve.
+- **Closed (default):** 28px tab flush right, fixed heights stacked with 8px gaps and group-centered on the rail: Notifications 164 (`stackOffset −126`), Quick Actions 140 (`+34`), Bug Report 96 (`+160`). Vertical Cake Mono wordmark + upright glyph; Notifications renders a count badge; severity drives the 2px accent stripe + optional 0.12-alpha tint glaze.
+- **Hover:** glass brightens + tooltip (title + shortcut chip). Nothing grows, nothing pushes.
+- **Open:** drawer slides in (260ms, OPS easing); the tab travels left flush with it, glyph rotates/swaps, wordmark reads CLOSE. The open drawer covers sibling tabs (z: rest tabs 1540 < drawer 1550 < active tab 1560). All drawers are 360px, clamped to `calc(100vw − 36px)` on narrow viewports, anchored inside the rail (`top:72`, `bottom:16`).
+- **Row hover:** primary action button + dismiss × reveal inline (timestamp yields). Persistent rows expose no dismiss.
+- **Row expanded:** click expands body + action + DISMISS (non-persistent only). Snooze/mute controls were cut until snooze ships.
+- **Surface:** `var(--glass-dense)`, `var(--glass-border)`, zero box-shadows, square right edge, left-corner radius 10 (drawers) / 6 (tabs).
 
-**Keyboard:**
-- `N` toggles the drawer (global; suppressed in inputs/textareas/contenteditable).
-- `Q` toggles Quick Actions.
-- `` ` `` toggles Bug Report.
-- `Escape` closes the drawer.
-- Arrow `Up`/`Down` move focus between rows.
+**Behavior rules:**
+- Action clicks auto-dismiss **non-persistent** rows only — persistent notifications stay until resolved programmatically (`is_read = true` by the server path).
+- Footer CLEAR ALL = `useDismissAllNotifications` (disabled when nothing is dismissible). The old VIEW ALL filter-reset is gone.
 
-**Mutual exclusion:** `useEdgeTabStore` ensures only one edge tab drawer is open at a time. Opening Notifications, Quick Actions, or Bug Report atomically closes any other active edge-tab drawer. `EdgeTabOutsideDismiss` closes the active drawer when the operator clicks outside the tab, drawer, or a portaled child menu/dialog.
+**Keyboard:** `N` notifications · `Q` quick actions · `` ` `` bug report (all suppressed in inputs) · `Escape` closes · Arrow `Up`/`Down` move row focus.
 
-**Data Model:** unchanged — existing `AppNotification` + `notifications` table (columns `persistent`, `action_url`, `action_label` already present).
+**Mutual exclusion:** `useEdgeTabStore` keeps one drawer open at a time; `EdgeTabOutsideDismiss` closes the active drawer on canvas clicks while ignoring portaled menus/dialogs.
+
+**Data Model:** unchanged — existing `AppNotification` + `notifications` table (columns `persistent`, `action_url`, `action_label`).
 
 **Motion:** `drawerVariants` / `rowVariants` / `chipVariants` in `src/lib/utils/motion.ts`, all with reduced-motion fallbacks.
 

@@ -2347,6 +2347,26 @@ When mobile apps eventually migrate (Phase 4), the changes will be concentrated 
 
 The offline-first architecture, defensive SwiftData/Room patterns, and operation coalescing will all be preserved. The migration primarily replaces the transport layer, not the application architecture.
 
+### OPS-Web App Shell (rebuilt 2026-06-11 — WEB OVERHAUL P2)
+
+The web app shell was rebuilt from scratch in P2 of the web overhaul (master plan: `OPS-Web/docs/specs/2026-06-11-web-overhaul-master-plan.md`; shell design + parity inventory: `OPS-Web/docs/specs/2026-06-11-web-overhaul-p2-shell-design.md`).
+
+**Route registry — single source of truth.** `src/lib/navigation/route-registry.ts` owns every top-level route's href, icon, i18n label key (`navigation.json`, en + es), nav placement/order/group, RBAC permission, Phase C posture, badge binding, full-height layout mode, palette search aliases, and P3 absorption schedule (`absorbedBy`). Consumers: sidebar, top-bar titles, mobile drawer, command-palette nav section, 1–9 number shortcuts, the `(dashboard)/layout.tsx` route-permission gate, and `dashboard-layout.tsx` full-height modes. It replaced six drifted parallel tables (sidebar dict keys, top-bar hardcoded titles, breadcrumbs dict, layout permission map, palette literals, shortcut map). 42 invariant tests at `tests/unit/navigation/route-registry.test.ts`. Transition rule: nav entries exist only for routes that exist; each P3 wave swaps its absorbed entries + adds redirects in its landing commit.
+
+**Shell composition** (`src/components/layouts/`):
+- **Sidebar (`sidebar.tsx`)** — 72px HUD rail → 240px glass-dense hover overlay (120ms hover-intent, 80ms collapse grace, keyboard-focus parity, reduced-motion fallback). `// COMMAND` + `// OPS` group marks, Cake Mono 300 labels, 2px text-2 active bar (no accent on nav), company header, OPS mark + `package.json` version footer. Mobile <768px: 280px drawer + scrim + Escape. Gating: RBAC `can()` hides; commercial flag locks dim (request-access modal flow); `phaseCOnly` entries (Calibration, Agent Queue + pending badge) render only when `canAccessFeature("phase_c")`.
+- **Operator menu (`operator-menu.tsx`)** — avatar/user section opens a 248px glass-dense menu: `// OPERATOR :: NAME` identity block (email + role tag), Settings, external destinations with ↗ (OPS Website, Courses, iOS App Store listing — `src/lib/constants/external-links.ts`), rose Sign Out.
+- **Top bar (`top-bar.tsx`)** — registry-fed i18n page titles (en/es), breadcrumb store for nested routes, undo (⌘Z + stack), ⌘K search dispatch, live sync indicator, minute-tick 24h deck clock.
+- **Edge rail** — see 07_SPECIALIZED_FEATURES §14 (Web Notifications Drawer) for the rebuilt fixed-height tab + drawer system.
+
+**Schedule rename.** `/calendar` → `/schedule` (route dir moved; query-preserving 308 in `src/middleware.ts` keeps old notification `action_url`s resolving). All internal links, dictionaries (es: "Agenda"), palette, shortcuts, and widget CTAs re-pointed.
+
+**Phase C company gating (client).** Prod `feature_flags` has no global `phase_c` row, and unknown slugs default to accessible in `useFeatureFlagsStore` — so `/api/feature-flags` appends **synthetic per-company flags** from `admin_feature_overrides`: `inbox_ui` (routes `/inbox`) and `phase_c` (routes `/calibration`, `/agent`). Fail-closed on errors. This is the mechanism that keeps Phase C operator surfaces invisible AND unreachable (in-place 404) for non-flagged companies; today only Canpro Deck and Rail carries `phase_c: true`.
+
+**Z-index (nav band, per OPS-Web CLAUDE.md scale):** top bar 500 · mobile scrim 502 · sidebar 505 · dropdowns 1000 · edge rail 1540/1550/1560 (rest tab / drawer / active tab).
+
+**Inbox posture (master plan §3):** no nav entry for anyone; the route survives behind the per-company `inbox_ui` flag (page-level server gate + synthetic client flag) so old links keep resolving for flagged companies.
+
 ### Web App Supabase Patterns
 
 The web app already implements the Supabase patterns that mobile will eventually adopt:
