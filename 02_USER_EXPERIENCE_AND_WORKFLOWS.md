@@ -1290,6 +1290,26 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 ---
 
+### OPS-Web Books (web financial hub) — 2026-06-11
+
+**Purpose:** The desktop mirror of the iOS BOOKS tab — one surface for the company's money. Shipped in WEB OVERHAUL P3.1 (direction A "Instrument Strip", approved 2026-06-11); replaced the standalone web Estimates, Invoices, and Accounting pages and the `/money/cashflow` placeholder.
+
+**Source:** `OPS-Web/src/app/(dashboard)/books/page.tsx` + `src/components/books/**` (page orchestrator `books-page.tsx`, `ledger-strip.tsx`, `segment-toolbar.tsx`, `segments/{invoices,estimates,expenses,sync}-segment.tsx`, `segments/ar-aging-view.tsx`, `modals/`). Data: `src/lib/api/services/books-service.ts` (`computeLedger`) via `useBooksLedger`.
+
+**URL contract:** `/books?segment=invoices|estimates|expenses|sync` + `&view=aging|connections|import` + `&status=<doc status>` + `&action=new`. Retired routes 308-redirect param-preserving in `src/middleware.ts` (`/estimates`, `/invoices`, `/accounting` tab-aware, `/money/cashflow`, `/books/cashflow`).
+
+**Layout (top to bottom):**
+
+1. **Ledger strip** — `// LEDGER` + PeriodPill (same 8 windows as iOS) over four glance tiles translating the iOS Mission Deck card faces to desktop: **NET** (whole-dollar hero, margin meter, `IN`/`OUT` row), **CASH FLOW** (avg/week hero, weekly-net sparkline with rose low-week dot, `LOW WK`), **A/R** (`ALL OPEN` scope badge, hero total, 4-bucket aging ramp, `OVERDUE` + `TOP CHASE`), **JOBS** (profitable count, diverging profit/loss bars with the iOS worst-loser floor, `AVG MARGIN` + losers). Gated `accounting.view` (web analog of iOS `finances.view`); whole strip hides without it. Count-ups/draw-ons use the single OPS easing with reduced-motion fallbacks; tiles skeleton on load and fail to a strip-level `// ERROR` + RETRY.
+2. **Segment control** — `INVOICES | ESTIMATES | EXPENSES | SYNC` with mono counts; active segment persists (`localStorage books.segment`) as the no-param default. Unlike iOS there is no crew auto-skip (web has no own-scope expense surface; the expenses segment is the review hub).
+3. **Active segment** — full parity ports of the absorbed pages (tables, create/edit modals, record-payment, SendEstimateFlow, convert-to-invoice, PDF download, setup gate, `?action=new`), plus: the A/R drill from the strip drops a rose `PAST DUE ×` chip on the invoices list; `?status=` deep links from dashboard widgets are honored; a quiet mono stat line carries the retired per-tab MetricsHeader numbers.
+
+**Per-segment gates** (never roles): invoices `invoices.view` (or `accounting.view` for the A/R-aging-only view), estimates `estimates.view`, expenses `expenses.approve`, sync `accounting.manage_connections`. Route gate = any-of via the nav registry's `anyOfPermissions`.
+
+**Differences from iOS BooksTabView:** four tiles instead of the 5-card carousel (no Pipeline Forecast tile in v1); drills filter the in-page list instead of opening half-sheets; SYNC (QuickBooks/Sage connections + read-only import) is a first-class segment, where iOS keeps integrations in settings; the cashflow forecast preview card is iOS-only (web full build remains separately planned).
+
+---
+
 ### PipelineView (Pipeline Segment)
 
 **Purpose:** CRM pipeline view showing sales opportunities filtered by stage.

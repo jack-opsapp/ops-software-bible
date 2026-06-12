@@ -1732,6 +1732,26 @@ Per-card composition (`OPS/Views/Books/Cards/`):
 
 ---
 
+## OPS-Web Books Surface (2026-06-11)
+
+**Status:** Shipped in WEB OVERHAUL P3.1 on `feat/web-overhaul` (local program branch). `/books` absorbed the web Estimates, Invoices, and Accounting pages, the orphan-adjacent expense review hub, and the `/money/cashflow` placeholder; the old page directories are deleted and `src/middleware.ts` owns param-preserving 308s (`/estimates`→`segment=estimates` · `/invoices`→`segment=invoices` · `/accounting`→`segment=invoices&view=aging`, `?tab=expenses`→`segment=expenses`, `?tab=integrations`→`segment=sync`, `?tab=import`→`segment=sync&view=import` · `/money/cashflow` + `/books/cashflow`→`/books`). UX reference: `02_USER_EXPERIENCE_AND_WORKFLOWS.md § OPS-Web Books`.
+
+### Ledger service (`books-service.ts`)
+
+`BooksService.fetchLedger(companyId, period)` gathers in parallel and delegates to the pure `computeLedger` (unit-tested at `tests/unit/services/books-service.test.ts`):
+
+- **Periods** — the iOS PeriodPill set (`30d/90d/6m/1y/this_month/last_month/this_quarter/ytd`); NET, CASH FLOW, JOBS re-scope, A/R is always all-open.
+- **NET** — `payments` in window (non-voided, by `payment_date`) minus `expenses` in window (non-deleted, status ∈ submitted/approved/reimbursed — drafts and rejected lines never count); margin = net/paymentsIn.
+- **CASH FLOW** — weekly nets bucketed by Monday-start weeks. Postgres DATE strings are parsed as **local** dates (UTC parsing shifted a day west of Greenwich — caught by the unit suite).
+- **A/R** — non-deleted invoices, status ∉ {paid, void, draft, written_off}, `balance_due > 0`; 4 ramp buckets by days overdue where 0–30 includes not-yet-due (iOS ARCard convention; the in-page aging *view* keeps the old 5-bucket CURRENT split); top chase = largest per-client open balance (name resolved client-side via `useClients`).
+- **JOBS** — revenue = in-window payments joined through `invoices.project_id`; cost = `expense_project_allocations.amount` with `expense.amount × percentage/100` fallback (string-on-string join — allocations `project_id` is text); display slice = top 4 by net with the iOS −$500 worst-loser displacement.
+
+### Swap mechanics
+
+The nav registry entry (`key: books`, order 6, lucide `Calculator` per the icon brief's `nav-finance` concept) introduced `anyOfPermissions` — `["invoices.view","estimates.view","expenses.approve","accounting.view"]` — consumed by the dashboard layout gate, sidebar (flag dimming + RBAC hiding), and command palette. `/books` joined the `accounting` feature flag's route list (flag-off companies stay gated across the redirect hop). FAB retargets: expense → `/books?segment=expenses`, invoice → `/books?segment=invoices&action=new`. The QBO import-apply notification now writes `action_url: "/books?segment=sync&view=import"`. ~20 dashboard-widget links deep-link straight to segments (expense contexts → expenses; payment/A-R contexts → invoices aging).
+
+---
+
 ## Home Billable This Week Rollup (2026-05-25)
 
 **Status:** iOS Home implementation landed for `IOS BUG BACKLOG - P1-7`. This is a Home-level billing-context surface, separate from the BOOKS carousel. It answers: "what should I be invoicing this week?" without forcing the operator into Books or project detail.
