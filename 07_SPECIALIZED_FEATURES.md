@@ -3680,7 +3680,7 @@ Emitted by the daily envelope sweep (`public.expense_envelope_sweep()`, pg_cron 
 | `title` | `Expenses ready for review` |
 | `body` | `<batch_number> — <Mon YYYY> (<total>)` — e.g. `EXP-BATCH-0003 — May 2026 ($59.32)` |
 | `deep_link_type` | `expense` |
-| `action_url` | `/accounting?tab=expenses&batch=<batch_id>` (the office expense review lives under `/accounting`; the earlier `/expenses?batch=` 404'd and was corrected 2026-06-02) |
+| `action_url` | `/accounting?tab=expenses&batch=<batch_id>` — written by the DB sweep. Since the web BOOKS absorption (P3.1, 2026-06-11) this 308s param-preserving to `/books?segment=expenses&batch=<batch_id>`, where the review hub now lives; retargeting the writer would need a prod migration of `expense_envelope_sweep`, and the middleware redirect is the designed permanent guard. (History: the earlier `/expenses?batch=` 404'd, corrected 2026-06-02.) |
 | `action_label` | `REVIEW` |
 | `batch_id` | the envelope's id |
 | `dedupe_key` | `expense_batch_review:<batch_id>` — per-envelope, so multiple envelopes auto-sent to one approver in a single sweep don't collide on `notifications_unread_title_dedup_without_key` (the title-dedup index for keyless rows); a non-null key routes dedup to `notifications_open_dedupe_key (user_id, company_id, type, dedupe_key)` instead. Insert uses `ON CONFLICT DO NOTHING` so the daily cron can never abort on a duplicate. |
