@@ -1,24 +1,29 @@
 <!DOCTYPE html>
 <!--
-  OPS SPEC — TIER GUIDE · NON-PRODUCTION PROTOTYPE
-  ================================================
-  This is a THROWAWAY design artifact for Jackson to react to. It is NOT
-  production code. Production lives in ops-site (Next.js + Framer Motion +
-  the t(dict, ...) i18n layer). See SPEC/09_TIER_GUIDE_DESIGN.md for the
-  real spec. Tokens here are hand-mirrored from ops-design-system; the real
-  build must trace every value to a Tailwind/theme token, not this file.
+  OPS SPEC — TIER GUIDE · NON-PRODUCTION PROTOTYPE  (rev 2026-06-13b, post-review)
+  ================================================================================
+  Throwaway design artifact for Jackson to click. NOT production. Production lives
+  in ops-site (Next.js + Framer Motion + the t(dict,...) i18n layer). Canonical
+  spec: SPEC/09_TIER_GUIDE_DESIGN.md (§7/§8 are canonical; this HTML is a reference,
+  not the source of truth).
 
-  What it demonstrates faithfully:
-   • The full entry → 3 questions → result → "see the package" flow
-   • The deterministic answer→tier scoring (incl. the Enterprise-
-     corroboration guard and the close-call handling) — this IS the logic
-     the build chip should port to src/lib/spec/tier-guide.ts
-   • The SpecOpsBoard selection vocabulary (2px accent rail, faint tint,
-     siblings dim) and the single easing curve
-   • Reduced-motion handling
+  rev 2026-06-13b applies the 8-agent review fixes:
+   • Result has its OWN primary action (TALK TO THE FOUNDER ABOUT {tier}); the
+     card-scroll is demoted to a secondary text link.
+   • Scoring: corrected winner-consistent driver priority; the Enterprise guard is
+     SURFACED (guard note + guarded driver), not silent; Enterprise is dropped from
+     "also consider" on a Setup win with no structural signal.
+   • Tokens: accent CTAs are white-on-accent + 3px radius; accent removed from the
+     open-container border (now white/0.15), the progress number (now a contrast
+     step), and the result underline (now a neutral hairline). Accent = CTA fill +
+     focus ring only.
+   • Option rows are a two-line stack (label block over hint block) — no inline
+     collision.
+   • :focus-visible rings on every interactive element.
+   • Entry copy re-led with payoff + trust; auto-advance hold lengthened.
 
-  Cake Mono is unavailable on Google Fonts, so JetBrains Mono stands in for
-  tactical labels here; production uses Cake Mono per DESIGN.md.
+  Cake Mono is unavailable on Google Fonts, so JetBrains Mono stands in for tactical
+  labels here; production uses Cake Mono per DESIGN.md.
 -->
 <html lang="en">
 <head>
@@ -34,11 +39,11 @@
     --bg:#000000;            --surface:#0A0A0A;        --surface-2:#141414;
     --text:#EDEDED;          --text-2:#B5B5B5;         --text-3:#8A8A8A;   --text-mute:#6A6A6A;
     --accent:#6F94B0;        --accent-hover:#7FA3BD;   --accent-004:rgba(111,148,176,0.04);
-    --accent-tint:rgba(111,148,176,0.10);
     --olive:#9DB582;         --tan:#C4A868;            --rose:#B58289;
     --line:rgba(255,255,255,0.10);   --line-soft:rgba(255,255,255,0.06);  --line-04:rgba(255,255,255,0.04);
-    --line-hover:rgba(255,255,255,0.25);
-    --r-sm:2px; --r-md:3px; --r-lg:4px; --r-btn:5px; --r-panel:10px;
+    --line-active:rgba(255,255,255,0.15);   --line-hover:rgba(255,255,255,0.25);
+    --underline:rgba(255,255,255,0.12);
+    --r-sm:2px; --r-md:3px; --r-lg:4px; --r-btn:3px;
     --ease:cubic-bezier(0.22,1,0.36,1);
     --mono:'JetBrains Mono',monospace;  --head:'Mohave',sans-serif;
   }
@@ -51,6 +56,9 @@
   .label{font-family:var(--mono);text-transform:uppercase;letter-spacing:.18em;font-size:11px;color:var(--text-mute)}
   .seclabel{font-family:var(--mono);text-transform:uppercase;letter-spacing:.18em;font-size:12px;color:var(--text-3)}
 
+  /* accent is CTA-fill + focus-ring ONLY */
+  :focus-visible{outline:1.5px solid var(--accent);outline-offset:2px}
+
   /* page chrome (mock) */
   .page-eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--accent)}
   h1.page{font-weight:500;font-size:34px;letter-spacing:.01em;text-transform:uppercase;margin:8px 0 4px}
@@ -59,17 +67,17 @@
   .sec-head{margin-bottom:24px}
 
   /* ============ TIER GUIDE ============ */
-  .guide{border:1px solid var(--line);border-radius:var(--r-panel);background:var(--surface);overflow:hidden;
+  .guide{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);overflow:hidden;
          transition:border-color .3s var(--ease)}
-  .guide.open{border-color:rgba(111,148,176,0.30)}
+  .guide.open{border-color:var(--line-active)}   /* active = brighter neutral hairline, NOT accent */
 
   /* entry bar (collapsed, SSR'd state) */
   .entry{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 20px;cursor:pointer}
   .entry-l .entry-label{color:var(--text-mute)}
-  .entry-l .entry-head{font-size:16px;color:var(--text);margin-top:6px}
+  .entry-l .entry-head{font-size:17px;color:var(--text);margin-top:6px}
   .entry-l .entry-sub{font-family:var(--mono);font-size:11px;color:var(--text-3);letter-spacing:.04em;margin-top:7px}
   .entry-cta{flex:0 0 auto;font-family:var(--mono);text-transform:uppercase;letter-spacing:.15em;font-size:12px;
-             color:#000;background:var(--accent);border:none;border-radius:var(--r-btn);padding:11px 22px;cursor:pointer;
+             color:#fff;background:var(--accent);border:none;border-radius:var(--r-btn);padding:11px 22px;cursor:pointer;
              transition:background .15s var(--ease)}
   .entry-cta:hover{background:var(--accent-hover)}
 
@@ -79,7 +87,7 @@
 
   .qhead{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:18px}
   .progress{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--text-mute)}
-  .progress .cur{color:var(--accent)}
+  .progress .cur{color:var(--text)}   /* contrast step, not accent hue */
   .qprompt{font-size:20px;color:var(--text);font-weight:300;line-height:1.3;margin-bottom:18px;max-width:30ch}
 
   .opts{display:flex;flex-direction:column;gap:8px}
@@ -88,15 +96,15 @@
        padding:15px 16px 15px 18px;transition:border-color .2s var(--ease),background .2s var(--ease),opacity .2s var(--ease)}
   .opt:hover{border-color:var(--line-hover)}
   .opt .rail{position:absolute;left:0;top:6px;bottom:6px;width:2px;background:var(--accent);opacity:0;transition:opacity .2s var(--ease)}
-  .opt .opt-label{font-size:15px;color:var(--text);letter-spacing:.005em}
-  .opt .opt-hint{font-family:var(--head);font-size:12.5px;color:var(--text-3);margin-top:4px;line-height:1.4}
+  .opt .opt-label{display:block;font-size:15px;color:var(--text);letter-spacing:.005em}
+  .opt .opt-hint{display:block;font-family:var(--head);font-size:13px;color:var(--text-3);margin-top:4px;line-height:1.4}
   .opt.sel{border-color:rgba(111,148,176,0.40);background:var(--accent-004)}
   .opt.sel .rail{opacity:1}
   .opts.committing .opt:not(.sel){opacity:.4}
 
   .qfoot{margin-top:18px;display:flex;align-items:center;gap:18px}
   .ghost{font-family:var(--mono);text-transform:uppercase;letter-spacing:.15em;font-size:11px;color:var(--text-2);
-         background:none;border:none;cursor:pointer;padding:6px 2px;transition:color .15s var(--ease)}
+         background:none;border:none;cursor:pointer;padding:11px 4px;min-height:44px;transition:color .15s var(--ease)}
   .ghost:hover{color:var(--text)}
   .ghost[disabled]{opacity:.3;cursor:default}
 
@@ -105,24 +113,29 @@
   .result .r-label{color:var(--text-mute)}
   .r-tier-wrap{margin-top:14px;display:inline-block}
   .r-tier{font-family:var(--head);font-weight:600;text-transform:uppercase;letter-spacing:.04em;font-size:40px;line-height:1;color:var(--text)}
-  .r-underline{height:1px;background:var(--accent);width:0;margin-top:10px;transition:width .5s var(--ease)}
+  .r-underline{height:1px;background:var(--underline);width:0;margin-top:10px;transition:width .5s var(--ease)}  /* neutral, not accent */
   .r-reason{font-size:15px;color:var(--text-2);line-height:1.55;margin-top:18px;max-width:48ch}
   .r-because{font-family:var(--mono);font-size:11px;color:var(--text-3);letter-spacing:.03em;margin-top:12px}
-  .r-cta{margin-top:24px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.15em;font-size:12px;
-         color:#000;background:var(--accent);border:none;border-radius:var(--r-btn);padding:12px 24px;cursor:pointer;transition:background .15s var(--ease)}
+  .r-guard{font-size:13.5px;color:var(--text-2);line-height:1.55;margin-top:14px;max-width:50ch;
+           border-left:2px solid var(--tan);padding-left:12px}
+  .r-close{font-family:var(--mono);font-size:11px;color:var(--tan);letter-spacing:.02em;margin-top:16px;line-height:1.5;display:none}
+  .r-actions{margin-top:24px;display:flex;flex-direction:column;align-items:flex-start;gap:12px}
+  .r-cta{font-family:var(--mono);text-transform:uppercase;letter-spacing:.15em;font-size:12px;
+         color:#fff;background:var(--accent);border:none;border-radius:var(--r-btn);padding:13px 24px;cursor:pointer;transition:background .15s var(--ease)}
   .r-cta:hover{background:var(--accent-hover)}
+  .r-secondary{font-family:var(--head);font-size:13.5px;color:var(--text-2);background:none;border:none;cursor:pointer;padding:4px 0;transition:color .15s var(--ease)}
+  .r-secondary:hover{color:var(--text)}
   .r-also{margin-top:30px;border-top:1px solid var(--line-soft);padding-top:18px}
   .r-also .also-label{color:var(--text-mute);margin-bottom:12px}
-  .r-also .also-row{display:block;width:100%;text-align:left;background:none;border:none;color:var(--text-3);
-        font-size:13.5px;padding:9px 0;cursor:pointer;border-bottom:1px solid var(--line-04);transition:color .15s var(--ease)}
-  .r-also .also-row:hover{color:var(--text-2)}
-  .r-also .also-row .at{font-family:var(--mono);text-transform:uppercase;letter-spacing:.12em;font-size:11px;color:var(--text-2);margin-right:8px}
-  .r-close{font-family:var(--mono);font-size:11px;color:var(--tan);letter-spacing:.02em;margin-top:16px;line-height:1.5;display:none}
-  .r-restart{margin-top:22px}
+  .r-also .also-row{display:block;width:100%;text-align:left;background:none;border:none;color:var(--text-2);
+        font-size:14px;padding:11px 0;cursor:pointer;border-bottom:1px solid var(--line-04);transition:color .15s var(--ease)}
+  .r-also .also-row:hover{color:var(--text)}
+  .r-also .also-row .at{font-family:var(--mono);text-transform:uppercase;letter-spacing:.12em;font-size:11px;color:var(--text);margin-right:8px}
+  .r-foot{margin-top:22px;display:flex;align-items:center;gap:20px}
 
   /* mock pricing cards */
   .cards{display:flex;flex-direction:column;gap:12px;margin-top:26px}
-  .card{border:1px solid var(--line);border-radius:var(--r-panel);background:var(--surface);padding:18px 20px;
+  .card{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);padding:18px 20px;
         position:relative;transition:border-color .3s var(--ease),background .3s var(--ease)}
   .card .crail{position:absolute;left:0;top:10px;bottom:10px;width:2px;background:var(--accent);opacity:0;transition:opacity .25s var(--ease)}
   .card.hot{border-color:rgba(111,148,176,0.45);background:var(--accent-004)}
@@ -131,9 +144,10 @@
   .card .c-name{font-family:var(--mono);text-transform:uppercase;letter-spacing:.15em;font-size:12px;color:var(--accent)}
   .card .c-price{font-size:17px;color:var(--text)}
   .card .c-tag{color:var(--text-3);font-size:13px;margin-top:5px}
-  .card .c-sub{font-family:var(--mono);font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.12em;margin-top:6px}
-  .rec-pill{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--olive);
-            border:1px solid rgba(157,181,130,0.3);background:rgba(157,181,130,0.08);border-radius:var(--r-lg);padding:2px 6px;margin-left:8px}
+  .pill{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;border-radius:var(--r-lg);padding:2px 6px;margin-left:8px}
+  .pill-rec{color:var(--olive);border:1px solid rgba(157,181,130,0.3);background:rgba(157,181,130,0.08)}
+  .pill-match{color:var(--accent);border:1px solid rgba(111,148,176,0.4);background:rgba(111,148,176,0.10)}
+  .pill.hidden{display:none}
 
   .footnote{margin-top:60px;color:var(--text-mute);font-family:var(--mono);font-size:10px;letter-spacing:.06em;line-height:1.7;border-top:1px solid var(--line-soft);padding-top:18px}
 
@@ -143,6 +157,7 @@
     .entry-cta{width:100%}
     .qprompt{font-size:18px}
     .r-tier{font-size:34px}
+    .r-cta{width:100%;text-align:center}
   }
   @media (prefers-reduced-motion:reduce){
     *{transition-duration:.01ms !important;animation-duration:.01ms !important}
@@ -168,8 +183,8 @@
       <div class="entry" id="entry" role="button" tabindex="0" aria-expanded="false" aria-controls="guideBody">
         <div class="entry-l">
           <div class="label entry-label">// NOT SURE WHICH ONE</div>
-          <div class="entry-head">Tell us three things. We'll point you to the right tier.</div>
-          <div class="entry-sub">[ 2 min · no email · we don't default to the expensive one ]</div>
+          <div class="entry-head">We'll tell you which one's yours.</div>
+          <div class="entry-sub">[ three questions · no upsell · no signup ]</div>
         </div>
         <button class="entry-cta" id="startBtn">START</button>
       </div>
@@ -179,7 +194,7 @@
         <!-- QUESTIONS -->
         <div class="questions" id="questions">
           <div class="qhead">
-            <span class="seclabel" id="qkicker">// WHICH TIER</span>
+            <span class="seclabel" id="qkicker">// WHAT YOU NEED</span>
             <span class="progress num"><span class="cur" id="pCur">01</span> / <span id="pTot">03</span></span>
           </div>
           <div class="qprompt" id="qPrompt" aria-live="polite"></div>
@@ -198,13 +213,20 @@
           </div>
           <p class="r-reason" id="rReason"></p>
           <p class="r-because mono" id="rBecause"></p>
+          <p class="r-guard" id="rGuard" style="display:none"></p>
           <p class="r-close mono" id="rClose"></p>
-          <button class="r-cta" id="rCta"></button>
+          <div class="r-actions">
+            <button class="r-cta" id="rCta"></button>
+            <button class="r-secondary" id="rSecondary"></button>
+          </div>
           <div class="r-also">
             <div class="label also-label">ALSO CONSIDER</div>
             <div id="rAlso"></div>
           </div>
-          <div class="r-restart"><button class="ghost" id="restartBtn">‹ START OVER</button></div>
+          <div class="r-foot">
+            <button class="ghost" id="resultBackBtn">‹ BACK</button>
+            <button class="ghost" id="restartBtn">START OVER</button>
+          </div>
         </div>
       </div>
     </div>
@@ -213,36 +235,36 @@
     <div class="cards" id="cards">
       <div class="card" data-tier="setup" id="card-setup">
         <span class="crail"></span>
-        <div class="c-top"><div><span class="c-name">SETUP</span></div><div class="c-price num">$750</div></div>
+        <div class="c-top"><div><span class="c-name">SETUP</span><span class="pill pill-match hidden" data-match="setup">YOUR MATCH</span></div><div class="c-price num">$750</div></div>
         <div class="c-tag">We configure OPS around your workflow</div>
-        <div class="c-sub num">$3,000 total · 4 milestones</div>
       </div>
       <div class="card" data-tier="build" id="card-build">
         <span class="crail"></span>
-        <div class="c-top"><div><span class="c-name">BUILD</span><span class="rec-pill">RECOMMENDED</span></div><div class="c-price num">$2,125</div></div>
+        <div class="c-top"><div><span class="c-name">BUILD</span><span class="pill pill-rec" id="recPill">RECOMMENDED</span><span class="pill pill-match hidden" data-match="build">YOUR MATCH</span></div><div class="c-price num">$2,125</div></div>
         <div class="c-tag">A custom module built for your trade</div>
-        <div class="c-sub num">$8,500 total · 4 milestones</div>
       </div>
       <div class="card" data-tier="enterprise" id="card-enterprise">
         <span class="crail"></span>
-        <div class="c-top"><div><span class="c-name">ENTERPRISE</span></div><div class="c-price num">$4,500</div></div>
+        <div class="c-top"><div><span class="c-name">ENTERPRISE</span><span class="pill pill-match hidden" data-match="enterprise">YOUR MATCH</span></div><div class="c-price num">$4,500</div></div>
         <div class="c-tag">Your entire operation, custom-built on OPS</div>
-        <div class="c-sub num">$18,000 total · 4 milestones</div>
       </div>
     </div>
   </section>
 
   <div class="footnote">
-    PROTOTYPE · NOT PRODUCTION · ops-software-bible/specs/2026-06-13-spec-tier-guide-PROTOTYPE.html<br/>
-    Logic + copy mirror SPEC/09_TIER_GUIDE_DESIGN.md. Cake Mono substituted by JetBrains Mono. Tokens hand-mirrored from ops-design-system.
+    PROTOTYPE · NOT PRODUCTION · rev 2026-06-13b · ops-software-bible/specs/2026-06-13-spec-tier-guide-PROTOTYPE.html<br/>
+    Logic + copy mirror SPEC/09_TIER_GUIDE_DESIGN.md (§7/§8 canonical). Cake Mono substituted by JetBrains Mono. Tokens hand-mirrored from ops-design-system.
   </div>
 </div>
 
 <script>
 /* ============================================================
    TIER-GUIDE LOGIC  (port to src/lib/spec/tier-guide.ts — pure, client-side)
+   Encodes §3.2: tie-break low, Enterprise guard, also-row suppression,
+   corrected winner-consistent driver priority.
    ============================================================ */
 const TIERS = { setup:'SETUP', build:'BUILD', enterprise:'ENTERPRISE' };
+const ORDER = ['setup','build','enterprise'];
 
 const QUESTIONS = [
   { id:'need', kicker:'// WHAT YOU NEED',
@@ -259,7 +281,7 @@ const QUESTIONS = [
       { id:'one_tool',     label:"One main app, plus the mess",       hint:"Something like Jobber, Housecall Pro, or QuickBooks." },
       { id:'heavy_system', label:"A heavy system I need off of",      hint:"ServiceTitan, Buildertrend, AppFolio — with data and integrations to bring across." },
     ]},
-  { id:'shape', kicker:'// HOW YOU\'RE BUILT',
+  { id:'shape', kicker:"// HOW YOU'RE BUILT",
     prompt:"How's your operation built?",
     options:[
       { id:'solo',           label:"One trade, one crew",            hint:"Just me, or a single tight crew." },
@@ -268,13 +290,11 @@ const QUESTIONS = [
     ]},
 ];
 
-// Point vectors [setup, build, enterprise] per answer id.
 const SCORES = {
   configure:[3,0,0], build_one:[0,3,0], rebuild:[0,0,3],
   manual:[1,0,0],    one_tool:[0,1,0],  heavy_system:[0,0,2],
   solo:[1,0,0],      multi_crew:[0,1,0],multi_division:[0,0,2],
 };
-// Structural signals that must corroborate an Enterprise recommendation:
 const ENTERPRISE_SIGNALS = new Set(['heavy_system','multi_division']);
 
 function recommend(answers){          // answers = {need, stack, shape}
@@ -282,36 +302,37 @@ function recommend(answers){          // answers = {need, stack, shape}
   const ids=Object.values(answers);
   ids.forEach(id=>{ const v=SCORES[id]; s.setup+=v[0]; s.build+=v[1]; s.enterprise+=v[2]; });
 
-  // rank; tie-break toward the LOWER commitment (honest default)
-  const order=['setup','build','enterprise'];
-  let ranked=order.slice().sort((a,b)=> s[b]-s[a] || order.indexOf(a)-order.indexOf(b));
+  let ranked=ORDER.slice().sort((a,b)=> s[b]-s[a] || ORDER.indexOf(a)-ORDER.indexOf(b));
   let winner=ranked[0];
 
-  // Enterprise-corroboration guard: never recommend $18k on self-report alone.
+  // §3.2.3 Enterprise-corroboration guard
   const hasEntSignal = ids.some(id=>ENTERPRISE_SIGNALS.has(id));
   let guarded=false;
   if(winner==='enterprise' && !hasEntSignal){ winner='build'; guarded=true; }
 
-  // recompute "also consider" order around the (possibly guarded) winner
-  const others=order.filter(t=>t!==winner).sort((a,b)=> s[b]-s[a] || order.indexOf(a)-order.indexOf(b));
+  // §3.2.4 also-consider order + Enterprise suppression on Setup-win-no-signal
+  let others=ORDER.filter(t=>t!==winner).sort((a,b)=> s[b]-s[a] || ORDER.indexOf(a)-ORDER.indexOf(b));
+  if(winner==='setup' && !hasEntSignal) others=others.filter(t=>t!=='enterprise');
   const runnerUp=others[0];
-  const closeCall = !guarded && (s[winner]-s[runnerUp] <= 1) && s[runnerUp] > 0;
 
-  // dominant driver clause (priority: migration > structure > primary axis)
+  // §3.2.5 close-call (suppressed when guarded)
+  const closeCall = !guarded && runnerUp && (s[winner]-s[runnerUp] <= 1) && s[runnerUp] > 0;
+
+  // §3.2.6 winner-consistent driver priority
   let driver;
-  if(answers.stack==='heavy_system') driver='migration';
-  else if(answers.shape==='multi_division') driver='structure';
-  else if(winner==='setup')  driver = answers.need==='configure' ? 'configure' : 'simple';
-  else if(winner==='build')  driver = 'build_one';
-  else driver='structure';
+  if(guarded) driver='guarded';
+  else if(winner==='enterprise') driver = answers.stack==='heavy_system' ? 'migration'
+                                        : answers.shape==='multi_division' ? 'structure' : 'structure';
+  else if(winner==='build') driver='build_one';
+  else driver = answers.need==='configure' ? 'configure' : 'simple';
 
   return { winner, others, runnerUp, closeCall, guarded, driver, scores:s };
 }
 
 const REASON = {
-  setup:"Setup. We shape OPS around the way you already work — your pipeline, your stages, your fields. Nothing new to learn. Just OPS, built to fit you.",
-  build:"Build. We build the one thing you're missing — a custom module for your trade, on iOS and web, wired straight into your live OPS.",
-  enterprise:"Enterprise. Multiple custom modules, your data moved off the old system, your tools integrated. Your whole operation, rebuilt on OPS.",
+  setup:"We shape OPS around the way you already work — your pipeline, your stages, your fields. Nothing new to learn. Just OPS, built to fit you.",
+  build:"We build the one thing you're missing — a custom module for your trade, on iOS and web, wired straight into your live OPS.",
+  enterprise:"Multiple custom modules, your data moved off the old system, your tools integrated. Your whole operation, rebuilt on OPS.",
 };
 const DRIVER = {
   configure:"[ you said your work already fits how OPS runs ]",
@@ -319,7 +340,9 @@ const DRIVER = {
   migration:"[ you're moving off a system that has to come with you ]",
   structure:"[ you're running more than one crew, trade, or division ]",
   simple:"[ your operation's lean enough to start light ]",
+  guarded:"[ you want the whole thing rebuilt — we start with one module and prove it ]",
 };
+const GUARD_NOTE = "You said rebuild — but with nothing to migrate and a lean crew, Enterprise would be overkill. We start with Build and prove it. If discovery shows it's bigger, we move up.";
 const ALSO = {
   setup:"if you'd rather get organized first and build custom later.",
   build:"if one custom module would close most of the gap.",
@@ -333,11 +356,12 @@ const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const el = id=>document.getElementById(id);
 let step=0; const answers={};
 
-const guide=el('guide'), entry=el('entry'), body=el('guideBody');
+const guide=el('guide'), entry=el('entry');
 const questions=el('questions'), result=el('result');
 
 function openGuide(){ guide.classList.add('open'); entry.setAttribute('aria-expanded','true');
   entry.style.display='none'; step=0; renderQuestion(); }
+
 function renderQuestion(){
   questions.style.display='block'; result.style.display='none';
   const q=QUESTIONS[step];
@@ -354,20 +378,21 @@ function renderQuestion(){
     b.addEventListener('click',()=>choose(q,o,b));
     opts.appendChild(b);
   });
-  // transition in
   if(!reduce){ prompt.animate([{opacity:0,transform:'translateY(8px)'},{opacity:1,transform:'none'}],{duration:200,easing:'cubic-bezier(0.22,1,0.36,1)'});
     opts.animate([{opacity:0,transform:'translateY(8px)'},{opacity:1,transform:'none'}],{duration:240,easing:'cubic-bezier(0.22,1,0.36,1)'}); }
   el('backBtn').disabled = step===0;
 }
+
 function choose(q,o,btn){
   answers[q.id]=o.id;
   const opts=el('opts'); opts.classList.add('committing');
-  [...opts.children].forEach(c=>c.classList.toggle('sel', c===btn));
-  [...opts.children].forEach(c=>c.setAttribute('aria-checked', c===btn?'true':'false'));
+  [...opts.children].forEach(c=>{ c.classList.toggle('sel', c===btn); c.setAttribute('aria-checked', c===btn?'true':'false'); });
   const advance=()=>{ if(step<QUESTIONS.length-1){ step++; renderQuestion(); } else { showResult(); } };
-  reduce ? advance() : setTimeout(advance,260);
+  // §5.1 hardening: longer commit hold (~390ms) so the selection is legible.
+  reduce ? advance() : setTimeout(advance,390);
 }
 el('backBtn').addEventListener('click',()=>{ if(step>0){ step--; renderQuestion(); }});
+el('resultBackBtn').addEventListener('click',()=>{ step=QUESTIONS.length-1; renderQuestion(); });
 
 function showResult(){
   questions.style.display='none'; result.style.display='block';
@@ -375,17 +400,28 @@ function showResult(){
   el('rTier').textContent=TIERS[r.winner];
   el('rReason').textContent=REASON[r.winner];
   el('rBecause').textContent=DRIVER[r.driver];
-  // close-call line
+
+  // §5.2 guard note (surface the guard instead of suppressing reassurance)
+  const guardEl=el('rGuard');
+  if(r.guarded){ guardEl.style.display='block'; guardEl.textContent=GUARD_NOTE; } else guardEl.style.display='none';
+
+  // close-call
   const closeEl=el('rClose');
   if(r.closeCall){
-    const lower = (['setup','build','enterprise'].indexOf(r.winner) < ['setup','build','enterprise'].indexOf(r.runnerUp)) ? r.winner : r.runnerUp;
+    const lower = ORDER.indexOf(r.winner) < ORDER.indexOf(r.runnerUp) ? r.winner : r.runnerUp;
     const higher = lower===r.winner ? r.runnerUp : r.winner;
     closeEl.style.display='block';
     closeEl.textContent=`${TIERS[lower]} and ${TIERS[higher]} both fit. Start with ${TIERS[lower]} — if discovery shows you need ${TIERS[higher]}, we move you up then.`;
   } else closeEl.style.display='none';
-  // CTA
-  const cta=el('rCta'); cta.textContent=`SEE THE ${TIERS[r.winner]} PACKAGE`;
-  cta.onclick=()=>gotoCard(r.winner);
+
+  // §5.2 PRIMARY action lives in the result; card-scroll is secondary
+  const cta=el('rCta');
+  cta.textContent=`TALK TO THE FOUNDER ABOUT ${TIERS[r.winner]}`;
+  cta.onclick=()=>{ /* prod: location.href = `/resources?tier=${r.winner}&from=guide#contact` */ gotoCard(r.winner); };
+  const sec=el('rSecondary');
+  sec.textContent=`See the ${TIERS[r.winner]} package ›`;
+  sec.onclick=()=>gotoCard(r.winner);
+
   // also consider
   const also=el('rAlso'); also.innerHTML='';
   r.others.forEach(t=>{
@@ -393,19 +429,32 @@ function showResult(){
     b.innerHTML=`<span class="at">${TIERS[t]}</span>${ALSO[t]}`;
     b.onclick=()=>gotoCard(t); also.appendChild(b);
   });
-  // achievement beat: underline draws L→R; restraint, no parade
+
+  // §4 pill override: once the guide runs, its result owns "recommended"
+  applyPillOverride(r.winner);
+
+  // achievement beat: neutral hairline underline draws L→R; restraint, no parade
   const under=el('rUnder'); under.style.width='0';
   if(reduce){ under.style.width='100%'; }
   else { result.animate([{opacity:0,transform:'translateY(8px)'},{opacity:1,transform:'none'}],{duration:300,easing:'cubic-bezier(0.22,1,0.36,1)'});
     requestAnimationFrame(()=>{ under.style.width = el('rTier').offsetWidth+'px'; }); }
 }
+
+function applyPillOverride(winner){
+  // generic BUILD "RECOMMENDED" pill yields to the per-user "YOUR MATCH"
+  el('recPill').classList.toggle('hidden', winner!=='build');
+  document.querySelectorAll('.pill-match').forEach(p=>p.classList.toggle('hidden', p.dataset.match!==winner));
+}
 function gotoCard(tier){
   document.querySelectorAll('.card').forEach(c=>c.classList.remove('hot'));
   const card=el('card-'+tier); card.classList.add('hot');
+  // §5.3 desktop would use block:'start'+offset to clear the fixed phone; mobile 'center'
   card.scrollIntoView({behavior:reduce?'auto':'smooth', block:'center'});
 }
 function restart(){ step=0; for(const k in answers) delete answers[k];
   document.querySelectorAll('.card').forEach(c=>c.classList.remove('hot'));
+  el('recPill').classList.remove('hidden');
+  document.querySelectorAll('.pill-match').forEach(p=>p.classList.add('hidden'));
   renderQuestion(); }
 
 entry.addEventListener('click',openGuide);
