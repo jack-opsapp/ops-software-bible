@@ -67,9 +67,13 @@ completed → contact-click ratio; success later is completed → `stripe_checko
 
 **Changes applied from the review (APPLY_NOW items, woven into the sections below):**
 
-1. Result gets its own first-class action (`TALK TO THE FOUNDER ABOUT {tier}`),
-   card-scroll demoted to secondary (§ 5.2, § 5.3, § 8.1). *5 of 7 lenses converged
-   here — highest-confidence finding.*
+1. Result gets its own first-class action: an **inline, pre-contextualized inquiry
+   form** (`START YOUR {tier}`) that submits the lead + the full guide context
+   without leaving the page — *not* a punt to the generic `/resources` contact page,
+   which would discard everything the guide captured. Card-scroll demoted to
+   secondary (§ 5.2, § 5.3, § 8.1, § 12.7). *5 of 7 lenses converged on fixing this
+   handoff — highest-confidence finding; the inline-form upgrade is Jackson's
+   2026-06-13 directive.*
 2. The base-dictionary reconciliation is now a **hard precondition** (§ 12.0), not a
    footnote — the cards the guide scrolls to are rendering raw keys in prod today.
 3. Action-stage instrumentation added: `tier_guide_viewed` (START denominator) +
@@ -440,14 +444,26 @@ ALSO CONSIDER
 
 - **The recommendation is stated plainly and first**: tier name, then the one-sentence
   reason, then the bracketed "because you said X." No hedging into uselessness.
-- **Primary action lives in the result.** With `depositsEnabled` OFF, the primary CTA
-  is `TALK TO THE FOUNDER ABOUT {tier}` → `/resources?tier={tier}&from=guide#contact`
-  (tier pre-named, prefilled into the contact form). The card-scroll
-  (`see the {tier} package ›`) is **secondary**. Rationale: the live `PackageCard`
-  renders its features grid, examples, milestone bar, and subscription/retainer rows
-  **before** its CTA — so "scroll to the card" spends peak intent on a contact link
-  buried below ~5 blocks of detail. Co-locating a tier-named action with the
-  reasoning is the single highest-confidence conversion fix in the review.
+- **Primary action = an inline inquiry form, in place — no navigation away.** With
+  `depositsEnabled` OFF, the primary CTA (`START YOUR {tier}`) expands a short,
+  pre-contextualized inquiry form *inside the guide container*. It does **not** punt
+  to the generic `/resources` contact page — that throws away everything the guide
+  just captured and reads as a dead end. The form (full spec § 12.7):
+  - opens with an editable one-line summary of what they told us + the tier ("A
+    custom Build module for your trade — you're on Jobber, one crew"), so the user
+    sees they were heard and can correct it;
+  - collects **name, phone, email (required)** and a **"what do you need?"** textarea
+    **pre-filled** with a starter line derived from their answers (never a blank box);
+  - submits the contact fields **plus the structured guide payload** (tier + the
+    three answers + driver) to the existing `/api/contact` route (extended, § 12.7),
+    so Jackson receives a *qualified* lead — not a blank "tell us how we can help";
+  - resolves to an inline confirmation ("Got it — Jackson will reach out about your
+    {tier}"). No page change, no momentum lost.
+  The card-scroll (`see the {tier} package ›`) stays **secondary**. Rationale: the
+  live `PackageCard` renders features/examples/milestones/subscription rows **before**
+  its CTA, so "scroll to the card" buries peak intent below ~5 blocks; and a generic
+  contact page discards the qualification. Co-locating a contextual inquiry form with
+  the reasoning is the single highest-confidence conversion fix in the review.
 - **When `depositsEnabled` flips ON**, the same primary slot becomes the deposit
   action — `PAY {tier} DEPOSIT` wired through the card's existing `handleDeposit(tier)`
   (and, per § 13.1, optionally pre-selecting the tier into the Stripe session). The
@@ -628,7 +644,7 @@ scroll-to-card handoff (§ 5.3) clears the phone's right-edge mass.
 │ your trade, on iOS and web, wired straight into your OPS.    │
 │ [ you need one specific thing built — not the whole op ]     │
 │                                                              │
-│ [ TALK TO THE FOUNDER ABOUT BUILD ]   ← PRIMARY (white-on-accent)  │
+│ [ START YOUR BUILD ]   ← PRIMARY: opens the inline inquiry form (white-on-accent) │
 │ see the build package ›               ← secondary (scroll to card) │
 │                                                              │
 │ ALSO CONSIDER                                                │
@@ -738,9 +754,24 @@ stores `{trade, desc}` arrays.
 | `guide.driver.simple` | `[ your operation's lean enough to start light ]` |
 | `guide.driver.guarded` | `[ you want the whole thing rebuilt — we start with one module and prove it ]` |
 | `guide.result.guardNote` | `You said rebuild — but with nothing to migrate and a lean crew, Enterprise would be overkill. We start with Build and prove it. If discovery shows it's bigger, we move up.` |
-| `guide.result.ctaPrimary` | `TALK TO THE FOUNDER ABOUT {tier}` |
+| `guide.result.ctaPrimary` | `START YOUR {tier}` *(opens the inline inquiry form, § 12.7)* |
 | `guide.result.ctaPrimaryDeposit` | `PAY {tier} DEPOSIT` *(used only when depositsEnabled is ON; see § 5.2)* |
 | `guide.result.ctaSecondary` | `See the {tier} package ›` |
+| `guide.inquiry.heading` | `// START YOUR {tier}` |
+| `guide.inquiry.summary.setup` | `Setting OPS up around how you already work.` |
+| `guide.inquiry.summary.build` | `A custom module for your trade, built on OPS.` |
+| `guide.inquiry.summary.enterprise` | `Your operation rebuilt on OPS — modules, migration, integrations.` |
+| `guide.inquiry.name` | `Name` |
+| `guide.inquiry.phone` | `Phone` |
+| `guide.inquiry.email` | `Email` |
+| `guide.inquiry.message` | `What do you need?` |
+| `guide.inquiry.prefill.setup` | `I want OPS set up around my workflow. Here's how my jobs run:` |
+| `guide.inquiry.prefill.build` | `I need a custom module for my trade. Here's what it has to do:` |
+| `guide.inquiry.prefill.enterprise` | `I want to move my operation onto OPS. Here's what I'm running and what I need:` |
+| `guide.inquiry.submit` | `SEND IT` |
+| `guide.inquiry.sending` | `SENDING…` |
+| `guide.inquiry.success` | `Got it. Jackson will reach out about your {tier}.` |
+| `guide.inquiry.error` | `// SEND FAILED — try again, or email hello@opsapp.co` |
 | `guide.result.alsoLabel` | `ALSO CONSIDER` |
 | `guide.also.setup` | `if you'd rather get organized first and build custom later.` |
 | `guide.also.build` | `if one custom module would close most of the gap.` |
@@ -784,9 +815,24 @@ so nothing can be dropped.
 | `guide.driver.simple` | `[ tu operación es lo bastante simple para empezar ligero ]` |
 | `guide.driver.guarded` | `[ quieres reconstruirlo todo — empezamos con un módulo y lo probamos ]` |
 | `guide.result.guardNote` | `Dijiste reconstruir — pero sin nada que migrar y con una cuadrilla, Enterprise sería demasiado. Empezamos con Build y lo probamos. Si discovery muestra que es más grande, subimos.` |
-| `guide.result.ctaPrimary` | `HABLA CON EL FUNDADOR SOBRE {tier}` |
+| `guide.result.ctaPrimary` | `EMPIEZA TU {tier}` *(abre el formulario en línea, § 12.7)* |
 | `guide.result.ctaPrimaryDeposit` | `PAGAR DEPÓSITO {tier}` |
 | `guide.result.ctaSecondary` | `Ver el paquete {tier} ›` |
+| `guide.inquiry.heading` | `// EMPIEZA TU {tier}` |
+| `guide.inquiry.summary.setup` | `Configurar OPS según cómo ya trabajas.` |
+| `guide.inquiry.summary.build` | `Un módulo a medida para tu oficio, sobre OPS.` |
+| `guide.inquiry.summary.enterprise` | `Tu operación reconstruida en OPS — módulos, migración, integraciones.` |
+| `guide.inquiry.name` | `Nombre` |
+| `guide.inquiry.phone` | `Teléfono` |
+| `guide.inquiry.email` | `Correo` |
+| `guide.inquiry.message` | `¿Qué necesitas?` |
+| `guide.inquiry.prefill.setup` | `Quiero OPS configurado según mi flujo. Así corren mis trabajos:` |
+| `guide.inquiry.prefill.build` | `Necesito un módulo a medida para mi oficio. Esto es lo que tiene que hacer:` |
+| `guide.inquiry.prefill.enterprise` | `Quiero mover mi operación a OPS. Esto es lo que uso y lo que necesito:` |
+| `guide.inquiry.submit` | `ENVIAR` |
+| `guide.inquiry.sending` | `ENVIANDO…` |
+| `guide.inquiry.success` | `Listo. Jackson te contactará sobre tu {tier}.` |
+| `guide.inquiry.error` | `// FALLÓ EL ENVÍO — intenta de nuevo, o escribe a hello@opsapp.co` |
 | `guide.result.alsoLabel` | `TAMBIÉN CONSIDERA` |
 | `guide.also.setup` | `si prefieres organizarte primero y construir a medida después.` |
 | `guide.also.build` | `si un módulo a medida cubriría casi todo.` |
@@ -889,7 +935,8 @@ written here, not the prototype's older logic.
 |---|---|
 | `SpecTierGuide.tsx` | `'use client'`. Owns flow state (`step`, `answers`, `phase: 'entry'\|'questions'\|'result'`). Renders entry bar, questions, result. Receives a typed `copy` prop (built in `SpecPageContent` from `t(dict,…)`, exactly like `SpecOpsBoardCopy`). Emits `onRecommend(result)` up to `SpecPricing` for the pill-override + card handoff. |
 | `GuideQuestion.tsx` | One question: prompt, `01 / 03` (contrast not accent), three **two-line** option rows (§ 8.1 anatomy), `‹ BACK`. Selection + gesture-guarded auto-advance + Framer transitions (§7). |
-| `GuideResult.tsx` | Tier name + neutral underline draw, reason, driver clause, guard note, close-call line, **primary action** (tier-named contact CTA → `/resources?tier={tier}&from=guide#contact`; or deposit when ON), secondary card-scroll, also-consider, `‹ BACK` + `START OVER`. |
+| `GuideResult.tsx` | Tier name + neutral underline draw, reason, driver clause, guard note, close-call line, **primary action** (`START YOUR {tier}` → expands `GuideInquiry`; or deposit when ON), secondary card-scroll, also-consider, `‹ BACK` + `START OVER`. |
+| `GuideInquiry.tsx` | The inline inquiry form (§ 5.2, § 12.7): editable context summary, name / phone / email / pre-filled "what do you need?" textarea, submit → `/api/contact` (extended) with the guide payload, inline success/error states. |
 | `tier-guide-copy.ts` | The `SpecTierGuideCopy` interface + the `t(dict,…)` assembly helper (parallels `SpecOpsBoardCopy`). |
 
 The component tree is small and bounded — each file does one thing and is readable
@@ -925,11 +972,11 @@ shown) by rendering both locales.
 
 ### 12.5 Analytics
 
-Client-side only — the guide is a soft engagement + qualification signal with no PII
-and no server round-trip, so it uses `trackMarketingEvent(name, props)` from
-`src/lib/marketing-analytics.ts` (fires `gtag` + Vercel `track`). It does **not**
+**Analytics** are client-side and carry no PII — `trackMarketingEvent(name, props)`
+from `src/lib/marketing-analytics.ts` (fires `gtag` + Vercel `track`). They do **not**
 use the server `sendConversionEvent()` outbox — that is reserved for the ad-platform
-funnel (deposit click, checkout). Events:
+funnel (deposit click, checkout). (The inquiry-form submission is the guide's one
+server touch — § 12.7.) Events:
 
 | Event | When | Properties |
 |---|---|---|
@@ -937,15 +984,17 @@ funnel (deposit click, checkout). Events:
 | `tier_guide_started` | `START` clicked / guide expands | `{ locale }` |
 | `tier_guide_answered` | each option select | `{ step, question_id, option_id }` |
 | `tier_guide_completed` | result shown | `{ recommended_tier, guarded, close_call, driver }` |
-| `tier_guide_to_contact` | result PRIMARY CTA clicked | `{ recommended_tier, driver, guarded, close_call, from:'tier_guide' }` |
+| `tier_guide_inquiry_opened` | result PRIMARY CTA clicked → form shown | `{ recommended_tier, driver, guarded, close_call }` |
+| `tier_guide_inquiry_submitted` | inquiry form submitted successfully | `{ recommended_tier, driver, guarded, close_call, source:'tier_guide' }` |
 | `tier_guide_card_opened` | secondary card-scroll / also-consider → card | `{ from_tier, to_tier }` |
 
-- Persist a `from=guide` (+ `tier`) marker into the contact-form URL/state (and,
-  once deposits are ON, into Stripe metadata) so guide-attributed conversions are
-  reconstructable end-to-end. When deposits go live, map `tier_guide_to_contact` to
-  the same Meta CAPI intermediate funnel step as `owner_approval_requested`.
+- The guide payload (tier + the three answers + driver, `source:'tier_guide'`) is
+  submitted **with the inquiry form** and stored on the `contact_messages` row (§ 12.7)
+  — no `from=guide` URL hop is needed because there's no navigation. When deposits go
+  live, map `tier_guide_inquiry_submitted` (and the future deposit) to the same Meta
+  CAPI intermediate funnel step as `owner_approval_requested`.
 - **Success metric — say it explicitly:** today, success is the
-  `tier_guide_completed → tier_guide_to_contact` **ratio** (and the
+  `tier_guide_completed → tier_guide_inquiry_submitted` **ratio** (and the
   `recommended_tier` vs. where conversations actually land signal); later, it's
   `tier_guide_completed → stripe_checkout_completed`. **`tier_guide_completed` count
   alone is a vanity metric** and must not be used to declare success.
@@ -963,12 +1012,46 @@ primary-action wiring. **Note:** the § 12.0 dictionary reconciliation is separa
 base-page work that must land first; treat it as its own task, not part of the
 guide's effort estimate.
 
+### 12.7 Inquiry submission — the one server touch (reuses existing backend)
+
+The result's primary action submits an inline inquiry; the backend already exists —
+`POST /api/contact` → `contact_messages` (+ newsletter upsert). Extend it; do not
+build new infrastructure.
+
+- **Request (extended `/api/contact`):** existing `{ name, email, message }` plus
+  optional `{ phone, company?, tier, guide: { need, stack, shape, driver }, source:
+  'tier_guide' }`. Server validates email + non-empty message (existing rules), then
+  persists the new context.
+- **Storage:** add a `metadata jsonb` column (or `phone`, `source`, `context jsonb`
+  columns) to `contact_messages` so Jackson sees a **qualified** lead — recommended
+  tier + the three answers + the driver — not a bare message. *Schema change →
+  mirror the migration into `migrations/`, update `03_DATA_ARCHITECTURE.md`, and
+  (per CLAUDE.md) verify the live table with the Supabase MCP before writing it.*
+- **Notify Jackson:** on insert, create the lead notification through the existing
+  path (`src/lib/spec/notifications.ts` / the email-outbox pattern) so a guide lead
+  lands in the rail + inbox, tagged `source: tier_guide`, tier, and the summary —
+  consistent with the OPS notification-system requirement in CLAUDE.md.
+- **Client:** `GuideInquiry.tsx` mirrors the existing `ContactForm.tsx` field styling
+  and submit/success/error states (token-faithful), pre-fills the textarea from
+  `guide.inquiry.prefill.<tier>`, and renders the inline confirmation
+  (`guide.inquiry.success`) in place — no navigation. Fires
+  `tier_guide_inquiry_submitted` on success (§ 12.5).
+- **Spam/abuse:** the route is public; add the same minimal guard the contact route
+  uses (and a honeypot/timing check if not already present). No new auth.
+- **Deposits-ON future:** when `depositsEnabled` flips ON, the primary slot becomes
+  the deposit action (`PAY {tier} DEPOSIT` → `handleDeposit(tier)`); the inquiry form
+  remains the path for users who want to talk first.
+
+This is the single addition that moves the guide from "purely client-side" to "one
+server touch" — and it is the reason the feature is worth shipping before deposits
+(a qualified-lead pipeline with full context), not a generic contact dump.
+
 ---
 
 ## 13. Open questions for Jackson
 
 1. **Pre-select the tier into the deposit flow?** Today the result's primary action
-   is the tier-named contact CTA; the card-scroll is secondary. Once
+   is the inline inquiry form (§ 12.7); the card-scroll is secondary. Once
    `depositsEnabled` is ON, the result's primary slot becomes the deposit action —
    should completing the guide also *pre-select* the recommended tier into the
    Stripe session (one-tap), or just open the deposit for that tier?

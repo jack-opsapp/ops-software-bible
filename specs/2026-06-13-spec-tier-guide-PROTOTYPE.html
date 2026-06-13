@@ -133,6 +133,23 @@
   .r-also .also-row .at{font-family:var(--mono);text-transform:uppercase;letter-spacing:.12em;font-size:11px;color:var(--text);margin-right:8px}
   .r-foot{margin-top:22px;display:flex;align-items:center;gap:20px}
 
+  /* inline inquiry form (§5.2 / §12.7) */
+  .r-inquiry{display:none;margin-top:22px;border-top:1px solid var(--line-soft);padding-top:20px}
+  .r-inquiry.show{display:block}
+  .r-inq-head{color:var(--text-mute);margin-bottom:8px}
+  .r-inq-sum{font-size:13px;color:var(--text-3);margin-bottom:16px;line-height:1.5}
+  .r-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .r-field{margin-bottom:14px}
+  .r-field label{display:block;font-family:var(--mono);text-transform:uppercase;letter-spacing:.15em;font-size:10px;color:var(--text-3);margin-bottom:6px}
+  .r-field input,.r-field textarea{width:100%;background:rgba(255,255,255,0.04);border:1px solid var(--line);border-radius:var(--r-btn);padding:11px 13px;font-family:var(--head);font-size:14px;color:var(--text);transition:border-color .15s var(--ease)}
+  .r-field input::placeholder,.r-field textarea::placeholder{color:var(--text-mute)}
+  .r-field input:focus,.r-field textarea:focus{outline:none;border-color:var(--line-hover)}
+  .r-field textarea{resize:vertical;min-height:96px;line-height:1.5}
+  .r-confirm{display:none;margin-top:22px;border-top:1px solid var(--line-soft);padding-top:20px}
+  .r-confirm.show{display:block}
+  .r-confirm .ck{font-family:var(--head);font-weight:500;text-transform:uppercase;letter-spacing:.04em;font-size:18px;color:var(--text)}
+  @media(max-width:768px){.r-grid{grid-template-columns:1fr}}
+
   /* mock pricing cards */
   .cards{display:flex;flex-direction:column;gap:12px;margin-top:26px}
   .card{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);padding:18px 20px;
@@ -219,6 +236,21 @@
             <button class="r-cta" id="rCta"></button>
             <button class="r-secondary" id="rSecondary"></button>
           </div>
+
+          <!-- inline inquiry form — opened by the primary CTA, no navigation away -->
+          <form class="r-inquiry" id="rInquiry">
+            <div class="label r-inq-head" id="rInqHead">// START YOUR BUILD</div>
+            <div class="r-inq-sum" id="rInqSum"></div>
+            <div class="r-grid">
+              <div class="r-field"><label>Name</label><input type="text" id="inqName" placeholder="Jack"></div>
+              <div class="r-field"><label>Phone</label><input type="tel" id="inqPhone" placeholder="(___) ___-____"></div>
+            </div>
+            <div class="r-field"><label>Email *</label><input type="email" id="inqEmail" placeholder="you@company.com" required></div>
+            <div class="r-field"><label>What do you need?</label><textarea id="inqMsg"></textarea></div>
+            <button type="submit" class="r-cta">SEND IT</button>
+          </form>
+          <div class="r-confirm" id="rConfirm"><div class="ck" id="rConfirmText"></div></div>
+
           <div class="r-also">
             <div class="label also-label">ALSO CONSIDER</div>
             <div id="rAlso"></div>
@@ -348,13 +380,23 @@ const ALSO = {
   build:"if one custom module would close most of the gap.",
   enterprise:"if discovery shows you need more than one module, or a migration.",
 };
+const SUMMARY = {
+  setup:"Setting OPS up around how you already work.",
+  build:"A custom module for your trade, built on OPS.",
+  enterprise:"Your operation rebuilt on OPS — modules, migration, integrations.",
+};
+const PREFILL = {
+  setup:"I want OPS set up around my workflow. Here's how my jobs run:\n\n",
+  build:"I need a custom module for my trade. Here's what it has to do:\n\n",
+  enterprise:"I want to move my operation onto OPS. Here's what I'm running and what I need:\n\n",
+};
 
 /* ============================================================
    PROTOTYPE WIRING (illustrative — production uses Framer Motion + React state)
    ============================================================ */
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const el = id=>document.getElementById(id);
-let step=0; const answers={};
+let step=0; let currentTier=null; const answers={};
 
 const guide=el('guide'), entry=el('entry');
 const questions=el('questions'), result=el('result');
@@ -414,10 +456,12 @@ function showResult(){
     closeEl.textContent=`${TIERS[lower]} and ${TIERS[higher]} both fit. Start with ${TIERS[lower]} — if discovery shows you need ${TIERS[higher]}, we move you up then.`;
   } else closeEl.style.display='none';
 
-  // §5.2 PRIMARY action lives in the result; card-scroll is secondary
-  const cta=el('rCta');
-  cta.textContent=`TALK TO THE FOUNDER ABOUT ${TIERS[r.winner]}`;
-  cta.onclick=()=>{ /* prod: location.href = `/resources?tier=${r.winner}&from=guide#contact` */ gotoCard(r.winner); };
+  // §5.2 PRIMARY action = inline inquiry form (no navigation away); card-scroll secondary
+  currentTier=r.winner;
+  el('rInquiry').classList.remove('show'); el('rConfirm').classList.remove('show');
+  const cta=el('rCta'); cta.style.display='';
+  cta.textContent=`START YOUR ${TIERS[r.winner]}`;
+  cta.onclick=()=>openInquiry(r.winner);
   const sec=el('rSecondary');
   sec.textContent=`See the ${TIERS[r.winner]} package ›`;
   sec.onclick=()=>gotoCard(r.winner);
@@ -451,6 +495,22 @@ function gotoCard(tier){
   // §5.3 desktop would use block:'start'+offset to clear the fixed phone; mobile 'center'
   card.scrollIntoView({behavior:reduce?'auto':'smooth', block:'center'});
 }
+function openInquiry(tier){
+  el('rInqHead').textContent=`// START YOUR ${TIERS[tier]}`;
+  el('rInqSum').textContent=SUMMARY[tier];
+  el('inqMsg').value=PREFILL[tier];   // pre-filled, never a blank box
+  el('rInquiry').classList.add('show');
+  el('rCta').style.display='none';     // launcher yields to the form
+  el('inqName').focus();
+}
+el('rInquiry').addEventListener('submit',e=>{
+  e.preventDefault();
+  // prod: POST /api/contact { name, phone, email, message, tier:currentTier,
+  //   guide:{...answers, driver}, source:'tier_guide' }  → fires tier_guide_inquiry_submitted
+  el('rInquiry').classList.remove('show');
+  el('rConfirmText').textContent=`Got it. Jackson will reach out about your ${TIERS[currentTier]}.`;
+  el('rConfirm').classList.add('show');
+});
 function restart(){ step=0; for(const k in answers) delete answers[k];
   document.querySelectorAll('.card').forEach(c=>c.classList.remove('hot'));
   el('recPill').classList.remove('hidden');
