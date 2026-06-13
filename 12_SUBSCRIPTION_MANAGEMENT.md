@@ -58,9 +58,9 @@ Defined in `supabase/migrations/EXECUTED/004_core_entities.sql:69-86`.
 | `seat_grace_start_date` | TIMESTAMPTZ | NULL | yes | When the company first entered `grace`. Drives 7-day grace expiry. |
 | `max_seats` | INT | 10 | no | Hard ceiling. Currently set by migration default; not overridden by plan changes. |
 | `seated_employee_ids` | TEXT[] | `'{}'` | no | User IDs occupying paid seats. |
-| `has_priority_support` | BOOLEAN | FALSE | no | Add-on flag. Not currently enforced. |
-| `data_setup_purchased` | BOOLEAN | FALSE | no | Add-on flag. Not currently enforced. |
-| `data_setup_completed` | BOOLEAN | FALSE | no | Add-on flag. Not currently enforced. |
+| `has_priority_support` | BOOLEAN | FALSE | no | Priority Support add-on entitlement. Flipped by the Stripe webhook (`handlePrioritySupportCheckout`) on add-on checkout. See § 07 Subscription Add-ons. |
+| `data_setup_purchased` | BOOLEAN | FALSE | no | Data Setup add-on entitlement (one-time). Flipped `true` by the Stripe webhook (`handleDataSetupCheckout`) on `checkout.session.completed`; also files a `data_setup_requests` row for ops fulfillment. See § 07 Subscription Add-ons / `03_DATA_ARCHITECTURE.md`. |
+| `data_setup_completed` | BOOLEAN | FALSE | no | Flipped by ops staff in `/admin/data-setup` once the data migration is fulfilled. |
 
 ---
 
@@ -152,7 +152,9 @@ Defined in `ops-web/src/lib/types/models.ts` and mirrored in `opsapp-ios/OPS/Dat
 | `seat_grace_start_date` | webhook `invoice.payment_failed` (set, only if null), webhook `subscription.created/updated` (set on grace, clear on active/trial), reconcile cron |
 | `max_seats` | Migration default 10. Not currently overridden by plan changes — **gap**. |
 | `seated_employee_ids` | Postgres function `join_user_to_company()` (auto-seat on join), `CompanyService.addSeatedEmployee()` and `removeSeatedEmployee()` (manual via team UI) |
-| `has_priority_support`, `data_setup_*` | Never written by code. **Gap** — add-on flags not yet implemented. |
+| `has_priority_support` | Stripe webhook `handlePrioritySupportCheckout` (set on add-on `checkout.session.completed`; cleared on add-on `subscription.deleted/updated`). |
+| `data_setup_purchased` | Stripe webhook `handleDataSetupCheckout` (set on one-time `checkout.session.completed`). |
+| `data_setup_completed` | Ops staff via `/admin/data-setup` (request lifecycle → `completed`). |
 
 ---
 
@@ -335,7 +337,7 @@ The reconcile cron logs every drift fix. Search Vercel logs for `[reconcile-stri
 ## Known Gaps (as of 2026-04-14)
 
 1. **`max_seats` is not updated when the plan changes.** Currently fixed at the migration default of 10. Plan tier limits (3/5/unlimited) are enforced in app logic via `subscription_plan` reads, not via this column. Either remove the column or wire plan-change logic to update it.
-2. **`has_priority_support`, `data_setup_purchased`, `data_setup_completed`** are defined but never written. Add-on features not yet implemented.
+2. **Add-on entitlement flags are fulfillment markers, not feature gates.** `has_priority_support`, `data_setup_purchased`, and `data_setup_completed` ARE written — Stripe webhooks (`handlePrioritySupportCheckout` / `handleDataSetupCheckout`) on add-on checkout, and ops staff for `data_setup_completed`. The **Data Setup** and **Priority Support** add-ons are implemented end-to-end (§ 07 Subscription Add-ons; the `data_setup_requests` ops queue, `03_DATA_ARCHITECTURE.md`). What remains true: no app feature *gates* on these columns — they drive ops fulfillment + Subscription-tab display, not access control. *(Corrected 2026-06-13 — the prior "never written / not yet implemented" note was stale.)*
 3. **Android has no Supabase company sync.** See [Android Status](#android-status).
 4. **Reconcile cron is per-row, not paginated.** At >1k companies it will exceed the 300s function timeout. Add pagination or move to a background job before that.
 5. **Failed reconcile updates are logged but not alerted.** Add to your monitoring stack.
