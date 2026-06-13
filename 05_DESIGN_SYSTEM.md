@@ -267,6 +267,21 @@ static let separator = Color.white.opacity(0.10)
   - Large backgrounds
   - Non-interactive decorations
   - Text (except links/buttons)
+  - **Data-visualization fills** — chart bars, gauges, sparklines, aging-ramp segments, status dots. Use the semantic earth-tone / financial palette instead. On OPS-Web the accent is user-customizable at runtime (`PreferencesApplier` overrides `--ops-accent-rgb` from the curated accent palette), so any accent-colored data viz inherits whatever color the operator picked — meaning is lost. (Bug fixed 2026-06-13: the Dashboard A/R aging "current" bucket was `WT.accent`, rendering as each user's accent — e.g. `#417394` on demo accounts — instead of the canonical olive.)
+
+#### A/R Aging Color Ramp (2026-06-13)
+
+The accounts-receivable aging ramp is **one canonical healthy → destructive gradient across every surface** (Books AGING view + the Dashboard receivables widget). Each bucket maps to a semantic/financial token, never the accent:
+
+| Bucket | Token (web) | Hex | Earth-tone |
+|--------|-------------|-----|-----------|
+| Current / not-yet-due | `--fin-current` (web) · `--olive` · `financial-profit` | `#9DB582` | olive (healthy) |
+| 1–30 days | `--tan` | `#C4A868` | tan (attention) |
+| 31–60 days | `--fin-receivables` | `#D4A574` | amber |
+| 61–90 days | `--rose` | `#B58289` | rose (at risk) |
+| 90+ days | `--fin-overdue` | `#93321A` | brick (overdue) |
+
+`--fin-current` was added 2026-06-13 (= `--fin-profit`/olive) to give "current/healthy receivables" a self-documenting financial token. Web sources: `globals.css` `--color-financial-current`, `tailwind.config.ts` `financial.current` (→ `bg-financial-current`), `WT.current`; design-system canonical: `ops-design-system/project/colors_and_type.css` + `DESIGN.md §3`.
 
 #### Secondary Accent Usage
 - **DEPRECATED**: `secondaryAccent` now matches `primaryAccent` (#597794). It will be removed after the active-state migration.
