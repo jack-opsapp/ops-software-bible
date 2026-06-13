@@ -644,6 +644,8 @@ final class Client: Identifiable {
 
 **NOTE**: The email property is `email`, NOT `emailAddress`.
 
+**Web client aggregates (OPS-Web, 2026-06-13):** The rebuilt web Clients surface (WEB OVERHAUL P3.3, see `02_USER_EXPERIENCE_AND_WORKFLOWS.md` § "OPS-Web Clients") derives per-client money + activity entirely client-side from existing query caches — no new tables, columns, or RPCs. `OPS-Web/src/lib/hooks/use-client-financials.ts`: `useClientOutstandingMap()` (list OUTSTANDING column + A/R banner), `useClientFinancials(clientId)` (MONEY tab), `useClientActivity(clientId)` (composed timeline). **Data gotcha:** invoices link to a client via `invoices.client_id` (uuid, NOT NULL in prod), NOT `invoices.client_ref` (the FK'd column is 100% NULL in live data). Outstanding excludes statuses `paid`/`void`/`draft`/`written_off`; "oldest" in the A/R banner means oldest *overdue* (due_date < now). All reads are RLS-scoped (`clients`/`invoices` `company_isolation` + `role_scope_read`), so a scoped-out client returns zero rows and the web window shows a not-found state.
+
 ---
 
 ### 5. SubClient

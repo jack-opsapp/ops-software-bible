@@ -1311,6 +1311,24 @@ in the 2026-04-27 Phase 1+2 rework)
 
 ---
 
+### OPS-Web Clients (web client roster + workspace window) — 2026-06-13
+
+**Purpose:** The desktop client book. Shipped in WEB OVERHAUL P3.3 (direction B "lean list + tabbed window", approved 2026-06-13). Replaced the standalone web clients list, the `/clients/[id]` detail page, the `/clients/new` page, the floating client-detail popover, and the create/edit client modals — all retired.
+
+**Source:** list `OPS-Web/src/app/(dashboard)/clients/page.tsx` + `_components/clients-ar-banner.tsx`; window `src/components/ops/clients/workspace/**` (`client-workspace-container.tsx`, `viewing/{client-viewing-body,client-viewing-tabs,contact-tab,projects-tab,money-tab,activity-tab}.tsx`, `edit-create/client-edit-create-body.tsx`). Reuses the generic project workspace shell `components/ops/projects/workspace/shell/project-workspace-window.tsx` directly. Data: existing client/sub-client/project/invoice/opportunity hooks + new cache-shared aggregates `src/lib/hooks/use-client-financials.ts` (`useClientOutstandingMap`, `useClientFinancials`, `useClientActivity`) — no schema changes. Table primitive: shared `components/ui/register-table/` (the P3-5 presentational extraction of table-v2).
+
+**URL contract:** `/clients` (list). The client surface is a floating window, not a route — opened via `useWindowStore.openClientWindow({ clientId, mode })` (`window-store.ts`, type `"client-workspace"`, size 880×620). Deep link `/dashboard?openClient=<id>&mode=view|edit` (and `openClient=new` → creating) handled by `ClientWorkspaceDeepLinkHandler` in `dashboard-layout.tsx`. Retired routes are thin client redirects: `/clients/[id]` → `/dashboard?openClient={id}` (param-preserving), `/clients/new` → `/dashboard?openClient=new`.
+
+**List layout (top to bottom):** (1) **A/R banner** — slim rose bar, "N clients owe $X — oldest Nd" (oldest = oldest *overdue*), `[CHASE →]` sets the OWES filter; rendered only when the operator has `invoices.view` and someone owes. (2) **Workbar** — `// CLIENTS` label + `SearchInput` (name/email/phone/address/sub-contact names) + one accent `+ NEW CLIENT` CTA (gated `clients.create`, setup-gated). (3) **Filter chips** — ALL / WITH PROJECTS / OWES / NEW(≤30d) + mono count. (4) **`RegisterTable`** — columns CLIENT (avatar + name + sub-contact count) · CONTACT (phone · email) · PROJECTS · OUTSTANDING (rose) · LAST SEEN (max of client createdAt + latest project). Row click → `openClientWindow({mode:"viewing"})`. Scope-aware `clients.view` gate preserved verbatim (scope "all" → all company clients; otherwise restricted to clients on the user's accessible projects; fails closed before permissions resolve). Loading = 6 glass skeletons; distinct empty vs filtered-empty states.
+
+**Window (tabbed dossier):** modes viewing / editing / creating via the shared shell's mode footer. Title bar `// CLIENT · <id8> · [owes chip] · <mode pill>` + Cake name. Viewing tabs: **CONTACT** (phone/email/address with copy + tel/mailto/maps, inline sub-contact CRUD gated `clients.edit`/`clients.delete`, notes), **PROJECTS** (active + completed, row → project window), **MONEY** (invoiced/paid/outstanding/overdue tiles + paid-bar + invoice list; tab disabled without `invoices.view`), **ACTIVITY** (composed timeline: project starts + invoices sent/paid/past-due + won opportunities). Editing/creating render a single RHF+zod form (name*/email/phone-autoformat/address+use-my-location/notes — no company field; gated `clients.edit`/`clients.create`, RLS-backstopped). Footer: viewing → EDIT (hidden without `clients.edit`); editing → DELETE (gated `clients.delete`, confirm modal) + DISCARD + CANCEL + SAVE; creating → CANCEL + CREATE. Created → viewing meta swap mirrors the project window.
+
+**Gates** (never roles): list/route `clients.view` (scope-aware); create `clients.create`; edit `clients.edit`; delete `clients.delete`; MONEY tab + A/R figures `invoices.view`.
+
+**Cross-surface:** FAB `client` action + dashboard-widget client-open retargeted to `openClientWindow`. Notifications stay toast-only for client CRUD (self-action; no rail spam). Per-client outstanding joins `invoices.client_id` (NOT `client_ref`, which is 100% NULL in prod) and excludes paid/void/draft/written_off.
+
+---
+
 ### PipelineView (Pipeline Segment)
 
 **Purpose:** CRM pipeline view showing sales opportunities filtered by stage.
