@@ -8,9 +8,8 @@ Build, or Enterprise** — with a plain-English reason.
 - **Status:** design only. No production code written. No shipped `/spec` file
   touched. This document is the brief a follow-up build chip executes from.
 - **Vintage:** designed 2026-06-13, against SPEC Phase 1 as shipped to production
-  (behind the `depositsEnabled` kill switch — currently OFF). **Hardened** by an
-  8-agent design + conversion review, then **extended to a 4th outcome + 5 questions**
-  by a second grounded/adversarial workflow (see § 0).
+  (behind the `depositsEnabled` kill switch — currently OFF). Hardened across three
+  multi-agent passes (see § 0); **v3 is the current design.**
 - **Prototype:** [`specs/2026-06-13-spec-tier-guide-PROTOTYPE.html`](../specs/2026-06-13-spec-tier-guide-PROTOTYPE.html)
   — a throwaway, interactive, token-faithful artifact. Not production; § 7 / § 8 are
   canonical, not the HTML.
@@ -18,786 +17,559 @@ Build, or Enterprise** — with a plain-English reason.
 Primary sources: [01_BUSINESS_MODEL.md](01_BUSINESS_MODEL.md) (tiers, pricing, §4
 upgrade mechanics), [04_CUSTOMER_UX.md](04_CUSTOMER_UX.md) (`/spec` composition,
 voice, conversion-tracking), [07_ROLLOUT.md](07_ROLLOUT.md) § 3, plus the standard-OPS
-capability research cited in § 2.1 (00_EXECUTIVE_SUMMARY, 01_PRODUCT_REQUIREMENTS,
-03_DATA_ARCHITECTURE, 12_SUBSCRIPTION_MANAGEMENT). Live component patterns:
-`SpecPageContent.tsx`, `SpecPricing.tsx`, `PackageCard.tsx`, `SpecOpsBoard.tsx`,
-`lib/theme.ts`, `lib/marketing-analytics.ts`, `lib/spec/conversion-events.ts`,
-`app/api/contact/route.ts`, `components/resources/ContactForm.tsx`.
+capability research cited in § 2.1. Live component patterns: `SpecPageContent.tsx`,
+`SpecPricing.tsx`, `PackageCard.tsx`, `SpecOpsBoard.tsx`, `lib/theme.ts`,
+`lib/marketing-analytics.ts`, `lib/spec/conversion-events.ts`, `app/api/contact/route.ts`,
+`components/resources/ContactForm.tsx`. **Signup URL (confirmed in code):** the free-
+trial entry is `https://app.opsapp.co/register` (`ops-site/src/lib/seo-redirects.ts`
+301s `/signup`, `/sign_up`, `/register` to it). The build reads it from a config
+constant; the value is known, not guessed.
 
 ---
 
-## 0. Review log + conversion verdict (2026-06-13)
+## 0. Review log + verdict (2026-06-13)
 
-**Two review passes, both multi-agent and adversarial.**
+**Three multi-agent passes.**
 
-**Pass 1 (8 agents — design-compliance, craft, 3 CRO lenses, 2 adversaries):**
-hardened the original 3-question / 3-outcome design — result now carries its own
-inline action; the Enterprise guard is surfaced; tokens/focus/a11y fixed; entry copy
-re-led with payoff. Conversion verdict (still holds): **with `depositsEnabled` OFF
-this is an engagement + qualification feature, not a deposit-conversion lever** — it
-becomes one once deposits are ON and the § 12.0 dictionary fix lands. Success today =
-`completed → inquiry_submitted` ratio, **not** the `tier_guide_completed` vanity
-count.
+- **Pass 1 (8 agents):** hardened the original 3-question / 3-outcome design — inline
+  result action, surfaced Enterprise guard, token/focus/a11y fixes. Verdict (still
+  holds): with `depositsEnabled` OFF this is an **engagement + qualification** feature,
+  not a deposit lever; success = handoff ratio, never the `tier_guide_completed` count.
+- **Pass 2 (research → designs → adversary):** added the **4th outcome `ops`** ("you
+  don't need a paid build — start the free trial; set it up yourself"), grounded in the
+  standard-OPS capability boundary (§ 2.1).
+- **Pass 3 — THIS revision (v3): the branch.** Pass-2's questions asked a prospect to
+  audit OPS's feature set ("does OPS have a box for X?", "do your stages differ from
+  OPS's built-in eight?"). **A cold prospect who has never opened OPS cannot answer
+  that.** Per Jackson: most `/spec` traffic is cold. v3 **branches on OPS experience**
+  as the first screen, and the cold path asks only questions answerable about the
+  prospect's *own business* — never about OPS internals. The feature-gap questions move
+  to the existing-user path, where they're honest. Validated by a **14-persona
+  war-game**: every persona can now answer every question shown and routes to its true
+  best fit (14/14; **8 prior misroutes fixed**).
 
-**Pass 2 (research → 2 designs + adversary → synthesis) — this revision:** adds a
-**4th outcome, `ops`** ("you don't need a custom build — standard OPS already does
-this; start the free trial and set it up yourself"), and expands to **5 questions**.
-Rationale for both, per Jackson's direction:
-
-- **The 4th outcome is the ultimate anti-upsell.** A guide that sometimes says "you
-  don't need to pay us a cent past your subscription" is the strongest possible proof
-  of the trust OPS sells. It routes low-fit prospects to the free self-serve path
-  where they belong (happier, stickier, no refund risk) and offers Setup honestly as
-  the *done-for-you* alternative rather than forcing it.
-- **5 questions, not 3.** A 3-question survey reads as too thin to credibly say
-  "here's exactly what you need," and a 4-outcome decision — especially the subtle
-  *standard-OPS-vs-Setup* line — genuinely needs more signal. The two new questions
-  each earn their place (§ 3.1): **Q3 (DIY vs done-for-you)** is the only thing
-  separating the free `ops` verdict from paid Setup; **Q4 (capability gate,
-  multi-select)** is the hard backstop that makes "Just OPS" impossible to misroute.
-  No personalizer padding — trade/crew-size/urgency were considered and **cut** as
-  scored questions.
-
-**The grounding that makes `ops` honest (§ 2.1):** standard OPS is a 30-day free
-trial with **no feature paywalls**; the *only* two things a paid Setup unlocks that a
-user genuinely cannot self-serve are **renamed/new pipeline stages** (beyond the
-fixed eight) and **custom fields** on projects/clients (plus migrating *historical*
-data). Everything else Setup does — stage colors, follow-up timing, thresholds,
-win-odds, lead sources, tags, roles, catalog, tax, connecting QuickBooks/Sage going
-forward — is already free and self-serve. So the `ops` copy must **never** imply you
-can self-serve stages or fields; that exact line is the honesty boundary (§ 5.2).
-
-**Adversary-driven guards encoded in the scoring (§ 3.2):** a Build/Enterprise lane
-is never demoted to `ops`/Setup by a self-serve-sounding later answer; a true
-capability lock forbids `ops` outright; the under-estimator (migrating GC) is still
-forced up; the unsure user is sent to the *free* trial, never a $3k engagement.
+**v3 design decisions locked with Jackson (2026-06-13):**
+- The cold "trade-shape" question (C4) does **not** assert an OPS limitation cold — a
+  trade with permit/inspection-type stages stays on the **OPS / start-free** floor with
+  Setup as a prominent also-door + an honest "most pipelines fit the built-in stages —
+  start free and check first" note. (Resolves the open judgment call: no cold capability
+  assertion.)
+- **Anti-upsell guard accepted:** an anxious "do it for me" on a *trivial* profile
+  headlines OPS/free with Setup as the also-door — deliberately diverting low-scope
+  Setup intent into free trials.
+- Signup URL confirmed (`app.opsapp.co/register`).
 
 ---
 
 ## 1. Problem & intent
 
-A prospect lands on `/spec`, sees three packages, and can't tell which one is theirs
-— or whether they even need one. Today the page answers passively. The guide answers
-actively: ask the fewest questions that genuinely discriminate, then hand back a
-confident, honest answer — up to and including "you don't need to buy anything here."
+A prospect lands on `/spec`, sees three packages, and can't tell which is theirs — or
+whether they need one. The guide answers actively: ask the fewest questions that
+genuinely discriminate, **for the audience that can actually answer them**, then hand
+back a confident, honest answer — up to and including "you don't need to buy anything."
 
-The user is a trades business owner "drowning in texts, paper, and chaos" — stressed,
-unsure. The bar for every decision: does it feel like a lifeline, or a tech-demo
-quiz? If it reads as a quiz, it's wrong.
+**The v3 constraint that shapes everything:** `/spec` traffic is mostly **cold
+prospects who have never used OPS.** They can answer about *their own world* — trade,
+size, structure, current tools, pains, and whether they want help — but they **cannot**
+evaluate OPS's feature set ("is OPS missing X?"). Only an **existing user** can. So the
+guide's first move is to find out which audience it's talking to, then ask that audience
+only what it can honestly answer.
 
-Three non-negotiables:
-
-1. **No upsell-by-default.** The honest answer wins. Enterprise is never recommended
-   on ambition alone (§ 3.2 guard, surfaced not hidden).
-2. **Sometimes the honest answer is "don't pay us."** If standard OPS covers them,
-   the guide says so and points them at the free trial — with Setup offered as the
-   *done-for-you* option, never as a thing they must buy. This is outcome `ops`.
-3. **Every question earns its place** — a real discriminator or an explicit qualifier.
-   No padding. (Five questions, all discriminators; zero personalizer padding.)
+Non-negotiables:
+1. **No upsell-by-default.** The honest answer wins; ties resolve to the lower
+   commitment; the Enterprise guard is surfaced.
+2. **Sometimes the honest answer is "don't pay us."** If standard OPS covers them →
+   point at the free trial, Setup offered as the *done-for-you* option, never required.
+3. **Every question answerable by its audience.** A cold prospect is never asked to
+   audit OPS. A question they'd have to guess at is cut or moved to the existing path.
 
 ---
 
-## 2. What actually distinguishes the outcomes
+## 2. The four outcomes
 
-Four outcomes, lowest commitment first:
+Lowest commitment first; honest default = **OPS**.
 
-| Outcome | Price | What it is |
-|---|---|---|
-| **OPS** | subscription only ($90–$190/mo, 30-day free trial) | **Nothing to build or pay extra for.** Standard OPS already covers them; they self-serve the config in Settings. |
-| **Setup** | $3,000 / $750 deposit | **Done-for-you** configuration + the two things OPS can't self-serve (renamed/new pipeline stages, custom fields). 2 discovery sessions, workflow analysis, staging review, walkthrough, 30-day guarantee. |
-| **Build** | $8,500 / $2,125 | **One** custom module — new features/views/logic OPS doesn't have. iOS + web. |
-| **Enterprise** | $18,000 / $4,500 | **Multiple** modules + **data migration** off an incumbent + deep integrations + structural complexity (multi-trade/division/subs). |
+| Outcome | Price (total / P1 deposit) | What it is | Cold-diagnosable? |
+|---|---|---|---|
+| **OPS** | subscription only ($90–$190/mo, **30-day free trial**) | Nothing to build/pay extra; self-serve config in Settings. Primary action `START FREE` → `app.opsapp.co/register`. | **Yes — the default floor.** |
+| **Setup** | $3,000 / $750 | Done-for-you configuration + the only 3 things OPS can't self-serve (new/renamed pipeline stages, custom fields, historical-data migration). | Partly — via stated *done-for-you preference* or *history migration*; never via a cold OPS-feature claim. |
+| **Build** | $8,500 / $2,125 | One custom module OPS doesn't have. | **No** — can't prove OPS lacks a feature before using it. Cold: a warm founder-conversation only. Headlined only on the existing path. |
+| **Enterprise** | $18,000 / $4,500 | Multiple modules + data migration off an incumbent + structural complexity. | Yes — only when **migration AND structure** co-occur. |
 
-The highest-signal axis is **how much of what you need already exists in OPS vs. has
-to be built — and who does the configuring.** The override axes are **migration**
-(Enterprise scope, catches the under-estimator) and **structural complexity**
-(Enterprise tell — structural, not headcount).
-
-**Out of scope for the guide: eligibility.** Quebec + excluded regulated workflows
-([01_BUSINESS_MODEL.md](01_BUSINESS_MODEL.md) §3) are disqualifiers handled downstream
-(Quebec at `/spec/billing-address`; regulated at intake). The `ops` free-trial CTA
-routes through the **same** onboarding that screens these — it does **not** create an
-unscreened fast-path (§ 5.2). The guide recommends; it does not gate eligibility.
+**Honest-default rule:** every tie resolves to the lower tier; uncertainty routes to the
+**free** product, never a paid engagement; the free OPS door is mandatorily surfaced
+first on every Setup result that wasn't forced by a hard capability lock.
 
 ### 2.1 Standard OPS vs. paid Setup — the honest boundary (research-grounded)
 
-Source: standard-OPS capability research (00_EXECUTIVE_SUMMARY L90–138, 223–261;
-01_PRODUCT_REQUIREMENTS L1118–1148; 03_DATA_ARCHITECTURE permissions; 12_SUBSCRIPTION_MANAGEMENT
-L79–136; SPEC/01_BUSINESS_MODEL §2). This is the first time this line is drawn
-publicly — **§ 13.3 flags it for Jackson's positioning sign-off.**
+Source: 00_EXECUTIVE_SUMMARY L90–138/223–261; 01_PRODUCT_REQUIREMENTS L1118–1148;
+03_DATA_ARCHITECTURE permissions; 12_SUBSCRIPTION_MANAGEMENT L79–136; SPEC/01_BUSINESS_MODEL §2.
 
-**Free + self-serve in standard OPS (NO Setup needed):** 30-day free trial (10 seats),
-self-serve signup; all core features with **no feature paywalls** (scheduling, crew,
-the 8-stage pipeline CRM, estimates, invoices, catalog, inventory, notes, calendar,
-email import, QuickBooks/Sage OAuth connect); and self-serve configuration of pipeline
-stage **colors / stale thresholds / follow-up rules / win-probability**, lead sources,
-tags, roles (RBAC), catalog, tax — all set by an Admin/Owner in Settings.
+**Free + self-serve in standard OPS:** 30-day free trial (10 seats), self-serve signup;
+all core features, no feature paywalls (scheduling, crew, the 8-stage pipeline CRM,
+estimates, invoices, catalog, inventory, notes, calendar, email import, QuickBooks/Sage
+OAuth connect); self-serve config of stage **colors / thresholds / follow-up rules /
+win-probability**, lead sources, tags, roles, catalog, tax.
 
-**Setup-only (genuinely NOT self-serve):**
-1. **Renaming or adding pipeline stages** beyond the built-in eight (the stage *set*
-   is a fixed enum — colors/thresholds are tunable, the stage *names/count* are not).
-2. **Custom fields** on projects/clients (standard OPS has no custom-fields feature
-   at all — repo-grep-verified).
-3. **Migrating historical data** across (connecting QuickBooks/Sage *going forward* is
-   free OAuth; bringing *years of history* over is Setup-or-up).
+**Setup-only (genuinely NOT self-serve):** (1) renaming/adding pipeline stages beyond
+the fixed eight; (2) custom fields on projects/clients; (3) migrating historical data
+across. Connecting QuickBooks/Sage *going forward* is free. Everything else Setup sells
+is **done-for-you convenience**, not a locked capability.
 
-Everything else Setup sells is **done-for-you convenience + expertise** (discovery,
-workflow analysis, configured-for-you, staging review, recorded walkthrough, 30-day
-money-back, polish hours) — valuable, but not a locked capability.
-
-**The two honest lines (the copy traces to these — § 5.2):**
-- *OPS:* "If all you need is OPS shaped the way you already work — your colors, your
-  follow-up timing, your thresholds, your lead sources, your team and roles, your
-  catalog and tax — you don't pay us a cent past your subscription. Start the free
-  trial and set it up yourself in an afternoon. The only things you can't switch on
-  yourself are renaming/adding pipeline stages and custom fields on your jobs or
-  clients — if you need those, that's Setup."
-- *Setup:* "Setup is worth it when you want it configured *for* you, or you need the
-  two things standard OPS can't self-serve (new/renamed stages, custom fields), or
-  you've got history to migrate. If you don't, skip it."
+**§ 13.2 flags the public positioning for Jackson's sign-off.**
 
 ---
 
-## 3. Question set + scoring
+## 3. The branch + question paths
 
-### 3.1 The five questions
+### 3.0 Branch — first screen (shared, answerable by anyone)
 
-Each is phrased in the user's own world, never OPS's taxonomy. Roles: **D** =
-discriminator (scored), all five are discriminators; no qualifier/personalizer is
-included (trade/crew/urgency were cut — they may ride only on the post-result inquiry
-form, § 12.7, physically unable to change the verdict — § 3.2 firewall).
+**`// WHERE YOU'RE AT` — "Where are you with OPS today?"**
 
-**Q1 — `// WHAT YOU NEED` — "What do you actually need OPS to do for you?"** *(D, primary lane-selector, weight 3)*
+| id | label | hint | leads to |
+|---|---|---|---|
+| `cold` | Haven't tried it yet — I'm just sizing it up | "Never logged in. I want to know what I'd need before I start." | **Cold path** (§ 3.1) — the default lane. |
+| `existing` | I'm in OPS right now and something's blocking me | "Logged in, using it, and I've hit a wall I can't get past." | **Existing path** (§ 3.3). |
+
+The hint wording is load-bearing: "in OPS right now / logged in" keeps a prospect who
+hit a wall in their *old* tool (never logged into OPS) out of the existing lane. This
+question asks about the visitor's relationship to OPS, not about OPS internals — so it
+is answerable by everyone, and it is the only thing that lets each path ask audience-
+appropriate questions.
+
+### 3.1 Cold path questions (every one about the prospect's own world)
+
+Up to five questions; **C2 is conditional** (skipped when C1 = `manual` — a paper shop
+has nothing to migrate). So a manual-stack prospect answers 4, a tool-user 5.
+
+**C1 `// WHAT YOU RUN ON` — "What are you running your business on right now?"**
 
 | id | label | hint | signal |
 |---|---|---|---|
-| `already_fits` | Run my jobs — it already does what I need | "Scheduling, crew, the pipeline, estimates, invoices, the catalog. The bones are there. I just need it shaped to how I run." | already-exists lane → **ops or setup** (decided by Q3/Q4). **Never auto-Setup.** |
-| `build_one` | Build something it doesn't do yet | "A tool, view, or workflow made for my trade that OPS doesn't have today." | **Build** lane (floor). Cannot be demoted by a later self-serve answer. |
-| `rebuild` | Rebuild my whole operation on it | "Several custom pieces — and move me off what I'm running now." | **Enterprise** candidate (needs corroboration or guards to Build). |
-| `not_sure` | Honestly, not sure — show me where I land | "I just know what I've got isn't working. Point me the right way." | **Defer** — resolves from Q2/Q4/Q5; falls to `ops` if no paid signal. Uncertainty is never monetized. |
+| `manual` | Texts, paper, whiteboard, spreadsheets | "Nothing in a real system yet." | no tool → skip C2; ops/setup-lean. |
+| `light_tool` | One or more apps — Jobber, Housecall, QuickBooks, AppFolio, ServiceTitan, anything | "Whatever you use today, light or heavy." | has a tool. **Weight is NOT read here** — migration is asked separately in C2. |
 
-*Earns its place:* the only question mapping onto what each outcome IS; selects the
-free/Setup lane vs the paid-build lane. The old `configure` answer is now
-`already_fits` and is **never auto-Setup** — Q3 + Q4 decide ops vs Setup, killing the
-over-route that a 3-question design couldn't avoid.
+*Why this shape:* splitting tool-presence from migration kills the v2 misroutes where a
+heavy-incumbent option was the only home for AppFolio (over-charged a no-data shop) and
+where "my tool isn't on the list" stalled people. Naming incumbents = AI-discovery SEO.
 
-**Q2 — `// WHAT YOU RUN ON` — "What are you running your business on today?"** *(D, migration axis)*
+**C2 `// YOUR HISTORY` — "Do you need your old history brought across into OPS, or are you fine starting clean?"** *(shown only if C1 ≠ manual)*
 
 | id | label | hint | signal |
 |---|---|---|---|
-| `manual` | Texts, paper, spreadsheets | "Nothing to move over. Just starting fresh." | ops/setup-lean (nothing to migrate). |
-| `one_tool` | One main app, plus the usual mess | "Jobber, Housecall Pro, QuickBooks — but I'm fine starting clean." | ops/setup-eligible. **Connecting QB/Sage forward is FREE OAuth — must not inflate the tier.** |
-| `heavy_system` | A heavy platform I need to get off of | "ServiceTitan, Buildertrend, AppFolio — years of data and integrations to bring across." | Enterprise +2 (the under-estimator catcher). |
+| `start_clean` | Fine starting clean — connecting going forward is enough | "I don't need the old records moved." | no migration. |
+| `bring_history` | I need my history moved across — I can't lose it | "Years of jobs/clients/records that have to come over, not just connect from here." | **migrationSignal** (Setup floor; Enterprise with multi-division). |
 
-*Earns its place:* the under-estimator catch. Migrating *historical data* is
-Setup-or-up and is captured precisely in Q4 (`migrate_data`); `one_tool` stays
-ops-eligible so a QuickBooks user isn't punished for a free connection.
+*Why:* the tool-agnostic migration axis. A fact about *their data*, not about OPS. Copy
+explicitly separates the **free** forward-connect from the **paid** history-move (the
+QuickBooks trap: connecting QB is free; moving years of QB history is Setup-or-up).
 
-**Q3 — `// WHO SETS IT UP` — "Setting it up to fit you — do it yourself, or have it done for you?"** *(D, the OPS-vs-Setup clincher)*
-
-| id | label | hint | signal |
-|---|---|---|---|
-| `myself` | I'll do it myself — point me at the settings | "Me or my office admin. An afternoon in there is fine." | **ops** (decisive DIY — self-serve config is free; no reason to pay Setup). |
-| `for_me` | Do it for me — around how I actually run | "I'd rather someone who knows OPS map it to my business, done right the first time." | **Setup** (decisive done-for-you — exactly what Setup sells). |
-| `show_me` | Show me once, then I've got it | "A walkthrough or a template to start from, then I run with it." | leans **ops** (guided self-start; Setup stays the also-door). |
-
-*Earns its place:* the **only** thing separating the free `ops` verdict from paid
-Setup when the need is pure self-serve config. The bulk of Setup's $3k is done-for-you
-convenience, not locked capability — so the honest fork is *who does it.* Phrased
-without shame in either direction. **Only changes the result inside the already-exists
-/ no-lock lane.**
-
-**Q4 — `// WHAT IT HAS TO DO` — "To make OPS fit, does any of this have to be true? (Check all that apply.)"** *(D, the capability gate — MULTI-SELECT)*
+**C3 `// HOW YOU'RE BUILT` — "How's your operation built?"**
 
 | id | label | hint | signal |
 |---|---|---|---|
-| `rename_stages` | My sales stages have different names than the built-in ones | "OPS ships New Lead → Qualifying → Quoting → Quoted → Follow-up → Negotiation → Won/Lost. I need stages it doesn't have — Permit, Rough-In, Final Inspection — added or renamed, not just recolored." | **capability lock → Setup floor.** (Colors/thresholds ARE self-serve; the stage *names* are the boundary.) |
-| `custom_fields` | I need to track info OPS has no box for | "Permit #, lot size, HOA, warranty expiry — details on every job or client that aren't standard." | **capability lock → Setup floor.** (Custom fields exist nowhere in standard OPS.) |
-| `migrate_data` | My existing data has to come across — not just connect going forward | "Years of jobs, clients, or QuickBooks history I can't lose. Bring it over, not just link from here on." | **capability lock → Setup floor** + structural signal for the Enterprise guard. (Distinct from the free OAuth connect.) |
-| `new_module` | A whole feature it doesn't have | "A tool, view, or automation for my trade OPS just doesn't do today." | **Build +3** (catches a custom-module need under-described in Q1). |
-| `none` | None of these — just my colors, timing, lists, the usual | "Recolor the pipeline, set my follow-up timing and thresholds, my lead sources, tags, roles, catalog, tax. Nothing exotic." | ops +2, **mutually exclusive** (clears the others). Clears the gate → Q3 decides. |
+| `solo` | One trade, one crew | "Just me, or a single tight crew." | neutral. |
+| `multi_crew` | One trade, a few crews | "Growing, but still one line of work." | neutral — growth never inflates the tier. |
+| `multi_division` | Multiple trades, divisions, subs, or locations | "Different divisions, subs to manage, or more than one location." | **structuralSignal** — escalates to Enterprise **only** when it co-occurs with `bring_history`. Never pulls a self-server off the free floor alone. |
 
-*Earns its place:* the hard no-misroute backstop. It isolates the **three Setup-only
-unlocks** from the free self-serve set, and catches a Build need Q1 under-described.
-**Multi-select** because a user can need a custom field AND a renamed stage; a radio
-would let the first ops-eligible tap under-route them. `none` is mutually exclusive.
-**Interaction exception (§ 5.1, § 11):** Q4 is a checkbox group with an explicit
-`CONTINUE` button — exempt from auto-advance; the build chip must not "consistency-fix"
-it back to a radio.
-
-**Q5 — `// HOW YOU'RE BUILT` — "How's your operation built?"** *(D, structural corroborator)*
+**C4 `// YOUR TRADE` — "Does your trade run on stages or details a generic tool wouldn't know about?"** *(about HIS trade, never OPS)*
 
 | id | label | hint | signal |
 |---|---|---|---|
-| `solo` | One trade, one crew | "Just me, or a single tight crew." | ops/setup-lean. |
-| `multi_crew` | One trade, a few crews | "Growing, but still one line of work." | neutral (growth alone never inflates the tier). |
-| `multi_division` | Multiple trades, divisions, subs, or locations | "Different divisions, subs to manage, or more than one location." | Enterprise +2 (structural corroborator). |
+| `standard_flow` | No — lead, quote, schedule, invoice covers how I work | "A pretty standard flow." | none. |
+| `special_stages` | Yes — my work moves through stages most CRMs don't have — permits, inspections, rough-in, draws, approvals | "Stages a generic pipeline wouldn't ship with." | **stagesSignal** — a *soft* nudge, **not** a cold Setup verdict (see routing). |
+| `whole_capability` | Yes — there's a whole job a general tool just doesn't do — claims/supplements, takeoffs, route density, something specific to my trade | "A capability, not just a stage." | **buildLean** — surfaces the founder-escape; never a cold Build headline. |
 
-*Earns its place:* second Enterprise corroborator (the guard) and the under-estimator
-override. **Critical guard:** `multi_division` does **not** by itself pull a user out
-of the free `ops` floor — a multi-division shop that picks `already_fits` + `myself` +
-`none` is still standard-OPS self-serve. Structure only escalates *within* the
-build/enterprise lane or corroborates Enterprise.
+*Why answerable cold:* it asks whether *his trade* has unusual needs — a thing a roofer
+or restoration GC knows cold — without ever asking "does OPS have X." Per the v3 decision,
+`special_stages` does **not** assert OPS can't do it; it keeps him on the free floor and
+adds a Setup nudge + "most pipelines fit the built-in stages — start free and check first."
 
-### 3.2 Scoring (deterministic, lane-gated, client-side)
+**C5 `// SETTING IT UP` — "Once you know what you need — set it up yourself, or have us do it?"** *(symmetric, free option first, has a not-sure landing)*
 
-Pure `recommendTier(answers)` → `{ winner, others[], runnerUp, closeCall, guarded,
-capabilityGate, diyClincher, structuralSignal, headsUp, driver, scores }`. **Not
-pure-additive** — a free outcome can't be expressed as "more points"; it's a **lane
-gate** (Q1/Q4) then additive corroboration. Ladder, lowest first: **`ops` < `setup` <
-`build` < `enterprise`**; **all tie-breaks resolve to the lower index.** Extends the
-Pass-1 logic; keeps every prior guard verbatim.
+| id | label | hint | signal |
+|---|---|---|---|
+| `show_me` | Show me where things are, then I run with it | "A quick walkthrough or starter template — fast and free." | leans ops (guided self-start). |
+| `myself` | I'll set it up myself | "Me or my admin. Settings are self-serve and free." | ops. |
+| `not_sure` | Not sure yet — point me the right way | "I just know what I have isn't working." | **defer → ops** (uncertainty never monetized). |
+| `do_for_me` | Rather you set it up for me, done right | "A done-for-you option, if you want it — not required." | done-for-you preference (only headlines Setup with a real scope signal — see routing). |
 
-**Step 0 — signal detection.**
-- `capabilityLock` = Q4 contains any of `{rename_stages, custom_fields, migrate_data}`
-  (the only things standard OPS can't self-serve). **Master anti-misroute switch: if
-  true, `ops` is impossible.**
-- `buildSignal` = Q1 = `build_one` **or** Q4 has `new_module`.
-- `structuralSignal` = Q2 = `heavy_system` **or** Q5 = `multi_division` **or** Q4 has
-  `migrate_data`.
-- `diyClincher` = Q3 = `myself`. `capabilityGate` = `capabilityLock`.
-- Q4 multi-select: `none` is mutually exclusive (clears others); across checked items,
-  **max-commitment wins** (any lock beats any ops-eligible item).
+*Why de-weaponized:* the free option is listed first (scan-bias), `myself` is framed as
+fast/free (not labor), `not_sure` restores the honest "send the unsure owner to the free
+trial" case, and `do_for_me` no longer auto-charges a tiny shop.
 
-**Step 1 — lane from Q1 (weight-3).** `build_one` → BUILD lane; `rebuild` →
-ENTERPRISE-candidate; `already_fits` → ALREADY-EXISTS lane (Step 2); `not_sure` →
-defer: `structuralSignal` → ENTERPRISE-candidate, elif `buildSignal` → BUILD, else →
-ALREADY-EXISTS. **Hard precedence:** a BUILD/ENTERPRISE lane is **never** demoted to
-`ops`/Setup by a self-serve-sounding Q3/Q4. `ops` is reachable **only** from the
-already-exists lane.
+### 3.2 Cold routing (deterministic; outcomes {ops, setup, enterprise}; Build = warm escape)
 
-**Step 2 — already-exists lane → `{ops, setup}`.**
-- (a) `capabilityLock` → **SETUP**, `driver` = the lock (custom_fields / custom_stages
-  / data_migration). **`ops` forbidden and NOT offered as an also-row** (would promise
-  a capability OPS lacks).
-- (b) no lock (Q4 = `none`): Q3 = `myself` → **OPS**; `show_me` → **OPS** with
-  `closeCall` vs Setup; `for_me` → **SETUP** (a done-for-you *preference*, not a need).
-- **Structure does not escalate this lane** — only the Step-4 override does.
+Inputs: `c1∈{manual,light_tool}`, `c2∈{start_clean,bring_history,na}`, `c3∈{solo,multi_crew,multi_division}`,
+`c4∈{standard_flow,special_stages,whole_capability}`, `c5∈{show_me,myself,not_sure,do_for_me}`.
+Ladder `ops < setup < enterprise`; **all ties resolve down.**
 
-**Step 3 — build/enterprise lane → `{build, enterprise}`** (Enterprise-corroboration
-guard, verbatim from Pass 1). Start BUILD floor. Promote ENTERPRISE iff Q1 = `rebuild`
-**and** `structuralSignal`. Else BUILD, with `guarded = true` when Q1 = `rebuild`
-(never sell $18k on ambition alone; the guard is **surfaced**, § 5.2).
+```
+migrationSignal  = (c2 == bring_history)
+structuralSignal = (c3 == multi_division)
+stagesSignal     = (c4 == special_stages)
+buildLean        = (c4 == whole_capability)
+doneForYou       = (c5 == do_for_me)
+realScope        = migrationSignal || stagesSignal || structuralSignal   // a concrete reason to pay
 
-**Step 4 — under-estimator override (honest upward).**
-- (a) Q2 = `heavy_system` **and** Q5 = `multi_division` → force **ENTERPRISE** (even
-  from `already_fits`/`build_one`), `driver` = `migration`.
-- (b) **Safety valve:** exactly *one* structural hint (heavy_system OR multi_division
-  alone, Q4 = none) in a Step-2 `ops` case → **keep OPS, `headsUp = true`**, attach an
-  honest note (§ 5.2) — neither lie nor auto-charge; discovery decides. (`migrate_data`
-  already sets `capabilityLock` → handled in Step 2a.)
+STEP 1 — Enterprise (only cold-diagnosable Enterprise):
+  IF migrationSignal AND structuralSignal → ENTERPRISE (driver=migration).
+     Result shows a DUAL affordance: "start the trial now / we'll scope your migration."
+STEP 2 — Setup headline (cold-honest Setup only):
+  ELSE IF migrationSignal → SETUP (driver=data_migration).        // history move is genuinely Setup-or-up
+  ELSE IF doneForYou AND realScope → SETUP (driver=done_for_you). // wants it done AND there's real scope
+STEP 3 — OPS floor (everything else) → OPS / START FREE:
+  driver = fits_oob (myself, no signals) | guided_self (show_me) | deferred_unsure (not_sure)
+  Setup also-door: ALWAYS present, leading the also-list; prominent when doneForYou (trivial profile).
+  stagesSignal present → add the Setup nudge note ("most pipelines fit the built-in stages —
+     start free and check first; if they don't, that's Setup").
+  buildLean present → add the founder-escape (PRE-trial) + the Build hedge.
+  headsUp = true when exactly one lone signal sits unresolved (e.g. multi_division alone, or
+     buildLean alone) → keep OPS, append the honest note, never auto-charge.
+```
 
-**Step 5 — point vectors `[ops,setup,build,enterprise]`** (corroboration / tie-break /
-runner-up ordering only; the lane gate is authoritative for the winner). Q1:
-`already_fits[2,1,0,0]` `build_one[0,0,3,0]` `rebuild[0,0,0,3]` `not_sure[1,0,0,0]`.
-Q2: `manual[1,0,0,0]` `one_tool[1,0,0,0]` `heavy_system[0,0,0,2]`. Q3: `myself[3,0,0,0]`
-`show_me[1,1,0,0]` `for_me[0,3,0,0]`. Q4 (sum checked): `rename_stages[0,3,0,0]`
-`custom_fields[0,3,0,0]` `migrate_data[0,1,0,2]` `new_module[0,0,3,0]` `none[2,0,0,0]`.
-Q5: `solo[1,0,0,0]` `multi_crew[0,0,1,0]` `multi_division[0,0,0,2]`.
+**Key properties:** `light_tool` never inflates the tier (connecting forward is free).
+`do_for_me` on a trivial profile (no migration, no special stages, solo/multi_crew,
+standard flow) lands **OPS headline + Setup prominent also-door** — not an auto-charge.
+`special_stages` is a nudge, never a cold capability assertion. `not_sure` → free trial.
 
-**Step 6 — suppressions / also-consider.**
-- **`ops` win:** suppress build + enterprise; only **Setup** as the quiet "want it done
-  for you?" door.
-- **Setup win:** `others = [ops, build]`, and surfacing the **free** `ops` option
-  **above** the paid one is **mandatory** — UNLESS Setup was forced by `capabilityLock`,
-  in which case **do not offer `ops`** (it would promise something OPS can't self-serve).
-  Drop `enterprise` on a Setup win with no `structuralSignal`.
-- **Build win:** `others = [setup, enterprise]`. **Enterprise win:** `others = [build]`;
-  suppress ops/setup.
+**Build, handled cold (three mechanisms, no false certainty):** (1) C4 `whole_capability`
+is a cold-answerable *trade fact* that surfaces a **talk-to-the-founder escape** on the
+OPS result (a self-aware domain expert talks to the founder *now*, not after a churned
+trial); (2) every OPS result carries the Build hedge in copy ("start free — if it
+genuinely can't do the one thing your trade needs, that's a Build; you'll know within
+the trial"); (3) the escape is tagged `tier_guide_cold_build` **only** when `buildLean`
+— a stages/migration need is never mislabeled Build.
 
-**Step 7 — close-call** (extended to the `ops`<`setup` seam). `closeCall` = runner-up
-within 1pt, not `guarded`, not `capabilityGate`-forced. The ops-vs-setup close call
-**always resolves to `ops`** (lower commitment) and nudges **down**: "You can do this
-yourself, free — start the trial. Rather we set it up for you? Setup's right here."
+### 3.3 Existing-user path questions (they can audit OPS — feature-gap questions are honest here)
 
-**Step 8 — driver (winner-consistent).** `guarded`→`guarded`; elif Setup-by-lock →
-`custom_fields` | `custom_stages` | `data_migration`; elif `enterprise` → `migration`
-(heavy_system/migrate_data) | `structure` (multi_division) | `multi_modules`; elif
-`build` → `new_module` (Q4) | `build_one`; elif Setup (no lock) → `done_for_you`; elif
-`ops` → `fits_oob` (already_fits + none + myself) | `guided_self` (show_me) |
-`self_serve`.
+**E1 `// THE WALL` — "What's the wall?" (MULTI-SELECT — check everything blocking you; explicit `CONTINUE`)**
 
-**Primary-action divergence (§ 5.2):** `ops` → **`START FREE — 30 DAYS`** linking the
-existing self-serve onboarding (config-driven URL — **never hardcode `app.opsapp.co`**,
-§ 13.1); routes through the same Quebec/regulated screening as normal signup. Paid
-outcomes → the inline inquiry form (§ 12.7). The `ops` result presents Setup as a
-legitimate, valuable choice — **never a thing to avoid.**
+| id | label | hint | signal |
+|---|---|---|---|
+| `setting` | A setting I couldn't find — colors, follow-up timing, win odds, lead sources, tags, roles, catalog, tax | "All self-serve — we'll point you to the exact screen." | ops-eligible. |
+| `stages` | I need stages my work has that the app doesn't — permits, inspections, approvals — added or renamed | "Adding/renaming stages isn't self-serve. Setup does it." | setup (stages). |
+| `fields` | I need custom fields on jobs or clients OPS has no box for | "Custom fields aren't self-serve. Setup adds them." | setup (fields). |
+| `data` | I need old jobs/clients/history brought in from another system | "Bringing history across isn't self-serve. Scope decides the tier." | migration → E2. |
+| `missing` | A whole thing OPS just doesn't do — a feature or module that isn't in the app at all | "If OPS genuinely can't do it, that's a custom Build." | build-candidate → disconfirm → E3. |
 
-**Personalizer firewall.** `recommendTier()` accepts ONLY the five scored
-discriminators. Trade/crew-size/urgency, if ever added, are a separate payload
-enriching the lead + copy and are **physically incapable** of changing the winner
-(unit test: vary any non-scored field across all values, holding the five fixed →
-winner/driver never change).
+Multi-select so co-occurring locks (stages **and** fields) both register. Resolve by
+**max-commitment** across checked items; ties down. Phrased as *his* need (permits/
+inspections), not "beyond the built-in eight" jargon.
 
-### 3.3 Worked cases (the honesty test — all four outcomes)
+**Missing-disconfirm interstitial** *(only if `missing` checked, before any Build verdict):*
+"Before we call this a Build — a lot of 'OPS can't do this' turns out to be a setting. Is
+what you need any of these? [auto follow-up reminders / stage colors / win-probability /
+lead sources / tags / roles]." → **Yes** = re-route to `ops` (setting); **No, genuinely
+not in the app** = proceed to E3. (Catches a wrong-but-certain "OPS won't do X" belief
+before an $8.5k verdict.)
 
-| # | Q1 / Q2 / Q3 / Q4 / Q5 | Result | Driver | Why it's right |
-|---|---|---|---|---|
-| A | already_fits / manual / myself / [none] / solo | **OPS** | `fits_oob` | Pure free floor. Build/Ent suppressed; only Setup as the quiet also-door. Primary = START FREE, **not** a lead form. The verdict a 3-outcome guide could never produce. |
-| B | already_fits / one_tool / myself / [none] / multi_crew | **OPS** | `self_serve` | QuickBooks `one_tool` does **not** inflate the tier (free OAuth). Setup = honest lower-commitment also-door. |
-| C | already_fits / manual / myself / [custom_fields] / solo | **SETUP** | `custom_fields` | Capability lock overrides DIY. `ops` forbidden + not offered. Names the reason: custom fields exist nowhere in standard OPS. |
-| D | already_fits / one_tool / for_me / [none] / multi_crew | **SETUP** | `done_for_you` | `others[]` **leads with OPS** — "you could do all this yourself for free; Setup is the done-for-you version." Mandatory free-disclosure. |
-| E | already_fits / manual / show_me / [none] / solo | **OPS** (closeCall) | `guided_self` | Close-call nudges **down** to the free start, not up to paid. |
-| F | build_one / manual / myself / [new_module] / multi_crew | **BUILD** | `new_module` | Hard precedence blocks demotion despite Q3 = myself. Refuses to misroute DOWN. |
-| G | already_fits / heavy_system / myself / [none] / multi_division | **ENTERPRISE** | `migration` | Step 4a forces it. Migration overrides DIY exactly as a lock does — refuses to under-sell the lowballing migrating GC. |
-| H | already_fits / heavy_system / myself / [none] / solo | **OPS** (`headsUp`) | `fits_oob` | One structural hint only (migrate_data unchecked) → safety valve keeps OPS but surfaces the honest note. Hardest middle case — no lie, no auto-charge. |
-| I | rebuild / manual / for_me / [none] / solo | **BUILD** (`guarded`) | `guarded` | Guard fails → Build + surfaced refusal note. $18k guard preserved. |
-| J | not_sure / manual / myself / [none] / solo | **OPS** | `fits_oob` | Unsure owner → **free trial**, never a $3k engagement. Uncertainty never monetized. |
-| K | rebuild / heavy_system / for_me / [migrate_data] / multi_division | **ENTERPRISE** | `migration` | Ambition + migration + structure all agree. The one place $18k is honest. |
-| L | already_fits / one_tool / myself / [migrate_data] / solo | **SETUP** | `data_migration` | Connecting QB forward is free; migrating 3 years of history is Setup-or-up. Not forced to Enterprise (solo, single tool). |
+**E2 `// YOUR HISTORY` migration scope** *(only if `data`)*: `simple` (spreadsheet/one tool,
+one business) → Setup; `incumbent_simple` (off a full platform, one business) → Setup;
+`incumbent_complex` (full platform AND multiple divisions) → **Enterprise**.
 
-Cases A, H, J prove the guide will send people to the *free* product. C and L prove it
-won't wrongly tell a lock-needer "just use OPS." F and G prove it won't misroute down.
+**E3 `// HOW BIG` build breadth** *(only if `missing` survived disconfirm)*: `one_module`
+(one thing, rest fits) → **Build**; `several` (several missing, or module + migration +
+multi-division) → **Enterprise**.
+
+### 3.4 Existing routing (outcomes {ops, setup, build, enterprise})
+
+Resolve E1 multi-select by max-commitment after the disconfirm; ties down. (1) only
+`setting` → **OPS** — and the result **names the exact screen** per symptom (stage-color
+picker; `autoFollowUpDays`/stale threshold in `pipeline_stage_configs`; etc.) so the free
+verdict is *believed*, not a generic "check settings." Free QB/Sage forward-connect folds
+here. (2) `stages`/`fields` (no migration/missing) → **SETUP**, driver lists **all**
+checked locks (result + inquiry payload carry every lock, not one). (3) `data` → E2. (4)
+`missing` survives → E3. (5) multi-lock (e.g. `fields` + `missing`) → E3; `one_module` →
+Build (fields folds into scope, surfaced); `several` → Enterprise. A single clean gap is
+never inflated; co-occurring locks resolve up honestly.
+
+### 3.5 Worked cases (14-persona war-game — scorecard 14/14)
+
+Every persona answers every question shown **and** routes to its true best fit. The 8
+fixes prove the v3 reframe works:
+
+| Persona | Path · answers → outcome | What it proves |
+|---|---|---|
+| Dwayne — solo, paper, anxious do-for-me | cold · manual/–/solo/standard/do_for_me → **OPS** + Setup door | trivial-profile guard: anxious tap isn't monetized *(fixed: was Setup)* |
+| Priya — multi-crew, one app, DIY | cold · light/start_clean/multi_crew/standard/myself → **OPS** | clean free floor |
+| Rob — multi-crew, permit/rough-in stages, DIY | cold · light/start_clean/multi_crew/special_stages/myself → **OPS** + Setup nudge | C4 stays a nudge, no cold capability claim *(v3 decision)* |
+| Frank — solo, QuickBooks **with history** | cold · light/bring_history/solo/standard/myself → **SETUP** (data_migration) | history-move is paid, tool-agnostically *(fixed: was OPS — a blocker)* |
+| Sandra — solo, AppFolio, no data to move | cold · light/start_clean/solo/standard/myself → **OPS** | no-data shop not over-charged *(fixed: was Setup)* |
+| Aaron — solo, paper, unsure | cold · manual/–/solo/standard/not_sure → **OPS** (deferred_unsure) | uncertainty → free trial *(fixed: was Setup — a blocker)* |
+| Hector — multi-crew, needs a supplement *module*, DIY | cold · light/start_clean/multi_crew/whole_capability/myself → **OPS** + **founder-escape (pre-trial)** | a true cold Build need is captured warm, not churned *(fixed)* |
+| Denise — solo, paper, wants a module, do-for-me | cold · manual/–/solo/whole_capability/do_for_me → **SETUP** + Build surfaced + escape | Build seen even on a Setup result *(fixed)* |
+| Tina — multi-crew, paper, genuine do-for-me | cold · manual/–/multi_crew/standard/do_for_me → **OPS** headline + Setup prominent also-door | Setup is one deliberate click, not an auto-charge *(more robust)* |
+| Gerald — GC, off Buildertrend **+ multi-division** | cold · light/bring_history/multi_division/standard/myself → **ENTERPRISE** + dual affordance | migration+structure overrides DIY; no dead-end |
+| Olivia — multi-division, migrating, wants a module | cold · light/bring_history/multi_division/whole_capability/do_for_me → **ENTERPRISE** + Build in also-row | fully corroborated |
+| Marcus — multi-crew, paper | cold · manual/–/multi_crew/standard/show_me → **OPS** | guided self-start |
+| Bryce — **existing** user, "OPS won't auto-remind me" | existing · E1 missing → disconfirm catches it → **OPS** w/ deep screen-pointer | wrong-Build belief self-corrects to free *(fixed)* |
+| Camille — **existing** user, needs stages **and** fields | existing · E1 [stages, fields] → **SETUP** carrying both locks | multi-select scopes fully *(fixed: was under-scoped)* |
 
 ---
 
 ## 4. Placement
 
-The guide's job is to help a person choose what they need *among the options on this
-page*. It belongs welded to the cards, in the same scan moment — not a separate
-section, modal, or route.
-
-| # | Variant | Verdict |
-|---|---|---|
-| 1 | **Entry at the top of `#packages`, expands inline above the cards** | **Recommended.** |
-| 2 | Takeover — guide replaces the cards | Rejected: hides the cards from the user who knows; big layout shift. |
-| 3 | Dedicated full-width section before Pricing | Rejected: competes with the OPS BOARD; divorces the guide from the cards. |
-| 4 | Sticky right-rail helper | Rejected: the right 55% of the desktop viewport is the fixed phone scene. |
-
-A slim tactical entry bar is the first thing inside `#packages`, above the cards.
-SSR'd + collapsed (indexable, zero layout shift). `START` expands the guide inline;
-the cards stay below. On a paid result, the guide carries its own action **and** the
-matching card scrolls into view + takes the highlight. On an `ops` result, the primary
-action is the free-trial CTA (no card to highlight; Setup is the quiet also-door).
-
-**Reconcile with the page's hardcoded BUILD defaults.** `SpecPageContent.tsx`
-hardcodes `recommended: tier === 'build'` and the board defaults to BUILD. Once the
-guide runs, **its result owns "recommended" for the session**: when the winner ≠
-`build`, suppress the generic pill and render "YOUR MATCH" on the guided card (§ 12.3).
-On an `ops` win, suppress the BUILD pill entirely (no paid tier is "recommended").
-
-**Real desktop layout (corrected).** `#packages` is `lg:w-[55%]` with the phone scene
-`fixed right-0 w-[55%]` — ~10% overlap at the right edge. Keep the guide's interactive
-content in the left ~720px safe area; the scroll-to-card handoff must clear the phone
-(§ 5.3).
+Unchanged from prior: a slim SSR'd entry bar at the top of `#packages`, expanding inline
+above the cards (Variant 1; takeover/section/right-rail rejected — the right 55% of the
+desktop viewport is the fixed phone scene). Once the guide runs, **its result owns
+"recommended" for the session** — suppress the hardcoded BUILD pill when the winner ≠
+build, show "YOUR MATCH" on the matched card; on an **OPS** win suppress the pill
+entirely (no paid tier is recommended) and there is no card handoff (the action is the
+free trial). Keep the guide's interactive content in the left ~720px safe area
+(`lg:w-[55%]` content column overlaps the fixed phone ~10% at the right).
 
 ---
 
 ## 5. Interaction & flow
 
-### 5.1 States
-
 ```
-[entry bar] → Q1 → Q2 → Q3 → Q4(multi) → Q5 → [result]
-     ▲         │    │    │       │        │       │
-     └─ START OVER ─┴────┴───────┴────────┘       └─ ‹ BACK (to Q5, answers kept)
-                ◄ BACK (Q2–Q5)
+[entry] → BRANCH → ┬─ cold: C1 → (C2?) → C3 → C4 → C5 → [result]
+                   └─ existing: E1(multi)+CONTINUE → (disconfirm?) → (E2?/E3?) → [result]
 ```
 
-- **One question at a time, five steps.** Enough to credibly determine the answer
-  without becoming a form. Each step: one prompt + its options.
-- **Auto-advance on the four single-select questions (Q1, Q2, Q3, Q5)** — hardened for
-  the field: ~360–420ms commit hold; suppress commit during a scroll/`touchmove`
-  gesture; `‹ BACK` is ≥44px, enabled from Q2, focus to the prior answer; the result
-  carries a quiet `‹ BACK` to Q5.
-- **Q4 (capability) is the exception — checkbox multi-select with an explicit
-  `CONTINUE` button. No auto-advance.** `None of these` is mutually exclusive (checking
-  it clears the locks; checking a lock clears `none`). The build chip must not convert
-  Q4 to a radio (silent under-route of a lock-needer — § 11).
-- **Progress `01 / 05` in mono** — current number `--text`, rest `--text-mute` (a
-  contrast step, never accent). No bar, no percent.
-- **Back / restart.** `‹ BACK` restores the prior answer; `START OVER` clears all.
-
-### 5.2 The result — a place to ACT (four outcomes)
-
-The result is peak intent. It states the answer plainly (headline + one-sentence
-reason + bracketed "because you said X"), then lets the user act *there*.
-
-**Paid outcomes (Setup / Build / Enterprise):** primary action is the inline
-pre-contextualized **inquiry form** (`START YOUR {tier}`, § 12.7) — editable context
-summary, name/phone/email, a "what do you need?" textarea pre-filled from their
-answers, submitting the lead + the full guide payload to `/api/contact` (extended).
-Secondary `see the {tier} package ›` scrolls to + highlights the card (§ 5.3). When
-`depositsEnabled` flips ON, the primary slot becomes `PAY {tier} DEPOSIT`.
-
-**Setup specifics:** when Setup was **not** forced by a capability lock, the
-also-consider **leads with the free `ops` door** (mandatory — "you could do all this
-yourself, free; Setup is the done-for-you version"). When Setup **was** forced by a
-lock (custom fields / new stages / migration), `ops` is **not** offered, and the
-driver names the exact lock. The guard note still renders for a guarded Build.
-
-**`ops` outcome — the free answer.** Headline `OPS`; reason traceable to the § 2.1
-*honest_ops_line*, scoped to **exactly** the free self-serve surface — it must **never**
-use the unqualified words "stages" or "fields" as things you self-serve:
-
-```
-// YOUR MOVE
-OPS
-▔▔▔
-Standard OPS already covers you. Start the 30-day free trial — you (or your office
-admin) set your pipeline colors, follow-up timing, stale-deal thresholds, win-odds,
-lead sources, tags, team and roles, catalog and tax, yourself, in an afternoon. You
-don't pay us a cent past your subscription.
-[ everything you need is already in OPS — you just make it yours ]
-
-The only things you can't switch on yourself are renaming or adding pipeline stages
-beyond the built-in eight, and custom fields on your jobs or clients — if you ever
-need those, that's Setup.            ← mandatory honest carve-out
-
-[ START FREE — 30 DAYS ]             ← PRIMARY (config-driven onboarding URL)
-rather we set it up for you? → Setup ← quiet secondary (opens the Setup inquiry form)
-
-‹ BACK        START OVER
-```
-
-- The carve-out is **mandatory** — it's the one place "stages"/"fields" appear, stating
-  honestly that they're *not* self-serve. Removing it would let the reason over-promise.
-- The Setup secondary is offered as legitimate and valuable (traceable to *honest_setup_line*):
-  "Two discovery sessions, we map OPS to how your jobs run, deploy to staging for you to
-  check, then a recorded walkthrough. $3,000, four milestones, 30-day money-back. The
-  done-for-you version of what you'd otherwise do free." It opens the **inquiry form
-  pre-set to Setup** — not a separate page.
-- `headsUp` note (Step 4b) appends only when the safety valve fired: "One heads-up — if
-  it turns out you've got history to move over, that's where Setup earns its keep.
-  Start free; we're here if you hit that."
-- The free-trial CTA routes through the **same** onboarding that screens Quebec +
-  regulated workflows — no eligibility bypass. Fires `tier_guide_trial_started`.
-
-### 5.3 Connection to the cards (paid outcomes only)
-
-Secondary `see the {tier} package ›` and "also consider" rows call `gotoCard(tier)`:
-smooth-scroll the card (`block:'start'`+offset on desktop to clear the phone,
-`'center'` on mobile), expand it (`expandedTier`), apply the held accent rail + swap
-"RECOMMENDED" → "YOUR MATCH" (§ 12.3). The `ops` result has no card handoff (its action
-is the free trial). The guide never auto-triggers payment; deposits-ON pre-select is
-§ 13.2.
+- **Branch is the first screen** after expand. Single-select, auto-advance.
+- **Cold path:** single-select auto-advance (≥44px BACK from C1, gesture-guarded commit
+  ~360–420ms). C2 is skipped when C1 = `manual`. Progress counter reflects the *actual*
+  length of the chosen path (4 or 5 cold steps after the branch; `02 / 05` style).
+- **Existing path:** E1 is a **checkbox multi-select with an explicit `CONTINUE`** (no
+  auto-advance; `setting`…`missing` are independent). The disconfirm interstitial and
+  E2/E3 appear conditionally.
+- **Result:** states the outcome plainly (name + one-line reason + bracketed "because you
+  said X"). Primary action diverges:
+  - **OPS** → `START FREE — 30 DAYS` → `app.opsapp.co/register` (config constant; routes
+    through the same Quebec/regulated screening as normal signup — no bypass). Fires
+    `tier_guide_trial_started`. Carries the Setup also-door, the stages-nudge / Build-
+    hedge / headsUp notes as applicable, and the founder-escape when `buildLean`.
+  - **Setup / Enterprise** → the inline pre-contextualized **inquiry form** (§ 12.7) —
+    name/phone/email + a pre-filled "what do you need?" submitting the lead + the full
+    answer payload to `/api/contact` (extended). Enterprise also shows a `START FREE`
+    secondary (dual affordance). Setup leads its also-list with the free OPS door (unless
+    forced by a hard lock on the existing path).
+  - **Build** (existing path only) → the inquiry form pre-set to Build. Cold "build"
+    intent is the founder-escape, never a headline.
+- **Guard/heads-up/disconfirm notes** render as short `--tan`-railed lines, never hidden.
+- **Back/restart** throughout; result carries a quiet `‹ BACK` (to the last question) +
+  `START OVER`.
 
 ---
 
 ## 6. Copy
 
-All strings via `ops-copywriter` (Anti-Pitch — the reader is skeptical every quiz
-upsells; the trust hooks are *"we don't default to the expensive one"* and now *"you
-might not need to pay us at all"*). Terse, sentence case content / UPPERCASE authority,
-`//` and `[bracket]` prefixes, no emoji, no exclamation, numbers in mono.
-
-The result composes from enumerated dictionary strings only (no free-text
-interpolation): per-outcome reason, driver clause, guard note / heads-up note, the
-`ops` carve-out + Setup-alt, and also-consider lines. The only interpolated tokens are
-outcome **names**. **Honesty rule (load-bearing):** the `ops` reason must never imply
-self-serve "stages"/"fields"; those words appear only in the carve-out stating they
-require Setup (§ 2.1, § 5.2).
+All strings via `ops-copywriter` before ship (Anti-Pitch; trust hooks "we don't default
+to the expensive one" and "you might not need to pay us at all"). Terse, sentence-case
+content / UPPERCASE authority, `//` + `[bracket]`, no emoji/exclamations, mono numbers.
+The result composes from enumerated dictionary strings (no free-text interpolation; only
+outcome *names* interpolate). **Honesty rules (load-bearing):** cold copy never asserts
+an OPS feature gap (no unqualified "stages"/"fields" as self-serve or as a cold "OPS
+can't"); the OPS reason scopes only to the free self-serve surface; visible copy uses no
+internal stage-slug names.
 
 ---
 
 ## 7. Animation choreography
 
-Routed through `animation-studio:animation-architect` → `web-animations`. The guide
-**adopts the `SpecOpsBoard.tsx` selection + reduced-motion vocabulary and adds two
-guide-specific beats on the same easing curve and durations.** Single easing
-`cubic-bezier(0.22,1,0.36,1)` (`theme.animation.easing`), no spring/bounce, durations
-from `theme.animation.durations`, Framer Motion (`framer-motion`), `will-change` only
-on the actively-animating element.
-
-| Moment | Beat | Motion | Duration |
-|---|---|---|---|
-| Expand the guide | Entry | Body height `0→auto` + opacity, crisp ease-out. Mirrors `PackageCard` expand. | 350ms |
-| Question → question | Transition | Fade + 8px y-slide out/in (`AnimatePresence mode="wait"`). Camera-move, not a cut. Optional direction-aware variant § 13.10. | 200–240ms |
-| Option select (Q1/Q2/Q3/Q5) | Discovery+Commitment | Chosen row: 2px **accent** rail + `bg-ops-accent/[0.04]` tint (200ms); siblings dim to 0.4; auto-advance after ~390ms hold. | 200ms + ~390ms |
-| Q4 checkbox toggle | Discovery | Box check + row tint on; **no auto-advance** (explicit `CONTINUE`). | 150ms |
-| Result reveal | **Achievement (restraint)** | Fade + slide in; the headline's 1px **neutral hairline** (`white/0.12`, not accent) draws L→R. A stamp, not a parade. | 300ms + 500ms |
-| Scroll-to-card (paid) | Transition | Smooth-scroll + card expand + held rail. | 350ms |
-
-**Token fidelity (accent = CTA-fill + focus-ring ONLY — DESIGN.md §3):** accent CTAs
-are `bg-ops-accent text-white rounded-[3px]` (matching `PackageCard`); the open
-container uses `--line` (active cue `white/0.15`, never accent); the progress number is
-a contrast step; the underline is a neutral hairline. **No ambient motion** (the board's
-LIVE pulse is the page's only ambient motion). **Reduced motion** → instant final state,
-opacity-only ≤200ms, underline at full width, `behavior:'auto'` scroll.
+Routed through `animation-studio:animation-architect` → `web-animations`. Adopts the
+`SpecOpsBoard.tsx` selection + reduced-motion vocabulary. Single easing
+`cubic-bezier(0.22,1,0.36,1)`, no spring/bounce, durations from `theme.animation`,
+Framer Motion, `will-change` only on the active element. Beats: expand (height 0→auto,
+350ms); branch/question transition (fade + 8px slide, 200–240ms, `AnimatePresence
+mode="wait"`); single-select commit (2px **accent** rail + `bg-ops-accent/[0.04]`,
+~390ms hold → advance); E1 checkbox toggle (150ms, **no** auto-advance); result reveal
+(fade + slide 300ms, neutral hairline underline draws 500ms — a stamp, not a parade).
+**Accent = CTA-fill + focus-ring ONLY** (container uses `--line`, progress is a contrast
+step, underline is neutral). No ambient motion. Reduced motion → instant final state,
+opacity-only ≤200ms, `behavior:'auto'` scroll.
 
 ---
 
 ## 8. Wireframes
 
-### 8.1 Desktop (real `lg:w-[55%]` column, fixed phone overlapping ~10% right)
-
-**Option-row anatomy (canonical two-line stack — block label over block hint, never
-inline):** label `--text` 15px; hint `--text-3` 13px, `mt-1`, line-height 1.4; 2px
-accent rail + tint when selected, siblings dim 0.4.
-
-**Entry collapsed (SSR):**
+**Branch (first screen):**
 ```
-// PACKAGES
-┌──────────────────────────────────────────────────────────────┐
-│ // NOT SURE WHICH ONE                                         │
-│ We'll tell you which one's yours — or if you even need us. [ START ] │
-│ [ five questions · no upsell · no signup ]                   │
-└──────────────────────────────────────────────────────────────┘
-[ SETUP $750 ] [ BUILD ·RECOMMENDED· $2,125 ] [ ENTERPRISE $4,500 ]   (pill yields to YOUR MATCH / suppressed on OPS)
+┌──────────────────────────────────────────────┐
+│ // WHERE YOU'RE AT                            │
+│ Where are you with OPS today?                 │
+│ │▍ Haven't tried it yet — just sizing it up   │
+│ ├─ I'm in OPS right now and something's       │
+│ │  blocking me                                │
+└──────────────────────────────────────────────┘
 ```
 
-**Single-select question (Q1/Q2/Q3/Q5):**
+**Cold question (single-select, two-line rows, conditional C2):**
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ // WHAT YOU NEED                                    01 / 05   │
-│ What do you actually need OPS to do for you?                 │
-│ │▍ Run my jobs — it already does what I need                 │
-│ │  Scheduling, crew, the pipeline, estimates… the bones are  │
-│ │  there. I just need it shaped to how I run.                │
-│ ├─ Build something it doesn't do yet                         │
-│ ├─ Rebuild my whole operation on it                          │
-│ ├─ Honestly, not sure — show me where I land                 │
-│ ‹ BACK                                                       │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ // WHAT YOU RUN ON                   01 / 05  │
+│ What are you running your business on now?    │
+│ │▍ Texts, paper, whiteboard, spreadsheets     │   (→ skips C2)
+│ ├─ One or more apps — Jobber, QuickBooks, …   │
+│ ‹ BACK                                        │
+└──────────────────────────────────────────────┘
 ```
 
-**Q4 — capability gate (MULTI-SELECT + CONTINUE; no auto-advance):**
+**Existing E1 (multi-select + CONTINUE):**
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ // WHAT IT HAS TO DO                                04 / 05   │
-│ To make OPS fit, does any of this have to be true?           │
-│ [✓] My sales stages have different names than the built-in   │
-│ [ ] I need to track info OPS has no box for                  │
-│ [ ] My existing data has to come across — not just connect   │
-│ [ ] A whole feature it doesn't have                          │
-│ [ ] None of these — just my colors, timing, lists, the usual │   (mutually exclusive)
-│ ‹ BACK                                          [ CONTINUE ]  │
-└──────────────────────────────────────────────────────────────┘
-```
-
-**Result — `ops` (the free answer):**
-```
-┌──────────────────────────────────────────────────────────────┐
-│ // YOUR MOVE                                                 │
-│ OPS   ▔▔▔                                                     │
-│ Standard OPS already covers you. Start the 30-day free trial │
-│ — set your colors, follow-up timing, thresholds, lead        │
-│ sources, roles, catalog and tax yourself, in an afternoon.   │
-│ You don't pay us a cent past your subscription.              │
-│ [ everything you need is already in OPS — you just make it yours ] │
-│ The only things you can't switch on yourself are new/renamed │
-│ pipeline stages and custom fields — if you need those, Setup.│
-│ [ START FREE — 30 DAYS ]                                     │
-│ rather we set it up for you? → Setup                         │
-│ ‹ BACK        START OVER                                     │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ // THE WALL                          01 / …   │
+│ What's the wall? (check everything)           │
+│ [ ] A setting I couldn't find — colors, …     │
+│ [✓] Stages my work has the app doesn't —      │
+│     permits, inspections, approvals           │
+│ [✓] Custom fields OPS has no box for          │
+│ [ ] Old history brought in from another system│
+│ [ ] A whole thing OPS just doesn't do         │
+│ ‹ BACK                          [ CONTINUE ]  │
+└──────────────────────────────────────────────┘
 ```
 
-**Result — paid (Setup/Build/Enterprise):** as Pass 1 — headline + reason + driver,
-`[ START YOUR {tier} ]` primary (inline inquiry form), `see the {tier} package ›`
-secondary, also-consider (Setup win leads with the free OPS door unless lock-forced),
-`‹ BACK` / `START OVER`.
+**Result — OPS (free):**
+```
+// YOUR MOVE
+OPS  ▔▔▔
+Standard OPS already covers you. Start the 30-day free trial — set your colors,
+follow-up timing, lead sources, roles, catalog and tax yourself, in an afternoon.
+You don't pay us a cent past your subscription.
+[ everything you need is already in OPS — you just make it yours ]
+The only things you can't switch on yourself are new/renamed pipeline stages and
+custom fields — if you ever need those, that's Setup.            (carve-out)
+most pipelines fit the built-in stages — start free and check first.   (stages nudge, if special_stages)
+start free — if it genuinely can't do the one thing your trade needs, that's a Build.  (hedge / founder-escape if buildLean)
+[ START FREE — 30 DAYS ]   → app.opsapp.co/register
+rather we set it up for you? → Setup
+```
 
-### 8.2 Mobile (<768px)
-
-Full-bleed single column; entry CTA full-width; two-line option rows ≥44px; progress
-top-right. Q4 is a stacked checkbox list with a full-width `CONTINUE`. *Sequential vs.
-single-combined-screen is an open A/B (§ 13.9) — but with five questions the combined
-screen is a taller panel; sequential is the safer default.*
+**Result — Setup / Enterprise / Build:** headline + reason + driver; `[ START YOUR
+{tier} ]` → inline inquiry form (Enterprise also shows `START FREE` secondary); Setup
+also-list leads with the free OPS door.
 
 ---
 
 ## 9. SEO / SSR posture
 
-Below the fold, text-only, no images/fonts → no LCP impact. The entry bar + a static
-"how to choose" summary (now four outcomes: *"Most people just need OPS itself — start
-free. Setup configures it for you; Build adds one custom module; Enterprise rebuilds +
-migrates."*) are **SSR'd** in the collapsed container (indexable, JS-off fallback),
-mirroring the FAQ `<details>` pattern. The questionnaire hydrates as progressive
-enhancement. Keywords earned: "do I need [setup/custom software]," the four outcomes,
-and the named incumbents in Q2/Q4. No new JSON-LD required.
+Below the fold, text-only → no LCP impact. The entry bar + a static four-outcome "how to
+choose" summary ("Most people just need OPS — start free. Setup configures it for you;
+Build adds a custom module; Enterprise rebuilds + migrates.") are SSR'd in the collapsed
+container (indexed, JS-off fallback). The questionnaire hydrates as progressive
+enhancement. Keywords: the named incumbents (Jobber/Housecall/QuickBooks/AppFolio/
+ServiceTitan/Buildertrend) and the four outcomes. No new JSON-LD required.
 
 ---
 
-## 10. i18n — the full key set
+## 10. i18n — the key set
 
-New namespace `guide.*` in **both** `en/spec.json` and `es/spec.json`, flat dot-keys,
-option arrays of `{id,label,hint}` (ids shared across locales — the scoring keys on
-them). Added in the same commit as the § 12.0 fix, behind the `t()` raw-key CI canary.
-**The 4th outcome + 5 questions expand the key set below — every key in both locales.**
+New `guide.*` namespace in **both** `en/spec.json` and `es/spec.json`, flat dot-keys,
+option arrays of `{id,label,hint}` (ids shared, scoring keys on them), added in the same
+commit as the § 12.0 base fix, behind the `t()` raw-key CI canary. **All copy passes
+ops-copywriter before ship.** EN below is the complete set; the ES mirror is generated
+alongside the ops-copywriter pass at build (faithful, same ids, `//`/`[ ]` preserved,
+"4 pagos" register) — the design locks the keys + meaning so nothing is dropped.
 
-### 10.1 English (`en/spec.json`)
+### 10.1 Branch + cold path (EN)
 
 | Key | Value |
 |---|---|
 | `guide.entry.label` | `// NOT SURE WHICH ONE` |
 | `guide.entry.headline` | `We'll tell you which one's yours — or if you even need us.` |
-| `guide.entry.subnote` | `[ five questions · no upsell · no signup ]` |
+| `guide.entry.subnote` | `[ a few questions · no upsell · no signup ]` |
 | `guide.entry.cta` | `START` |
-| `guide.q1.kicker` | `// WHAT YOU NEED` |
-| `guide.q1.prompt` | `What do you actually need OPS to do for you?` |
-| `guide.q1.options` | `[ {id:"already_fits", label:"Run my jobs — it already does what I need", hint:"Scheduling, crew, the pipeline, estimates, invoices, the catalog. The bones are there. I just need it shaped to how I run."}, {id:"build_one", label:"Build something it doesn't do yet", hint:"A tool, view, or workflow made for my trade that OPS doesn't have today."}, {id:"rebuild", label:"Rebuild my whole operation on it", hint:"Several custom pieces — and move me off what I'm running now."}, {id:"not_sure", label:"Honestly, not sure — show me where I land", hint:"I just know what I've got isn't working. Point me the right way."} ]` |
-| `guide.q2.kicker` | `// WHAT YOU RUN ON` |
-| `guide.q2.prompt` | `What are you running your business on today?` |
-| `guide.q2.options` | `[ {id:"manual", label:"Texts, paper, spreadsheets", hint:"Nothing to move over. Just starting fresh."}, {id:"one_tool", label:"One main app, plus the usual mess", hint:"Jobber, Housecall Pro, QuickBooks — but I'm fine starting clean."}, {id:"heavy_system", label:"A heavy platform I need to get off of", hint:"ServiceTitan, Buildertrend, AppFolio — years of data and integrations to bring across."} ]` |
-| `guide.q3.kicker` | `// WHO SETS IT UP` |
-| `guide.q3.prompt` | `Setting it up to fit you — do it yourself, or have it done for you?` |
-| `guide.q3.options` | `[ {id:"myself", label:"I'll do it myself — point me at the settings", hint:"Me or my office admin. An afternoon in there is fine."}, {id:"for_me", label:"Do it for me — around how I actually run", hint:"I'd rather someone who knows OPS map it to my business, done right the first time."}, {id:"show_me", label:"Show me once, then I've got it", hint:"A walkthrough or a template to start from, then I run with it."} ]` |
-| `guide.q4.kicker` | `// WHAT IT HAS TO DO` |
-| `guide.q4.prompt` | `To make OPS fit, does any of this have to be true?` |
-| `guide.q4.subprompt` | `[ check all that apply ]` |
-| `guide.q4.continue` | `CONTINUE` |
-| `guide.q4.options` | `[ {id:"rename_stages", label:"My sales stages have different names than the built-in ones", hint:"OPS ships New Lead → Qualifying → Quoting → Quoted → Follow-up → Negotiation → Won/Lost. I need stages it doesn't have — Permit, Rough-In, Final Inspection — added or renamed, not just recolored."}, {id:"custom_fields", label:"I need to track info OPS has no box for", hint:"Permit #, lot size, HOA, warranty expiry — details on every job or client that aren't standard."}, {id:"migrate_data", label:"My existing data has to come across — not just connect going forward", hint:"Years of jobs, clients, or QuickBooks history I can't lose. Bring it over, not just link from here on."}, {id:"new_module", label:"A whole feature it doesn't have", hint:"A tool, view, or automation for my trade OPS just doesn't do today."}, {id:"none", label:"None of these — just my colors, timing, lists, the usual", hint:"Recolor the pipeline, set my follow-up timing and thresholds, my lead sources, tags, roles, catalog, tax. Nothing exotic."} ]` |
-| `guide.q5.kicker` | `// HOW YOU'RE BUILT` |
-| `guide.q5.prompt` | `How's your operation built?` |
-| `guide.q5.options` | `[ {id:"solo", label:"One trade, one crew", hint:"Just me, or a single tight crew."}, {id:"multi_crew", label:"One trade, a few crews", hint:"Growing, but still one line of work."}, {id:"multi_division", label:"Multiple trades, divisions, subs, or locations", hint:"Different divisions, subs to manage, or more than one location."} ]` |
+| `guide.branch.kicker` | `// WHERE YOU'RE AT` |
+| `guide.branch.prompt` | `Where are you with OPS today?` |
+| `guide.branch.options` | `[ {id:"cold", label:"Haven't tried it yet — I'm just sizing it up", hint:"Never logged in. I want to know what I'd need before I start."}, {id:"existing", label:"I'm in OPS right now and something's blocking me", hint:"Logged in, using it, and I've hit a wall I can't get past."} ]` |
+| `guide.c1.kicker` | `// WHAT YOU RUN ON` |
+| `guide.c1.prompt` | `What are you running your business on right now?` |
+| `guide.c1.options` | `[ {id:"manual", label:"Texts, paper, whiteboard, spreadsheets", hint:"Nothing in a real system yet."}, {id:"light_tool", label:"One or more apps — Jobber, Housecall, QuickBooks, AppFolio, ServiceTitan, anything", hint:"Whatever you use today, light or heavy."} ]` |
+| `guide.c2.kicker` | `// YOUR HISTORY` |
+| `guide.c2.prompt` | `Do you need your old history brought across into OPS, or are you fine starting clean?` |
+| `guide.c2.options` | `[ {id:"start_clean", label:"Fine starting clean — connecting going forward is enough", hint:"I don't need the old records moved."}, {id:"bring_history", label:"I need my history moved across — I can't lose it", hint:"Years of jobs/clients/records that have to come over, not just connect from here."} ]` |
+| `guide.c3.kicker` | `// HOW YOU'RE BUILT` |
+| `guide.c3.prompt` | `How's your operation built?` |
+| `guide.c3.options` | `[ {id:"solo", label:"One trade, one crew", hint:"Just me, or a single tight crew."}, {id:"multi_crew", label:"One trade, a few crews", hint:"Growing, but still one line of work."}, {id:"multi_division", label:"Multiple trades, divisions, subs, or locations", hint:"Different divisions, subs to manage, or more than one location."} ]` |
+| `guide.c4.kicker` | `// YOUR TRADE` |
+| `guide.c4.prompt` | `Does your trade run on stages or details a generic tool wouldn't know about?` |
+| `guide.c4.options` | `[ {id:"standard_flow", label:"No — lead, quote, schedule, invoice covers how I work", hint:"A pretty standard flow."}, {id:"special_stages", label:"Yes — my work moves through stages most CRMs don't have — permits, inspections, rough-in, draws, approvals", hint:"Stages a generic pipeline wouldn't ship with."}, {id:"whole_capability", label:"Yes — there's a whole job a general tool just doesn't do — claims, takeoffs, route density, something specific to my trade", hint:"A capability, not just a stage."} ]` |
+| `guide.c5.kicker` | `// SETTING IT UP` |
+| `guide.c5.prompt` | `Once you know what you need — set it up yourself, or have us do it?` |
+| `guide.c5.options` | `[ {id:"show_me", label:"Show me where things are, then I run with it", hint:"A quick walkthrough or starter template — fast and free."}, {id:"myself", label:"I'll set it up myself", hint:"Me or my admin. Settings are self-serve and free."}, {id:"not_sure", label:"Not sure yet — point me the right way", hint:"I just know what I have isn't working."}, {id:"do_for_me", label:"Rather you set it up for me, done right", hint:"A done-for-you option, if you want it — not required."} ]` |
+
+### 10.2 Existing path (EN)
+
+| Key | Value |
+|---|---|
+| `guide.e1.kicker` | `// THE WALL` |
+| `guide.e1.prompt` | `What's the wall?` |
+| `guide.e1.subprompt` | `[ check everything that's blocking you ]` |
+| `guide.e1.continue` | `CONTINUE` |
+| `guide.e1.options` | `[ {id:"setting", label:"A setting I couldn't find — colors, follow-up timing, win odds, lead sources, tags, roles, catalog, tax", hint:"All self-serve — we'll point you to the exact screen."}, {id:"stages", label:"I need stages my work has that the app doesn't — permits, inspections, approvals — added or renamed", hint:"Adding/renaming stages isn't self-serve. Setup does it."}, {id:"fields", label:"I need custom fields on jobs or clients OPS has no box for", hint:"Custom fields aren't self-serve. Setup adds them."}, {id:"data", label:"I need old jobs/clients/history brought in from another system", hint:"Bringing history across isn't self-serve. Scope decides the tier."}, {id:"missing", label:"A whole thing OPS just doesn't do — a feature or module that isn't in the app at all", hint:"If OPS genuinely can't do it, that's a custom Build."} ]` |
+| `guide.disconfirm.prompt` | `Before we call this a Build — a lot of "OPS can't do this" turns out to be a setting. Is what you need any of these?` |
+| `guide.disconfirm.options` | `[ {id:"is_setting", label:"Yes — one of those", hint:"auto follow-up reminders · stage colors · win-probability · lead sources · tags · roles"}, {id:"genuinely_missing", label:"No — genuinely not in the app", hint:"I've looked. It isn't there."} ]` |
+| `guide.e2.kicker` | `// YOUR HISTORY` |
+| `guide.e2.prompt` | `What are you bringing across?` |
+| `guide.e2.options` | `[ {id:"simple", label:"A spreadsheet or one simple tool, one business", hint:"Straightforward to move."}, {id:"incumbent_simple", label:"Off a full platform, one business", hint:"A real migration, one operation."}, {id:"incumbent_complex", label:"Off a full platform, and multiple divisions or branches", hint:"A real migration across a complex operation."} ]` |
+| `guide.e3.kicker` | `// HOW BIG` |
+| `guide.e3.prompt` | `How much is missing?` |
+| `guide.e3.options` | `[ {id:"one_module", label:"One thing — the rest of OPS fits how I work", hint:"A single custom module."}, {id:"several", label:"Several things — or a module plus migration and multiple divisions", hint:"More than one custom piece."} ]` |
+
+### 10.3 Results + drivers (EN)
+
+| Key | Value |
+|---|---|
 | `guide.result.label` | `// YOUR MOVE` |
 | `guide.result.ops.reason` | `Standard OPS already covers you. Start the 30-day free trial — you (or your office admin) set your pipeline colors, follow-up timing, stale-deal thresholds, win-odds, lead sources, tags, team and roles, catalog and tax, yourself, in an afternoon. You don't pay us a cent past your subscription.` |
 | `guide.result.ops.carveout` | `The only things you can't switch on yourself are renaming or adding pipeline stages beyond the built-in eight, and custom fields on your jobs or clients — if you ever need those, that's Setup.` |
+| `guide.result.ops.stagesNudge` | `Heads up — your trade may want stages OPS doesn't ship. Most pipelines fit the built-in ones, so start free and check first; if they don't, that's a quick Setup.` |
+| `guide.result.ops.buildHedge` | `Start free — if OPS genuinely can't do the one thing your trade needs, that's a Build, and you'll know within the trial.` |
+| `guide.result.ops.headsUpMigration` | `One heads-up — if you've got history to move over, that's where Setup earns its keep. Start free; we're here if you hit that.` |
 | `guide.result.ops.setupAlt` | `Rather we set it up around your workflow for you? That's Setup — two discovery sessions, we map OPS to how your jobs run, deploy it to staging for you to check, then a recorded walkthrough. $3,000, four milestones, 30-day money-back. The done-for-you version of what you'd otherwise do free.` |
-| `guide.result.ops.headsUp` | `One heads-up — if it turns out you've got history to move over, that's where Setup earns its keep. Start free; we're here if you hit that.` |
+| `guide.result.ops.founderEscape` | `Sounds like you already know you need something custom. Skip the guessing — tell the founder what you're after.` |
 | `guide.result.setup.reason` | `We shape OPS around the way you already work — your pipeline, your stages, your fields, dialed to your business. Nothing for you to learn. Just OPS, built to fit.` |
 | `guide.result.build.reason` | `We build the one thing you're missing — a custom module for your trade, on iOS and web, wired straight into your live OPS.` |
 | `guide.result.enterprise.reason` | `Multiple custom modules, your data moved off the old system, your tools integrated. Your whole operation, rebuilt on OPS.` |
+| `guide.result.enterprise.dualNote` | `No reason to wait — start the trial today while we scope your migration.` |
 | `guide.driver.fits_oob` | `[ everything you need is already in OPS — you just make it yours ]` |
 | `guide.driver.guided_self` | `[ a quick walkthrough and you're running — nothing to build or buy ]` |
-| `guide.driver.self_serve` | `[ you'd rather set it up yourself — and it's all free to do ]` |
+| `guide.driver.deferred_unsure` | `[ not sure yet? start free — it's the fastest way to find out ]` |
 | `guide.driver.done_for_you` | `[ you'd rather we set it up for you — that's exactly what Setup is ]` |
-| `guide.driver.custom_fields` | `[ you need to track details OPS has no box for — that's Setup ]` |
-| `guide.driver.custom_stages` | `[ you need pipeline stages OPS doesn't ship — that's Setup ]` |
+| `guide.driver.trade_stages` | `[ your trade runs on stages a generic tool doesn't ship ]` |
 | `guide.driver.data_migration` | `[ you've got history to bring across — that's Setup, not a free connect ]` |
-| `guide.driver.build_one` | `[ you need one specific thing built — not the whole operation ]` |
-| `guide.driver.new_module` | `[ a whole feature OPS doesn't have — that's a custom build ]` |
+| `guide.driver.setting` | `[ what's blocking you is a setting — here's the exact screen ]` |
+| `guide.driver.build_one` | `[ one custom thing OPS doesn't do — the rest fits ]` |
 | `guide.driver.migration` | `[ you're moving off a system that has to come with you ]` |
-| `guide.driver.structure` | `[ you're running more than one trade, division, or location ]` |
-| `guide.driver.multi_modules` | `[ several custom pieces — that's the full rebuild ]` |
-| `guide.driver.guarded` | `[ you want the whole thing rebuilt — we start with one module and prove it ]` |
-| `guide.result.guardNote` | `You said rebuild — but with nothing to migrate and a lean crew, Enterprise would be overkill. We start with Build and prove it. If discovery shows it's bigger, we move up.` |
+| `guide.driver.structure` | `[ multiple trades, divisions, or locations ]` |
+| `guide.driver.several` | `[ several custom pieces — that's the full build ]` |
 | `guide.result.ctaTrial` | `START FREE — 30 DAYS` |
-| `guide.result.ctaPrimary` | `START YOUR {tier}` *(opens the inline inquiry form, § 12.7)* |
-| `guide.result.ctaPrimaryDeposit` | `PAY {tier} DEPOSIT` *(only when depositsEnabled is ON)* |
-| `guide.result.ctaSecondary` | `See the {tier} package ›` |
+| `guide.result.ctaPrimary` | `START YOUR {tier}` |
+| `guide.result.ctaPrimaryDeposit` | `PAY {tier} DEPOSIT` |
+| `guide.result.ctaFounder` | `TELL THE FOUNDER` |
 | `guide.result.opsSetupLink` | `rather we set it up for you? → Setup` |
-| `guide.inquiry.heading` | `// START YOUR {tier}` |
-| `guide.inquiry.summary.setup` | `Setting OPS up around how you already work, done for you.` |
-| `guide.inquiry.summary.build` | `A custom module for your trade, built on OPS.` |
-| `guide.inquiry.summary.enterprise` | `Your operation rebuilt on OPS — modules, migration, integrations.` |
-| `guide.inquiry.name` | `Name` |
-| `guide.inquiry.phone` | `Phone` |
-| `guide.inquiry.email` | `Email` |
-| `guide.inquiry.message` | `What do you need?` |
-| `guide.inquiry.prefill.setup` | `I want OPS set up around my workflow. Here's how my jobs run:` |
-| `guide.inquiry.prefill.build` | `I need a custom module for my trade. Here's what it has to do:` |
-| `guide.inquiry.prefill.enterprise` | `I want to move my operation onto OPS. Here's what I'm running and what I need:` |
-| `guide.inquiry.submit` | `SEND IT` |
-| `guide.inquiry.sending` | `SENDING…` |
-| `guide.inquiry.success` | `Got it. Jackson will reach out about your {tier}.` |
-| `guide.inquiry.error` | `// SEND FAILED — try again, or email hello@opsapp.co` |
 | `guide.result.alsoLabel` | `ALSO CONSIDER` |
 | `guide.also.ops` | `you can set all this up yourself, free — start the trial.` |
 | `guide.also.setup` | `if you'd rather we configure it around your workflow for you.` |
-| `guide.also.build` | `if one custom module would close most of the gap.` |
-| `guide.also.enterprise` | `if discovery shows you need more than one module, or a migration.` |
-| `guide.result.closeCall` | `You can do this yourself, free — start the trial. Rather we set it up for you? Setup's right here.` |
+| `guide.also.build` | `if one custom module would close the gap.` |
+| `guide.also.enterprise` | `if it's several pieces, or a migration.` |
 | `guide.back` | `‹ BACK` |
 | `guide.restart` | `START OVER` |
 | `guide.a11y.progress` | `Question {n} of {total}` |
 | `guide.a11y.recommended` | `Your match: {outcome}` |
 
-### 10.2 Spanish (`es/spec.json`) — faithful mirror
-
-Same `id`s, `//` and `[ ]` preserved, tactical register. Native-voice polish welcome;
-keys + meaning locked.
-
-| Key | Value |
-|---|---|
-| `guide.entry.label` | `// ¿CUÁL ES LA TUYA?` |
-| `guide.entry.headline` | `Te decimos cuál es la tuya — o si siquiera nos necesitas.` |
-| `guide.entry.subnote` | `[ cinco preguntas · sin upsell · sin registro ]` |
-| `guide.entry.cta` | `EMPEZAR` |
-| `guide.q1.kicker` | `// QUÉ NECESITAS` |
-| `guide.q1.prompt` | `¿Qué necesitas de verdad que haga OPS por ti?` |
-| `guide.q1.options` | `[ {id:"already_fits", label:"Correr mis trabajos — ya hace lo que necesito", hint:"Agenda, cuadrilla, el pipeline, estimados, facturas, el catálogo. La base está. Solo necesito ajustarlo a cómo trabajo."}, {id:"build_one", label:"Construir algo que todavía no hace", hint:"Una herramienta o flujo para mi oficio que OPS no tiene hoy."}, {id:"rebuild", label:"Reconstruir toda mi operación en él", hint:"Varias piezas a medida — y migrarme de lo que uso ahora."}, {id:"not_sure", label:"La verdad, no sé — muéstrame dónde caigo", hint:"Solo sé que lo que tengo no funciona. Oriéntame."} ]` |
-| `guide.q2.kicker` | `// CON QUÉ TRABAJAS` |
-| `guide.q2.prompt` | `¿Con qué trabajas hoy?` |
-| `guide.q2.options` | `[ {id:"manual", label:"Mensajes, papel, hojas de cálculo", hint:"Nada que migrar. Empezando de cero."}, {id:"one_tool", label:"Una app principal, más el desorden", hint:"Jobber, Housecall Pro, QuickBooks — pero puedo empezar limpio."}, {id:"heavy_system", label:"Una plataforma pesada de la que necesito salir", hint:"ServiceTitan, Buildertrend, AppFolio — años de datos e integraciones que migrar."} ]` |
-| `guide.q3.kicker` | `// QUIÉN LO CONFIGURA` |
-| `guide.q3.prompt` | `Configurarlo a tu medida — ¿lo haces tú, o te lo hacemos?` |
-| `guide.q3.options` | `[ {id:"myself", label:"Lo hago yo — muéstrame los ajustes", hint:"Yo o mi administrador. Una tarde ahí me alcanza."}, {id:"for_me", label:"Háganmelo — según cómo trabajo de verdad", hint:"Prefiero que alguien que conoce OPS lo ajuste a mi negocio, bien a la primera."}, {id:"show_me", label:"Muéstrenme una vez y sigo solo", hint:"Un recorrido o una plantilla para arrancar, y yo sigo."} ]` |
-| `guide.q4.kicker` | `// QUÉ TIENE QUE HACER` |
-| `guide.q4.prompt` | `Para que OPS encaje, ¿algo de esto tiene que ser cierto?` |
-| `guide.q4.subprompt` | `[ marca todo lo que aplique ]` |
-| `guide.q4.continue` | `CONTINUAR` |
-| `guide.q4.options` | `[ {id:"rename_stages", label:"Mis etapas de venta tienen otros nombres que las de fábrica", hint:"OPS trae Nuevo → Calificando → Cotizando → Cotizado → Seguimiento → Negociación → Ganado/Perdido. Necesito etapas que no tiene — Permiso, Obra Gris, Inspección Final — agregadas o renombradas, no solo recoloreadas."}, {id:"custom_fields", label:"Necesito registrar datos para los que OPS no tiene casilla", hint:"# de permiso, tamaño de lote, HOA, vencimiento de garantía — datos de cada trabajo o cliente que no son estándar."}, {id:"migrate_data", label:"Mis datos actuales tienen que venir — no solo conectar de aquí en adelante", hint:"Años de trabajos, clientes o historial de QuickBooks que no puedo perder. Traerlo, no solo enlazarlo."}, {id:"new_module", label:"Una función entera que no tiene", hint:"Una herramienta o automatización para mi oficio que OPS no hace hoy."}, {id:"none", label:"Nada de esto — solo mis colores, tiempos, listas, lo normal", hint:"Recolorear el pipeline, mis tiempos de seguimiento y umbrales, fuentes de leads, etiquetas, roles, catálogo, impuestos. Nada exótico."} ]` |
-| `guide.q5.kicker` | `// CÓMO ESTÁS ARMADO` |
-| `guide.q5.prompt` | `¿Cómo está armada tu operación?` |
-| `guide.q5.options` | `[ {id:"solo", label:"Un oficio, una cuadrilla", hint:"Solo yo, o una cuadrilla."}, {id:"multi_crew", label:"Un oficio, varias cuadrillas", hint:"Creciendo, pero todavía una línea de trabajo."}, {id:"multi_division", label:"Varios oficios, divisiones, subs o ubicaciones", hint:"Distintas divisiones, subcontratistas, o más de una ubicación."} ]` |
-| `guide.result.label` | `// TU MOVIDA` |
-| `guide.result.ops.reason` | `OPS estándar ya te cubre. Empieza la prueba gratis de 30 días — tú (o tu administrador) configuras los colores de tu pipeline, tiempos de seguimiento, umbrales, probabilidad de cierre, fuentes de leads, etiquetas, equipo y roles, catálogo e impuestos, tú mismo, en una tarde. No nos pagas ni un peso más allá de tu suscripción.` |
-| `guide.result.ops.carveout` | `Lo único que no puedes activar tú son renombrar o agregar etapas de pipeline más allá de las ocho de fábrica, y campos personalizados en tus trabajos o clientes — si algún día los necesitas, eso es Setup.` |
-| `guide.result.ops.setupAlt` | `¿Prefieres que te lo configuremos según tu flujo? Eso es Setup — dos sesiones de descubrimiento, mapeamos OPS a cómo corren tus trabajos, lo dejamos en staging para que lo revises, y un recorrido grabado. $3,000, cuatro pagos, garantía de 30 días. La versión hecha-para-ti de lo que harías gratis.` |
-| `guide.result.ops.headsUp` | `Un aviso — si resulta que tienes historial que mover, ahí es donde Setup vale la pena. Empieza gratis; estamos aquí si llegas a eso.` |
-| `guide.result.setup.reason` | `Ajustamos OPS a tu forma de trabajar — tu pipeline, tus etapas, tus campos, a la medida de tu negocio. Nada que aprender. Solo OPS, hecho a tu medida.` |
-| `guide.result.build.reason` | `Construimos lo único que te falta — un módulo a medida para tu oficio, en iOS y web, conectado directo a tu OPS.` |
-| `guide.result.enterprise.reason` | `Varios módulos a medida, tus datos migrados del sistema viejo, tus herramientas integradas. Toda tu operación, reconstruida en OPS.` |
-| `guide.driver.fits_oob` | `[ todo lo que necesitas ya está en OPS — solo lo haces tuyo ]` |
-| `guide.driver.guided_self` | `[ un recorrido rápido y estás corriendo — nada que construir ni comprar ]` |
-| `guide.driver.self_serve` | `[ prefieres configurarlo tú — y todo es gratis de hacer ]` |
-| `guide.driver.done_for_you` | `[ prefieres que te lo configuremos — eso es exactamente Setup ]` |
-| `guide.driver.custom_fields` | `[ necesitas registrar datos para los que OPS no tiene casilla — eso es Setup ]` |
-| `guide.driver.custom_stages` | `[ necesitas etapas de pipeline que OPS no trae — eso es Setup ]` |
-| `guide.driver.data_migration` | `[ tienes historial que traer — eso es Setup, no una conexión gratis ]` |
-| `guide.driver.build_one` | `[ necesitas una cosa específica construida — no toda la operación ]` |
-| `guide.driver.new_module` | `[ una función entera que OPS no tiene — eso es un build a medida ]` |
-| `guide.driver.migration` | `[ estás saliendo de un sistema que tiene que venir contigo ]` |
-| `guide.driver.structure` | `[ manejas más de un oficio, división o ubicación ]` |
-| `guide.driver.multi_modules` | `[ varias piezas a medida — esa es la reconstrucción completa ]` |
-| `guide.driver.guarded` | `[ quieres reconstruirlo todo — empezamos con un módulo y lo probamos ]` |
-| `guide.result.guardNote` | `Dijiste reconstruir — pero sin nada que migrar y con una cuadrilla, Enterprise sería demasiado. Empezamos con Build y lo probamos. Si discovery muestra que es más grande, subimos.` |
-| `guide.result.ctaTrial` | `EMPIEZA GRATIS — 30 DÍAS` |
-| `guide.result.ctaPrimary` | `EMPIEZA TU {tier}` |
-| `guide.result.ctaPrimaryDeposit` | `PAGAR DEPÓSITO {tier}` |
-| `guide.result.ctaSecondary` | `Ver el paquete {tier} ›` |
-| `guide.result.opsSetupLink` | `¿prefieres que te lo configuremos? → Setup` |
-| `guide.inquiry.heading` | `// EMPIEZA TU {tier}` |
-| `guide.inquiry.summary.setup` | `Configurar OPS según cómo ya trabajas, hecho para ti.` |
-| `guide.inquiry.summary.build` | `Un módulo a medida para tu oficio, sobre OPS.` |
-| `guide.inquiry.summary.enterprise` | `Tu operación reconstruida en OPS — módulos, migración, integraciones.` |
-| `guide.inquiry.name` | `Nombre` |
-| `guide.inquiry.phone` | `Teléfono` |
-| `guide.inquiry.email` | `Correo` |
-| `guide.inquiry.message` | `¿Qué necesitas?` |
-| `guide.inquiry.prefill.setup` | `Quiero OPS configurado según mi flujo. Así corren mis trabajos:` |
-| `guide.inquiry.prefill.build` | `Necesito un módulo a medida para mi oficio. Esto es lo que tiene que hacer:` |
-| `guide.inquiry.prefill.enterprise` | `Quiero mover mi operación a OPS. Esto es lo que uso y lo que necesito:` |
-| `guide.inquiry.submit` | `ENVIAR` |
-| `guide.inquiry.sending` | `ENVIANDO…` |
-| `guide.inquiry.success` | `Listo. Jackson te contactará sobre tu {tier}.` |
-| `guide.inquiry.error` | `// FALLÓ EL ENVÍO — intenta de nuevo, o escribe a hello@opsapp.co` |
-| `guide.result.alsoLabel` | `TAMBIÉN CONSIDERA` |
-| `guide.also.ops` | `puedes configurar todo esto tú mismo, gratis — empieza la prueba.` |
-| `guide.also.setup` | `si prefieres que lo configuremos según tu flujo por ti.` |
-| `guide.also.build` | `si un módulo a medida cubriría casi todo.` |
-| `guide.also.enterprise` | `si discovery muestra que necesitas más de un módulo, o una migración.` |
-| `guide.result.closeCall` | `Puedes hacer esto tú mismo, gratis — empieza la prueba. ¿Prefieres que te lo configuremos? Setup está aquí mismo.` |
-| `guide.back` | `‹ ATRÁS` |
-| `guide.restart` | `EMPEZAR DE NUEVO` |
-| `guide.a11y.progress` | `Pregunta {n} de {total}` |
-| `guide.a11y.recommended` | `Tu opción: {outcome}` |
+*(Inquiry-form keys `guide.inquiry.*` — heading, name/phone/email/message, per-tier
+summary + prefill, submit/sending/success/error — carry over from § 12.7 unchanged.)*
 
 ---
 
 ## 11. Accessibility
 
-- **Semantics.** Single-select questions (Q1/Q2/Q3/Q5) are `radiogroup`s
-  (`aria-label` = prompt), options `role="radio"` + `aria-checked`, arrow-key nav,
-  Space/Enter selects (and auto-advances). **Q4 is a `group` of native checkboxes**
-  with an explicit `CONTINUE` button — Tab/Space per box, no auto-advance; `none`
-  toggles clear the lock boxes and vice-versa, announced via `aria-live`. The entry
-  bar is a `button` with `aria-expanded`/`aria-controls`.
-- **Focus ring (mandatory accent — DESIGN.md §9/§15):** `:focus-visible` →
-  `outline:1.5px solid var(--ops-accent); outline-offset:2px` on every interactive
-  element (entry, options, checkboxes, `CONTINUE`, result CTAs, also-rows, `BACK`,
-  `START OVER`, the OPS free-trial CTA + Setup link).
-- **Focus management.** Expand → first option of Q1. Advance → first option/checkbox of
-  the next question. `‹ BACK` → prior answer. Result → result heading (`tabindex=-1`);
-  result `‹ BACK` → Q5.
-- **Announce.** Progress via `guide.a11y.progress`; the outcome via `aria-live="polite"`
-  using `guide.a11y.recommended` ("Your match: OPS").
-- **Never color-alone** (rail + `aria-checked` + dim). **Contrast** via the `theme`
-  ladder. **Field-mis-tap hardening** per § 5.1. **Reduced motion** per § 7. **≥44px**
-  targets. **Keyboard-only** completes the flow including the Q4 checkbox group →
-  `CONTINUE`.
+- **Branch + cold questions:** `radiogroup`/`role=radio` + `aria-checked`, arrow-key nav,
+  Space/Enter selects + auto-advances. **E1 is a `group` of native checkboxes** + explicit
+  `CONTINUE` (Tab/Space, no auto-advance); the disconfirm + E2/E3 are radiogroups.
+- **Focus ring (mandatory accent):** `:focus-visible → outline:1.5px solid var(--ops-accent);
+  outline-offset:2px` on every interactive element incl. the OPS free-trial CTA, the
+  founder-escape, and `CONTINUE`.
+- **Focus management:** expand → branch; branch → first option of the chosen path; advance
+  → next question's first control; `‹ BACK` → prior answer; result → heading (`tabindex=-1`).
+- **Announce** progress (`guide.a11y.progress`) and outcome (`aria-live=polite`,
+  `guide.a11y.recommended`). Never color-alone (rail + `aria-checked` + dim). `theme`
+  contrast ladder. ≥44px targets. Reduced motion per § 7. Keyboard-only completes both
+  paths incl. the E1 checkbox group → CONTINUE and the disconfirm.
 
 ---
 
@@ -805,154 +577,148 @@ keys + meaning locked.
 
 ### 12.0 Hard precondition — base-dictionary reconciliation (BLOCKER)
 
-Before any `guide.*` keys land, fix the Phase-1 `spec.json` drift: the committed
-`en/spec.json` is missing `startFrom`, `headlineSub`, `milestoneAmount`,
-`packages.milestones.*` (the keys `SpecPageContent.tsx`/`PackageCard.tsx` read) while
-still carrying stale `packages.<tier>.price`/`.deposit` + "50%" copy — so the cards the
-guide points at render raw keys in prod today. Restore the missing keys + strip the
-stale ones in **both** locales, verified by a `t()` raw-key CI canary. Separate
-base-page hygiene; coordinate with sibling WIP, don't stomp parallel edits.
+Before any `guide.*` keys land, fix the Phase-1 `spec.json` drift: `en/spec.json` is
+missing `startFrom`, `headlineSub`, `milestoneAmount`, `packages.milestones.*` (read by
+`SpecPageContent.tsx`/`PackageCard.tsx`) while carrying stale `packages.<tier>.price`/
+`.deposit` + "50%" copy — so the cards the guide points at render raw keys in prod today.
+Restore the missing keys + strip the stale ones in both locales, verified by a `t()`
+raw-key CI canary. Separate base-page hygiene; coordinate with sibling WIP.
 
 ### 12.1 Pure logic module — `src/lib/spec/tier-guide.ts` (new)
 
 ```ts
 export type Outcome = 'ops' | 'setup' | 'build' | 'enterprise';
-export type Q1 = 'already_fits' | 'build_one' | 'rebuild' | 'not_sure';
-export type Q2 = 'manual' | 'one_tool' | 'heavy_system';
-export type Q3 = 'myself' | 'for_me' | 'show_me';
-export type Q4 = 'rename_stages' | 'custom_fields' | 'migrate_data' | 'new_module' | 'none';
-export type Q5 = 'solo' | 'multi_crew' | 'multi_division';
-export interface GuideAnswers { need: Q1; stack: Q2; hands: Q3; caps: Q4[]; shape: Q5 }
-export interface GuideResult {
-  winner: Outcome;
-  others: Outcome[];           // §3.2.6 suppression rules
-  runnerUp: Outcome | null;
-  closeCall: boolean;
-  guarded: boolean;            // Enterprise→Build guard
-  capabilityGate: boolean;     // Setup forced by a lock (→ no ops also-row)
-  diyClincher: boolean;        // Q3 = myself
-  structuralSignal: boolean;
-  headsUp: boolean;            // Step 4b safety valve
-  driver: 'fits_oob'|'guided_self'|'self_serve'|'done_for_you'|'custom_fields'|'custom_stages'|'data_migration'|'build_one'|'new_module'|'migration'|'structure'|'multi_modules'|'guarded';
-  scores: Record<Outcome, number>;
+export type Branch = 'cold' | 'existing';
+// cold answers
+export interface ColdAnswers {
+  c1: 'manual' | 'light_tool';
+  c2: 'start_clean' | 'bring_history' | 'na';   // 'na' when c1==='manual'
+  c3: 'solo' | 'multi_crew' | 'multi_division';
+  c4: 'standard_flow' | 'special_stages' | 'whole_capability';
+  c5: 'show_me' | 'myself' | 'not_sure' | 'do_for_me';
 }
-export function recommendTier(a: GuideAnswers): GuideResult;  // §3.2 Steps 0–8
+// existing answers
+export interface ExistingAnswers {
+  walls: Array<'setting' | 'stages' | 'fields' | 'data' | 'missing'>;  // multi-select
+  disconfirm?: 'is_setting' | 'genuinely_missing';                     // only if 'missing'
+  e2?: 'simple' | 'incumbent_simple' | 'incumbent_complex';            // only if 'data'
+  e3?: 'one_module' | 'several';                                       // only if 'missing' survived
+}
+export interface GuideResult {
+  branch: Branch;
+  winner: Outcome;
+  also: Outcome[];
+  driver: string;
+  founderEscape: boolean;     // cold buildLean → show TELL THE FOUNDER
+  setupNudge: boolean;        // cold special_stages on an OPS win
+  buildHedge: boolean;        // OPS win, surface the "if it can't, that's a Build" line
+  headsUp: boolean;           // lone unresolved signal
+  dualAffordance: boolean;    // cold Enterprise → also show START FREE
+  settingPointer?: string;    // existing 'setting' win → exact screen id
+}
+export function recommendCold(a: ColdAnswers): GuideResult;       // §3.2
+export function recommendExisting(a: ExistingAnswers): GuideResult; // §3.4
 ```
 
-Ship `__tests__/tier-guide.test.ts` covering all §3.3 cases A–L **plus**: every
-capability-lock forbids `ops`; `one_tool` never inflates the tier; the lane
-hard-precedence (no demotion to ops/setup from a self-serve Q3/Q4); the Step-4a force
-and Step-4b safety valve; the close-call resolves to `ops`; and the **personalizer
-firewall** (any non-scored field, varied, never changes the winner).
+Ship `__tests__/tier-guide.test.ts` covering all 14 § 3.5 personas **plus**: `light_tool`
+never inflates; `do_for_me` trivial-profile → ops; `special_stages` never headlines Setup
+cold; `not_sure` → ops; cold Enterprise requires migration AND structure; the existing
+disconfirm reroutes `missing`→`setting`; multi-lock max-commitment; and the **firewall**
+(no cold answer can produce `build` as a winner).
 
 ### 12.2 Components — `src/components/spec/tier-guide/` (new)
 
-`SpecTierGuide.tsx` (state + flow), `GuideQuestion.tsx` (single-select, auto-advance),
-`GuideCapabilityQuestion.tsx` (**Q4 checkbox group + CONTINUE, mutually-exclusive
-`none`**), `GuideResult.tsx` (four-outcome result — `ops` branch renders the free-trial
-CTA + carve-out + Setup link; paid branch renders the inquiry form + card-scroll),
-`GuideInquiry.tsx` (§ 12.7), `tier-guide-copy.ts` (the `t(dict,…)` assembly). Small,
-bounded, presentational children; state only in the container.
+`SpecTierGuide.tsx` (branch + path state), `GuideQuestion.tsx` (single-select), 
+`GuideWallQuestion.tsx` (E1 checkbox multi-select + CONTINUE), `GuideDisconfirm.tsx`,
+`GuideResult.tsx` (four outcomes + the OPS notes/escape vs the inquiry form),
+`GuideInquiry.tsx` (§ 12.7), `tier-guide-copy.ts` (`t(dict,…)` assembly). Small,
+presentational; state only in the container.
 
 ### 12.3 Wiring into the page
 
 Render `<SpecTierGuide>` at the top of `SpecPricing`. On a **paid** `onRecommend`:
-`setExpandedTier` + `highlightTier` + scroll (desktop `block:'start'`+offset) and apply
-the pill override (`PackageCard` gets `highlighted?` + `matchLabel?`; suppress the
-hardcoded BUILD `recommended` pill when `guidedTier !== 'build'`; **suppress entirely on
-an `ops` win** — no paid tier is "recommended"). On an **`ops`** result there is no card
-handoff. Screenshot-verify the desktop scroll clears the fixed phone.
+`setExpandedTier` + `highlightTier` + scroll (desktop `block:'start'`+offset) + pill
+override (suppress hardcoded BUILD pill when winner≠build; "YOUR MATCH" on the matched
+card). On an **OPS** win: suppress the pill, no card handoff, render the free-trial CTA.
+Screenshot-verify the desktop scroll clears the fixed phone.
 
 ### 12.4 i18n
 
-Add the full § 10 key set (four outcomes, five questions) to `en` + `es` in one commit,
-after § 12.0, behind the raw-key canary.
+Add the § 10 key set to `en` + `es` in one commit after § 12.0, behind the canary.
 
 ### 12.5 Analytics
 
-Client-side `trackMarketingEvent` (gtag + Vercel), no PII. The inquiry submit is the
-one server touch (§ 12.7).
+Client-side `trackMarketingEvent` (gtag + Vercel), no PII; the inquiry submit is the one
+server touch (§ 12.7).
 
 | Event | When | Properties |
 |---|---|---|
-| `tier_guide_viewed` | entry bar in viewport (once) | `{ locale }` — START denominator |
-| `tier_guide_started` | `START` clicked | `{ locale }` |
-| `tier_guide_answered` | each select (Q4 fires on `CONTINUE` with the array) | `{ step, question_id, option_id(s) }` |
-| `tier_guide_completed` | result shown | `{ recommended_outcome ∈ {ops,setup,build,enterprise}, capability_gate, diy_clincher, heads_up, guarded, close_call, driver }` |
-| `tier_guide_trial_started` | `ops` free-trial CTA clicked | `{ driver, heads_up }` |
-| `tier_guide_inquiry_opened` / `_submitted` | paid primary CTA / form submit | `{ recommended_tier, driver, … , source:'tier_guide' }` |
-| `tier_guide_card_opened` | secondary card-scroll / also-row | `{ from_tier, to_tier }` |
+| `tier_guide_viewed` | entry in viewport (once) | `{ locale }` — START denominator |
+| `tier_guide_started` | START clicked | `{ locale }` |
+| `tier_guide_branched` | branch answered | `{ branch }` |
+| `tier_guide_answered` | each select (E1 fires on CONTINUE with the array) | `{ step, question_id, option_id(s) }` |
+| `tier_guide_completed` | result shown | `{ lane, recommended_outcome, driver, setup_nudge, build_hedge, heads_up, dual_affordance }` |
+| `tier_guide_trial_started` | OPS / Enterprise `START FREE` clicked | `{ lane, driver }` |
+| `tier_guide_cold_build_escape` | founder-escape clicked (cold buildLean) | `{ driver:'whole_capability' }` |
+| `tier_guide_missing_disconfirm_recovered` | existing `missing`→`setting` reroute | `{}` |
+| `tier_guide_setup_downresolved` | trivial-profile guard suppressed a Setup headline | `{}` |
+| `tier_guide_inquiry_opened` / `_submitted` | paid primary CTA / form submit | `{ recommended_tier, driver, lane, source:'tier_guide' }` |
 
-**Success metric:** the split funnel — `ops` completions → `tier_guide_trial_started`
-(free-signup intent), paid completions → `tier_guide_inquiry_submitted` (later
-→ `stripe_checkout_completed`). `tier_guide_completed` count alone is **vanity**. The
-`recommended_outcome` distribution is itself a signal: a healthy honest guide sends a
-real share to `ops`.
+**Success metric:** the split funnel — OPS/Enterprise completions → `trial_started`
+(free-signup intent); Setup/Build/Enterprise completions → `inquiry_submitted` (later →
+`stripe_checkout_completed`). The `recommended_outcome` distribution is itself a signal:
+a healthy honest guide sends a real share to `ops`. `tier_guide_completed` count alone is
+vanity. New diagnostics: `setup_downresolved` (anxiety-monetization prevented),
+`missing_disconfirm_recovered` (wrong-Build beliefs caught), `cold_build_escape` (warm
+Build leads captured pre-trial).
 
 ### 12.6 Build-complexity estimate
 
 **Moderate, one focused session for the guide** + the separate § 12.0 dictionary fix +
-the § 12.7 `/api/contact` extension (small). The 4-outcome lane-gated scorer is ~120
-lines of pure TS + a thorough test suite (the routing guards are the risk surface — test
-them hard). Q4's multi-select component is the one genuinely new UI pattern; everything
-else reuses existing selection/card/motion patterns.
+the § 12.7 `/api/contact` extension (small). Two routing functions (~140 lines pure TS) +
+a thorough test suite (the routing guards are the risk surface — test all 14 personas).
+The E1 multi-select + disconfirm are the only genuinely new UI patterns; the rest reuses
+existing selection/card/motion patterns.
 
 ### 12.7 Inquiry submission — the one server touch (reuses existing backend)
 
-Paid results submit the inline inquiry via the existing `POST /api/contact` →
-`contact_messages` (+ newsletter upsert). **Extend, don't rebuild:** accept optional
-`{ phone, company?, tier, guide:{need,stack,hands,caps,shape,driver}, source:'tier_guide' }`;
-store the context in a new `metadata jsonb` column (schema change → mirror migration to
-`migrations/`, update `03_DATA_ARCHITECTURE.md`, verify the live table via Supabase MCP
-first); notify Jackson via the existing `notifications.ts`/email-outbox path tagged
-`source:tier_guide`; `GuideInquiry.tsx` mirrors `ContactForm.tsx` styling + states,
-pre-fills from `guide.inquiry.prefill.<tier>`, confirms inline. The `ops` outcome does
-**not** hit this route — it links the free self-serve onboarding.
+Paid results submit via the existing `POST /api/contact` → `contact_messages` (+ newsletter
+upsert). **Extend, don't rebuild:** accept optional `{ phone, company?, tier, lane,
+guide:<answer payload>, source:'tier_guide' }`; store context in a new `metadata jsonb`
+column (schema change → mirror migration to `migrations/`, update `03_DATA_ARCHITECTURE.md`,
+verify the live table via Supabase MCP first); notify Jackson via the existing
+`notifications.ts`/email-outbox path tagged `source:tier_guide`; `GuideInquiry.tsx`
+mirrors `ContactForm.tsx` styling/states, pre-fills from `guide.inquiry.prefill.<tier>`,
+confirms inline. The OPS outcome does **not** hit this route — it links
+`app.opsapp.co/register`. The cold founder-escape posts here tagged `tier_guide_cold_build`.
 
 ---
 
 ## 13. Open questions for Jackson
 
-The capability research surfaced things only Jackson can ratify — the first four are
-**new and gating for the `ops` copy:**
+The structural calls and the signup URL are resolved (§ 0). Remaining:
 
-1. **Self-serve signup URL is unconfirmed.** The bible documents the onboarding flow +
-   internal routes but no canonical public signup URL (`app.opsapp.co` is **not** in the
-   bible). The `ops` free-trial CTA must read the URL from config — **what is the real
-   production signup URL?** (The build must not hardcode it.)
-2. **Sign off the public OPS-vs-Setup boundary (§ 2.1).** This is the *first time* OPS
-   draws the "free self-serve (colors/timing/thresholds/win-odds/lead sources/tags/
-   roles/catalog/tax) vs. Setup-only (new/renamed stages, custom fields, data migration)"
-   line publicly. The guide encodes it in Q4 + the `ops` carve-out. **Is this how you
-   want it positioned?** (It will divert some Setup sales into the free trial — by
-   design.)
-3. **Custom fields = Setup-only — confirm nothing in-flight changes that.** Repo-grep
-   confirms standard OPS has no custom-fields feature today; the honest line is "only via
-   Setup." Confirm no self-serve custom-fields feature is about to ship.
-4. **"Up to 3 custom configurations" — firm or approximate?** §2 of the canonical SPEC
-   model says "custom pipeline stages + custom fields" without a number; the tier-guide
-   summary said "up to 3." Confirm the published number.
-5. **When deposits flip ON, pre-select the tier into Stripe?** *Rec:* yes — the guide
-   already knows it; never auto-charge.
-6. **Soft regulated-workflow nudge on a Build/Enterprise result whose described module
-   sounds regulated?** *Rec:* keep eligibility downstream; the free-trial path already
-   routes through the same screening.
-7. **Entry-bar prominence + a skip affordance** (slim payoff-led bar vs. louder; a
-   "skip — show the packages" link). *Rec:* slim bar + skip link.
-8. **Verify Q5 is load-bearing** before build: generate the full Q1×Q2×Q3×Q4×Q5 truth
-   table; confirm Q5 (structure) flips the result on a non-trivial count of paths not
-   already covered by Q2/Q4. *Rec:* run it; keep Q5 if it earns it, else fold into Q2.
-9. **Mobile: sequential (rec) vs. single combined screen** — A/B; with five questions a
-   combined screen is a tall panel, so sequential is the safer default.
-10. **Answer-derived noun in the result + direction-aware transitions** — both i18n-safe
-    craft upgrades; optional for v1.
+1. **Positioning sign-off (inherited).** v3 draws the free-vs-Setup line publicly and —
+   by the trivial-profile guard + the C4-nudge decision — diverts *more* low-scope Setup
+   intent into the free trial than v2. Genuine done-for-you buyers still reach Setup
+   (Tina, via the prominent also-door); confirm you accept the deliberate leak.
+2. **`do_for_me` guard threshold.** Trivial = no migration, no special stages, no
+   multi-division, standard flow (any C1). A one-app solo with a standard flow who taps
+   "do it for me" currently down-resolves to OPS + Setup door. Confirm, or let a
+   `light_tool` + do_for_me headline Setup.
+3. **"Up to 3 custom configurations"** — confirm whether Setup's published cap is firm
+   "3" or an approximation (the canonical model says "stages + fields" without a number).
+4. **Soft regulated-workflow nudge** on a Build/Enterprise result that sounds regulated?
+   *Rec:* keep eligibility downstream; the free-trial path already routes through the same
+   screening.
+5. **Mobile:** sequential single-screen-per-question (rec) vs. a combined screen.
 
-**Considered and rejected:** gating the build behind deposits ON (ship now as
-qualification + the now-instant free-trial path, gated only on § 12.0); stripping the
-progress counter / underline as "quiz tells" (on-brand restraint — the real issue was
-accent *hue*, recolored); adding a trade/crew/urgency *scored* question (cut — it would
-be padding and risks misrouting; rides only on the inquiry form, firewalled from the
-score).
+**Considered and rejected (do not re-raise without new evidence):** asking cold prospects
+to audit OPS's feature set (the v2 flaw v3 exists to fix); a single unbranched funnel
+(cold and existing users cannot answer the same questions); gating the build behind
+deposits ON (ship now as qualification + the instant free-trial path, gated only on § 12.0);
+a scored trade/crew/urgency personalizer (cut — padding + misroute risk; rides only on the
+inquiry form, firewalled from the score).
 
 ---
 
@@ -961,9 +727,11 @@ score).
 - No production code written; no shipped `/spec` component, route, dictionary, or `lib`
   file modified. Only this design doc + the non-production prototype under `specs/`.
 - No flags flipped, nothing deployed, no `git push`.
-- Reuses the existing `/spec` composition, interaction/motion/token/i18n patterns, and
-  the existing `/api/contact` backend (extended).
-- The honest framing it must ship under: a **qualification + honest-routing** feature —
-  it sends genuinely-fit prospects to paid SPEC *and* genuinely-unfit ones to the free
-  trial. Real conversion proof arrives once deposits are ON and § 12.0 lands; the `ops`
-  free-trial path is the one honestly-instant outcome today.
+- Reuses the existing `/spec` composition, interaction/motion/token/i18n patterns, the
+  existing `/api/contact` backend (extended), and the confirmed `app.opsapp.co/register`
+  signup entry.
+- Validated by a 14-persona war-game (14/14 answerable + correctly routed). The honest
+  framing it ships under: a **qualification + honest-routing** feature — it sends fit
+  prospects to paid SPEC, unfit ones to the free trial, and captures genuine cold custom-
+  build intent as a warm founder lead. Real conversion proof arrives once deposits are ON
+  and § 12.0 lands; the `ops`/free-trial path is the one honestly-instant outcome today.
