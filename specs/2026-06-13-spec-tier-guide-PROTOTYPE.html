@@ -165,7 +165,7 @@
       <div class="card" data-tier="enterprise" id="card-enterprise"><span class="crail"></span><div class="c-top"><div><span class="c-name">ENTERPRISE</span><span class="pill pill-match hidden" data-match="enterprise">YOUR MATCH</span></div><div class="c-price num">$4,500 <span class="sub">/ $18,000</span></div></div><div class="c-tag">Your entire operation, custom-built on OPS</div></div>
     </div>
   </section>
-  <div class="footnote">PROTOTYPE · NOT PRODUCTION · rev 2026-06-13d (v3 branched) · logic + copy mirror SPEC/09_TIER_GUIDE_DESIGN.md (§7/§8 canonical). Free-trial CTA → app.opsapp.co/register.</div>
+  <div class="footnote">PROTOTYPE · NOT PRODUCTION · rev 2026-06-13d2 (v3.1 branched + Data Setup add-on) · logic + copy mirror SPEC/09_TIER_GUIDE_DESIGN.md (§7/§8 canonical). Simple migration → ~$300 Data Setup add-on, not $3k Setup. Free-trial CTA → app.opsapp.co/register.</div>
 </div>
 
 <script>
@@ -244,11 +244,11 @@ function stepIndex(cur,a){ // 1-based position within the path
 /* ====== ROUTING (§3.2 cold, §3.4 existing) ====== */
 function recommendCold(a){
   const migration=a.c2==='bring_history', structural=a.c3==='multi_division', stages=a.c4==='special_stages', buildLean=a.c4==='whole_capability', doneForYou=a.c5==='do_for_me';
-  const trivial = a.c4==='standard_flow' && !migration && !structural; // solo/multi_crew implied (no multi_division)
-  let winner,driver,founderEscape=false,setupNudge=false,buildHedge=false,headsUp=false,dual=false,buildSurfaced=false,setupProminent=false;
-  if(migration && structural){ winner='enterprise'; driver='migration'; dual=true; }
-  else if(migration){ winner='setup'; driver='data_migration'; }
-  else if(doneForYou && !trivial){ winner='setup'; driver= stages?'trade_stages': structural?'structure':'done_for_you'; if(buildLean){buildSurfaced=true;founderEscape=true;} }
+  const trivial = a.c4==='standard_flow' && !migration && !structural;
+  const configScope = stages || structural; // a real reason to pay for done-for-you CONFIG
+  let winner,driver,founderEscape=false,setupNudge=false,buildHedge=false,headsUp=false,dual=false,buildSurfaced=false,setupProminent=false,dataSetupRider=false;
+  if(migration && structural){ winner='enterprise'; driver='migration'; dual=true; }                  // complex migration = Enterprise
+  else if(doneForYou && !trivial && configScope){ winner='setup'; driver= stages?'trade_stages':'structure'; if(buildLean){buildSurfaced=true;founderEscape=true;} }  // $3k = done-for-you CONFIG only
   else {
     winner='ops'; driver= a.c5==='not_sure'?'deferred_unsure': a.c5==='show_me'?'guided_self':'fits_oob';
     if(stages) setupNudge=true;
@@ -256,34 +256,39 @@ function recommendCold(a){
     if(structural && !migration) headsUp=true;
     if(doneForYou) setupProminent=true;
   }
+  if(migration && !structural) dataSetupRider=true;   // §3.2 Step 4 — simple migration = ~$300 Data Setup add-on, NOT $3k Setup
   let also; if(winner==='ops') also=['setup']; else if(winner==='setup') also=buildSurfaced?['ops','build']:['ops']; else also=['build'];
-  return {lane:'cold',winner,driver,also,founderEscape,setupNudge,buildHedge,headsUp,dual,setupProminent};
+  return {lane:'cold',winner,driver,also,founderEscape,setupNudge,buildHedge,headsUp,dual,setupProminent,dataSetupRider};
 }
 function recommendExisting(a){
   const w=a.e1||[]; const has=x=>w.includes(x);
   const missingSurvived = has('missing') && a.disconfirm==='genuinely_missing';
-  const dataTier = has('data') ? (a.e2==='incumbent_complex'?'enterprise':'setup') : null;
+  const dataTier = has('data') ? (a.e2==='incumbent_complex'?'enterprise':'data_setup') : null;  // simple/mid = ~$300 add-on
   const buildTier = missingSurvived ? (a.e3==='several'?'enterprise':'build') : null;
   const cand=[];
   if(dataTier==='enterprise'||buildTier==='enterprise') cand.push('enterprise');
   if(buildTier==='build') cand.push('build');
-  if(dataTier==='setup'||has('stages')||has('fields')) cand.push('setup');
+  if(has('stages')||has('fields')) cand.push('setup');
+  if(dataTier==='data_setup') cand.push('data_setup');
   if(has('setting')||(has('missing')&&!missingSurvived)) cand.push('ops');
   if(!cand.length) cand.push('ops');
-  const order=['enterprise','build','setup','ops']; const winner=order.find(o=>cand.includes(o));
+  const order=['enterprise','build','setup','data_setup','ops']; const winner=order.find(o=>cand.includes(o));
+  const dataSetupRider = dataTier==='data_setup' && winner!=='data_setup'; // data add-on rides alongside a config/build winner
   let driver,settingPointer;
   if(winner==='ops'){ driver='setting'; settingPointer = has('setting')?"Settings → Pipeline → stage config (colors, autoFollowUpDays, win-probability)":"Settings — we'll point you to the exact screen"; }
-  else if(winner==='setup') driver = (has('stages')&&has('fields'))?'stages_fields': has('stages')?'trade_stages': has('fields')?'custom_fields':'data_migration';
+  else if(winner==='setup') driver = (has('stages')&&has('fields'))?'stages_fields': has('stages')?'trade_stages':'custom_fields';
+  else if(winner==='data_setup') driver='data_setup';
   else if(winner==='build') driver='build_one';
   else driver = dataTier==='enterprise'?'migration':'several';
-  let also; if(winner==='ops') also=['setup']; else if(winner==='setup') also=['ops','build']; else if(winner==='build') also=['setup','enterprise']; else also=['build'];
-  return {lane:'existing',winner,driver,also,settingPointer};
+  let also; if(winner==='ops') also=['setup']; else if(winner==='data_setup') also=['ops']; else if(winner==='setup') also=['ops','build']; else if(winner==='build') also=['setup','enterprise']; else also=['build'];
+  return {lane:'existing',winner,driver,also,settingPointer,dataSetupRider};
 }
 
 /* ====== COPY ====== */
-const NAME={ops:'OPS',setup:'SETUP',build:'BUILD',enterprise:'ENTERPRISE'};
+const NAME={ops:'OPS',data_setup:'DATA SETUP',setup:'SETUP',build:'BUILD',enterprise:'ENTERPRISE'};
 const REASON={
   ops:"Standard OPS already covers you. Start the 30-day free trial — you (or your office admin) set your pipeline colors, follow-up timing, stale-deal thresholds, win-odds, lead sources, tags, team and roles, catalog and tax, yourself, in an afternoon. You don't pay us a cent past your subscription.",
+  data_setup:"You've got history to bring across — that's the Data Setup add-on. Once you're set up, we import your old jobs, clients and records for you. About $300, one-time, and we handle the move.",
   setup:"We shape OPS around the way you already work — your pipeline, your stages, your fields, dialed to your business. Nothing for you to learn. Just OPS, built to fit.",
   build:"We build the one thing you're missing — a custom module for your trade, on iOS and web, wired straight into your live OPS.",
   enterprise:"Multiple custom modules, your data moved off the old system, your tools integrated. Your whole operation, rebuilt on OPS.",
@@ -295,6 +300,7 @@ const DRIVER={
   done_for_you:"[ you'd rather we set it up for you — that's exactly what Setup is ]",
   trade_stages:"[ your trade runs on stages a generic tool doesn't ship ]",
   data_migration:"[ you've got history to bring across — that's Setup, not a free connect ]",
+  data_setup:"[ you've got history to bring in — that's the Data Setup add-on, not a custom build ]",
   setting:"[ what's blocking you is a setting — here's the exact screen ]",
   custom_fields:"[ custom fields OPS has no box for — that's Setup ]",
   stages_fields:"[ custom stages and fields — that's Setup ]",
@@ -310,7 +316,8 @@ const HEADS_MIG="One heads-up — if you've got history to move over, that's whe
 const FOUNDER="Sounds like you already know you need something custom. Skip the guessing — tell the founder what you're after.";
 const SETUP_ALT="Rather we set it up around your workflow for you? That's Setup — two discovery sessions, we map OPS to how your jobs run, deploy to staging for you to check, then a recorded walkthrough. $3,000, four milestones, 30-day money-back. The done-for-you version of what you'd otherwise do free.";
 const DUAL_NOTE="No reason to wait — start the trial today while we scope your migration.";
-const ALSO={ops:"you can set all this up yourself, free — start the trial.",setup:"if you'd rather we configure it around your workflow for you.",build:"if one custom module would close the gap.",enterprise:"if it's several pieces, or a migration."};
+const ALSO={ops:"you can set all this up yourself, free — start the trial.",data_setup:"start free, then add Data Setup to bring your history in.",setup:"if you'd rather we configure it around your workflow for you.",build:"if one custom module would close the gap.",enterprise:"if it's several pieces, or a migration."};
+const DATA_RIDER="Bringing your history with you? Once you're in, the Data Setup add-on imports your old jobs, clients and records for you — about $300, one-time. Connecting going forward is free; moving the history across is the add-on.";
 const SUMMARY={setup:"Setting OPS up around how you already work, done for you.",build:"A custom module for your trade, built on OPS.",enterprise:"Your operation rebuilt on OPS — modules, migration, integrations."};
 const PREFILL={setup:"I want OPS set up around my workflow. Here's how my jobs run:\n\n",build:"I need a custom module for my trade. Here's what it has to do:\n\n",enterprise:"I want to move my operation onto OPS. Here's what I'm running and what I need:\n\n"};
 
@@ -372,32 +379,42 @@ function note(text,tan){ const p=document.createElement('p'); p.className='r-not
 function showResult(){
   questions.style.display='none';result.style.display='block';
   const r = answers.branch==='cold'?recommendCold(answers):recommendExisting(answers);
-  currentTier=r.winner; const isOps=r.winner==='ops';
+  currentTier=r.winner; const isOps=r.winner==='ops'; const isDataSetup=r.winner==='data_setup';
   el('rTier').textContent=NAME[r.winner];
   el('rReason').textContent=REASON[r.winner];
   el('rBecause').textContent=DRIVER[r.driver]||'';
   // notes
   const notes=el('rNotes');notes.innerHTML='';
   if(isOps){
-    notes.appendChild(note(CARVEOUT));
+    if(r.lane==='cold'){
+      notes.appendChild(note(CARVEOUT));
+      if(r.setupNudge) notes.appendChild(note(STAGES_NUDGE,true));
+      if(r.headsUp) notes.appendChild(note(HEADS_MIG,true));
+      if(r.founderEscape) notes.appendChild(note(FOUNDER,true)); else if(r.buildHedge) notes.appendChild(note(BUILD_HEDGE));
+    }
     if(r.settingPointer) notes.appendChild(note('Exact screen: '+r.settingPointer,true));
-    if(r.setupNudge) notes.appendChild(note(STAGES_NUDGE,true));
-    if(r.headsUp) notes.appendChild(note(HEADS_MIG,true));
-    if(r.founderEscape) notes.appendChild(note(FOUNDER,true)); else if(r.buildHedge) notes.appendChild(note(BUILD_HEDGE));
   }
+  if(r.dataSetupRider) notes.appendChild(note(DATA_RIDER));
   if(r.winner==='enterprise' && r.dual) notes.appendChild(note(DUAL_NOTE,true));
-  el('rSetupAlt').style.display=isOps?'block':'none'; if(isOps)el('rSetupAlt').textContent=SETUP_ALT;
+  const showAlt=isOps && r.lane==='cold';
+  el('rSetupAlt').style.display=showAlt?'block':'none'; if(showAlt)el('rSetupAlt').textContent=SETUP_ALT;
 
   // actions
   el('rInquiry').classList.remove('show');el('rConfirm').classList.remove('show');
   const acts=el('rActions');acts.innerHTML='';
+  const addDataSetupBtn=()=>{const d=document.createElement('button');d.className='r-cta ghosted';d.textContent='ADD DATA SETUP';d.onclick=()=>alert('→ Subscription tab → Data Setup add-on (one-time, ~$300). Ops imports your history.');acts.appendChild(d);};
   if(isOps){
     const cta=document.createElement('button');cta.className='r-cta';cta.textContent='START FREE — 30 DAYS';cta.onclick=()=>alert('→ https://app.opsapp.co/register (routes through Quebec/regulated screening). Fires tier_guide_trial_started.');acts.appendChild(cta);
     if(r.founderEscape){const f=document.createElement('button');f.className='r-cta ghosted';f.textContent='TELL THE FOUNDER';f.onclick=()=>openInquiry('build');acts.appendChild(f);}
+    if(r.dataSetupRider) addDataSetupBtn();
     const sec=document.createElement('button');sec.className='r-secondary';sec.textContent='rather we set it up for you? → Setup';sec.onclick=()=>openInquiry('setup');acts.appendChild(sec);
+  } else if(isDataSetup){
+    const cta=document.createElement('button');cta.className='r-cta';cta.textContent='ADD DATA SETUP';cta.onclick=()=>alert('→ Subscription tab → Data Setup add-on (one-time, ~$300). Ops imports your history.');acts.appendChild(cta);
+    const sec=document.createElement('button');sec.className='r-secondary';sec.textContent='not set up yet? → start free first';sec.onclick=()=>alert('→ https://app.opsapp.co/register');acts.appendChild(sec);
   } else {
     const cta=document.createElement('button');cta.className='r-cta';cta.textContent=`START YOUR ${NAME[r.winner]}`;cta.onclick=()=>openInquiry(r.winner);acts.appendChild(cta);
     if(r.winner==='enterprise' && r.dual){const f=document.createElement('button');f.className='r-cta ghosted';f.textContent='START FREE WHILE WE SCOPE';f.onclick=()=>alert('→ app.opsapp.co/register (dual affordance)');acts.appendChild(f);}
+    if(r.dataSetupRider) addDataSetupBtn();
     const sec=document.createElement('button');sec.className='r-secondary';sec.textContent=`See the ${NAME[r.winner]} package ›`;sec.onclick=()=>gotoCard(r.winner);acts.appendChild(sec);
   }
   // also-consider
@@ -405,7 +422,7 @@ function showResult(){
   if(isOps){ alsoWrap.style.display='none'; }
   else { alsoWrap.style.display='block'; (r.also||[]).forEach(t=>{const b=document.createElement('button');b.className='also-row';b.innerHTML=`<span class="at">${NAME[t]}</span>${ALSO[t]}`;b.onclick=()=>{ if(t==='ops'){restart();} else gotoCard(t); };also.appendChild(b);}); }
 
-  applyPill(isOps?null:r.winner);
+  applyPill((isOps||isDataSetup)?null:r.winner);
   const under=el('rUnder');under.style.width='0';
   if(reduce)under.style.width='100%'; else {result.animate([{opacity:0,transform:'translateY(8px)'},{opacity:1,transform:'none'}],{duration:300,easing:'cubic-bezier(0.22,1,0.36,1)'});requestAnimationFrame(()=>{under.style.width=el('rTier').offsetWidth+'px';});}
 }
