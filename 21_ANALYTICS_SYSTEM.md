@@ -203,6 +203,11 @@ Table grants: `anon` has **INSERT only** (write-only — no SELECT/UPDATE/DELETE
 | `begin_trial` | `{trial_days: int}` | Trial starts | YES |
 | `subscribe` | `{plan: string, price: number, currency: string, period: 'Monthly' \| 'Annual'}` | Subscription purchase | YES |
 | `complete_onboarding` | `{has_company: bool}` | Onboarding finished | YES |
+| `onboarding_step_viewed` | `{step: string, path: 'owner' \| 'crew' \| 'unknown'}` | Entry to each onboarding step (rebuilt iOS flow; deduped once per step entry) | NO |
+| `onboarding_completed` | `{path: string, step_count: int, duration_ms: int}` | Rebuilt iOS onboarding flow completed (admit) | NO |
+| `onboarding_abandoned` | `{last_step: string, path: string}` | User signed out mid-onboarding | NO |
+| `onboarding_completion_queued` | `{}` | Completion ACK failed/timed out and was queued offline (`CompletionGateView`) | NO |
+| `onboarding_invite_check_failed` | `{}` | Invite lookup fetch/decode failed (distinct from "zero invites"; `InviteCheckStepView`) | NO |
 
 ### Screen Views (`event_type: 'screen_view'`)
 
@@ -778,7 +783,7 @@ These systems continue operating independently. They are NOT replaced by `analyt
 
 | System | Table | Purpose | Status |
 |---|---|---|---|
-| Onboarding Analytics | `onboarding_analytics` | Step-by-step onboarding funnel with A/B/C variants | Active (iOS) |
+| Onboarding Analytics | `onboarding_analytics` | Legacy step-by-step onboarding funnel (written by the pre-rebuild A/B/C flow). The rebuilt express flow (2026-06-13) emits its funnel as `lifecycle` events on `analytics_events` instead — see § 3 `onboarding_step_viewed` / `onboarding_completed` / `onboarding_abandoned`. | Legacy (dead path) |
 | Wizard Analytics | `wizard_analytics` | Guided tour engagement with offline queue | Active (iOS) |
 | Tutorial Analytics | `tutorial_analytics` | Tutorial phase progression | Active (iOS + Android) |
 | GA4 (server-side) | N/A | Marketing site traffic, used in admin `/analytics` | Active (Web) |

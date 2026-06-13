@@ -272,109 +272,75 @@ OPS has one cohesive signup/onboarding contract across ops-site, OPS-Web, and OP
 - **Completion is acknowledged by the backend.** Web completion uses `/api/setup/complete`; iOS completion uses `/api/onboarding/complete` through the OPS-Web API gateway.
 - **Handoffs preserve intent.** ops-site and OPS-Web auth/onboarding routes preserve sanitized continuation URLs so signup, login, account-type selection, and setup return users to the route that initiated the flow.
 
-### Company Creator Flow (Owner/Admin)
+### iOS Onboarding — The Rebuilt Express Flow (2026-06-13 cutover)
 
-Presented on first launch when user has no account.
+> The iOS onboarding was rebuilt from scratch and cut over on **2026-06-13** (spec: `ops-ios/docs/superpowers/specs/2026-06-11-onboarding-rebuild-design.md`). The old three-generation system — an A/B/C experiment coordinator (`OnboardingABTestCoordinator`) mounted in two places, three drifting login forms, a double-welcome, and ~70 dead/superseded screens — was replaced by **one express flow: one welcome, one login, one onboarding instance, one completion path.** The rebuilt module lives at `OPS/Onboarding/` (`Gateway/`, `Flow/`, `Screens/*StepView`, `Gateway/*LiveBoundary`, `Manager/OnboardingManager`, `State/OnboardingFlowState`). The original A/B/C experiment (express vs interactive-tutorial vs workflow-animation) is **deferred** to tracked follow-up work — it is rebuilt properly only when those variants ship; this version ships the express variant alone.
 
-**Step 1: Welcome Screen**
-- **UI Elements:**
-  - OPS logo
-  - Tagline: "Job Management for Trades"
-  - "Get Started" button
-  - "Already have an account? Sign In" text button
-- **Actions:**
-  - Tap "Get Started" → Step 2
+**Architecture.** A single `OnboardingGateway` (SwiftUI) is the only pre-app mount: it owns Welcome, Login, and the one `OnboardingFlowCoordinator` instance for both anonymous and authenticated-but-incomplete users, so a kill/relaunch mid-onboarding resumes the flow rather than landing in the main app. `ContentView` routes into the gateway, flag-gated by **`FeatureFlags.useRebuiltOnboarding` (default `true` as of the 2026-06-13 cutover)**. The coordinator is an explicit step machine (`OnboardingFlowStep`) with a data-driven back map (a no-op Back is structurally impossible) and a server-derived resume table; each screen isolates the live auth/data layer behind an injected `*LiveBoundary` adapter so the screens stay unit-testable. Flow state persists under **`onboarding_state_v4`** (single versioned blob: step position + collected form data), with a one-shot `onboarding_state_v3 → v4` launch migration.
 
-**Step 2: Signup Method Selection**
-- **UI Elements:**
-  - "Create Your Account" title
-  - Google Sign-In button (with Google logo)
-  - Apple Sign-In button (with Apple logo)
-  - "Or use email" divider
-  - Email/Password form fields
-  - "Continue" button
-  - "Already have an account? Sign In" text button
-- **Actions:**
-  - Tap Google → Google OAuth flow → Step 3
-  - Tap Apple → Apple OAuth flow → Step 3
-  - Enter email/password + Tap Continue → Step 3
+> **Legacy code status (2026-06-13):** the legacy A/B coordinator and its ~70 screens/components remain in the codebase but are **dead** (no longer mounted) pending a legacy-deletion pass. Setting `feature.useRebuiltOnboarding = false` reverts to the legacy flow.
 
-**Step 3: Profile Setup**
-- **UI Elements:**
-  - "Tell us about yourself" title
-  - First name text field
-  - Last name text field
-  - Phone number text field (optional)
-  - "Continue" button
-- **Actions:**
-  - Fill fields + Tap Continue → Step 4
+**Screen-count rule:** counts = interactive screens requiring input (auto-advancing transitions and the completion gate are excluded). **Owner: 5. Crew: 6 (single invite) or 7 (picker / manual code).**
 
-**Step 4: Company Setup**
-- **UI Elements:**
-  - "Create Your Company" title
-  - Company name text field
-  - "Continue" button
-- **Actions:**
-  - Enter company name + Tap Continue → Step 5
+#### Shared head (both roles)
 
-**Step 5: Company Details**
-- **UI Elements:**
-  - "Tell us about your company" title
-  - Industry picker (dropdown)
-  - Crew size picker (dropdown: 1-3, 4-5, 6-10, 11+)
-  - "Continue" button
-- **Actions:**
-  - Select options + Tap Continue → Step 6
+**S1 — Welcome** (`WelcomeStepView`) — brand line, one subline, version footer. `GET STARTED` → role pick; `SIGN IN` → Login. Serves new and returning users identically; static-first hero (any motion honors Reduce Motion).
 
-**Step 6: Company Code Display**
-- **UI Elements:**
-  - "Your Company Code" title
-  - Large display of 6-character code (e.g., "ABC123")
-  - "Share this code with your employees so they can join your company"
-  - Copy to clipboard button
-  - Share button (iOS share sheet)
-  - "Continue" button
-- **Actions:**
-  - Copy/share code for later use
-  - Tap Continue → Step 7
+**Login** (`LoginStepView`, one shared implementation; Back → Welcome) — email + password, Apple, Google, forgot-password, inline field-level errors. Outcomes:
+- Returning **complete** user → workspace-preload-gate path into the app.
+- Returning **incomplete** user → flow resumed at the derived step (see resume table).
+- Social sign-in resolving to a **brand-new identity** (no prior `users` row) → `sync-user` runs, then routes into the flow at Role pick with auth already satisfied (Create account is skipped).
 
-**Step 7: Ready Screen**
-- **UI Elements:**
-  - "You're All Set!" title
-  - "Start managing your projects" subtitle
-  - "Start Tutorial" button
-  - "Skip Tutorial" text button
-- **Actions:**
-  - Tap Start Tutorial → Tutorial Mode
-  - Tap Skip Tutorial → Home Screen (tutorial accessible later)
+**S2 — Role pick** (`RolePickStepView`; Back → Welcome pre-auth; resumed post-auth there is no Back, header carries `SIGN OUT`) — two cards: `RUN A CREW` / `JOIN A CREW`. **Role choice is uncommitted** until a company is created or joined, so it can be revisited via the back-edges below — killing the wrong-role trap.
 
-### Employee Flow (Field Crew, Office Crew)
+**S3 — Create account** (`CreateAccountStepView`; Back → Role pick) — Apple / Google / email. **Commit point: the Firebase account + `sync-user` row are created on S3 submit.** No path exits S3 with an empty first or last name (email collects them inline; Apple/Google auto-fill, falling back to required inline fields when the provider returns no name; the Apple name cache lives in Keychain so it survives reinstall). Existing-account handling: email already registered → inline error + one-tap `SIGN IN` handoff (prefilled email); Apple/Google resolving to an existing account → treated as sign-in (complete → app; incomplete → derived resume).
 
-Presented when user joins via company code.
+#### Owner path (5 screens)
 
-**Steps 1-3:** Same as Company Creator (Welcome, Signup, Profile)
+- **S4o — Company name** (`CompanyNameStepView`; Back → Role pick — the account is committed but the role isn't yet, since no company exists; header `SIGN OUT`) — single name field + optional primary-trade chips → `companies.industries`. **Company-creation commit point:** calls the shared `create_company_for_owner` RPC (see `04_API_AND_INTEGRATION.md`), which returns the DB-truth crew code.
+- **S5o — Crew code** (`CrewCodeStepView`; no Back — company is committed) — the payoff. The RPC-returned code in JetBrains Mono, bracketed, identical render to the entry screen; COPY (success haptic); INVITE CREW; "find this code in Settings anytime"; CTA `ENTER OPS →` → completion gate → app.
 
-**Step 4: Company Code Entry**
-- **UI Elements:**
-  - "Join a Company" title
-  - "Enter the 6-character code provided by your company administrator"
-  - 6-character code input field (auto-uppercase, formatted)
-  - "Join" button
-  - "Don't have a code? Contact your administrator" help text
-- **Actions:**
-  - Enter code + Tap Join → Validates code with server
-  - If valid → Step 5
-  - If invalid → Error message "Invalid code. Please check and try again."
+#### Crew path (6–7 screens)
 
-**Step 5: Ready Screen**
-- Same as Company Creator Step 7
+- **S4c — Invite check** (`InviteCheckStepView`; auto transition) — looks up pending invites by email. Exactly one → Confirm company; 2+ → invite picker; none → code entry. A **fetch/decode failure is a user-visible retry state** (`CHECK AGAIN` / `ENTER CODE INSTEAD`), never silently treated as zero invites; it fires the `onboarding_invite_check_failed` diagnostic.
+- **Invite picker** (`InvitePickerStepView`; Back → Role pick; secondary `ENTER A DIFFERENT CODE` → code entry) — cards for each pending invite.
+- **S4c-code — Crew code entry** (`CodeEntryStepView`; Back → Role pick when reached via zero invites, Back → picker when reached from the picker — the back map carries provenance; header `SIGN OUT`) — bracket-mono input. **No client-side format rejection** — any non-empty code is accepted (legacy `PREFIX-XXXXXX` codes stay valid); validation is server lookup-only.
+- **S5c — Confirm company** (`ConfirmCompanyStepView`; Back → its source: picker or code entry) — branding/team preview before commit; sparse-data fallback gets a deliberate reduced layout. **Crew JOIN commit point:** calls `join_user_to_company`.
+- **S6c — Profile** (`ProfileStepView`; no Back — join is committed; header `SIGN OUT`) — first/last (prefilled from S3, editable), phone, photo. **Name + phone required, photo optional.** Avatar upload shows progress and surfaces failure with retry.
+- **S7c — Emergency contact** (`EmergencyContactStepView`; Back → Profile; visible `SKIP`) — `FINISH` saves; SKIP advances without saving. Both terminate at the completion gate.
+
+#### Completion gate (both paths, auto)
+
+`CompletionGateView` awaits the server ACK (`POST /api/onboarding/complete` → merges `users.onboarding_completed.ios=true`) behind a loader built to the `WorkspacePreloadGate` standard. **Offline/failure contract (designed for poor connectivity):** if the ACK fails or times out, completion is **queued locally** (`onboarding_completion_pending = true`) with a visible "will finish syncing" state and the user **enters the app**; `shouldShowOnboarding` treats a queued completion as complete; the SyncEngine drains the queued ACK (`retryPendingOnboardingCompletion`) until the server confirms. No blocking, no re-entry loop, no silent failure.
+
+#### Back map (single source of truth — `OnboardingFlowStep.backEdge(context:)`)
+
+`Login→Welcome`, `RolePick→Welcome` (pre-auth only), `CreateAccount→RolePick`, `CompanyName→RolePick`, `InvitePicker→RolePick`, `CodeEntry→RolePick | InvitePicker` (by provenance), `ConfirmCompany→source` (picker or code entry), `EmergencyContact→Profile`. Steps with no back-edge (escape is `SIGN OUT`, which fully clears flow state and returns to Welcome): post-auth RolePick, CrewCode, InviteCheck, Profile, CompletionGate.
+
+#### Server-derived resume (`OnboardingResume.derive` — server state is authority)
+
+The persisted local step is an optimization only; on resume / cross-device the server-observable user row decides placement (strict priority order):
+
+| Observable server state | Resume target |
+|---|---|
+| No company affiliation (any/no `user_type`) | Role pick — role is uncommitted |
+| Company + `onboarding_completed.web = true`, `.ios` ≠ true | Completion gate (silent auto-complete: the gate fires the iOS ACK, zero screens) |
+| Company + `role = owner` | Completion gate (NOT the crew-code screen — the code is a one-time reveal and lives in Settings; re-showing it cross-device would render a blank code) |
+| Company + employee, profile incomplete (blank first/last/phone) | Profile |
+| Company + employee, profile complete | Completion gate (Emergency contact is optional and never re-offered on resume) |
+
+> Note (2026-06-13): the iOS `User` model does not yet expose `onboarding_completed.web`, so the gateway reports `webComplete = false` until a DTO/model change lands. The safe consequence: a user who finished onboarding on web but not iOS is routed by company + role + profile (never skipping a required local step) rather than silently auto-completed.
+
+#### Funnel analytics
+
+The rebuilt flow fires a clean per-step funnel (see `21_ANALYTICS_SYSTEM.md`): `onboarding_step_viewed`, `onboarding_completed`, `onboarding_abandoned` (gateway-observed), plus `onboarding_completion_queued` (offline gate) and `onboarding_invite_check_failed` (the R13 diagnostic). The existing Google Ads conversion points (`sign_up`, `complete_onboarding`) are preserved.
 
 ### Sign-In Flow (Returning Users)
 
-**Sign-In Screen:**
+Returning users sign in through the shared **Login** screen described above (`LoginStepView`, reached from Welcome's `SIGN IN`):
 - **UI Elements:**
   - OPS logo
-  - "Welcome Back" title
+  - Title (terse/tactical voice; the banned "Welcome back!" / "Enter your credentials" strings are not used)
   - Google Sign-In button
   - Apple Sign-In button
   - Email/Password fields

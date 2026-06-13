@@ -29,25 +29,25 @@ This document catalogs every feature, user story, business rule, and functional 
 
 #### Onboarding Flows
 
-**Company Creator Flow:**
-1. Welcome screen
-2. Signup method selection
-3. Credential entry
-4. Profile setup (first name, last name, phone)
-5. Company setup (company name)
-6. Company details (industry, crew size)
-7. Company code display (6-character unique code)
-8. Ready screen
-9. Interactive tutorial (25 phases)
+> iOS onboarding was rebuilt into a single **express flow** (cutover 2026-06-13). Full screen-by-screen narrative, back map, and resume rules: `02_USER_EXPERIENCE_AND_WORKFLOWS.md` § *iOS Onboarding — The Rebuilt Express Flow*. Interactive screen counts: **Owner 5, Crew 6–7.**
 
-**Employee Flow:**
-1. Welcome screen
-2. Signup method selection
-3. Credential entry
-4. Profile setup (first name, last name, phone)
-5. Company code entry (join existing company)
-6. Ready screen
-7. Interactive tutorial (25 phases)
+**Owner Flow (`RUN A CREW`):**
+1. Welcome
+2. Role pick (uncommitted until a company is created)
+3. Create account (Apple / Google / email — Firebase + `sync-user` commit)
+4. Company name (+ optional primary-trade chips → `create_company_for_owner` RPC)
+5. Crew code reveal (server-generated code, COPY / INVITE CREW) → completion gate → app
+
+**Crew Flow (`JOIN A CREW`):**
+1. Welcome
+2. Role pick
+3. Create account
+4. Invite check (auto) → invite picker / crew-code entry (no client-side format check)
+5. Confirm company (`join_user_to_company` RPC commit)
+6. Profile (name + phone required, photo optional)
+7. Emergency contact (skippable) → completion gate → app
+
+The interactive 25-phase tutorial is no longer part of the onboarding flow itself (the old "Ready screen → Start Tutorial" step was removed); the tutorial remains available in-app.
 
 #### Tutorial System
 - **25-Phase Interactive Tutorial** - Comprehensive onboarding covering all app features
@@ -251,7 +251,7 @@ The Job Board uses a role-based section system. Each role sees a different set o
 - **View Team Members** - List of all company users
 - **Role Assignment** - Admin, Office Crew, Field Crew
 - **Employee Type** - Additional classification (Admin, Manager, Field Crew, etc.)
-- **Company Code Sharing** - Invite employees via 6-character code
+- **Company Code Sharing** - Invite employees via the company code (server-generated 8-char; legacy 6-char codes remain valid)
 - **Admin Designation** - Company owner can designate additional admins
 - **User Profiles** - Name, email, phone, role, avatar
 
@@ -343,7 +343,7 @@ The Job Board uses a role-based section system. Each role sees a different set o
 
 #### Company Settings (Admin Only)
 - **Company Profile** - Name, industry, crew size
-- **Company Code** - View/share 6-character code
+- **Company Code** - View/share the company code (8-char; legacy 6-char codes still valid)
 - **Subscription Management** - View current plan, upgrade/downgrade
 - **Admin Management** - Designate additional admins
 - **Task Type Management** - Create/edit custom task types

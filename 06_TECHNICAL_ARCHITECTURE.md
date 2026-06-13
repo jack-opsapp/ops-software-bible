@@ -451,8 +451,26 @@ OPS/OPS/
 │       ├── SeatManagementView.swift
 │       └── PlanSelectionView.swift
 │
-├── Onboarding/ (56 files)
-│   ├── OnboardingCopy.swift        # Copy text constants
+├── Onboarding/ (rebuilt 2026-06-13 — see note below)
+│   # REBUILT EXPRESS FLOW (live as of the 2026-06-13 cutover, flag
+│   # FeatureFlags.useRebuiltOnboarding default true):
+│   #   Gateway/OnboardingGateway.swift      — the single pre-app mount
+│   #   Gateway/*LiveBoundary.swift          — per-screen live auth/data adapters
+│   #   Gateway/OnboardingFunnelAnalytics.swift — per-step funnel tracker
+│   #   Flow/OnboardingFlowCoordinator.swift — step machine + back map + resume
+│   #   Flow/OnboardingFlowStep.swift, Flow/OnboardingResume.swift
+│   #   State/OnboardingFlowState.swift      — onboarding_state_v4 blob + v3 migration
+│   #   Screens/*StepView.swift              — Welcome/Login/RolePick/CreateAccount/
+│   #                                            CompanyName/CrewCode/InviteCheck/
+│   #                                            InvitePicker/CodeEntry/ConfirmCompany/
+│   #                                            Profile/EmergencyContact/CompletionGate
+│   #   Manager/OnboardingManager.swift (hardened, kept), Services/OnboardingService.swift,
+│   #   Screens/WorkspacePreloadGate.swift (kept)
+│   # The legacy A/B/C tree below (ABTest/, Container/, Coordinators/, ViewModels/,
+│   # Views/, the old Screens/ + Components/, OnboardingCopy.swift, State/OnboardingState.swift)
+│   # is now DEAD (no longer mounted) and awaits a deletion pass. Flow narrative:
+│   # 02_USER_EXPERIENCE_AND_WORKFLOWS.md § iOS Onboarding — The Rebuilt Express Flow.
+│   ├── OnboardingCopy.swift        # Copy text constants (legacy, dead)
 │   ├── Container/ (1 file)
 │   │   └── OnboardingContainer.swift
 │   ├── Coordinators/ (1 file)
