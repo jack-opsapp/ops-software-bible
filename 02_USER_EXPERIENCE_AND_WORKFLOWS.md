@@ -1118,33 +1118,34 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 │ Filters  │  // DAY · WEEK · MONTH · CREW│ Event   │
 │ (only)   │                             │ details  │
 └──────────┴─────────────────────────────┴──────────┘
-                                              ↑
-                              Unscheduled tray (right rail,
-                              promoted out of filter sidebar
-                              in the 2026-04-27 Phase 1+2 rework;
-                              docks LEFT in Day view)
+          ↑
+Unscheduled tray (left rail, promoted out of filter sidebar
+in the 2026-04-27 Phase 1+2 rework)
 ```
 
 **UI Elements (post 2026-04-27 Phase 1+2 visual + structural rework):**
 
-1. **CalendarHeader** — Date navigation (prev/next), `[ TODAY ]` accent pill (disabled when current view already shows today), filter toggle, view switcher.
+1. **CalendarHeader** — Date navigation (prev/next), `[ TODAY ]` accent pill (disabled when current view already shows today), filter toggle, view switcher, and auto-schedule action.
 
    **View switcher labels:** `// DAY` · `// WEEK` · `// MONTH` · `// CREW` (Cake Mono Light). The previous `'timeline'` view is now `'crew'` — Zustand persist v2 migrate function rewrites stored values on read. Default view for new users is `Week`.
 
-2. **CalendarToolbar** — Includes a `// UNSCHEDULED [N]` chip (left of today/week stats) that toggles the unscheduled tray. Event count, task type color legend, active filter chips remain.
+   **Auto-schedule:** The header action is enabled only when active, non-deleted, non-completed, non-cancelled tasks exist without `startDate`. It opens the shared auto-schedule ghost-preview + confirm bar flow; it does not write dates until the operator confirms. The project drawer exposes the same action scoped to the selected project's schedulable unscheduled tasks.
 
-3. **FilterSidebar** (left, 260px, collapsible) — Four filter sections only (Team Members, Task Types, Projects, Status). The UnscheduledPanel that previously lived inside has been promoted to a first-class `<UnscheduledTray>`.
+2. **CalendarToolbar** — Includes a `// UNSCHEDULED [N]` chip (left of today/week stats) that toggles the unscheduled tray. When `N = 0`, the chip is disabled and reports `No unscheduled tasks`. Event count, active filter chips, the `// TEAM` selector, and the task type `// LEGEND` selector remain. Team and legend selectors are Radix popovers portaled above the scrollable toolbar so they cannot be clipped by toolbar overflow.
 
-4. **UnscheduledTray** (right rail in Week/Month/Crew, **left rail in Day** — mirrors Jobber/Housecall convention):
+3. **FilterSidebar** (left, 260px, collapsible) — Three filter sections only (Team Members, Task Types, Projects). Time-relative status filters (`Past`, `Upcoming`, `In progress`) are intentionally removed because they do not map to useful operator decisions; the persisted calendar store clears any legacy values on migration. Filter rows show a checkbox plus the label, with team avatars only when a real profile image exists. The UnscheduledPanel that previously lived inside has been promoted to a first-class `<UnscheduledTray>`.
+
+4. **UnscheduledTray** (left rail in Day/Week/Month/Crew — mirrors Jobber/Housecall convention):
    - Collapsed: 32px-wide vertical strip with rotated `// UNSCHEDULED [N]` label + grip icon
    - Expanded: 280px wide. Search, group-by (Project / Client / Type / None), sort (Created / Title / Project), scrollable card list with `// GROUP_NAME [N]` headers
+   - Empty state: when `N = 0`, the tray is visually collapsed to the 32px rail regardless of the persisted expanded flag, and the rail button is disabled (`aria-label="No unscheduled tasks"`) so the empty tray never consumes planning canvas.
    - Drag source: dnd-kit `data: { type: 'unscheduled-task', task }` — same contract month-grid + week-grid + crew-grid already accept
    - State persisted: collapsed flag, group-by, sort. Search session-scoped.
 
 5. **Calendar Grid** (center, 4 views):
    - **Day** — single-column scrollable card list (will switch to hourly mode in Phase 3 when timed events exist)
    - **Week** — 7-column day stack (Mon–Sun, weekStartsOn: 1). All-day fallback now; hourly mode in Phase 3. Each column: header (weekday + date number) and a vertical stack of `<DayTaskCard>`s. Drag-drop per column.
-   - **Month** — traditional grid, event indicators (compact dots / standard bars / expanded cards), click date → Day view
+   - **Month** — traditional grid, event indicators (compact dots / standard bars / expanded cards), click date → Day view, click task → task detail panel. When the sticky month label overlaps an event on the first week row, hovering the label fades it temporarily and lets pointer events pass through to the event.
    - **Crew** — formerly "Timeline." Gantt-style swimlane rows per crew member, unassigned synthetic row. Drag tasks across days and rows; resize edges to extend duration.
 
 6. **Card information design (three-source rule, applied across Day, Week, Month, Crew, popovers):**
@@ -1152,7 +1153,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
    - **Subtitle:** `task.customTitle ?? taskType.display` (only when distinct from title)
    - **Body fill / border:** `STATUS_COLORS[deriveTaskStatusKey(task)]` — earth-tone semantic (olive/tan/mute/brick/rose for scheduled/in_progress/completed/cancelled/overdue)
    - **Left accent stripe:** `TASK_TYPE_COLORS[deriveTaskType(task)].border`, rendered as a 3px sibling div with matching `border-radius: 4px 0 0 4px` (NOT `box-shadow: inset` — the inset variant doesn't respect border-radius and produces a "crescent moon" artifact at the corners)
-   - **Type badge:** `taskType.display` (Cake Mono Light, type-color)
+   - **Type badge:** `taskType.display` (Cake Mono Light, type-color), rendered in the title row for Day/Week cards so narrow columns truncate the title before the badge instead of overlaying it
    - **Crew avatars:** max 3 visible (UserAvatar with tooltip), then `+N` chip
    - **Time label:** `HH:mm → HH:mm` JetBrains Mono tabular-nums, only rendered when `event.allDay === false` (Phase 3)
    - **Address:** hover popover only (too dense for cards)
@@ -1514,6 +1515,8 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 - CatalogSnapshotListView (variant-aware historical snapshots)
 - ProductDetailView (Product detail — view + light edits; options/modifiers/recipe read-only)
 - ProductQuickAddSheet (3-field FAB flow for barebones Products)
+
+**Web sibling (2026-06-12, OPS-Web overhaul wave 3.2):** `OPS-Web` ships a matching `/catalog` surface (`src/components/catalog/`) with the same PRODUCTS / STOCK segments. It is the variant-aware replacement for the retired `/products` + `/inventory` pages (Direction D "Workbench"): a 3-tile supply strip (STOCK HEALTH / ON-HAND / PRODUCTS), inline quantity editing that writes audited `inventory_deductions` rows keyed by `catalog_variant_id`, a stock detail drawer (quick-adjust + unit-cost + threshold-cascade sources + used-in + adjustment ledger), and a full product editor at `/catalog/products/[id]` (base fields + options + modifiers + recipe) — which is the 308 redirect target of the iOS `ProductDetailView` "VIEW ON WEB →" link (`https://app.ops.dev/products/{id}` → `/catalog/products/{id}`, `ProductDetailView.swift:1054`). Unlike iOS, web authors the configurable layer (options/modifiers/recipe) fully. Web has no ORDERS surface (`catalog_orders` is consumed nowhere on web) — the buy-run exit is a filter pivot + COPY LIST/PRINT, not a restock order. Threshold status uses the canonical 3-level cascade (variant → family → category); legacy tag thresholds are not consulted (web/iOS agree). Threshold-less variants render as `UNTRACKED`, never `OK`.
 
 ---
 
