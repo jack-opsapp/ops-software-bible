@@ -2195,6 +2195,8 @@ When building any feature with user actions, gate with `<PermissionGate>` or `ca
 
 The Catalog domain replaces the legacy file-only `Inventory*` models with a fully registered, variant-aware schema. Stockable SKUs (variants) and billable templates (Products) are separate concerns bridged by `ProductMaterial` recipe rows. Catalog entities and Product extension models live in `OPS/DataModels/Supabase/Catalog/` and are registered through `OPSSchemaCommon` version groups.
 
+> **Design intent** for the catalog model and guided onboarding — the durable concept (the four entry kinds, units/dimensions, price-vs-cost, variants, reference-not-duplication, and the onboarding philosophy) independent of any specific flow implementation — lives in `07_SPECIALIZED_FEATURES.md` § 13 → *Design Intent — Catalog Model & Guided Onboarding*. The schema below is the structural realization of that model.
+
 ```
 catalog_categories (nested via parent_id, 2-level UI)
   └─ catalog_items (variant family)

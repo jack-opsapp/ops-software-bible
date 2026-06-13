@@ -2732,6 +2732,41 @@ struct UpsertPhotoAnnotationDTO: Codable {
 
 The CATALOG tab replaces the legacy Inventory tab. It is variant-aware, recipe-aware, and integrates the drawing→estimate adapter and threshold-driven order suggestions. The IA splits into two segments — **STOCK** (variants and quantities) and **PRODUCTS** (billable templates) — with all advanced operations grouped under a kebab menu. SwiftData models live in `OPS/DataModels/Supabase/Catalog/`; see `03_DATA_ARCHITECTURE.md` § Catalog & Variant Model for full schema.
 
+### Design Intent — Catalog Model & Guided Onboarding (2026-06-10)
+
+This subsection records the durable *intent* behind the catalog and its onboarding — the model and principles that hold across implementations. The specific iOS guided-onboarding flow that realizes this intent (screens, survey routing, module gates) is expected to evolve and is **not** enumerated here; see the iOS design spec `ops-ios/docs/superpowers/specs/2026-06-09-guided-catalog-setup-design.md`, `03_DATA_ARCHITECTURE.md` § Catalog & Variant Model for schema, § 13a for recipe/resolver semantics, and § 13b for the stock-counting sub-flow.
+
+**What a catalog is.** A company's catalog is the model of everything it sells and everything it consumes to deliver it. Four kinds of entry:
+
+- **Service** — labor / time / expertise sold to the customer. Priced flat (per job, per call) or per-unit (per hour, per day, per area). The company's cost is optional; when present it yields margin.
+- **Good** — a physical item resold, typically marked up over cost. Carries a SKU and may carry variants (brand, model, size).
+- **Package (assembly)** — a fixed customer-facing offering that bundles materials + labor under one price. The customer sees a single number; the backend may price per unit (per linear foot, per square foot) and rolls component costs up into margin. Persisted as a `kind=package` product (`bundle_pricing_mode=override`) with child `product_bundle_items` / `product_materials` rows.
+- **Stock** — tracked inventory: `catalog_items` (families) → `catalog_variants` (the counted SKU) with on-hand quantity, thresholds, and reorder. A material may be stocked or ordered per job; offcuts/rolls carry their own physical identity (`catalog_stock_units`).
+
+**Cross-cutting primitives (durable vocabulary).**
+
+- **Units & dimensions** — every quantity carries a unit; units group by dimension (`count`, `length`, `area`, `volume`, `mass`, `time`). A company prices and counts in its real units (linear ft, sq ft, cubic yard, ton, hour). Units are first-class: available (seeded) and able to drive pricing, never silently dropped to flat-rate.
+- **Price vs cost** — customer-facing price and the company's cost are always distinct; margin is the difference. Cost tracking is optional per company.
+- **Variants & options** — one entity in several forms (color, size, thickness, tier). The variant is the priced/counted SKU; options (`catalog_options` / `catalog_option_values`) are the axes.
+- **Pricing mode** — flat total, or per-unit rate × measured quantity. Applies to services, packages, and labor lines alike.
+- **Reference, not duplication** — a material used in two packages is the same stock entity referenced twice, never two copies.
+
+**Onboarding intent.** Catalog setup is the highest-effort, highest-abandonment step for a new company. Guided onboarding exists to take an operator from zero to a usable catalog quickly by *meeting them where they are*:
+
+1. **Ask, don't assume** — a short adaptive survey establishes how the company prices (flat / per-unit / depends), what it sells (services / goods / packages / a mix), and whether it tracks cost and stock.
+2. **Derive, don't dump** — only the modules implied by the answers are shown. A services-only business never sees the package builder; a flat-price business is not asked to model materials.
+3. **Progressive, not exhaustive** — capture the minimum that makes the catalog usable; the rest is opt-in. Every module is skippable.
+4. **Show the payoff** — surface a real result (margin, a finished line) rather than a wall of fields. Per the brand test, the step should read as a lifeline, not a tech demo.
+
+**Invariants (the yardstick any implementation must hold).**
+
+1. Meet the operator where they are — never force a business shape on them (services-only ≠ assembly builder).
+2. Customer-facing price and backend cost/unit are both expressible and kept distinct.
+3. Units are first-class — seeded/creatable and able to drive pricing; never dropped to flat-rate silently.
+4. Cost tracking is the operator's choice — honor "just set prices" in every module.
+5. Reference existing catalog entities; never duplicate stock.
+6. The catalog models what a company *sells and stocks*, not *when* work happens — recurrence/cadence belongs to scheduling; onboarding routes there rather than absorbing it.
+
 ### IA — CATALOG tab
 
 ```
