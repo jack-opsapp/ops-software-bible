@@ -2087,14 +2087,16 @@ five bodies; none inline the comparison.
 email verification, `email_verified` was permanently false, so an attacker could register a
 Firebase account on a victim's email and be resolved as the victim by every policy.
 
-**Re-key to the cryptographic sub (CRIT-3 Phase C — built, rolled-back-probe-tested,
-STAGED, not yet applied):** the helpers become
+**Re-key to the cryptographic sub (CRIT-3 Phase C — APPLIED to prod 2026-06-14,
+migration `20260614083934_crit3_phase_c_rekey_rls_identity_helpers`):** the helpers now
+resolve by
 `WHERE (auth_id = (auth.jwt() ->> 'sub') OR firebase_uid = (auth.jwt() ->> 'sub'))`.
-Since all 296 dependents resolve through the five bodies, this is a `CREATE OR REPLACE` of
-five functions; zero policy DDL. **Gate:** apply only once every active user that *has a
-Firebase account* is sub-linked (the ~140 unlinked-with-email rows are dormant
-no-Firebase legacy/test accounts that self-heal via the sync-user legacy-link path on first
-login). Staged SQL + rollback + probe matrix:
+Since all 296 dependents resolve through the five bodies, this was a `CREATE OR REPLACE` of
+five functions; zero policy DDL. Applied only after a bulk Firebase backfill made every
+active user that *has a Firebase account* sub-linked (the ~140 still-unlinked rows are
+dormant no-Firebase legacy/test accounts that self-heal via the sync-user legacy-link path
+on first login). Live post-apply: linked users' access unchanged (verified 310 projects /
+362 clients), advisors clean. Forward SQL + rollback + probe matrix:
 `ops-ios/docs/superpowers/migrations/2026-06-14-crit3-phase-c-rekey-rls-helpers.sql`;
 full plan + execution log: `ops-ios/docs/superpowers/specs/2026-06-13-crit3-identity-rekey-followup.md`.
 
