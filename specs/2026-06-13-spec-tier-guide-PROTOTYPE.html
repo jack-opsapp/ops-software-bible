@@ -165,7 +165,7 @@
       <div class="card" data-tier="enterprise" id="card-enterprise"><span class="crail"></span><div class="c-top"><div><span class="c-name">ENTERPRISE</span><span class="pill pill-match hidden" data-match="enterprise">YOUR MATCH</span></div><div class="c-price num">$4,500 <span class="sub">/ $18,000</span></div></div><div class="c-tag">Your entire operation, custom-built on OPS</div></div>
     </div>
   </section>
-  <div class="footnote">PROTOTYPE · NOT PRODUCTION · rev 2026-06-13d2 (v3.1 branched + Data Setup add-on) · logic + copy mirror SPEC/09_TIER_GUIDE_DESIGN.md (§7/§8 canonical). Simple migration → ~$300 Data Setup add-on, not $3k Setup. Free-trial CTA → app.opsapp.co/register.</div>
+  <div class="footnote">PROTOTYPE · NOT PRODUCTION · rev 2026-06-13d2 (v3.1 branched + Data Setup add-on) · logic + copy mirror SPEC/09_TIER_GUIDE_DESIGN.md (§7/§8 canonical). Simple migration → $399 Data Setup add-on, not $3k Setup. Free-trial CTA → app.opsapp.co/register.</div>
 </div>
 
 <script>
@@ -256,14 +256,14 @@ function recommendCold(a){
     if(structural && !migration) headsUp=true;
     if(doneForYou) setupProminent=true;
   }
-  if(migration && !structural) dataSetupRider=true;   // §3.2 Step 4 — simple migration = ~$300 Data Setup add-on, NOT $3k Setup
+  if(migration && !structural) dataSetupRider=true;   // §3.2 Step 4 — simple migration = $399 Data Setup add-on, NOT $3k Setup
   let also; if(winner==='ops') also=['setup']; else if(winner==='setup') also=buildSurfaced?['ops','build']:['ops']; else also=['build'];
   return {lane:'cold',winner,driver,also,founderEscape,setupNudge,buildHedge,headsUp,dual,setupProminent,dataSetupRider};
 }
 function recommendExisting(a){
   const w=a.e1||[]; const has=x=>w.includes(x);
   const missingSurvived = has('missing') && a.disconfirm==='genuinely_missing';
-  const dataTier = has('data') ? (a.e2==='incumbent_complex'?'enterprise':'data_setup') : null;  // simple/mid = ~$300 add-on
+  const dataTier = has('data') ? (a.e2==='incumbent_complex'?'enterprise':'data_setup') : null;  // simple/mid = $399 add-on
   const buildTier = missingSurvived ? (a.e3==='several'?'enterprise':'build') : null;
   const cand=[];
   if(dataTier==='enterprise'||buildTier==='enterprise') cand.push('enterprise');
@@ -288,7 +288,7 @@ function recommendExisting(a){
 const NAME={ops:'OPS',data_setup:'DATA SETUP',setup:'SETUP',build:'BUILD',enterprise:'ENTERPRISE'};
 const REASON={
   ops:"Standard OPS already covers you. Start the 30-day free trial — you (or your office admin) set your pipeline colors, follow-up timing, stale-deal thresholds, win-odds, lead sources, tags, team and roles, catalog and tax, yourself, in an afternoon. You don't pay us a cent past your subscription.",
-  data_setup:"You've got history to bring across — that's the Data Setup add-on. Once you're set up, we import your old jobs, clients and records for you. About $300, one-time, and we handle the move.",
+  data_setup:"You've got history to bring across — that's the Data Setup add-on. Once you're set up, we import your old jobs, clients and records for you. $399, one-time, and we handle the move.",
   setup:"We shape OPS around the way you already work — your pipeline, your stages, your fields, dialed to your business. Nothing for you to learn. Just OPS, built to fit.",
   build:"We build the one thing you're missing — a custom module for your trade, on iOS and web, wired straight into your live OPS.",
   enterprise:"Multiple custom modules, your data moved off the old system, your tools integrated. Your whole operation, rebuilt on OPS.",
@@ -317,7 +317,7 @@ const FOUNDER="Sounds like you already know you need something custom. Skip the 
 const SETUP_ALT="Rather we set it up around your workflow for you? That's Setup — two discovery sessions, we map OPS to how your jobs run, deploy to staging for you to check, then a recorded walkthrough. $3,000, four milestones, 30-day money-back. The done-for-you version of what you'd otherwise do free.";
 const DUAL_NOTE="No reason to wait — start the trial today while we scope your migration.";
 const ALSO={ops:"you can set all this up yourself, free — start the trial.",data_setup:"start free, then add Data Setup to bring your history in.",setup:"if you'd rather we configure it around your workflow for you.",build:"if one custom module would close the gap.",enterprise:"if it's several pieces, or a migration."};
-const DATA_RIDER="Bringing your history with you? Once you're in, the Data Setup add-on imports your old jobs, clients and records for you — about $300, one-time. Connecting going forward is free; moving the history across is the add-on.";
+const DATA_RIDER="Bringing your history with you? Once you're in, the Data Setup add-on imports your old jobs, clients and records for you — $399, one-time. Connecting going forward is free; moving the history across is the add-on.";
 const SUMMARY={setup:"Setting OPS up around how you already work, done for you.",build:"A custom module for your trade, built on OPS.",enterprise:"Your operation rebuilt on OPS — modules, migration, integrations."};
 const PREFILL={setup:"I want OPS set up around my workflow. Here's how my jobs run:\n\n",build:"I need a custom module for my trade. Here's what it has to do:\n\n",enterprise:"I want to move my operation onto OPS. Here's what I'm running and what I need:\n\n"};
 
@@ -402,14 +402,14 @@ function showResult(){
   // actions
   el('rInquiry').classList.remove('show');el('rConfirm').classList.remove('show');
   const acts=el('rActions');acts.innerHTML='';
-  const addDataSetupBtn=()=>{const d=document.createElement('button');d.className='r-cta ghosted';d.textContent='ADD DATA SETUP';d.onclick=()=>alert('→ Subscription tab → Data Setup add-on (one-time, ~$300). Ops imports your history.');acts.appendChild(d);};
+  const addDataSetupBtn=()=>{const d=document.createElement('button');d.className='r-cta ghosted';d.textContent='ADD DATA SETUP';d.onclick=()=>alert('→ Subscription tab → Data Setup add-on (one-time, $399). Ops imports your history.');acts.appendChild(d);};
   if(isOps){
     const cta=document.createElement('button');cta.className='r-cta';cta.textContent='START FREE — 30 DAYS';cta.onclick=()=>alert('→ https://app.opsapp.co/register (routes through Quebec/regulated screening). Fires tier_guide_trial_started.');acts.appendChild(cta);
     if(r.founderEscape){const f=document.createElement('button');f.className='r-cta ghosted';f.textContent='TELL THE FOUNDER';f.onclick=()=>openInquiry('build');acts.appendChild(f);}
     if(r.dataSetupRider) addDataSetupBtn();
     const sec=document.createElement('button');sec.className='r-secondary';sec.textContent='rather we set it up for you? → Setup';sec.onclick=()=>openInquiry('setup');acts.appendChild(sec);
   } else if(isDataSetup){
-    const cta=document.createElement('button');cta.className='r-cta';cta.textContent='ADD DATA SETUP';cta.onclick=()=>alert('→ Subscription tab → Data Setup add-on (one-time, ~$300). Ops imports your history.');acts.appendChild(cta);
+    const cta=document.createElement('button');cta.className='r-cta';cta.textContent='ADD DATA SETUP';cta.onclick=()=>alert('→ Subscription tab → Data Setup add-on (one-time, $399). Ops imports your history.');acts.appendChild(cta);
     const sec=document.createElement('button');sec.className='r-secondary';sec.textContent='not set up yet? → start free first';sec.onclick=()=>alert('→ https://app.opsapp.co/register');acts.appendChild(sec);
   } else {
     const cta=document.createElement('button');cta.className='r-cta';cta.textContent=`START YOUR ${NAME[r.winner]}`;cta.onclick=()=>openInquiry(r.winner);acts.appendChild(cta);

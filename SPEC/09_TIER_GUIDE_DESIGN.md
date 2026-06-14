@@ -60,9 +60,10 @@ constant; the value is known, not guessed.
 - Signup URL confirmed (`app.opsapp.co/register`).
 
 **v3.1 — the Data Setup add-on (2026-06-13).** A real, implemented product was missing
-from the outcome space: the **Data Setup add-on** (~$300 one-time; done-for-you data
-migration, bought in-app, § 07). v3 routed "bring my history across" to a **$3,000 Setup**
-— a ~10× over-quote. Fixed: simple data migration → **OPS / start-free + the ~$300 Data
+from the outcome space: the **Data Setup add-on** (**$399.00 CAD one-time**, confirmed live
+in Stripe; done-for-you data migration, bought in-app, § 07). v3 routed "bring my history
+across" to a **$3,000 Setup**
+— a ~10× over-quote. Fixed: simple data migration → **OPS / start-free + the $399 Data
 Setup add-on** (cold: a rider; existing: a headline outcome); SPEC **Setup** is now
 reserved for done-for-you *configuration* + custom stages/fields; only **complex** migration
 (incumbent + multi-division) escalates to Enterprise (§ 2.1, § 3.2 Step 4, § 3.4). The
@@ -102,8 +103,8 @@ Lowest commitment first; honest default = **OPS**.
 | Outcome | Price (total / P1 deposit) | What it is | Cold-diagnosable? |
 |---|---|---|---|
 | **OPS** | subscription only ($90–$190/mo, **30-day free trial**) | Nothing to build/pay extra; self-serve config in Settings. `START FREE` → `app.opsapp.co/register`. | **Yes — the default floor.** |
-| **Data Setup add-on** | **~$300 one-time** (price in Stripe `STRIPE_PRICE_DATA_SETUP`) | **Done-for-you data migration** — ops imports your old jobs/clients/history for you. Bought in-app (Subscription tab) after starting free; files a `data_setup_requests` ticket. Implemented end-to-end (§ 07 / `03`). | **Yes — the honest answer for simple "bring my data across."** |
-| **Setup** | $3,000 / $750 | Done-for-you **configuration** + the two things OPS can't self-serve (new/renamed pipeline stages, custom fields). *(Data migration is the ~$300 add-on above — NOT Setup.)* | Partly — via a stated done-for-you-**config** preference with real scope; never a cold OPS-feature claim. |
+| **Data Setup add-on** | **$399.00 CAD one-time** (`STRIPE_PRICE_DATA_SETUP` = `price_1S6c4FE…`, confirmed live) | **Done-for-you data migration** — ops imports your old jobs/clients/history for you. Bought in-app (Subscription tab) after starting free; files a `data_setup_requests` ticket. Implemented end-to-end (§ 07 / `03`). | **Yes — the honest answer for simple "bring my data across."** |
+| **Setup** | $3,000 / $750 | Done-for-you **configuration** + the two things OPS can't self-serve (new/renamed pipeline stages, custom fields). *(Data migration is the $399 add-on above — NOT Setup.)* | Partly — via a stated done-for-you-**config** preference with real scope; never a cold OPS-feature claim. |
 | **Build** | $8,500 / $2,125 | One custom module OPS doesn't have. | **No** — can't prove OPS lacks a feature before using it. Cold: a warm founder-conversation only. Headlined only on the existing path. |
 | **Enterprise** | $18,000 / $4,500 | Multiple modules + **complex** data migration off an incumbent + structural complexity. | Yes — only when **migration AND structure** co-occur. |
 
@@ -124,17 +125,17 @@ win-probability**, lead sources, tags, roles, catalog, tax.
 
 **Not self-serve — but split across two products (the v3.1 fix):**
 - **Done-for-you data migration** (importing old jobs/clients/history) → the **Data
-  Setup add-on (~$300 one-time)**, bought in-app after starting free (§ 07). Connecting
+  Setup add-on ($399 one-time)**, bought in-app after starting free (§ 07). Connecting
   QuickBooks/Sage *going forward* is free; importing *history* is this add-on.
 - **Custom configuration OPS can't self-serve** — (1) renaming/adding pipeline stages
   beyond the fixed eight, (2) custom fields — plus done-for-you workflow configuration →
   **SPEC Setup ($3,000)**.
 
 Conflating these is the trap v3.1 closes: a prospect who just needs their data brought in
-is a **~$300 add-on**, not a $3,000 Setup. Everything else Setup sells is done-for-you
+is a **$399 add-on**, not a $3,000 Setup. Everything else Setup sells is done-for-you
 convenience, not a locked capability.
 
-**§ 13.1 flags the public positioning for Jackson's sign-off; § 13.2 the Data Setup price.**
+**Positioning is signed off (§ 0); the Data Setup price is confirmed at $399.00 CAD (§ 13.1).**
 
 ---
 
@@ -243,13 +244,13 @@ STEP 3 — OPS floor (everything else) → OPS / START FREE:
   buildLean → add the founder-escape (PRE-trial) + the Build hedge.
   headsUp = true when a lone signal sits unresolved (e.g. multi_division alone) → keep OPS, note.
 STEP 4 — DATA SETUP rider (the v3.1 migration fix; orthogonal to the config outcome above):
-  IF migrationSignal AND NOT structuralSignal → attach the **Data Setup add-on (~$300)** to
+  IF migrationSignal AND NOT structuralSignal → attach the **Data Setup add-on ($399)** to
      whatever the result is (OPS or Setup): "start free, then add Data Setup to bring your
      history in." dataSetupRider = true. Simple migration NO LONGER routes to $3,000 Setup.
 ```
 
 **Key properties:** `light_tool` never inflates the tier (connecting forward is free).
-**Simple "bring my history across" → OPS / start-free + the ~$300 Data Setup add-on rider,
+**Simple "bring my history across" → OPS / start-free + the $399 Data Setup add-on rider,
 not a $3,000 Setup** (the v3.1 fix; complex migration + multi-division is the only thing
 that escalates to Enterprise). `do_for_me` on a trivial profile lands **OPS headline +
 Setup prominent also-door** — not an auto-charge. `special_stages` is a nudge, never a cold
@@ -287,8 +288,8 @@ not in the app** = proceed to E3. (Catches a wrong-but-certain "OPS won't do X" 
 before an $8.5k verdict.)
 
 **E2 `// YOUR HISTORY` migration scope** *(only if `data`)*: `simple` (spreadsheet/one tool,
-one business) → **Data Setup add-on (~$300)**; `incumbent_simple` (off a full platform, one
-business) → **Data Setup add-on (~$300)**; `incumbent_complex` (full platform AND multiple
+one business) → **Data Setup add-on ($399)**; `incumbent_simple` (off a full platform, one
+business) → **Data Setup add-on ($399)**; `incumbent_complex` (full platform AND multiple
 divisions) → **Enterprise**. *(Simple/mid migration is the cheap done-for-you add-on, not a
 $3,000 Setup — § 2.1.)*
 
@@ -304,7 +305,7 @@ picker; `autoFollowUpDays`/stale threshold in `pipeline_stage_configs`; etc.) so
 verdict is *believed*, not a generic "check settings." Free QB/Sage forward-connect folds
 here. (2) `stages`/`fields` (no migration/missing) → **SETUP**, driver lists **all**
 checked locks (result + inquiry payload carry every lock, not one). (3) `data` → E2
-(**simple/mid → Data Setup add-on ~$300; complex → Enterprise**). (4)
+(**simple/mid → Data Setup add-on $399; complex → Enterprise**). (4)
 `missing` survives → E3. (5) multi-lock (e.g. `fields` + `missing`) → E3; `one_module` →
 Build (fields folds into scope, surfaced); `several` → Enterprise. A single clean gap is
 never inflated; co-occurring locks resolve up honestly.
@@ -319,7 +320,7 @@ fixes prove the v3 reframe works:
 | Dwayne — solo, paper, anxious do-for-me | cold · manual/–/solo/standard/do_for_me → **OPS** + Setup door | trivial-profile guard: anxious tap isn't monetized *(fixed: was Setup)* |
 | Priya — multi-crew, one app, DIY | cold · light/start_clean/multi_crew/standard/myself → **OPS** | clean free floor |
 | Rob — multi-crew, permit/rough-in stages, DIY | cold · light/start_clean/multi_crew/special_stages/myself → **OPS** + Setup nudge | C4 stays a nudge, no cold capability claim *(v3 decision)* |
-| Frank — solo, QuickBooks **with history** | cold · light/bring_history/solo/standard/myself → **OPS / start free + Data Setup add-on (~$300)** | simple history-move is the cheap add-on, not a $3k Setup *(v3.1 fix — a 10× over-quote removed)* |
+| Frank — solo, QuickBooks **with history** | cold · light/bring_history/solo/standard/myself → **OPS / start free + Data Setup add-on ($399)** | simple history-move is the cheap add-on, not a $3k Setup *(v3.1 fix — a 10× over-quote removed)* |
 | Sandra — solo, AppFolio, no data to move | cold · light/start_clean/solo/standard/myself → **OPS** | no-data shop not over-charged *(fixed: was Setup)* |
 | Aaron — solo, paper, unsure | cold · manual/–/solo/standard/not_sure → **OPS** (deferred_unsure) | uncertainty → free trial *(fixed: was Setup — a blocker)* |
 | Hector — multi-crew, needs a supplement *module*, DIY | cold · light/start_clean/multi_crew/whole_capability/myself → **OPS** + **founder-escape (pre-trial)** | a true cold Build need is captured warm, not churned *(fixed)* |
@@ -366,7 +367,7 @@ free trial). Keep the guide's interactive content in the left ~720px safe area
     through the same Quebec/regulated screening as normal signup — no bypass). Fires
     `tier_guide_trial_started`. Carries the Setup also-door, the stages-nudge / Build-
     hedge / headsUp notes as applicable, the founder-escape when `buildLean`, and — when
-    `dataSetupRider` — the **Data Setup add-on note + `ADD DATA SETUP` affordance** (~$300,
+    `dataSetupRider` — the **Data Setup add-on note + `ADD DATA SETUP` affordance** ($399,
     "bring your history in once you're set up").
   - **Setup / Enterprise** → the inline pre-contextualized **inquiry form** (§ 12.7) —
     name/phone/email + a pre-filled "what do you need?" submitting the lead + the full
@@ -461,7 +462,7 @@ The only things you can't switch on yourself are new/renamed pipeline stages and
 custom fields — if you ever need those, that's Setup.            (carve-out)
 most pipelines fit the built-in stages — start free and check first.   (stages nudge, if special_stages)
 start free — if it genuinely can't do the one thing your trade needs, that's a Build.  (hedge / founder-escape if buildLean)
-bringing your history? the Data Setup add-on imports it for you — ~$300, one-time.  (rider, if dataSetupRider)
+bringing your history? the Data Setup add-on imports it for you — $399, one-time.  (rider, if dataSetupRider)
 [ START FREE — 30 DAYS ]   → app.opsapp.co/register
 rather we set it up for you? → Setup       ·       [ ADD DATA SETUP ]  (if dataSetupRider)
 ```
@@ -476,7 +477,7 @@ also-list leads with the free OPS door.
 
 Below the fold, text-only → no LCP impact. The entry bar + a static "how to choose"
 summary ("Most people just need OPS — start free; if you're switching with history, the
-~$300 Data Setup add-on brings it in. Setup configures it for you; Build adds a custom
+$399 Data Setup add-on brings it in. Setup configures it for you; Build adds a custom
 module; Enterprise rebuilds + migrates.") are SSR'd in the collapsed
 container (indexed, JS-off fallback). The questionnaire hydrates as progressive
 enhancement. Keywords: the named incumbents (Jobber/Housecall/QuickBooks/AppFolio/
@@ -554,8 +555,8 @@ alongside the ops-copywriter pass at build (faithful, same ids, `//`/`[ ]` prese
 | `guide.result.build.reason` | `We build the one thing you're missing — a custom module for your trade, on iOS and web, wired straight into your live OPS.` |
 | `guide.result.enterprise.reason` | `Multiple custom modules, your data moved off the old system, your tools integrated. Your whole operation, rebuilt on OPS.` |
 | `guide.result.enterprise.dualNote` | `No reason to wait — start the trial today while we scope your migration.` |
-| `guide.result.dataSetup.rider` | `Bringing your history with you? Once you're in, the Data Setup add-on imports your old jobs, clients and records for you — about $300, one-time. Connecting going forward is free; moving the history across is the add-on.` |
-| `guide.result.dataSetup.reason` | `You've got history to bring across — that's the Data Setup add-on. Once you're set up, we import your old jobs, clients and records for you. About $300, one-time, and we handle the move.` |
+| `guide.result.dataSetup.rider` | `Bringing your history with you? Once you're in, the Data Setup add-on imports your old jobs, clients and records for you — $399, one-time. Connecting going forward is free; moving the history across is the add-on.` |
+| `guide.result.dataSetup.reason` | `You've got history to bring across — that's the Data Setup add-on. Once you're set up, we import your old jobs, clients and records for you. $399, one-time, and we handle the move.` |
 | `guide.result.ctaDataSetup` | `ADD DATA SETUP` |
 | `guide.driver.data_setup` | `[ you've got history to bring in — that's the Data Setup add-on, not a custom build ]` |
 | `guide.driver.fits_oob` | `[ everything you need is already in OPS — you just make it yours ]` |
@@ -621,7 +622,7 @@ raw-key CI canary. Separate base-page hygiene; coordinate with sibling WIP.
 
 ```ts
 export type Outcome = 'ops' | 'data_setup' | 'setup' | 'build' | 'enterprise';
-//  'data_setup' = the ~$300 Data Setup add-on. A headline outcome on the existing path
+//  'data_setup' = the $399 Data Setup add-on. A headline outcome on the existing path
 //  (E1 'data' alone); on the cold path simple migration rides as `dataSetupRider` on an
 //  OPS/Setup result rather than as its own winner.
 export type Branch = 'cold' | 'existing';
@@ -650,7 +651,7 @@ export interface GuideResult {
   buildHedge: boolean;        // OPS win, surface the "if it can't, that's a Build" line
   headsUp: boolean;           // lone unresolved signal
   dualAffordance: boolean;    // cold Enterprise → also show START FREE
-  dataSetupRider: boolean;    // cold simple migration → ~$300 Data Setup add-on note + CTA
+  dataSetupRider: boolean;    // cold simple migration → $399 Data Setup add-on note + CTA
   settingPointer?: string;    // existing 'setting' win → exact screen id
 }
 export function recommendCold(a: ColdAnswers): GuideResult;       // §3.2
@@ -738,10 +739,11 @@ The structural calls, the signup URL, and positioning are resolved (§ 0). **Res
 intent into the free trial; the migration→Data-Setup-add-on rework (§ 2.1, § 3.2 Step 4);
 the §12 bible correction. Remaining:
 
-1. **Data Setup price.** The guide copy says "about $300"; the live figure is the Stripe
-   price behind `STRIPE_PRICE_DATA_SETUP` (not in code). Confirm the exact number so the
-   copy + the build's `/api/stripe/addon/prices` display agree. *(The guide can show the
-   live Stripe amount instead of a hardcoded "$300" — recommended.)*
+1. **Data Setup price — RESOLVED.** Confirmed live in Stripe 2026-06-13: **$399.00 CAD,
+   one-time** (`STRIPE_PRICE_DATA_SETUP` = `price_1S6c4FEooJoYGoIwIHx3gzQA`, `prod_T2hTzqU8jtkKtU`,
+   `livemode`). Copy now reads "$399". *Build should still render the live
+   `/api/stripe/addon/prices` amount rather than hardcode it, so a Stripe price change never
+   leaves the guide stale.*
 2. **`do_for_me` guard threshold (minor).** A one-app solo, standard flow, no migration who
    taps "do it for me" down-resolves to OPS + Setup door. *Rec:* keep (don't charge $3k for
    20 min of config). Confirm, or let `light_tool` + do_for_me headline Setup.
