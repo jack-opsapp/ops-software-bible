@@ -2070,19 +2070,44 @@ $$;
 
 ### Auth ID Resolution
 
-**Critical**: Supabase `auth.uid()` returns the Supabase Auth UUID, which is different from `users.id` (the application-level UUID). The `users` table has an `auth_id` column that maps the Supabase Auth UUID to the app user. A helper function resolves this:
+**Critical**: `users.id` (the application UUID) differs from the auth identity. The
+`users` table carries `auth_id` (provider-agnostic token sub) and `firebase_uid`
+(Firebase UID only). Identity is ~100% Firebase: the JWT is a Firebase ID token whose
+`sub` claim == the Firebase UID; Supabase Auth (`auth.users`) holds only a handful of rows.
 
-```sql
-CREATE OR REPLACE FUNCTION private.get_current_user_id()
-RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER
-SET search_path = '' AS $$
-  SELECT id FROM public.users
-  WHERE auth_id = (SELECT auth.uid())::text
-  LIMIT 1
-$$;
-```
+Five SECURITY DEFINER helpers resolve the caller for every RLS policy:
+`private.resolve_uid()`, `private.get_current_user_id()`, `private.get_user_company_id()`,
+`public.get_user_company_id()`, `private.current_user_is_admin()`. Every RLS policy that
+needs identity goes through one of these — as of 2026-06-14, **296 dependent objects**
+(228 policies + 58 functions + 1 view + 9 triggers) reach the resolver only through these
+five bodies; none inline the comparison.
 
-All RLS policies on permission tables use `private.get_current_user_id()` instead of `auth.uid()` directly.
+**Current resolution (email-based — CRIT-3 vulnerability):** the live helpers resolve by
+`WHERE email = (auth.jwt() ->> 'email')`. Because OPS historically never sent Firebase
+email verification, `email_verified` was permanently false, so an attacker could register a
+Firebase account on a victim's email and be resolved as the victim by every policy.
+
+**Re-key to the cryptographic sub (CRIT-3 Phase C — built, rolled-back-probe-tested,
+STAGED, not yet applied):** the helpers become
+`WHERE (auth_id = (auth.jwt() ->> 'sub') OR firebase_uid = (auth.jwt() ->> 'sub'))`.
+Since all 296 dependents resolve through the five bodies, this is a `CREATE OR REPLACE` of
+five functions; zero policy DDL. **Gate:** apply only once every active user that *has a
+Firebase account* is sub-linked (the ~140 unlinked-with-email rows are dormant
+no-Firebase legacy/test accounts that self-heal via the sync-user legacy-link path on first
+login). Staged SQL + rollback + probe matrix:
+`ops-ios/docs/superpowers/migrations/2026-06-14-crit3-phase-c-rekey-rls-helpers.sql`;
+full plan + execution log: `ops-ios/docs/superpowers/specs/2026-06-13-crit3-identity-rekey-followup.md`.
+
+Linkage convergence (Phase A): `findUserByAuth` opportunistically stamps `auth_id = sub` on
+cryptographic matches; a daily `pg_cron` job (`crit3-identity-linkage-daily`) records
+`private.identity_linkage_metrics`; `scripts/crit3-backfill-identity.ts` bulk-links from
+Firebase Admin. Phase B wired Firebase email verification so `email_verified` is now
+meaningful. Phase D (behind env `CRIT3_SUB_IDENTITY`) drops the web email fallbacks and
+routes the `/api/setup/progress` privileged write through the sub-resolving
+`public.update_company_setup_for_member` RPC (MED-3).
+
+All RLS policies use these helpers (e.g. `private.get_current_user_id()`,
+`private.get_user_company_id()`) instead of `auth.uid()` directly.
 
 ### Expense / Payment / Opportunity RLS Hardening (2026-05-31)
 
