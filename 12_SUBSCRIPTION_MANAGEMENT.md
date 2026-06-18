@@ -185,6 +185,27 @@ Design rationale and visual contract: `OPS-Web/docs/superpowers/specs/2026-05-07
 
 ---
 
+## Payment-Method Default Contract (lockout recovery)
+
+The Stripe customer's `invoice_settings.default_payment_method` is the linchpin of re-subscribe / recovery. Subscribe resolves the charge card in this order:
+
+- `POST /api/stripe/subscribe` **with** `paymentMethodId` → attaches it and sets it as the customer default.
+- `POST /api/stripe/subscribe` **without** `paymentMethodId` (what `subscription-tab.tsx` sends on Upgrade) → requires `invoice_settings.default_payment_method` to already exist, else returns **402 `payment_method_required`** ("Add a card in Settings → Billing first").
+
+Writers of `invoice_settings.default_payment_method`:
+
+| Writer | When |
+|---|---|
+| `POST /api/stripe/subscribe` | When called with an explicit `paymentMethodId`. |
+| `POST /api/stripe/payment-methods` `{ action: "set_default" }` | Idempotently attaches the card (resolved off the PM's own `customer` field — a card attached to a *different* customer is refused with 409, never silently moved) and promotes it to the default. Returns `{ success, defaultPaymentMethodId }`. Fronted by `useSetDefaultPaymentMethod`. |
+| `AddCardForm` (Settings → Billing) | After a successful SetupIntent, auto-calls `set_default` **when the customer has no default yet**. Non-default saved cards expose an explicit "Set as default" action. |
+
+**Recovery flow:** a locked/churned customer adds a card via SetupIntent in Settings → Billing → the card is auto-promoted to default → a subsequent `POST /api/stripe/subscribe` (no `paymentMethodId`) finds the default and succeeds. Before the 2026-06 fix, the SetupIntent attached the card but never set the default, so subscribe stayed stuck at 402 against a card the customer had already added — a revenue-blocking dead loop.
+
+`/api/stripe/payment-methods` surface: `GET` (list, with `isDefault`), `POST` (`action: "set_default"`), `DELETE` (detach).
+
+---
+
 ## Stripe Webhook Handler
 
 `ops-web/src/app/api/webhooks/stripe/route.ts` handles the following events. Every handler is keyed on `stripe_customer_id` to find the company.
