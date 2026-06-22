@@ -7070,4 +7070,47 @@ Pure logic, no DB writes (returns a `SchedulePlan` the caller commits). The queu
 
 ---
 
+## 29. Phase-C Suggested Calendar Events (iOS, 2026-06-22) — item 63144953
+
+Second half of the "connect calendar + auto-add detected events" feature request. **Part A** (mirror the OPS schedule → iPhone Calendar) shipped 2026-05-11 as [§26 iPhone Calendar Mirror](#26-iphone-calendar-mirror-ios-2026-05-11--bug-68123654). **Part B** surfaces the upcoming commitments **Phase C detected in a company's email** as confirm-to-add suggestions on the iOS Schedule tab — **without coupling the app to the Phase C engine.**
+
+### The decoupling problem
+
+Phase-C detected events are `agent_memories` rows (`category = 'commitment'`, nullable `due_date` = the detected time). That table's RLS is `company_id = (auth.jwt() ->> 'company_id')::uuid`, which is **NULL for the Firebase-bridged iOS JWT** — so a direct iOS read returns zero rows. Phase C itself is headless / Canpro-only / not live-deployed, and **the app must never depend on it running.**
+
+### Server: two SECURITY DEFINER RPCs (additive)
+
+Applied to `ijeekuhbatykdomumfjx` as migration `phasec_suggested_calendar_events_rpc` (recorded at `ops-ios/docs/superpowers/migrations/2026-06-22-phasec-suggested-calendar-events-rpc.sql`):
+
+| RPC | Returns | Purpose |
+|-----|---------|---------|
+| `get_suggested_calendar_events()` | `setof (id, content, due_date, entity_id, confidence, resolved_at)` | The caller company's **unresolved, upcoming (`due_date >= now()`), time-bearing** commitments, `confidence >= 0.5`, soonest first, capped 100 |
+| `resolve_suggested_calendar_event(p_memory_id uuid)` | `jsonb {resolved, id}` | Idempotently stamps `resolved_at` so a confirmed/dismissed commitment isn't re-offered |
+
+Both resolve the caller's company via the canonical `get_user_company_id()` helper (matches `auth.jwt()->>'sub'` against `users.auth_id` / `users.firebase_uid` — **never `auth.uid()`, never the absent JWT `company_id` claim**). `EXECUTE` granted to `authenticated` only; `anon`/`public` revoked.
+
+**Why this reads `agent_memories` despite that table's broken RLS:** the functions are `SECURITY DEFINER` **owned by `postgres`**, which has `rolbypassrls = true`. A definer function executes as its owner, so the query inside runs with RLS **bypassed** — the explicit `WHERE company_id = get_user_company_id()::uuid` is the entire authorization boundary. (Same mechanism the schema's `get_user_company_id()` helper already relies on against the RLS-protected `users` table. Verified end-to-end by calling the RPC under `SET ROLE authenticated` + a simulated iOS JWT — it returns the company's rows; cross-tenant callers get none.) **Do not** "fix" this by rewriting the `agent_memories` RLS policy — that's unnecessary and would touch live Phase-C tables.
+
+### iOS: dormant-when-empty review surface
+
+`get_suggested_calendar_events()` returning `[]` is the **normal, healthy state** — iOS only ever reads a list, and an empty list renders nothing. That contract is what satisfies "the app never depends on Phase C": no engine → no rows → no surface, no errors.
+
+| Concern | File |
+|---------|------|
+| RPC DTOs (resilient confidence/date decode) | `OPS/Network/Supabase/DTOs/SuggestedCalendarEventDTOs.swift` |
+| RPC repository (swallows all errors → `[]`) | `OPS/Network/Supabase/Repositories/SuggestedCalendarEventRepository.swift` |
+| Load / dedup / confirm / dismiss + timing map | `OPS/ViewModels/CalendarViewModel+SuggestedEvents.swift` |
+| Review sheet + confirm cards | `OPS/Views/Calendar Tab/Components/SuggestedEventsReviewSheet.swift` |
+| Dormant banner + entry point | `OPS/Views/ScheduleView.swift` (`suggestedEventsBanner`) |
+
+**Flow:** Schedule-tab on-appear (and pull-to-refresh) calls `loadSuggestedEvents()`. Non-empty → a compact `// SUGGESTED EVENTS · N` banner appears above the calendar → opens the review sheet. Each card shows the detected commitment + due date with **ADD / DISMISS**:
+- **ADD** → creates a personal `CalendarUserEvent` via `CalendarUserEventRepository.create` (which fires the mirror → the event lands on the connected iPhone Calendar) **and** calls `resolve_suggested_calendar_event` so it isn't re-offered. Local-insert → server-id flow matches `UserEventSheet.save` exactly (the mirror fetches the *local* row by `id == opsId`, so the local id is reassigned to the server id before the explicit mirror call). First add with mirroring off reuses the `CalendarMirrorPromptSheet` consent gate.
+- **DISMISS** → resolves the commitment (no event created) so it isn't re-offered.
+
+**Timing:** Phase C stores deadline-style commitments at an end-of-day boundary in **UTC** (`00:00` / `23:59`), so `eventTiming` detects all-day via **UTC** components (a `23:59Z` deadline must stay all-day even though it reads as ~`16:59` locally in North America); a genuine time-of-day becomes a 30-minute block. All-day events anchor to the local day of the instant.
+
+**Dedup** ("not already in the calendar"): the server omits `resolved_at`-stamped rows; the client additionally skips any suggestion whose title+day already matches an existing `CalendarUserEvent`, and re-resolves any already-on-calendar commitment that came back unresolved (closes the offline-confirm gap).
+
+---
+
 **End of Document**
