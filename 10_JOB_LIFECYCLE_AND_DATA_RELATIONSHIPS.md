@@ -352,6 +352,22 @@ Estimate declined or opportunity abandoned.
 
 All auto-advances record a `StageTransition` row. Users can manually drag to any stage at any time (existing Kanban behavior preserved).
 
+### Around-call lead capture (iOS, feature 154cb8a3)
+
+**Reset to AROUND-call, not in-call.** iOS gives a third-party (non-VoIP) app no custom in-call UI, no access to the system call log, and no way to create app data or open the app *during* a native Phone call. `CXCallObserver` reports call *state* only (never the number) and fires reliably only while OPS is foregrounded. So OPS captures calls *around* them, never inside them. All three entry points funnel into the existing data layer — `OpportunityRepository.create` (`source:"phone"`) + `LeadDetailViewModel.logActivity` (type `call`) — so the `new_lead → qualifying` auto-advance fires exactly as for any other first activity.
+
+1. **Outbound post-call prompt.** Tapping CALL on a lead's `ContactCard` records an outbound intent (`CallLogStore`, persisted to UserDefaults so it survives the app→Phone→app switch). On the next foreground, `MainTabView` reads the recent intent (≤30 min) and presents `LogCallSheet` pre-filled to that exact lead. `CallStateObserver` adds an immediate trigger when a call ends while OPS stays foregrounded.
+2. **FAB "Log a call".** Opens `LogCallSheet` in capture mode → pick a contact (`CNContactPicker`) or type a number → OPS dedups it (`PhoneNumber.normalize` + `OpportunityRepository.findByContactPhone`, matching the local SwiftData lead cache) and **attaches** to the existing lead, or **creates** a new `source:"phone"` lead.
+3. **App Shortcut "Log a call to OPS".** `LogCallToOPSIntent` + `OPSAppShortcuts` in the **main app target** (no extension, no entitlement) — one tap from Siri / Spotlight / Action Button / Control Center. `openAppWhenRun` brings OPS forward and routes through the shared `CallCaptureCoordinator` into the same sheet.
+
+**Gating.** Every entry point matches the pipeline-mutation posture: feature flag `pipeline` enabled + permission `pipeline.manage` (the same gate as the existing "Log Activity" FAB item).
+
+**Voice note (not call recording).** Recording a native call's audio is not possible for a third-party app — iOS exposes no API. The shipped substitute is an in-app voice note: the operator dictates after the call via mic + **on-device** `SFSpeechRecognizer` (`requiresOnDeviceRecognition`, so audio never leaves the phone), transcript folded into the activity `body_text`. Canada is one-party consent; the operator's own dictation is lawful. Never marketed as "call recording."
+
+**Provenance.** `call_source` / `caller_number` / `call_started_at` on `activities` (see `03_DATA_ARCHITECTURE.md` § Activity) — additive, nullable.
+
+**Deferred (externally gated).** A CallKit **Call Directory** *recognition* extension could label inbound pipeline numbers as "OPS lead: {name}" on the native incoming-call screen. It's pure recognition (no data write) but is the only piece needing a new `.appex` target + `com.apple.developer.callkit.call-directory` entitlement + App Group + portal provisioning — out of scope for this build, flagged for a future scheduled migration.
+
 ---
 
 ## Data Model Changes (Modified Entities)

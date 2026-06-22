@@ -1002,6 +1002,9 @@ class Activity: Identifiable {
     // direction       TEXT CHECK ∈ {inbound, outbound} — only meaningful for call/email
     // outcome         TEXT                         — free-form result of the activity
     // duration_minutes INT                          — only meaningful for call/meeting
+    // call_source     TEXT                         — around-call provenance from iOS (post_call_prompt | fab | app_shortcut); nullable (feature 154cb8a3)
+    // caller_number   TEXT                         — normalized digits of the call's number, for dedup; nullable
+    // call_started_at TIMESTAMPTZ                  — best-effort call start captured around-call by iOS; nullable
 
     // Project Workspace Modal column (Supabase only — added 2026-05-06)
     // attachment_ids  UUID[] DEFAULT ARRAY[]::UUID[] — references to project_photos.id for activity entries with photo attachments.
@@ -1014,6 +1017,8 @@ class Activity: Identifiable {
 **Subject invariant**: `activities.subject` is `TEXT NOT NULL` with no default. Trigger `trg_activities_default_subject` (migration `add_activities_subject_default_trigger`, BEFORE INSERT) auto-fills it as a defense-in-depth measure: first non-empty line of `content` (truncated to 100 chars), else a type-derived label (`Call`, `Note`, `Site visit`, etc.), else `Activity`. Clients should send an explicit `subject` for best UX — iOS Log Activity flow derives `"{first line of notes}"` or `"Call with {contactName}"` style from form state.
 
 **iOS payload (CreateActivityDTO)** sends: `opportunity_id, company_id, type, subject, content, direction (call/email only), outcome (when non-empty), duration_minutes (call/meeting only and >0), created_by`. Other columns rely on Postgres defaults (`is_read`, `match_needs_review`, `has_attachments`, `attachment_count`, `sent_by_agent`, `created_at`).
+
+**Around-call provenance (feature 154cb8a3, migration `add_call_provenance_to_activities`).** Three nullable, additive columns — `call_source`, `caller_number`, `call_started_at` — let iOS record where a `call` activity came from when captured via the around-call lead-capture flow. `call_source` ∈ `post_call_prompt | fab | app_shortcut`; `caller_number` is the normalized digit form of the dialed/received number (NANP country code stripped); `call_started_at` is the best-effort call start. NO check constraints / NO defaults / NO NOT NULL — the additive-only rule keeps iOS↔Supabase sync intact across App Store releases. Web and older rows carry nil. See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Around-call lead capture.
 
 ---
 
