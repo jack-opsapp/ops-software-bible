@@ -7113,4 +7113,25 @@ Both resolve the caller's company via the canonical `get_user_company_id()` help
 
 ---
 
+## 30. "Add to OPS" Share Extension (iOS, 2026-06-22) — item 1e3c6fa8
+
+Lets a user push photos into a project straight from the iOS share sheet (Camera, Photos, Files, Messages, etc.) without opening OPS. New `OPSShareExtension.appex` app-extension target embedded in the OPS app.
+
+**Targets / project layout (Xcode-16 synchronized groups, `OPS.xcodeproj`):**
+- `OPSShareExtension/` — the extension (own synchronized root group, Info.plist with `com.apple.share-services` + `NSExtensionActivationSupportsImageWithMaxCount`, bundled brand fonts, `OPSShareExtension.entitlements`). Bundle id `co.opsapp.ops.OPS.ShareExtension`.
+- `Shared/` — a synchronized root group compiled into **both** the app and the extension (the cross-process data contract).
+- App target gains an "Embed Foundation Extensions" copy-files phase + a dependency on the extension.
+
+**App Group `group.co.opsapp.ops`** on both entitlements is the only cross-process channel. The extension **never runs Firebase, Supabase, or SwiftData.**
+
+**Session bridge (`Shared/ShareSessionBridge.swift`).** The app writes a snapshot to the App Group on login (`DataController.fetchUserFromAPI`) and every foreground (`OPSApp` scenePhase `.active` → `DataController.refreshShareSessionBridge` → `ShareSessionBridgeWriter`), cleared on logout: `userId`, `companyId`, a short-lived Firebase ID token + expiry (`FirebaseAuthService.getIDTokenResult`), `canEditProjects` (`projects.edit`), and the editable-project list (team-scoped, or all for full-access roles; archived/closed/deleted excluded).
+
+**Capture → upload.** The picker (searchable, single-select, OPS-styled via a self-contained `ShareTheme` mirroring `OPSStyle`) gates to the bridge's editable projects. On confirm the extension downscales each image (ImageIO thumbnail, ≤2048px, JPEG 0.8 — bounded for the ~120MB extension ceiling), writes it to the App Group inbox, and appends a job to the file-coordinated manifest (`Shared/ShareUploadManifest.swift`). If the bridged token is usable it presigns (`/api/uploads/presign`, folder `projects/{companyId}/{projectId}`) and starts a **background `URLSession`** PUT (shared container, same session id as the app); otherwise the job stays `pendingPresign` for the app to upload.
+
+**Finalize (app side).** `ShareUploadCoordinator` re-attaches to the background session so iOS delivers S3 completions to the app after the extension is gone, then drains on launch + foreground + a Darwin nudge + background-session finish. `SharePhotoFinalizer` is **REST-only (no SwiftData)** so it works when iOS relaunches the app in the background: appends to `projects.project_images` (`text[]`), inserts `project_photos` rows (`source = in_progress`, matching the in-app gallery add — the `photo_source` enum has no share-specific label), and posts a completion notification to the uploader deep-linking to the project (`ops://projects/<id>`). Defense-in-depth `projects.edit` re-check when permissions are loaded; idempotent; per-project batched notifications.
+
+**External gate (Apple Developer portal — not in code):** register the App Group `group.co.opsapp.ops`, enable it on the app's App ID + a new App ID for `co.opsapp.ops.OPS.ShareExtension`, and create/refresh provisioning profiles for both. Code compiles with `CODE_SIGNING_ALLOWED=NO`; device install / TestFlight need the portal step.
+
+---
+
 **End of Document**
