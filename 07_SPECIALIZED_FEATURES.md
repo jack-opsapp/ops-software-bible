@@ -7134,4 +7134,31 @@ Lets a user push photos into a project straight from the iOS share sheet (Camera
 
 ---
 
+## 31. App Update Gate (iOS + Web, 2026-06-23)
+
+Version-aware in-app messages shown on launch: force-update walls, optional update nudges, maintenance notices, and announcements. An admin authors a message in the web panel and toggles it live; the iOS app evaluates it against the installed version and shows the right sheet. Replaces the prior all-or-nothing app-message check (which had no version awareness and a stale DB schema).
+
+**`public.app_messages` table** (RLS, **anon SELECT** so the kill-switch works pre-login — content is broadcast/update copy only, no customer/company data; writes are service-role only):
+- `title`, `body`, `message_type` (`mandatory_update | optional_update | maintenance | announcement | info`)
+- `active` (NOT NULL default **false** — drafts start inactive; one active at a time, enforced in the web layer)
+- `dismissable` (false = blocking wall, true = dismissable overlay)
+- `app_store_url`, `target_user_types text[]` (role allowlist; null/empty = all)
+- `minimum_version` / `maximum_version` — half-open targeting range **[min, max)**: applies iff `installed >= min` AND `installed < max` (either null = open)
+- `platform` (`ios`/`android`; null = all), `start_date` / `end_date` (schedule window)
+
+**Version model.** A force-update for "everyone below the fix 3.1.0" sets `maximum_version = 3.1.0` (+ `mandatory_update`, `dismissable=false`). Everyone below is walled; the moment a user updates to 3.1.0+ they leave the range and the wall **self-resolves** — no admin cleanup, and already-updated users are never blocked. `minimum_version` is the optional inclusive lower bound for narrow targeting. Comparison is component-wise numeric (`3.10.0 > 3.9.0`, `3.1 == 3.1.0`).
+
+**iOS (`OPS/Network/Services/`):**
+- `AppMessageGate` — pure evaluator (`applies`, `resolve`, `semVerCompare`, `parseTimestamp`). Range/platform/schedule/role checks; picks one blocking + one dismissable by priority (`mandatory > optional > maintenance > announcement > info`) then recency. Fully unit-tested (`OPSTests/AppMessageGateTests.swift`). Role is enforced only when known — pre-auth a targeted message still applies so a wall is never let through for an unclassified user.
+- `AppMessageService.fetchActiveMessages()` — **anonymous** PostgREST GET (anon key, no Firebase token) because the shared `SupabaseService.client` throws when unauthenticated. Works in every auth state; fails open (empty) on error.
+- `AppStoreVersionService` — Apple iTunes Lookup (`itunes.apple.com/lookup?bundleId=`) for the live App Store version. When installed < store and no published message covers it, the gate synthesizes a dismissable "New version ready" nudge → solves "users don't notice updates" with zero admin action. Free, fails open.
+- `AppUpdateGate` (`@MainActor ObservableObject`) — orchestrates fetch + lookup + evaluate, publishes `blockingMessage` / `dismissableMessage`, session-dismiss tracking, 60s foreground throttle.
+- Wiring: `OPSApp` owns the gate, refreshes on cold launch (`.task`, `force`) and every foreground (scenePhase `.active`, throttled), and renders `blockingMessage` as a root `.overlay` **before sign-in** (pre-auth kill-switch). `PINGatedView` renders the role-aware `dismissableMessage` post-auth. `AppMessageView` renders all four states (blocking+URL = UPDATE NOW; dismissable+URL = DISMISS/UPDATE NOW; dismissable no-URL = DISMISS; blocking no-URL = `[ ACCESS SUSPENDED ]`). Fail-open throughout — a backend outage or offline device never blocks the app.
+
+**Web admin** (`OPS-Web/src/app/admin/app-messages/`): full CRUD; activating deactivates others (one live at a time); min/max version inputs (semver-validated), platform select, schedule pickers, and a one-click **Force update** preset (sets `mandatory_update` + non-dismissable, focuses `maximum_version` = "block versions below the fix"). Queries insert/update wholesale, so adding a field to the `AppMessage` type flows end-to-end.
+
+**No automatic version detection beyond the App Store nudge** — the force-update floor is admin-set and bumped only for blocker bugs; the app never force-updates on every release.
+
+---
+
 **End of Document**
