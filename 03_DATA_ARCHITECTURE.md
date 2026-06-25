@@ -1489,6 +1489,14 @@ class PhotoAnnotation: Identifiable {
 
 **Classic markup visibility contract (verified 2026-05-25):** `project_photo_annotations.photo_url` remains the source image URL and `annotation_url` remains the transparent PencilKit overlay PNG. iOS renders classic markup overlays in the fitted display-canvas coordinate space, not raw source-photo pixels, then composites by scaling the overlay over the source image. Project detail/photo viewers must handle a cold cache by downloading both the source photo and the overlay URL before writing the composited image into `ImageCache`; otherwise another device can see only the unmarked source image after sync.
 
+**Collaborative markup — author-scoped layers (2026-06-23).** Markup is now per-author *layers* on the shared annotation row, fixing the bug where a second editor saw a blank canvas and overwrote the first author's marks. Four ADDITIVE nullable columns on `project_photo_annotations` (migration `collaborative_photo_markup_layers`):
+
+- `layers jsonb` — array of `{ layerId, authorId, authorName, overlayUrl, strokeRef, visibleDefault, zIndex, strokeCount, createdAt, updatedAt, clearedAt }`. **Invariant: `layerId == authorId == users.id`** (one layer per author per photo). Each layer owns a transparent overlay PNG (`overlayUrl`) AND the editable `PKDrawing.dataRepresentation` stroke blob (`strokeRef`, an S3 object — never inlined base64). A layer is *active* while `clearedAt` is null.
+- `change_log jsonb` — append-only `{ eventId, authorId, authorName, action(added|edited|cleared), strokeDelta, beforeSnapshotUrl, afterSnapshotUrl, at }`.
+- `before_snapshot_url text`, `after_snapshot_url text` — most-recent event's baked before/after composites. **Forward-ready: null until the snapshot feature ships** (deferred 2026-06-24; retention cap = last 5 pairs/photo when it lands).
+
+The editor composites every *other* author's overlay as a NON-editable base under the current user's PencilKit canvas; each user edits only their own layer. `annotation_url` (the legacy scalar) is kept synced to the newest *active* overlay so pre-update builds + the activity feed (`AnnotationFeedPolicy.hasMarkup`) stay honest. Inbound sync does a **per-layer recency union** (`MarkupLayerMerge`, shared by InboundProcessor/DataActor/RealtimeProcessor) so a peer's newer server layer AND this device's un-pushed local layer both survive a stale echo. The show/hide eye toggle (`hiddenAuthorIds`) is a LOCAL per-viewer preference — never synced. All layer writes go through the `upsert_markup_layer` SECURITY DEFINER RPC (see `04_API_AND_INTEGRATION.md` §14), never a wholesale `.update(layers).eq(id)` (last-writer-wins, drops peers' layers).
+
 ---
 
 ### 25. CalendarUserEvent (Supabase-Backed)
