@@ -296,6 +296,16 @@ SUPABASE_SERVICE_ROLE_KEY=              # [V] Server-only — bypasses RLS
 - **Server client** (`src/lib/supabase/server-client.ts`): Uses `SUPABASE_SERVICE_ROLE_KEY`, bypasses RLS. For API routes and cron jobs.
 - **Admin client** (`src/lib/supabase/admin-client.ts`): Also uses service role key, used for admin panel queries across all companies.
 
+**Firebase → Supabase third-party auth role claim:** Every Firebase Auth user
+whose ID token is sent to Supabase must carry the custom claim
+`role='authenticated'`. Supabase uses this claim to assign the Postgres role for
+Data API, Storage, and Realtime authorization; Supabase Realtime rejects
+Firebase tokens without it before a channel can subscribe. OPS-Web
+`/api/auth/sync-user` repairs the claim via Firebase Admin SDK and returns
+`authClaimsUpdated` so clients can force-refresh their ID token. Existing
+Firebase users can be backfilled with
+`npm run backfill:firebase-supabase-role -- --apply` in `ops-web`.
+
 **ops-site and ops-learn also require Supabase env vars:**
 ```
 NEXT_PUBLIC_SUPABASE_URL=               # Same Supabase project URL
