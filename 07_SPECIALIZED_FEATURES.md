@@ -6846,11 +6846,13 @@ See `03_DATA_ARCHITECTURE.md` §28 for the full `CalendarMirrorMap` shape.
 
 **Spec:** `ops-software-bible/specs/2026-05-10-lidar-dimensioned-photo-capture-design.md`
 **Implementation plan:** `ops-software-bible/specs/plans/2026-05-10-lidar-dimensioned-photo-capture-plan.md`
-**Status (2026-05-12):** Phases A–G complete. Phase H (acceptance testing) pending hardware validation against the §10.2 9-criterion table on iPhone 15 Pro + iPhone SE 3rd gen + iPad Pro M4. Feature flag `feature.measurement.dimensioned_capture` ships default **OFF**; flips ON after the §10.2 table goes green and 48 hrs of crash-free operation per §10.3. Phase F (`DimensionedPhotoSyncManager` / P3-1) is the parallel sibling and must merge before Phase G's PR can build green.
+**Status (2026-06-27):** Phases A–G complete. Phase H (acceptance testing) pending hardware validation against the §10.2 9-criterion table on iPhone 15 Pro + iPhone SE 3rd gen + iPad Pro M4. Feature flag `feature.measurement.dimensioned_capture` ships default **OFF**; flips ON after the §10.2 table goes green and 48 hrs of crash-free operation per §10.3. Simulator/build verification is not hardware validation.
 
 ### Summary
 
 iOS-only feature. Tap **MEASURE** from `ProjectActionBar` on an active project → live AR view → shutter triggers AVFoundation+LiDAR synchronized capture (48 MP photo + 768×576 depth map + camera intrinsics) → opens `DimensionedAnnotationView` for tap-to-measure or auto-detected dimensions on classified windows/doors. Optional **reference-object precision mode** upgrades accuracy from `±1″ LIDAR` to `±5 MM CALIBRATED`. Output: PNG with burned-in Hover-style external-leader labels (2048 long-edge); optional PDF via PDFKit; structured `dimensions jsonb` row in `project_photo_annotations`.
+
+**Operator path (2026-06-27):** `PROJECT → MEASURE → AIM → SHUTTER → TAP TWO POINTS → SAVE`. MEASURE can appear from active project action bar, project quick actions, and site visit capture. Release builds hide the entry while the feature flag is OFF. Debug builds keep a developer/test entry visible for AR-capable devices and show `// DEV FLAG OVERRIDE · FLAG OFF` inside capture. No-AR/simulator devices show a hardware requirement state instead of silently hiding or crashing.
 
 ### Wedge (why this exists)
 
@@ -6868,9 +6870,9 @@ Every other LiDAR measurement app forces a full room scan (Magicplan, Polycam), 
 | Persistence | `DimensionedPhotoSyncManager` via existing `PresignedURLUploadService` | HEIC+embedded disparity → `project_photos.url`, rendered PNG → `project_photos.rendered_url` + `project_photo_annotations.rendered_photo_url`, sidecar JSON + FP32 depth-in-meters → S3 |
 | UI | `DimensionedCaptureView` + `DimensionedAnnotationView` | SwiftUI views with 6-tool toolbar, calibrate flow, accuracy badge |
 
-**Capture to annotation handoff (2026-05-13):** `.lidar` captures now build a `DimensionedAnnotationHandoff` before presenting `DimensionedAnnotationView`. Live AR frame updates remain lightweight; full `ARKitSnapshot.meshFaces` extraction happens once at shutter, while ARKit is still running and immediately before `arSession.pause()`. The handoff loads the exact 768×576 standalone FP32 depth-in-meters asset from `CapturedAssets.depthURL`, converts the captured `meshFaces` into `AnchorSnapshot`, runs `OpeningClassifier`, validates candidates through `AutoMeasurer`, and passes `preloadedDepthMap`, `anchors`, and `detectedOpenings` into annotation. AUTO is shown only when real measured openings exist. If depth loading, anchor conversion, or classification produces no candidates, annotation still opens for manual measurement with AUTO hidden. `.visual` fallback bypasses auto-detect entirely, requires no depth, keeps AUTO hidden, and leaves CALIBRATE visible.
+**Capture to annotation handoff (2026-05-13, updated 2026-06-27):** `.lidar` captures build a `DimensionedAnnotationHandoff` before presenting `DimensionedAnnotationView`. Live AR frame updates remain lightweight; full `ARKitSnapshot.meshFaces` extraction happens once at shutter, while ARKit is still running and immediately before `arSession.pause()`. The handoff loads the exact 768×576 standalone FP32 depth-in-meters asset from `CapturedAssets.depthURL`, converts the captured `meshFaces` into `AnchorSnapshot`, runs `OpeningClassifier`, validates candidates through `AutoMeasurer`, and passes `preloadedDepthMap`, `anchors`, and `detectedOpenings` into annotation. AUTO is shown only when real measured openings exist. If depth loading, anchor conversion, or classification produces no candidates, annotation still opens for manual measurement with AUTO hidden. `.visual` fallback bypasses auto-detect entirely, requires no depth, keeps AUTO hidden, and leaves CALIBRATE visible.
 
-**Calibration continuity (2026-05-13):** CALIBRATE now snapshots the current `DimensionsData` before returning to `DimensionedCaptureView` in `.calibration` mode. The calibration recapture is used only as reference-object input for `ReferenceObjectCalibrator`; the original annotation handoff, photo, and measurements remain the state of record. CANCEL reopens annotation unchanged. A successful credit-card or OPS-marker detection reopens annotation on the original photo with all prior measurements preserved and `calibration.method = reference_object`, `referenceObject`, `scaleFactor`, and `estimatedAccuracyMeters` copied from `CalibrationResult`. LiDAR calibrated sessions stay full-depth; visual-SLAM calibrated sessions reopen with `COPLANAR ONLY`. If no supported reference is found, capture stays in calibration mode, shows `// ERROR — REFERENCE NOT FOUND · INCREASE LIGHT · RETRY`, and offers `USE UNCALIBRATED` to return to the unchanged annotation.
+**Calibration continuity (2026-05-13, updated 2026-06-27):** CALIBRATE snapshots the current `DimensionsData` before returning to `DimensionedCaptureView` in `.calibration` mode. The calibration recapture is used only as reference-object input for `ReferenceObjectCalibrator`; the original annotation handoff, photo, and measurements remain the state of record. CANCEL reopens annotation unchanged. A successful credit-card or OPS-marker detection reopens annotation on the original photo with all prior measurements preserved and `calibration.method = reference_object`, `referenceObject`, `scaleFactor`, `estimatedAccuracyMeters`, `planeNormal`, and `planeOffset` copied from `CalibrationResult`. LiDAR calibrated sessions stay full-depth. Visual-SLAM calibrated sessions reopen with `COPLANAR ONLY`, and manual point-to-point measurement uses the stored reference plane through `PlaneRaycaster`; if no depth map or calibrated plane is present, annotation shows the limitation state instead of silently failing. If no supported reference is found, capture stays in calibration mode, shows `// ERROR — REFERENCE NOT FOUND · INCREASE LIGHT · RETRY`, and offers `USE UNCALIBRATED` to return to the unchanged annotation.
 
 ### Data model
 
@@ -6878,6 +6880,7 @@ Every other LiDAR measurement app forces a full room scan (Magicplan, Polycam), 
 - New `project_photos.rendered_url` and `project_photo_annotations.rendered_photo_url` text columns hold the derived 2048-long-edge PNG deliverable. `project_photos.url` and `project_photo_annotations.photo_url` remain the source HEIC/photo pointers.
 - New `'measurement'` value in `photo_source` enum.
 - SwiftData `PhotoAnnotation` extended with `dimensionsData: Data?` and `renderedPhotoURL: String?` (synced) + `localDepthMapPath`, `localSidecarPath`, `localCaptureFinishedAt` (local-only working state).
+- `dimensions.calibration` now persists optional `planeNormal` and `planeOffset` for reference-object calibration. Visual/manual measurements depend on this plane and are valid only for points on the calibrated surface.
 
 ### Device fallback ladder
 
@@ -6885,11 +6888,11 @@ Every other LiDAR measurement app forces a full room scan (Magicplan, Polycam), 
 |---|---|---|
 | LiDAR (iPhone 12 Pro+, iPad Pro 2020+) | ±1″ uncalibrated, ±5 MM calibrated | Full pipeline + auto-detect + reference-object option |
 | Non-LiDAR with ARKit | ±2″ in-plane only | Manual measurement only (no auto-detect); reference-object option is in-plane-only with `COPLANAR ONLY` badge |
-| No AR support | Estimate only | Manual scale tool — user marks known length, app proportions |
+| No AR support / simulator | Unavailable | Clear hardware requirement state; no crash, no silent hide in debug/test paths |
 
 ### Feature flag
 
-`feature.measurement.dimensioned_capture` — default OFF in initial release, flips ON after 48 hrs of crash-free operation post-launch.
+`feature.measurement.dimensioned_capture` — default OFF in initial release, flips ON after 48 hrs of crash-free operation post-launch. Static fallback is fail-closed (`[]` in `FeatureFlagService`), so a failed flag fetch hides MEASURE in release. Shared entry policy lives in `MeasureActionButton`: flag ON + `.lidar`/`.visual` opens capture; flag ON + `.noDepth` opens the unavailable state; flag OFF + release hides the entry; flag OFF + debug opens capture for `.lidar`/`.visual` with the dev override warning and opens the combined flag/hardware limitation state for `.noDepth`.
 
 ### Out of scope (v1)
 
