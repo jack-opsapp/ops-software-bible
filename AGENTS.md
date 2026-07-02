@@ -1,3 +1,5 @@
+<!-- GENERATED from CLAUDE.md — edit CLAUDE.md, then run scripts/sync-agent-docs.sh -->
+
 # OPS Software Bible — Development Standards
 
 Self-contained CLAUDE.md for the `ops-software-bible` sub-project. Universal OPS rules (kept in sync across every OPS sub-project) come first; bible-specific rules come after the divider.
