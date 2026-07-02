@@ -22,14 +22,14 @@ This prompt is the OPS-Web cron's entry point. It inherits the full contract in 
 
 ## Owned code paths (safe to edit)
 
-All of `OPS-Web/src/` except:
+All of `ops-web/src/` except:
 - `src/lib/api/services/` — services are load-bearing; edit with caution and check all callers.
 - `src/lib/firebase/` — auth wiring is sensitive.
 - `src/lib/supabase/helpers.ts` — changes ripple everywhere.
 
 **Skip entirely (not owned by this agent):**
-- `OPS-Web/supabase/migrations/` — migrations must be intentional, never driven by nightly sweeps.
-- `OPS-Web/tests/` — the agent writes fixes, not tests, unless a bug explicitly calls for a regression test.
+- `ops-web/supabase/migrations/` — migrations must be intentional, never driven by nightly sweeps.
+- `ops-web/tests/` — the agent writes fixes, not tests, unless a bug explicitly calls for a regression test.
 
 ## Common web bug patterns the agent should recognize fast
 

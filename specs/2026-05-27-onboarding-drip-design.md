@@ -9,12 +9,12 @@
 - `13_EMAIL_SYSTEM.md` — outbound email infrastructure
 - `14_FEATURE_POSITIONING.md` — canonical positioning for Day 3 (inbox) and Day 8 (estimates + portal)
 - `12_SUBSCRIPTION_MANAGEMENT.md` — trial lifecycle, hand-off at day 23
-- `OPS-Web/src/lib/email/sendgrid.tsx` — the `gatedSend` chokepoint (line 122)
-- `OPS-Web/src/app/api/setup/progress/route.ts:122` — the verified `companies` INSERT site (Day 0 hook point)
-- `OPS-Web/supabase/migrations/053_trial_expiry_notifications.sql` — analogous dedup pattern this spec mirrors
-- `OPS-Web/supabase/migrations/065_company_trial_init_trigger.sql` / `066_refine_company_trial_trigger.sql` — the existing trial-window trigger (unchanged by this spec)
-- `OPS-Web/src/lib/api/services/trial-expiry-service.ts` — service shape this spec mirrors
-- `OPS-Web/src/lib/api/services/notification-dispatch.ts:187-201` — the real `task_completed` notification format that the Day 4A mock must match
+- `ops-web/src/lib/email/sendgrid.tsx` — the `gatedSend` chokepoint (line 122)
+- `ops-web/src/app/api/setup/progress/route.ts:122` — the verified `companies` INSERT site (Day 0 hook point)
+- `ops-web/supabase/migrations/053_trial_expiry_notifications.sql` — analogous dedup pattern this spec mirrors
+- `ops-web/supabase/migrations/065_company_trial_init_trigger.sql` / `066_refine_company_trial_trigger.sql` — the existing trial-window trigger (unchanged by this spec)
+- `ops-web/src/lib/api/services/trial-expiry-service.ts` — service shape this spec mirrors
+- `ops-web/src/lib/api/services/notification-dispatch.ts:187-201` — the real `task_completed` notification format that the Day 4A mock must match
 - Supabase Edge Functions: `lifecycle-emails` (v11), `lifecycle-cron` (v5), `lifecycle-onboarding-complete` (v5), `lifecycle-first-action` (v5) — the dormant systems being decommissioned
 - Brand voice: `/Users/jacksonsweet/Projects/OPS/CLAUDE.md` § Brand & MO; founder memory files (`feedback_contractor_banned_in_marketing.md`, `feedback_ai_framing_in_marketing.md`)
 
@@ -74,9 +74,9 @@ The existing edge functions have structural problems that aren't worth patching:
 | Existing edge function problem | In-repo solution |
 |---|---|
 | Bypasses `gatedSend` — no suppression, no pause killswitch, no RFC 8058 unsubscribe header | All sends route through `gatedSend` |
-| Templates are inline HTML strings, no React Email, no design system, no admin preview | React Email TSX templates in `OPS-Web/src/lib/email/react/templates/onboarding/` with `template-registry.ts` entries |
-| Lives in separate Deno repo, not version-controlled with OPS-Web | All code in `OPS-Web/` |
-| Hardcoded `FROM_EMAIL = 'jack@opsapp.co'`; not a documented sender identity | `JACK` added to `OPS-Web/src/lib/email/senders.ts` and `13_EMAIL_SYSTEM.md` § Sender Identities |
+| Templates are inline HTML strings, no React Email, no design system, no admin preview | React Email TSX templates in `ops-web/src/lib/email/react/templates/onboarding/` with `template-registry.ts` entries |
+| Lives in separate Deno repo, not version-controlled with OPS-Web | All code in `ops-web/` |
+| Hardcoded `FROM_EMAIL = 'jack@opsapp.co'`; not a documented sender identity | `JACK` added to `ops-web/src/lib/email/senders.ts` and `13_EMAIL_SYSTEM.md` § Sender Identities |
 | No timezone awareness | Hourly cron + `detectCompanyTimezone()` |
 | No compliance footer | Visible footer on every email (see §12) |
 | Not in the bible | Documented in `13_EMAIL_SYSTEM.md` § Onboarding Drip after launch |
@@ -225,7 +225,7 @@ Same hourly cron sweeps for the "Lost you?" send. Conditions in §7.
 | Day 14 | **`Jack Sweet <jack@opsapp.co>`** (changed from v1) | `jack@opsapp.co` | Plain text | Jack the human |
 | Re-engagement | `Jack Sweet <jack@opsapp.co>` | `jack@opsapp.co` | Plain text | Jack the human |
 
-**Jack added as a documented sender identity.** New constant in `OPS-Web/src/lib/email/senders.ts`:
+**Jack added as a documented sender identity.** New constant in `ops-web/src/lib/email/senders.ts`:
 
 ```ts
 export const JACK: Sender = {
@@ -244,7 +244,7 @@ Footer format (rendered as a single small grey line, both for plain-text emails 
 OPS LTD. · 1515 Douglas St, Victoria, BC V8W 2G4 · Unsubscribe
 ```
 
-The "Unsubscribe" link uses the existing RFC 8058 HMAC-signed unsubscribe URL (`buildUnsubscribeUrl` in `OPS-Web/src/lib/email/unsubscribe-token.ts`).
+The "Unsubscribe" link uses the existing RFC 8058 HMAC-signed unsubscribe URL (`buildUnsubscribeUrl` in `ops-web/src/lib/email/unsubscribe-token.ts`).
 
 `gatedSend` continues to attach the `List-Unsubscribe` SMTP header automatically for one-click Gmail/Outlook unsubscribe — the visible footer adds the legally-required visible opt-out path on top.
 
@@ -802,11 +802,11 @@ COMMENT ON COLUMN public.onboarding_email_log.status IS
 
 | File | Change |
 |---|---|
-| `OPS-Web/src/lib/email/constants.ts` | Add 10 new entries to `KIND_TO_LIST` — one per typed sender (branch-specific so analytics can distinguish e.g. Day 1A from Day 1B open rates), all mapped to `'global'` list. Keys: `onboarding_day_0_welcome`, `onboarding_day_1_no_project`, `onboarding_day_1_has_project`, `onboarding_day_3_inbox`, `onboarding_day_4_no_notification`, `onboarding_day_4_has_notification`, `onboarding_day_8_estimates`, `onboarding_day_14_quiet`, `onboarding_day_14_active`, `onboarding_lost_you` |
-| `OPS-Web/src/lib/email/template-registry.ts` | Add 10 new entries (one per distinct template: Day 0 + Day 1A + Day 1B + Day 3 + Day 4A + Day 4B + Day 8 + Day 14A + Day 14B + LostYou) |
-| `OPS-Web/src/lib/email/pause.ts` `resolveEmailBucket()` | Add 10 case statements mapping the new kinds — all to `'dispatch'` (Jack rides the same bucket-level pause as Dispatch since `jack@opsapp.co` is operationally part of the dispatch sender bucket) |
-| `OPS-Web/src/lib/email/senders.ts` | Add `JACK` sender identity constant (see §4) |
-| `OPS-Web/vercel.json` | Add cron entry `{"path": "/api/cron/onboarding-drip", "schedule": "0 * * * *"}` (hourly, replacing the v1 daily 14:00 UTC) |
+| `ops-web/src/lib/email/constants.ts` | Add 10 new entries to `KIND_TO_LIST` — one per typed sender (branch-specific so analytics can distinguish e.g. Day 1A from Day 1B open rates), all mapped to `'global'` list. Keys: `onboarding_day_0_welcome`, `onboarding_day_1_no_project`, `onboarding_day_1_has_project`, `onboarding_day_3_inbox`, `onboarding_day_4_no_notification`, `onboarding_day_4_has_notification`, `onboarding_day_8_estimates`, `onboarding_day_14_quiet`, `onboarding_day_14_active`, `onboarding_lost_you` |
+| `ops-web/src/lib/email/template-registry.ts` | Add 10 new entries (one per distinct template: Day 0 + Day 1A + Day 1B + Day 3 + Day 4A + Day 4B + Day 8 + Day 14A + Day 14B + LostYou) |
+| `ops-web/src/lib/email/pause.ts` `resolveEmailBucket()` | Add 10 case statements mapping the new kinds — all to `'dispatch'` (Jack rides the same bucket-level pause as Dispatch since `jack@opsapp.co` is operationally part of the dispatch sender bucket) |
+| `ops-web/src/lib/email/senders.ts` | Add `JACK` sender identity constant (see §4) |
+| `ops-web/vercel.json` | Add cron entry `{"path": "/api/cron/onboarding-drip", "schedule": "0 * * * *"}` (hourly, replacing the v1 daily 14:00 UTC) |
 
 ### No schema changes to existing tables
 
@@ -819,7 +819,7 @@ COMMENT ON COLUMN public.onboarding_email_log.status IS
 
 ## 9. Cron schedule additions
 
-One new entry in `OPS-Web/vercel.json` `crons` array:
+One new entry in `ops-web/vercel.json` `crons` array:
 
 ```json
 {
@@ -842,35 +842,35 @@ Hourly fire vs daily-with-timezone-math (v1): hourly is simpler, handles DST tra
 
 | Path | Purpose |
 |---|---|
-| `OPS-Web/src/lib/email/react/templates/onboarding/Day0Welcome.tsx` | Plain-text template, no glass card |
-| `OPS-Web/src/lib/email/react/templates/onboarding/Day1NoProject.tsx` | OPS HTML, glass card |
-| `OPS-Web/src/lib/email/react/templates/onboarding/Day1HasProject.tsx` | OPS HTML |
-| `OPS-Web/src/lib/email/react/templates/onboarding/Day3Inbox.tsx` | Plain-text |
-| `OPS-Web/src/lib/email/react/templates/onboarding/Day4NoNotification.tsx` | OPS HTML + custom iOS push notification mockup |
-| `OPS-Web/src/lib/email/react/templates/onboarding/Day4HasNotification.tsx` | OPS HTML |
-| `OPS-Web/src/lib/email/react/templates/onboarding/Day8Estimates.tsx` | Plain-text |
-| `OPS-Web/src/lib/email/react/templates/onboarding/Day14Quiet.tsx` | Plain-text |
-| `OPS-Web/src/lib/email/react/templates/onboarding/Day14Active.tsx` | Plain-text with conditional stats block |
-| `OPS-Web/src/lib/email/react/templates/onboarding/LostYou.tsx` | Plain-text |
-| `OPS-Web/src/lib/email/react/primitives/MockPushNotification.tsx` | Reusable iOS-push-notification visual component for Day 4A. Renders an iOS-style notification card with title + body lines, matching the visual shape of a real push notification on lock screen. **Design note**: deliberately stylized (not pixel-perfect iOS chrome) so we never look like we're impersonating Apple's UI. The shape should be recognizably "a push notification" without copying Apple specifics. |
-| `OPS-Web/src/lib/email/react/primitives/PlainTextLayout.tsx` | Layout primitive for founder emails (Days 0, 3, 8, 14A, 14B, LostYou). Renders body + signature + the single-line compliance footer. No glass card, no logo, no `// OPERATOR ::` chrome. |
-| `OPS-Web/src/lib/email/react/primitives/FounderFooter.tsx` | The single-line compliance footer used by founder emails. Renders `OPS LTD. · 1515 Douglas St, Victoria, BC V8W 2G4 · Unsubscribe` in small grey text. Distinct from the existing `ComplianceFooter` which is taller and richer for Dispatch emails. |
-| `OPS-Web/src/lib/api/services/onboarding-drip-service.ts` | Service mirroring `TrialExpiryService` shape. Methods: `processAll(supabase, now)`, `processCompany(supabase, company, now, result)`, `computeState(supabase, company, daySlot)`, `claimAndSend(supabase, user, company, daySlot, branch)` |
-| `OPS-Web/src/app/api/cron/onboarding-drip/route.ts` | Cron route, auth via `Bearer ${CRON_SECRET}`, calls `OnboardingDripService.processAll()` |
-| `OPS-Web/supabase/migrations/108_onboarding_email_log.sql` | Dedup + state table (see §8) |
+| `ops-web/src/lib/email/react/templates/onboarding/Day0Welcome.tsx` | Plain-text template, no glass card |
+| `ops-web/src/lib/email/react/templates/onboarding/Day1NoProject.tsx` | OPS HTML, glass card |
+| `ops-web/src/lib/email/react/templates/onboarding/Day1HasProject.tsx` | OPS HTML |
+| `ops-web/src/lib/email/react/templates/onboarding/Day3Inbox.tsx` | Plain-text |
+| `ops-web/src/lib/email/react/templates/onboarding/Day4NoNotification.tsx` | OPS HTML + custom iOS push notification mockup |
+| `ops-web/src/lib/email/react/templates/onboarding/Day4HasNotification.tsx` | OPS HTML |
+| `ops-web/src/lib/email/react/templates/onboarding/Day8Estimates.tsx` | Plain-text |
+| `ops-web/src/lib/email/react/templates/onboarding/Day14Quiet.tsx` | Plain-text |
+| `ops-web/src/lib/email/react/templates/onboarding/Day14Active.tsx` | Plain-text with conditional stats block |
+| `ops-web/src/lib/email/react/templates/onboarding/LostYou.tsx` | Plain-text |
+| `ops-web/src/lib/email/react/primitives/MockPushNotification.tsx` | Reusable iOS-push-notification visual component for Day 4A. Renders an iOS-style notification card with title + body lines, matching the visual shape of a real push notification on lock screen. **Design note**: deliberately stylized (not pixel-perfect iOS chrome) so we never look like we're impersonating Apple's UI. The shape should be recognizably "a push notification" without copying Apple specifics. |
+| `ops-web/src/lib/email/react/primitives/PlainTextLayout.tsx` | Layout primitive for founder emails (Days 0, 3, 8, 14A, 14B, LostYou). Renders body + signature + the single-line compliance footer. No glass card, no logo, no `// OPERATOR ::` chrome. |
+| `ops-web/src/lib/email/react/primitives/FounderFooter.tsx` | The single-line compliance footer used by founder emails. Renders `OPS LTD. · 1515 Douglas St, Victoria, BC V8W 2G4 · Unsubscribe` in small grey text. Distinct from the existing `ComplianceFooter` which is taller and richer for Dispatch emails. |
+| `ops-web/src/lib/api/services/onboarding-drip-service.ts` | Service mirroring `TrialExpiryService` shape. Methods: `processAll(supabase, now)`, `processCompany(supabase, company, now, result)`, `computeState(supabase, company, daySlot)`, `claimAndSend(supabase, user, company, daySlot, branch)` |
+| `ops-web/src/app/api/cron/onboarding-drip/route.ts` | Cron route, auth via `Bearer ${CRON_SECRET}`, calls `OnboardingDripService.processAll()` |
+| `ops-web/supabase/migrations/108_onboarding_email_log.sql` | Dedup + state table (see §8) |
 
 ### Modified files
 
 | Path | Change |
 |---|---|
-| `OPS-Web/src/lib/email/sendgrid.tsx` | Add 10 typed senders: `sendOnboardingDay0Welcome`, `sendOnboardingDay1NoProject`, `sendOnboardingDay1HasProject`, `sendOnboardingDay3Inbox`, `sendOnboardingDay4NoNotification`, `sendOnboardingDay4HasNotification`, `sendOnboardingDay8Estimates`, `sendOnboardingDay14Quiet`, `sendOnboardingDay14Active`, `sendOnboardingLostYou`. All Jack-from-address sends pass `from: JACK` and `replyTo: 'jack@opsapp.co'`. All Dispatch sends pass `from: DISPATCH`, `replyTo: 'jack@opsapp.co'`. |
-| `OPS-Web/src/lib/email/senders.ts` | Add `JACK` constant per §4 |
-| `OPS-Web/src/lib/email/constants.ts` | Add 10 entries to `KIND_TO_LIST` per §8 (one per typed sender) |
-| `OPS-Web/src/lib/email/template-registry.ts` | Add 10 entries |
-| `OPS-Web/src/lib/email/pause.ts` | `resolveEmailBucket()` switch: all 10 onboarding kinds → `'dispatch'` |
-| `OPS-Web/src/app/api/setup/progress/route.ts` | After the verified `companies` INSERT at line 122, insert pending row in `onboarding_email_log` and dispatch Day 0 async (non-awaited Promise). Failure of the Day 0 send logs but does not roll back the signup. |
-| `OPS-Web/vercel.json` | Add hourly cron entry |
-| `OPS-Web/supabase/migrations/065_company_trial_init_trigger.sql` | **NOT modified** — trial trigger continues to handle trial-window stamping only. Day 0 enqueue is application code, not Postgres trigger. |
+| `ops-web/src/lib/email/sendgrid.tsx` | Add 10 typed senders: `sendOnboardingDay0Welcome`, `sendOnboardingDay1NoProject`, `sendOnboardingDay1HasProject`, `sendOnboardingDay3Inbox`, `sendOnboardingDay4NoNotification`, `sendOnboardingDay4HasNotification`, `sendOnboardingDay8Estimates`, `sendOnboardingDay14Quiet`, `sendOnboardingDay14Active`, `sendOnboardingLostYou`. All Jack-from-address sends pass `from: JACK` and `replyTo: 'jack@opsapp.co'`. All Dispatch sends pass `from: DISPATCH`, `replyTo: 'jack@opsapp.co'`. |
+| `ops-web/src/lib/email/senders.ts` | Add `JACK` constant per §4 |
+| `ops-web/src/lib/email/constants.ts` | Add 10 entries to `KIND_TO_LIST` per §8 (one per typed sender) |
+| `ops-web/src/lib/email/template-registry.ts` | Add 10 entries |
+| `ops-web/src/lib/email/pause.ts` | `resolveEmailBucket()` switch: all 10 onboarding kinds → `'dispatch'` |
+| `ops-web/src/app/api/setup/progress/route.ts` | After the verified `companies` INSERT at line 122, insert pending row in `onboarding_email_log` and dispatch Day 0 async (non-awaited Promise). Failure of the Day 0 send logs but does not roll back the signup. |
+| `ops-web/vercel.json` | Add hourly cron entry |
+| `ops-web/supabase/migrations/065_company_trial_init_trigger.sql` | **NOT modified** — trial trigger continues to handle trial-window stamping only. Day 0 enqueue is application code, not Postgres trigger. |
 
 ---
 
@@ -878,7 +878,7 @@ Hourly fire vs daily-with-timezone-math (v1): hourly is simpler, handles DST tra
 
 ### Unit tests
 
-- `OPS-Web/tests/unit/api/services/onboarding-drip-service.test.ts`
+- `ops-web/tests/unit/api/services/onboarding-drip-service.test.ts`
   - `computeState()` returns the correct branch for each day_slot given fixture company state
   - `processCompany()` skips on each kill condition (deleted, cancelled, expired, no admins, all-suppressed, internal-domain)
   - `claimAndSend()` writes the correct `onboarding_email_log` row on success — including `email_type` populated from `(day_slot, branch)`
@@ -894,7 +894,7 @@ Hourly fire vs daily-with-timezone-math (v1): hourly is simpler, handles DST tra
   - Day 14 stats threshold: under 5, returns the no-stats variant
   - Lost You: only fires when all 5 conditions hold; doesn't fire if Day 14 already sent
 
-- `OPS-Web/tests/unit/email/templates/onboarding/*.test.tsx`
+- `ops-web/tests/unit/email/templates/onboarding/*.test.tsx`
   - Each template renders with `previewProps` without error
   - Plural handling on Day 1B and Day 14B (0, 1, many)
   - `{{firstName}}` null fallback on Day 0 / Day 3 / Day 8 / Day 14 / LostYou
@@ -903,13 +903,13 @@ Hourly fire vs daily-with-timezone-math (v1): hourly is simpler, handles DST tra
 
 ### Integration tests
 
-- `OPS-Web/tests/integration/onboarding-drip-cron.test.ts`
+- `ops-web/tests/integration/onboarding-drip-cron.test.ts`
   - End-to-end cron run: seed N companies at various ages + timezones, invoke the route handler, assert correct sends + dedup rows
   - Verify timezone gating: operator at `localHour=9` gets sent, operator at `localHour=10` does not (this cron tick)
   - Verify activity-detection logic for Day 14 branching + `lost_you` trigger using real updated_at timestamps
   - Verify Day 0 retry: simulate SendGrid failure on first attempt, verify the cron picks it up on next tick
 
-- `OPS-Web/tests/integration/onboarding-drip-day0-realtime.test.ts`
+- `ops-web/tests/integration/onboarding-drip-day0-realtime.test.ts`
   - POST to `/api/setup/progress` triggers Day 0 enqueue + async dispatch
   - Failure of Day 0 send does not roll back the signup response
 

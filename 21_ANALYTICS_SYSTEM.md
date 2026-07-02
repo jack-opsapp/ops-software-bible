@@ -461,7 +461,7 @@ The 5 events: `sign_up`, `purchase`, `create_first_project`, `complete_onboardin
 
 ### Overview
 
-The web app at `OPS-Web/` is Next.js (App Router) with Supabase. Analytics events should be tracked client-side (user interactions happen in the browser) and flushed to Supabase.
+The web app at `ops-web/` is Next.js (App Router) with Supabase. Analytics events should be tracked client-side (user interactions happen in the browser) and flushed to Supabase.
 
 ### What to Build
 
@@ -754,7 +754,7 @@ $$ LANGUAGE sql STABLE;
 
 ### iOS: `AnalyticsManager.swift`
 
-**Location:** `OPS/OPS/Utilities/AnalyticsManager.swift`
+**Location:** `ops-ios/OPS/Utilities/AnalyticsManager.swift`
 
 This file is UNCHANGED by the new analytics system. It continues to:
 - Fire 5 conversion events to Firebase Analytics

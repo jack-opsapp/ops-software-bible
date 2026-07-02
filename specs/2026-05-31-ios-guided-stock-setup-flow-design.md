@@ -26,7 +26,7 @@ A **conversational, multiple-choice, first-run setup flow** that asks about the 
 
 This is **"Guided Stock Setup"** — a self-contained setup flow, a sibling to the Advanced `CatalogSetupFlowSheet`.
 
-It is **NOT** an OPS *Wizard* in the existing-framework sense. `OPS/OPS/Wizard/` is a **coach-mark / guided-tour** system (`WizardDefinition`, `.wizardTarget()` glow, instruction-bar overlay, orange `wizardAccent` #EB8C26, `completionNotification`s) that highlights *real* UI and walks a user through it. Coach-marking the existing jargon-heavy sheet would not solve the problem — the flow itself is the problem. Therefore Guided Stock Setup:
+It is **NOT** an OPS *Wizard* in the existing-framework sense. `ops-ios/OPS/Wizard/` is a **coach-mark / guided-tour** system (`WizardDefinition`, `.wizardTarget()` glow, instruction-bar overlay, orange `wizardAccent` #EB8C26, `completionNotification`s) that highlights *real* UI and walks a user through it. Coach-marking the existing jargon-heavy sheet would not solve the problem — the flow itself is the problem. Therefore Guided Stock Setup:
 - is its own full-screen flow (not a coach-mark overlay),
 - uses **standard flow styling** — steel-blue `OPSStyle.Colors.primaryAccent`, **never** `wizardAccent` (orange stays reserved for coach-marks),
 - does **not** register a `WizardDefinition`.

@@ -26,7 +26,7 @@ These must pass before opening the worktree. They're not tasks in the TDD sense 
 # Pull the project's vercel.json crons and confirm at least one sub-daily cron exists
 # (proves Pro+ in production — hourly would fail deployment on Hobby per
 # https://vercel.com/docs/cron-jobs/usage-and-pricing).
-cat /Users/jacksonsweet/Projects/OPS/OPS-Web/vercel.json | jq '.crons[] | select(.schedule | test("[*/]"))'
+cat /Users/jacksonsweet/Projects/OPS/ops-web/vercel.json | jq '.crons[] | select(.schedule | test("[*/]"))'
 ```
 
 Expected: At least one cron with a schedule like `*/5`, `*/10`, `*/15`. If output is empty, OPS-Web is on Hobby and this plan cannot ship as designed — escalate to founder.
@@ -58,7 +58,7 @@ Expected: Empty result (zero sends ever). If any rows exist, the dormant system 
 - [ ] **PF-3: Confirm the migration naming convention**
 
 ```bash
-ls /Users/jacksonsweet/Projects/OPS/OPS-Web/supabase/migrations/ | sort | tail -3
+ls /Users/jacksonsweet/Projects/OPS/ops-web/supabase/migrations/ | sort | tail -3
 ```
 
 Expected: most recent migrations use date-stamped names like `20260527140000_lead_lifecycle_p4_foundation.sql` (NOT sequential `108_…`). The repo migrated from sequential to date-stamped naming somewhere between migration 107 and the current convention. The new migration uses `YYYYMMDDHHMMSS_onboarding_email_log.sql` — pick a fresh timestamp (e.g. `20260527150000`) that's later than any existing migration. Verify with `ls supabase/migrations/ | sort | tail` before applying.
@@ -87,7 +87,7 @@ This phase ships the migration, the new `JACK` sender identity, the new `KIND_TO
 ### Task 1: Migration 108 — `onboarding_email_log` table
 
 **Files:**
-- Create: `OPS-Web/supabase/migrations/20260527150000_onboarding_email_log.sql`
+- Create: `ops-web/supabase/migrations/20260527150000_onboarding_email_log.sql`
 - Mirror into bible: `ops-software-bible/migrations/20260527150000_onboarding_email_log.sql`
 
 - [ ] **Step 1: Write the migration**
@@ -178,7 +178,7 @@ Should return all 13 columns from the CREATE TABLE.
 - [ ] **Step 3: Mirror the migration into the bible**
 
 ```bash
-cp /Users/jacksonsweet/Projects/OPS/OPS-Web/supabase/migrations/20260527150000_onboarding_email_log.sql \
+cp /Users/jacksonsweet/Projects/OPS/ops-web/supabase/migrations/20260527150000_onboarding_email_log.sql \
    /Users/jacksonsweet/Projects/OPS/ops-software-bible/migrations/
 ```
 
@@ -198,11 +198,11 @@ git commit -m "docs(bible): mirror migration 108 onboarding_email_log"
 ### Task 2: Add `JACK` sender identity
 
 **Files:**
-- Modify: `OPS-Web/src/lib/email/senders.ts`
+- Modify: `ops-web/src/lib/email/senders.ts`
 
 - [ ] **Step 1: Add JACK constant**
 
-Read `OPS-Web/src/lib/email/senders.ts`. Append after the `FIELD_NOTES` constant (before `portalSender`):
+Read `ops-web/src/lib/email/senders.ts`. Append after the `FIELD_NOTES` constant (before `portalSender`):
 
 ```ts
 /**
@@ -240,11 +240,11 @@ git commit -m "feat(onboarding-drip): add JACK sender identity (jack@opsapp.co)"
 ### Task 3: Add KIND_TO_LIST entries
 
 **Files:**
-- Modify: `OPS-Web/src/lib/email/constants.ts`
+- Modify: `ops-web/src/lib/email/constants.ts`
 
 - [ ] **Step 1: Add the 10 new entries**
 
-Read `OPS-Web/src/lib/email/constants.ts`. Inside the `KIND_TO_LIST` object, append these 10 entries (alphabetically grouped with existing entries or at the end — match the file's existing style):
+Read `ops-web/src/lib/email/constants.ts`. Inside the `KIND_TO_LIST` object, append these 10 entries (alphabetically grouped with existing entries or at the end — match the file's existing style):
 
 ```ts
   // Onboarding drip — see specs/2026-05-27-onboarding-drip-design.md §6.
@@ -283,11 +283,11 @@ git commit -m "feat(onboarding-drip): add 10 KIND_TO_LIST entries for onboarding
 ### Task 4: Add `resolveEmailBucket()` cases for onboarding kinds
 
 **Files:**
-- Modify: `OPS-Web/src/lib/email/pause.ts`
+- Modify: `ops-web/src/lib/email/pause.ts`
 
 - [ ] **Step 1: Add the cases**
 
-Read `OPS-Web/src/lib/email/pause.ts`. Find the `resolveEmailBucket()` function (around line 42). The switch currently has cases for `gate`, `field_notes`, `portal`, with `dispatch` as default. The 10 onboarding kinds all ride on `dispatch` (Jack's sends share the dispatch bucket for pause-killswitch purposes per Task 2's note). Default case already covers them — but we add explicit cases so the code is greppable and the design intent is explicit.
+Read `ops-web/src/lib/email/pause.ts`. Find the `resolveEmailBucket()` function (around line 42). The switch currently has cases for `gate`, `field_notes`, `portal`, with `dispatch` as default. The 10 onboarding kinds all ride on `dispatch` (Jack's sends share the dispatch bucket for pause-killswitch purposes per Task 2's note). Default case already covers them — but we add explicit cases so the code is greppable and the design intent is explicit.
 
 Add inside the switch, before the `default:`:
 
@@ -310,7 +310,7 @@ Add inside the switch, before the `default:`:
 
 - [ ] **Step 2: Write a smoke test**
 
-Create `OPS-Web/tests/unit/email/pause-onboarding-buckets.test.ts`:
+Create `ops-web/tests/unit/email/pause-onboarding-buckets.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -367,8 +367,8 @@ Three reusable React Email components. Templates in Phase 3 depend on these.
 ### Task 5: `FounderFooter` primitive
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/primitives/FounderFooter.tsx`
-- Test: `OPS-Web/tests/unit/email/primitives/founder-footer.test.tsx`
+- Create: `ops-web/src/lib/email/react/primitives/FounderFooter.tsx`
+- Test: `ops-web/tests/unit/email/primitives/founder-footer.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -415,7 +415,7 @@ Expected: FAIL with "Cannot find module ... FounderFooter".
 - [ ] **Step 3: Implement the primitive**
 
 ```tsx
-// OPS-Web/src/lib/email/react/primitives/FounderFooter.tsx
+// ops-web/src/lib/email/react/primitives/FounderFooter.tsx
 import * as React from "react";
 import { Text, Link, Section } from "@react-email/components";
 
@@ -483,8 +483,8 @@ git commit -m "feat(onboarding-drip): add FounderFooter primitive for plain-text
 ### Task 6: `PlainTextLayout` primitive
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/primitives/PlainTextLayout.tsx`
-- Test: `OPS-Web/tests/unit/email/primitives/plain-text-layout.test.tsx`
+- Create: `ops-web/src/lib/email/react/primitives/PlainTextLayout.tsx`
+- Test: `ops-web/tests/unit/email/primitives/plain-text-layout.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -539,7 +539,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 ```tsx
-// OPS-Web/src/lib/email/react/primitives/PlainTextLayout.tsx
+// ops-web/src/lib/email/react/primitives/PlainTextLayout.tsx
 import * as React from "react";
 import { Html, Head, Body, Container, Text } from "@react-email/components";
 import { FounderFooter } from "./FounderFooter";
@@ -627,8 +627,8 @@ git commit -m "feat(onboarding-drip): add PlainTextLayout primitive (no glass ca
 ### Task 7: `MockPushNotification` primitive
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/primitives/MockPushNotification.tsx`
-- Test: `OPS-Web/tests/unit/email/primitives/mock-push-notification.test.tsx`
+- Create: `ops-web/src/lib/email/react/primitives/MockPushNotification.tsx`
+- Test: `ops-web/tests/unit/email/primitives/mock-push-notification.test.tsx`
 
 This component renders an iOS-style push notification card for Day 4A's "the notification you're working toward" mockup. **Deliberately stylized** (not pixel-perfect iOS chrome) so we never look like we're impersonating Apple.
 
@@ -680,7 +680,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 ```tsx
-// OPS-Web/src/lib/email/react/primitives/MockPushNotification.tsx
+// ops-web/src/lib/email/react/primitives/MockPushNotification.tsx
 import * as React from "react";
 import { Section, Text } from "@react-email/components";
 
@@ -690,7 +690,7 @@ import { Section, Text } from "@react-email/components";
  * a visual preview of the moment they're driving toward.
  *
  * Format MUST match the real notification produced by
- * dispatchTaskCompleted() at OPS-Web/src/lib/api/services/notification-dispatch.ts:200-201:
+ * dispatchTaskCompleted() at ops-web/src/lib/api/services/notification-dispatch.ts:200-201:
  *   title: "Task Completed"
  *   body:  `${completedByName} completed "${taskTitle}" on ${projectTitle}`
  *
@@ -805,8 +805,8 @@ Body copy is canonical — do not improvise. If you find a typo or feel the copy
 ### Task 8: `Day0Welcome` template
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/templates/onboarding/Day0Welcome.tsx`
-- Test: `OPS-Web/tests/unit/email/templates/onboarding/day-0-welcome.test.tsx`
+- Create: `ops-web/src/lib/email/react/templates/onboarding/Day0Welcome.tsx`
+- Test: `ops-web/tests/unit/email/templates/onboarding/day-0-welcome.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -859,7 +859,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 ```tsx
-// OPS-Web/src/lib/email/react/templates/onboarding/Day0Welcome.tsx
+// ops-web/src/lib/email/react/templates/onboarding/Day0Welcome.tsx
 import * as React from "react";
 import { PlainTextLayout } from "@/lib/email/react/primitives/PlainTextLayout";
 
@@ -921,8 +921,8 @@ git commit -m "feat(onboarding-drip): add Day 0 founder welcome template"
 ### Task 9: `Day1NoProject` template
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/templates/onboarding/Day1NoProject.tsx`
-- Test: `OPS-Web/tests/unit/email/templates/onboarding/day-1-no-project.test.tsx`
+- Create: `ops-web/src/lib/email/react/templates/onboarding/Day1NoProject.tsx`
+- Test: `ops-web/tests/unit/email/templates/onboarding/day-1-no-project.test.tsx`
 
 This is a Dispatch-voice HTML template (tactical, with the CTA button). It uses the standard OPS HTML email layout — look for the existing layout primitive used by `ProductUpdate.tsx`, `FeatureAnnouncement.tsx`, etc. and follow the same pattern.
 
@@ -990,7 +990,7 @@ Expected: FAIL — module not found.
 Use the existing OPS HTML email layout pattern observed in Step 1. The body text below is canonical per spec §6:
 
 ```tsx
-// OPS-Web/src/lib/email/react/templates/onboarding/Day1NoProject.tsx
+// ops-web/src/lib/email/react/templates/onboarding/Day1NoProject.tsx
 import * as React from "react";
 import {
   Html,
@@ -1096,8 +1096,8 @@ git commit -m "feat(onboarding-drip): add Day 1A no-project template (Dispatch H
 ### Task 10: `Day1HasProject` template
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/templates/onboarding/Day1HasProject.tsx`
-- Test: `OPS-Web/tests/unit/email/templates/onboarding/day-1-has-project.test.tsx`
+- Create: `ops-web/src/lib/email/react/templates/onboarding/Day1HasProject.tsx`
+- Test: `ops-web/tests/unit/email/templates/onboarding/day-1-has-project.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1156,7 +1156,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 ```tsx
-// OPS-Web/src/lib/email/react/templates/onboarding/Day1HasProject.tsx
+// ops-web/src/lib/email/react/templates/onboarding/Day1HasProject.tsx
 import * as React from "react";
 import {
   Html, Head, Body, Container, Section, Text, Button,
@@ -1255,8 +1255,8 @@ git commit -m "feat(onboarding-drip): add Day 1B has-project template (Dispatch 
 ### Task 11: `Day3Inbox` template
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/templates/onboarding/Day3Inbox.tsx`
-- Test: `OPS-Web/tests/unit/email/templates/onboarding/day-3-inbox.test.tsx`
+- Create: `ops-web/src/lib/email/react/templates/onboarding/Day3Inbox.tsx`
+- Test: `ops-web/tests/unit/email/templates/onboarding/day-3-inbox.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1322,7 +1322,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 ```tsx
-// OPS-Web/src/lib/email/react/templates/onboarding/Day3Inbox.tsx
+// ops-web/src/lib/email/react/templates/onboarding/Day3Inbox.tsx
 import * as React from "react";
 import { PlainTextLayout } from "@/lib/email/react/primitives/PlainTextLayout";
 
@@ -1393,8 +1393,8 @@ git commit -m "feat(onboarding-drip): add Day 3 inbox founder template"
 ### Task 12: `Day4NoNotification` template
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/templates/onboarding/Day4NoNotification.tsx`
-- Test: `OPS-Web/tests/unit/email/templates/onboarding/day-4-no-notification.test.tsx`
+- Create: `ops-web/src/lib/email/react/templates/onboarding/Day4NoNotification.tsx`
+- Test: `ops-web/tests/unit/email/templates/onboarding/day-4-no-notification.test.tsx`
 
 This template uses the `MockPushNotification` primitive from Task 7.
 
@@ -1447,7 +1447,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 ```tsx
-// OPS-Web/src/lib/email/react/templates/onboarding/Day4NoNotification.tsx
+// ops-web/src/lib/email/react/templates/onboarding/Day4NoNotification.tsx
 import * as React from "react";
 import {
   Html, Head, Body, Container, Section, Text, Button,
@@ -1561,8 +1561,8 @@ git commit -m "feat(onboarding-drip): add Day 4A no-notification template with i
 ### Task 13: `Day4HasNotification` template
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/templates/onboarding/Day4HasNotification.tsx`
-- Test: `OPS-Web/tests/unit/email/templates/onboarding/day-4-has-notification.test.tsx`
+- Create: `ops-web/src/lib/email/react/templates/onboarding/Day4HasNotification.tsx`
+- Test: `ops-web/tests/unit/email/templates/onboarding/day-4-has-notification.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1614,7 +1614,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 ```tsx
-// OPS-Web/src/lib/email/react/templates/onboarding/Day4HasNotification.tsx
+// ops-web/src/lib/email/react/templates/onboarding/Day4HasNotification.tsx
 import * as React from "react";
 import {
   Html, Head, Body, Container, Section, Text, Button,
@@ -1719,8 +1719,8 @@ git commit -m "feat(onboarding-drip): add Day 4B has-notification template (Disp
 ### Task 14: `Day8Estimates` template
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/templates/onboarding/Day8Estimates.tsx`
-- Test: `OPS-Web/tests/unit/email/templates/onboarding/day-8-estimates.test.tsx`
+- Create: `ops-web/src/lib/email/react/templates/onboarding/Day8Estimates.tsx`
+- Test: `ops-web/tests/unit/email/templates/onboarding/day-8-estimates.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1771,7 +1771,7 @@ Expected: FAIL.
 - [ ] **Step 3: Implement**
 
 ```tsx
-// OPS-Web/src/lib/email/react/templates/onboarding/Day8Estimates.tsx
+// ops-web/src/lib/email/react/templates/onboarding/Day8Estimates.tsx
 import * as React from "react";
 import { PlainTextLayout } from "@/lib/email/react/primitives/PlainTextLayout";
 
@@ -1843,8 +1843,8 @@ git commit -m "feat(onboarding-drip): add Day 8 estimates founder template"
 ### Task 15: `Day14Quiet` template
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/templates/onboarding/Day14Quiet.tsx`
-- Test: `OPS-Web/tests/unit/email/templates/onboarding/day-14-quiet.test.tsx`
+- Create: `ops-web/src/lib/email/react/templates/onboarding/Day14Quiet.tsx`
+- Test: `ops-web/tests/unit/email/templates/onboarding/day-14-quiet.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1890,7 +1890,7 @@ Expected: FAIL.
 - [ ] **Step 3: Implement**
 
 ```tsx
-// OPS-Web/src/lib/email/react/templates/onboarding/Day14Quiet.tsx
+// ops-web/src/lib/email/react/templates/onboarding/Day14Quiet.tsx
 import * as React from "react";
 import { PlainTextLayout } from "@/lib/email/react/primitives/PlainTextLayout";
 
@@ -1954,8 +1954,8 @@ git commit -m "feat(onboarding-drip): add Day 14 quiet check-in template (from J
 ### Task 16: `Day14Active` template
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/templates/onboarding/Day14Active.tsx`
-- Test: `OPS-Web/tests/unit/email/templates/onboarding/day-14-active.test.tsx`
+- Create: `ops-web/src/lib/email/react/templates/onboarding/Day14Active.tsx`
+- Test: `ops-web/tests/unit/email/templates/onboarding/day-14-active.test.tsx`
 
 This template has stats threshold logic — when `projectCount + taskCount + notificationCount < 5`, the stats line is suppressed.
 
@@ -2037,7 +2037,7 @@ Expected: FAIL.
 - [ ] **Step 3: Implement**
 
 ```tsx
-// OPS-Web/src/lib/email/react/templates/onboarding/Day14Active.tsx
+// ops-web/src/lib/email/react/templates/onboarding/Day14Active.tsx
 import * as React from "react";
 import { PlainTextLayout } from "@/lib/email/react/primitives/PlainTextLayout";
 
@@ -2141,8 +2141,8 @@ git commit -m "feat(onboarding-drip): add Day 14 active check-in template with s
 ### Task 17: `LostYou` template
 
 **Files:**
-- Create: `OPS-Web/src/lib/email/react/templates/onboarding/LostYou.tsx`
-- Test: `OPS-Web/tests/unit/email/templates/onboarding/lost-you.test.tsx`
+- Create: `ops-web/src/lib/email/react/templates/onboarding/LostYou.tsx`
+- Test: `ops-web/tests/unit/email/templates/onboarding/lost-you.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2203,7 +2203,7 @@ Expected: FAIL.
 - [ ] **Step 3: Implement**
 
 ```tsx
-// OPS-Web/src/lib/email/react/templates/onboarding/LostYou.tsx
+// ops-web/src/lib/email/react/templates/onboarding/LostYou.tsx
 import * as React from "react";
 import { PlainTextLayout } from "@/lib/email/react/primitives/PlainTextLayout";
 
@@ -2292,15 +2292,15 @@ Batched into 2 tasks by sender persona — keeps the file edit reviewable.
 ### Task 18: Add 6 Jack-persona typed senders
 
 **Files:**
-- Modify: `OPS-Web/src/lib/email/sendgrid.tsx`
-- Test: `OPS-Web/tests/unit/email/sendgrid-onboarding-jack.test.ts`
+- Modify: `ops-web/src/lib/email/sendgrid.tsx`
+- Test: `ops-web/tests/unit/email/sendgrid-onboarding-jack.test.ts`
 
 Adds: `sendOnboardingDay0Welcome`, `sendOnboardingDay3Inbox`, `sendOnboardingDay8Estimates`, `sendOnboardingDay14Quiet`, `sendOnboardingDay14Active`, `sendOnboardingLostYou`.
 
 - [ ] **Step 1: Read existing sender patterns**
 
 ```bash
-grep -n "^export async function send" /Users/jacksonsweet/Projects/OPS/OPS-Web/src/lib/email/sendgrid.tsx | head -10
+grep -n "^export async function send" /Users/jacksonsweet/Projects/OPS/ops-web/src/lib/email/sendgrid.tsx | head -10
 ```
 
 Identify a reference implementation (e.g. `sendTrialExpiryWarning` is a good model — it uses gatedSend, passes campaignId/userId, builds compliance headers). The new Jack senders follow the same pattern with `from: JACK` and an `onboardingEmailLogId` parameter that lands in `metadata`.
@@ -2308,7 +2308,7 @@ Identify a reference implementation (e.g. `sendTrialExpiryWarning` is a good mod
 - [ ] **Step 2: Write the failing test**
 
 ```ts
-// OPS-Web/tests/unit/email/sendgrid-onboarding-jack.test.ts
+// ops-web/tests/unit/email/sendgrid-onboarding-jack.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import sgMail from "@sendgrid/mail";
 
@@ -2394,7 +2394,7 @@ Expected: FAIL — `sendOnboardingDay0Welcome` does not exist.
 
 - [ ] **Step 4: Implement the 6 Jack senders**
 
-Open `OPS-Web/src/lib/email/sendgrid.tsx`. Add imports near the existing template imports:
+Open `ops-web/src/lib/email/sendgrid.tsx`. Add imports near the existing template imports:
 
 ```ts
 import { Day0Welcome } from "./react/templates/onboarding/Day0Welcome";
@@ -2628,15 +2628,15 @@ git commit -m "feat(onboarding-drip): add 6 Jack-persona typed senders (Day 0/3/
 ### Task 19: Add 4 Dispatch-persona typed senders
 
 **Files:**
-- Modify: `OPS-Web/src/lib/email/sendgrid.tsx`
-- Test: `OPS-Web/tests/unit/email/sendgrid-onboarding-dispatch.test.ts`
+- Modify: `ops-web/src/lib/email/sendgrid.tsx`
+- Test: `ops-web/tests/unit/email/sendgrid-onboarding-dispatch.test.ts`
 
 Adds: `sendOnboardingDay1NoProject`, `sendOnboardingDay1HasProject`, `sendOnboardingDay4NoNotification`, `sendOnboardingDay4HasNotification`.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// OPS-Web/tests/unit/email/sendgrid-onboarding-dispatch.test.ts
+// ops-web/tests/unit/email/sendgrid-onboarding-dispatch.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import sgMail from "@sendgrid/mail";
 
@@ -2728,7 +2728,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement the 4 Dispatch senders**
 
-In `OPS-Web/src/lib/email/sendgrid.tsx`, add the 4 template imports near the others:
+In `ops-web/src/lib/email/sendgrid.tsx`, add the 4 template imports near the others:
 
 ```ts
 import { Day1NoProject } from "./react/templates/onboarding/Day1NoProject";
@@ -2877,7 +2877,7 @@ End of Phase 4. Ten typed senders ready. All route through `gatedSend`. All pass
 ### Task 20: Register 10 templates in `template-registry.ts`
 
 **Files:**
-- Modify: `OPS-Web/src/lib/email/template-registry.ts`
+- Modify: `ops-web/src/lib/email/template-registry.ts`
 
 This unlocks admin preview at `/admin/email/templates/[templateId]/`.
 
@@ -2987,7 +2987,7 @@ Append to the `TEMPLATE_REGISTRY` array (before the closing `]`):
 
 - [ ] **Step 3: Verify all 10 register correctly**
 
-Write a quick smoke test at `OPS-Web/tests/unit/email/template-registry-onboarding.test.ts`:
+Write a quick smoke test at `ops-web/tests/unit/email/template-registry-onboarding.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -3055,13 +3055,13 @@ Split into 7 focused tasks. Each task adds one method or one set of conditions t
 ### Task 21: Service skeleton + `computeOperatorLocalHour()` helper
 
 **Files:**
-- Create: `OPS-Web/src/lib/api/services/onboarding-drip-service.ts`
-- Test: `OPS-Web/tests/unit/api/services/onboarding-drip-service.test.ts`
+- Create: `ops-web/src/lib/api/services/onboarding-drip-service.ts`
+- Test: `ops-web/tests/unit/api/services/onboarding-drip-service.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// OPS-Web/tests/unit/api/services/onboarding-drip-service.test.ts
+// ops-web/tests/unit/api/services/onboarding-drip-service.test.ts
 import { describe, it, expect } from "vitest";
 import { computeOperatorLocalHour } from "@/lib/api/services/onboarding-drip-service";
 
@@ -3101,7 +3101,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Create the service skeleton**
 
 ```ts
-// OPS-Web/src/lib/api/services/onboarding-drip-service.ts
+// ops-web/src/lib/api/services/onboarding-drip-service.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
@@ -3185,8 +3185,8 @@ git commit -m "feat(onboarding-drip): scaffold OnboardingDripService with operat
 ### Task 22: `computeState()` — branch resolution
 
 **Files:**
-- Modify: `OPS-Web/src/lib/api/services/onboarding-drip-service.ts`
-- Modify: `OPS-Web/tests/unit/api/services/onboarding-drip-service.test.ts`
+- Modify: `ops-web/src/lib/api/services/onboarding-drip-service.ts`
+- Modify: `ops-web/tests/unit/api/services/onboarding-drip-service.test.ts`
 
 `computeState(supabase, company, daySlot)` returns `{ branch, emailType, payload }` for the given day. The branch decision matches spec §5.
 
@@ -3399,8 +3399,8 @@ git commit -m "feat(onboarding-drip): add computeState branch resolution"
 ### Task 23: `claimAndSend()` — claim-before-send + send + reconciliation
 
 **Files:**
-- Modify: `OPS-Web/src/lib/api/services/onboarding-drip-service.ts`
-- Modify: `OPS-Web/tests/unit/api/services/onboarding-drip-service.test.ts`
+- Modify: `ops-web/src/lib/api/services/onboarding-drip-service.ts`
+- Modify: `ops-web/tests/unit/api/services/onboarding-drip-service.test.ts`
 
 This is the core dispatch primitive. It:
 1. Attempts the claim INSERT
@@ -3754,8 +3754,8 @@ git commit -m "feat(onboarding-drip): claimAndSend with claim-before-send dedup 
 ### Task 24: `processCompany()` — kill switches + branch dispatch
 
 **Files:**
-- Modify: `OPS-Web/src/lib/api/services/onboarding-drip-service.ts`
-- Modify: `OPS-Web/tests/unit/api/services/onboarding-drip-service.test.ts`
+- Modify: `ops-web/src/lib/api/services/onboarding-drip-service.ts`
+- Modify: `ops-web/tests/unit/api/services/onboarding-drip-service.test.ts`
 
 `processCompany(db, company, now)` walks the day_slots applicable to this company (based on `created_at`), evaluates kill switches, calls computeState + claimAndSend per matching day.
 
@@ -3854,8 +3854,8 @@ git commit -m "feat(onboarding-drip): processCompany with kill switches + branch
 ### Task 25: Retry sweep + in-flight gate + day_slot_expires_at gate
 
 **Files:**
-- Modify: `OPS-Web/src/lib/api/services/onboarding-drip-service.ts`
-- Modify: `OPS-Web/tests/unit/api/services/onboarding-drip-service.test.ts`
+- Modify: `ops-web/src/lib/api/services/onboarding-drip-service.ts`
+- Modify: `ops-web/tests/unit/api/services/onboarding-drip-service.test.ts`
 
 Add `processRetries(db, now)` method that sweeps `onboarding_email_log` for pending/failed rows past the 5-minute in-flight gate, within day_slot_expires_at, attempts < 3.
 
@@ -3908,7 +3908,7 @@ git commit -m "feat(onboarding-drip): processRetries with in-flight + expiry gat
 ### Task 26: Lost You behavior trigger
 
 **Files:**
-- Modify: `OPS-Web/src/lib/api/services/onboarding-drip-service.ts`
+- Modify: `ops-web/src/lib/api/services/onboarding-drip-service.ts`
 
 Add `processLostYouCandidate(db, company, now)` that evaluates the 5 conditions in spec §7. If all hold, runs claimAndSend with `daySlot='lost_you'`.
 
@@ -3990,7 +3990,7 @@ git commit -am "feat(onboarding-drip): Lost You behavior trigger with 5-conditio
 ### Task 27: `processAll()` orchestration
 
 **Files:**
-- Modify: `OPS-Web/src/lib/api/services/onboarding-drip-service.ts`
+- Modify: `ops-web/src/lib/api/services/onboarding-drip-service.ts`
 
 Pulls candidate companies from `companies` (created_at within last 14 days, not deleted, not on internal allowlist), filters by `localHour === 9` for the cron tick, calls processCompany + processLostYouCandidate.
 
@@ -4039,14 +4039,14 @@ End of Phase 6. Service is feature-complete and unit-tested at the dedup + recon
 ### Task 28: `/api/cron/onboarding-drip` route
 
 **Files:**
-- Create: `OPS-Web/src/app/api/cron/onboarding-drip/route.ts`
+- Create: `ops-web/src/app/api/cron/onboarding-drip/route.ts`
 
 - [ ] **Step 1: Implement the route**
 
 Model on `/api/cron/trial-expiry/route.ts`. Same auth pattern (Bearer CRON_SECRET), same shape (calls a single service method).
 
 ```ts
-// OPS-Web/src/app/api/cron/onboarding-drip/route.ts
+// ops-web/src/app/api/cron/onboarding-drip/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceRoleClient } from "@/lib/supabase/server-client";
 import { OnboardingDripService } from "@/lib/api/services/onboarding-drip-service";
@@ -4110,13 +4110,13 @@ git commit -m "feat(onboarding-drip): add /api/cron/onboarding-drip cron route"
 ### Task 29: Hook Day 0 into `/api/setup/progress` after the company INSERT
 
 **Files:**
-- Modify: `OPS-Web/src/app/api/setup/progress/route.ts`
-- Test: `OPS-Web/tests/integration/onboarding-day0-realtime.test.ts`
+- Modify: `ops-web/src/app/api/setup/progress/route.ts`
+- Test: `ops-web/tests/integration/onboarding-day0-realtime.test.ts`
 
 - [ ] **Step 1: Read the existing route**
 
 ```bash
-sed -n '110,140p' /Users/jacksonsweet/Projects/OPS/OPS-Web/src/app/api/setup/progress/route.ts
+sed -n '110,140p' /Users/jacksonsweet/Projects/OPS/ops-web/src/app/api/setup/progress/route.ts
 ```
 
 Identify the `companies.insert` site (line ~122) and the userId in scope.
@@ -4124,7 +4124,7 @@ Identify the `companies.insert` site (line ~122) and the userId in scope.
 - [ ] **Step 2: Write the integration test**
 
 ```ts
-// OPS-Web/tests/integration/onboarding-day0-realtime.test.ts
+// ops-web/tests/integration/onboarding-day0-realtime.test.ts
 // Verifies the post-company-INSERT hook fires Day 0 async without blocking
 // the API response.
 import { describe, it, expect, vi } from "vitest";
@@ -4198,7 +4198,7 @@ git commit -m "feat(onboarding-drip): wire Day 0 founder welcome into /api/setup
 ### Task 30: Add the hourly cron to `vercel.json`
 
 **Files:**
-- Modify: `OPS-Web/vercel.json`
+- Modify: `ops-web/vercel.json`
 
 - [ ] **Step 1: Verify Pro+ plan (re-run PF-1)**
 
@@ -4206,7 +4206,7 @@ Already done in pre-flight. If skipped, do it now.
 
 - [ ] **Step 2: Add the cron entry**
 
-Open `OPS-Web/vercel.json`. Inside the `crons` array, append:
+Open `ops-web/vercel.json`. Inside the `crons` array, append:
 
 ```json
     {
@@ -4238,7 +4238,7 @@ git commit -m "feat(onboarding-drip): register hourly cron /api/cron/onboarding-
 ### Task 31: End-to-end cron integration test
 
 **Files:**
-- Create: `OPS-Web/tests/integration/onboarding-drip-cron.test.ts`
+- Create: `ops-web/tests/integration/onboarding-drip-cron.test.ts`
 
 Spins up an in-memory Supabase-compatible test DB (or uses the dev Supabase project), seeds N companies with varied ages and timezones, invokes the cron handler, asserts the right sends + dedup rows.
 
@@ -4357,11 +4357,11 @@ Expected: `{ "ok": true, ... }` with `scanned` >= 0 (depends on operator timezon
 DROP TABLE IF EXISTS public.lifecycle_email_config;
 ```
 
-- [ ] Delete `OPS-Web/src/app/api/admin/email/lifecycle-config/route.ts`
-- [ ] Delete `OPS-Web/src/app/admin/email/_components/lifecycle-config-panel.tsx`
+- [ ] Delete `ops-web/src/app/api/admin/email/lifecycle-config/route.ts`
+- [ ] Delete `ops-web/src/app/admin/email/_components/lifecycle-config-panel.tsx`
 - [ ] Remove the panel's mount in the parent admin email page
 - [ ] Apply migration 109 + commit + deploy in one PR — these MUST land together to avoid the admin page 500ing
-- [ ] Remove ONLY `lifecycle-emails` from `OPS-Web/src/app/api/admin/email/trigger/route.ts` `ALLOWED_SLUGS` (preserve the other 4 unrelated slugs)
+- [ ] Remove ONLY `lifecycle-emails` from `ops-web/src/app/api/admin/email/trigger/route.ts` `ALLOWED_SLUGS` (preserve the other 4 unrelated slugs)
 - [ ] Delete SendGrid Marketing Lists from the SendGrid dashboard:
   - `SENDGRID_LIST_NO_ONBOARDING`, `SENDGRID_LIST_NO_FIRST_PROJECT`
   - `SENDGRID_LIST_INACTIVE_14D`, `SENDGRID_LIST_INACTIVE_30D`

@@ -259,7 +259,7 @@ Start with the Executive Summary to understand the business context, then procee
 **Feature Positioning: Canonical Marketing & Onboarding Copy Reference**
 
 - Per-feature positioning entries for 10 of the most marketing-load-bearing features (inbox→lead, pipeline, project workspace, estimates + client portal, invoices, schedule, crew dispatch, field-first iOS, photo markup, site visits)
-- Each entry: source of truth for behavior, persona, pain-before / relief-after moments, real competitor differentiator, approved positioning lines (headline / subhead / expanded), per-feature "don't say" list, current references across `ops-site/`, `OPS-Web/` email templates, iOS, and app store listing
+- Each entry: source of truth for behavior, persona, pain-before / relief-after moments, real competitor differentiator, approved positioning lines (headline / subhead / expanded), per-feature "don't say" list, current references across `ops-site/`, `ops-web/` email templates, iOS, and app store listing
 - Voice & format rules — Jocko/Springsteen/Musk blend, OPS terse-tactical voice, universal "don't say" list
 - Features intentionally not covered (AI drafts, financial dashboard, catalog, notifications, RBAC, navigation, PIN, inventory, activity timeline) with reasons
 - Known positioning contradictions across surfaces (Jobber price-multiple drift, audience-naming drift, inbox feature naming)

@@ -16,14 +16,14 @@ This prompt is the iOS cron's entry point. It inherits the full contract in `_sh
 | Main branch | `main` |
 | Build command | `xcodebuild -scheme OPS -destination 'generic/platform=iOS' -quiet` |
 | **Never use** | `-destination 'platform=iOS Simulator,…'` (per OPS iOS CLAUDE.md) |
-| Style source of truth | `OPS/OPS/Styles/OPSStyle.swift` + files in `OPS/OPS/Styles/Components/` |
+| Style source of truth | `ops-ios/OPS/Styles/OPSStyle.swift` + files in `ops-ios/OPS/Styles/Components/` |
 | Data layer | SwiftData via `DataController`, ModelActor refactor in progress (see `project_model_actor_refactor.md` memory) |
 | Commit author attribution | **Never add Claude as co-author.** Per OPS iOS CLAUDE.md. |
 
 ## Owned code paths (safe to edit)
 
-All of `OPS/OPS/` except:
-- `OPS/OPS/Network/Sync/` — touch only if the bug root-causes there; wizard_states sync is sensitive (see ios-bug-sweep plan).
+All of `ops-ios/OPS/` except:
+- `ops-ios/OPS/Network/Sync/` — touch only if the bug root-causes there; wizard_states sync is sensitive (see ios-bug-sweep plan).
 - `OPS/OPS.xcodeproj/project.pbxproj` — the Batch Fix sub-agent should avoid adding new files if at all possible (Xcode project edits are merge-conflict magnets). Prefer touching existing files.
 
 ## Common iOS bug patterns the agent should recognize fast

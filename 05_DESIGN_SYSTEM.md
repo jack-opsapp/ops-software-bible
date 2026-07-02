@@ -21,7 +21,7 @@
 > | Per-surface UI kits | `.interface-design/ui_kits/{ops-web, ops-site, opsapp}/` |
 > | Per-token preview cards | `.interface-design/preview/*.html` |
 > | Full spec with WCAG ratios + audit history | `docs/superpowers/specs/2026-04-15-ops-web-visual-system-design.md` |
-> | iOS source of truth | `OPS/OPS/Styles/OPSStyle.swift` (+ `Styles/Components/`) |
+> | iOS source of truth | `ops-ios/OPS/Styles/OPSStyle.swift` (+ `Styles/Components/`) |
 >
 > **For any OPS-Web styling decision: defer to `.interface-design/`.** This bible chapter remains authoritative for cross-platform brand fundamentals and the iOS app's design system. Where the two overlap (color palette, typography roles, motion principles), `.interface-design/` is the more current source.
 
@@ -498,7 +498,7 @@ Cake Mono is a brand-surface typeface — used only in:
 - Marketing hero wordmarks (`ops-site/`)
 - Social share / OG images
 
-Never enters product UI on any platform. Product UI uses Mohave + Kosugi + JetBrains Mono (web) or the iOS/Android equivalents defined in `OPS/OPS/Styles/OPSStyle.swift` and the Android design system. Web lockups outline Cake Mono glyphs as SVG paths so no font file is shipped in the product bundle.
+Never enters product UI on any platform. Product UI uses Mohave + Kosugi + JetBrains Mono (web) or the iOS/Android equivalents defined in `ops-ios/OPS/Styles/OPSStyle.swift` and the Android design system. Web lockups outline Cake Mono glyphs as SVG paths so no font file is shipped in the product bundle.
 
 Bebas Neue is deprecated (removed 2026-04-17). Do not reintroduce.
 
@@ -1008,7 +1008,7 @@ if isLoading {
 
 #### Keyboard Annotations (Web)
 
-Keyboard shortcut chips on the web app render through a single `KeyHint` primitive (`OPS-Web/src/components/ui/key-hint.tsx`). **Do not hand-roll `<kbd>` markup.** Two variants — `chip` (standalone, boxed) and `inline` (bracketed mono for use inside coloured buttons). Full spec, canonical modifier glyphs, and accessibility rules live in `.interface-design/system.md` § Keyboard Annotations.
+Keyboard shortcut chips on the web app render through a single `KeyHint` primitive (`ops-web/src/components/ui/key-hint.tsx`). **Do not hand-roll `<kbd>` markup.** Two variants — `chip` (standalone, boxed) and `inline` (bracketed mono for use inside coloured buttons). Full spec, canonical modifier glyphs, and accessibility rules live in `.interface-design/system.md` § Keyboard Annotations.
 
 ### Navigation Components
 
@@ -2509,7 +2509,7 @@ OpsButton(
 ## Appendix B: Component File Locations (iOS)
 
 ```
-OPS/OPS/Views/Components/ (76 files)
+ops-ios/OPS/Views/Components/ (76 files)
 ├── Cards/
 │   ├── ClientInfoCard.swift
 │   ├── CompanyContactCard.swift
@@ -2651,14 +2651,14 @@ The z-scale is exposed as CSS custom properties so component code can reference 
 
 Defined in both:
 - `.interface-design/colors_and_type.css` (canonical foundation)
-- `OPS-Web/src/styles/globals.css` (consumption — products import this)
+- `ops-web/src/styles/globals.css` (consumption — products import this)
 
 Plus utility classes in `globals.css` `@layer components`: `.z-content`, `.z-interactive`, `.z-nav`, `.z-dropdown`, `.z-floating-ui`, `.z-window`, `.z-modal`, `.z-map-controls`, `.z-emergency`. Use these on any portaled or fixed-position element instead of inline `z-index: 1000`.
 
 ### Where This Lives in Code
 
 - `.interface-design/colors_and_type.css` — canonical z-scale tokens (foundation)
-- `OPS-Web/src/styles/globals.css` — product token mirror + utility classes
+- `ops-web/src/styles/globals.css` — product token mirror + utility classes
 - `stores/window-store.ts` — `nextZIndex` starting value and per-type size overrides
 - `components/layouts/sidebar.tsx` — nav layer
 - `components/ops/floating-action-button.tsx` — floating-ui layer
@@ -2677,12 +2677,12 @@ The 2026-04-27 calendar visual rework migrated:
 
 ## 16. Email Template System
 
-OPS transactional email uses React Email (`@react-email/components`) with two canonical layouts and a fixed set of primitives. Every template traces its styling to `OPS-Web/src/lib/email/react/primitives/tokens.ts`.
+OPS transactional email uses React Email (`@react-email/components`) with two canonical layouts and a fixed set of primitives. Every template traces its styling to `ops-web/src/lib/email/react/primitives/tokens.ts`.
 
 ### Two layouts
 
-- **`OpsEmailLayout`** (`OPS-Web/src/lib/email/react/layouts/OpsEmailLayout.tsx`) — matte-black OPS branding. Used for all OPS-to-user emails: password reset, team invite, trial expiry, beta, blog newsletter, ads briefing. Hero band is the OPS wordmark; footer is `OPS Ltd. — Built by trades, for trades.`
-- **`PortalEmailLayout`** (`OPS-Web/src/lib/email/react/layouts/PortalEmailLayout.tsx`) — whitelabel with configurable `companyName`, `logoUrl`, `accentColor` props. Used for portal emails where a contractor's customer sees the contractor's branding, not OPS. The accent color fills the CTA button; the logo or company name fills the hero band. Footer reads `Sent by {companyName} via OPS`.
+- **`OpsEmailLayout`** (`ops-web/src/lib/email/react/layouts/OpsEmailLayout.tsx`) — matte-black OPS branding. Used for all OPS-to-user emails: password reset, team invite, trial expiry, beta, blog newsletter, ads briefing. Hero band is the OPS wordmark; footer is `OPS Ltd. — Built by trades, for trades.`
+- **`PortalEmailLayout`** (`ops-web/src/lib/email/react/layouts/PortalEmailLayout.tsx`) — whitelabel with configurable `companyName`, `logoUrl`, `accentColor` props. Used for portal emails where a contractor's customer sees the contractor's branding, not OPS. The accent color fills the CTA button; the logo or company name fills the hero band. Footer reads `Sent by {companyName} via OPS`.
 
 ### Three bands (hybrid structure)
 
@@ -2710,7 +2710,7 @@ Light body is safer in hostile email clients (Gmail dark mode, Outlook desktop) 
 
 ### Sender identities
 
-Four buckets, all defined in `OPS-Web/src/lib/email/senders.ts`:
+Four buckets, all defined in `ops-web/src/lib/email/senders.ts`:
 
 | Bucket | Email | Display name | Use |
 |---|---|---|---|
@@ -2719,7 +2719,7 @@ Four buckets, all defined in `OPS-Web/src/lib/email/senders.ts`:
 | **OPS Field Notes** | `field@opsapp.co` | `OPS Field Notes` | Blog newsletter, long-form |
 | **Portal** | `noreply@opsapp.co` | `{companyName}` (whitelabel) | Portal magic link, estimate, invoice, questions |
 
-All OPS senders share SPF/DKIM/DMARC records on the `opsapp.co` zone. Setup runbook at `OPS-Web/docs/email/sendgrid-senders-setup.md`.
+All OPS senders share SPF/DKIM/DMARC records on the `opsapp.co` zone. Setup runbook at `ops-web/docs/email/sendgrid-senders-setup.md`.
 
 ### Physical address
 
@@ -2735,11 +2735,11 @@ Every string in every template runs through the `ops-copywriter` skill before lo
 
 ### Preview server
 
-`npm run email:dev` in `OPS-Web/` spins up `react-email dev` on port 3001 with hot reload for every template in `src/lib/email/react/templates/`. Every template exports a `PreviewProps` constant that provides realistic mock data for the preview. Use this during development to iterate visual changes without sending real emails.
+`npm run email:dev` in `ops-web/` spins up `react-email dev` on port 3001 with hot reload for every template in `src/lib/email/react/templates/`. Every template exports a `PreviewProps` constant that provides realistic mock data for the preview. Use this during development to iterate visual changes without sending real emails.
 
 ### Test sending
 
-`OPS-Web/scripts/email/test-send.ts` lets you fire the password-reset template at any address from the terminal. Reads from `.env.local` for SendGrid and Firebase Admin credentials.
+`ops-web/scripts/email/test-send.ts` lets you fire the password-reset template at any address from the terminal. Reads from `.env.local` for SendGrid and Firebase Admin credentials.
 
 ### Migration history
 
@@ -2810,7 +2810,7 @@ A single mode-aware floating window replaces five legacy project surfaces in OPS
 ### Location
 
 - Implementation: `src/components/ops/projects/workspace/`
-- Token-level visual spec: `OPS-Web/.interface-design/system.md` (canonical OPS-Web design system)
+- Token-level visual spec: `ops-web/.interface-design/system.md` (canonical OPS-Web design system)
 - Open API: `useWindowStore.openProjectWindow({ projectId, mode, onProjectCreated? })` from `src/stores/window-store.ts`
 - Mounted inside `<FloatingWindows>` in `dashboard-layout.tsx` via `<ProjectWorkspaceContainer windowId={win.id} />`
 
@@ -2854,7 +2854,7 @@ Floating windows and stacked modals (the workspace shell, the workspace-scoped `
 
 ### See also
 
-- `OPS-Web/.interface-design/system.md` § "Project Workspace Patterns" — token-level spec including the mode pill, footer config grammar, and the destructive `ConfirmModal` variant
+- `ops-web/.interface-design/system.md` § "Project Workspace Patterns" — token-level spec including the mode pill, footer config grammar, and the destructive `ConfirmModal` variant
 - `07_SPECIALIZED_FEATURES.md` § "Project Workspace as a Reusable Pattern" — the architectural pattern as a template for future entity workspaces
 
 ---

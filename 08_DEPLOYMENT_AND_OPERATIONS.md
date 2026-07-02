@@ -258,7 +258,7 @@ API Token: f81e9da85b7a12e996ac53e970a52299
 
 **App ID:** `0fc0a8e0-9727-49b6-9e37-5d6d919d741f`
 
-**Initialized in:** `AppDelegate.swift` (iOS) and hardcoded in `OPS-Web/src/app/api/notifications/send/route.ts` (web)
+**Initialized in:** `AppDelegate.swift` (iOS) and hardcoded in `ops-web/src/app/api/notifications/send/route.ts` (web)
 
 ```swift
 // iOS - AppDelegate.swift
@@ -1341,7 +1341,7 @@ OPS-Web is the primary web application — the admin dashboard, management porta
 
 ### Vercel Configuration
 
-**File:** `OPS-Web/vercel.json`
+**File:** `ops-web/vercel.json`
 ```json
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
@@ -1369,7 +1369,7 @@ OPS-Web is the primary web application — the admin dashboard, management porta
 
 ### Node.js Runtime Pin
 
-**File:** `OPS-Web/package.json`
+**File:** `ops-web/package.json`
 ```json
 {
   "engines": {
@@ -1399,7 +1399,7 @@ Canonical rule: keep one parameter name for each route shape and delete/rename t
 
 ### Next.js Configuration
 
-**File:** `OPS-Web/next.config.ts`
+**File:** `ops-web/next.config.ts`
 ```typescript
 {
   images: {
@@ -1543,7 +1543,7 @@ rm .env.verify.production
 
 | Scenario | Runbook |
 |----------|---------|
-| Gmail real-time webhook broken / wrong GCP project / trailing newline on a Pub/Sub env var | `OPS-Web/docs/runbooks/gmail-pubsub-webhook-fix.md` — covers GCP console setup (topic, IAM grants, push subscription with OIDC auth), Vercel env-var update procedure with byte-count verification, per-user reconnect, and end-to-end verification. Referenced from `04_API_AND_INTEGRATION.md` § Gmail Real-Time Webhook Architecture. |
+| Gmail real-time webhook broken / wrong GCP project / trailing newline on a Pub/Sub env var | `ops-web/docs/runbooks/gmail-pubsub-webhook-fix.md` — covers GCP console setup (topic, IAM grants, push subscription with OIDC auth), Vercel env-var update procedure with byte-count verification, per-user reconnect, and end-to-end verification. Referenced from `04_API_AND_INTEGRATION.md` § Gmail Real-Time Webhook Architecture. |
 
 ### Build & Scripts
 

@@ -5,7 +5,7 @@
 **Purpose**: Definitive reference for every outbound email OPS sends — the SendGrid transport, the four sender identities, the gated send chokepoint, the React Email template library, the trial-expiry lifecycle, the campaign engine (dispatcher + worker), the pause killswitch, the suppression list, the deliverability anomaly detector, and the `/admin/email` console. Covers what fires automatically, what an operator schedules manually, and what fires not at all.
 
 **Last Updated**: 2026-05-27
-**Source Reference**: `OPS-Web/src/lib/email/`, `OPS-Web/src/app/api/cron/email/`, `OPS-Web/src/app/api/cron/trial-expiry/`, `OPS-Web/src/app/api/webhooks/sendgrid/`, `OPS-Web/src/lib/api/services/trial-expiry-service.ts`, `OPS-Web/src/app/admin/email/`, `OPS-Web/supabase/migrations/053, 065–066, 079–107`
+**Source Reference**: `ops-web/src/lib/email/`, `ops-web/src/app/api/cron/email/`, `ops-web/src/app/api/cron/trial-expiry/`, `ops-web/src/app/api/webhooks/sendgrid/`, `ops-web/src/lib/api/services/trial-expiry-service.ts`, `ops-web/src/app/admin/email/`, `ops-web/supabase/migrations/053, 065–066, 079–107`
 
 **Out of scope**: Inbound email (Gmail/M365 OAuth, sync, AI classification, drafts) is documented in `04_API_AND_INTEGRATION.md` §20. Tables `email_connections`, `email_threads`, `email_thread_category_corrections`, `email_filter_presets`, `email_ingest_heartbeat_log` belong to that subsystem.
 
@@ -40,7 +40,7 @@
 
 ## Source of Truth
 
-**SendGrid is canonical** for every outbound message OPS sends. There is no fallback transport and no second provider. Every send routes through `gatedSend` in `OPS-Web/src/lib/email/sendgrid.tsx`. Every send writes a row to `email_log`. SendGrid posts engagement events back via webhook (`/api/webhooks/sendgrid`) and they land in `email_events`, which a Postgres trigger fans into `email_suppressions`.
+**SendGrid is canonical** for every outbound message OPS sends. There is no fallback transport and no second provider. Every send routes through `gatedSend` in `ops-web/src/lib/email/sendgrid.tsx`. Every send writes a row to `email_log`. SendGrid posts engagement events back via webhook (`/api/webhooks/sendgrid`) and they land in `email_events`, which a Postgres trigger fans into `email_suppressions`.
 
 There are three layers above the transport:
 
@@ -54,7 +54,7 @@ Manual operator overrides ("send this thing right now") run via `/api/admin/emai
 
 ## Transport — SendGrid
 
-**Library**: `@sendgrid/mail` (`OPS-Web/src/lib/email/sendgrid.tsx:23`).
+**Library**: `@sendgrid/mail` (`ops-web/src/lib/email/sendgrid.tsx:23`).
 
 **Initialization**: Lazy on first call (`ensureInitialized()`, line 67). Requires `SENDGRID_API_KEY`. Throws if unset.
 
@@ -75,7 +75,7 @@ Headers are auto-built by `buildComplianceHeaders()` (`sendgrid.tsx:85`) when th
 
 ## Sender Identities
 
-Defined in `OPS-Web/src/lib/email/senders.ts`. Four buckets, each with a distinct job. DNS (SPF / DKIM / DMARC) must be aligned on `opsapp.co` before flipping any caller to a new bucket.
+Defined in `ops-web/src/lib/email/senders.ts`. Four buckets, each with a distinct job. DNS (SPF / DKIM / DMARC) must be aligned on `opsapp.co` before flipping any caller to a new bucket.
 
 | Constant | Address | Display Name | Use |
 |---|---|---|---|
@@ -84,7 +84,7 @@ Defined in `OPS-Web/src/lib/email/senders.ts`. Four buckets, each with a distinc
 | `FIELD_NOTES` | `field@opsapp.co` | OPS Field Notes | Blog newsletter, Field Notes digest |
 | `portalSender(companyName)` | env `SENDGRID_FROM_EMAIL` (fallback `noreply@opsapp.co`) | The contractor's company name | Whitelabel client-portal emails (magic link, estimate ready, invoice ready, questions reminder) — recipient sees the contractor's brand, not OPS |
 
-Bucket assignment per email kind is encoded in `resolveEmailBucket()` (`OPS-Web/src/lib/email/pause.ts:42`). Default is `dispatch` so any unmapped kind still gets bucket-level pause coverage.
+Bucket assignment per email kind is encoded in `resolveEmailBucket()` (`ops-web/src/lib/email/pause.ts:42`). Default is `dispatch` so any unmapped kind still gets bucket-level pause coverage.
 
 ---
 
@@ -93,7 +93,7 @@ Bucket assignment per email kind is encoded in `resolveEmailBucket()` (`OPS-Web/
 Every typed `sendXxx()` call passes an `emailType` string into `gatedSend`. The kind drives:
 
 - Which sender bucket carries the message (`resolveEmailBucket`, `pause.ts:42`)
-- Which suppression list the recipient must NOT be on (`KIND_TO_LIST`, `OPS-Web/src/lib/email/constants.ts:35`)
+- Which suppression list the recipient must NOT be on (`KIND_TO_LIST`, `ops-web/src/lib/email/constants.ts:35`)
 - The bucket-level pause that can stop it
 - The compliance footer's "you're receiving this because…" sentence (`LIST_DISPLAY_NAMES`, `constants.ts:19`)
 
@@ -120,7 +120,7 @@ Every typed `sendXxx()` call passes an `emailType` string into `gatedSend`. The 
 | `product_update` | dispatch | product_updates | `ProductUpdate.tsx` |
 | `feature_announcement` | dispatch | product_updates | `FeatureAnnouncement.tsx` |
 | `reengagement` | dispatch | reengagement | `Reengagement.tsx` |
-| `pmf_threshold_alert` | dispatch | global | (PMF — see `OPS-Web/CLAUDE.md`) |
+| `pmf_threshold_alert` | dispatch | global | (PMF — see `ops-web/CLAUDE.md`) |
 | `pmf_daily_digest` | dispatch | global | (PMF) |
 | `pmf_weekly_digest` | dispatch | global | (PMF) |
 | `transactional_generic` / `generic` | dispatch | global | Back-compat shims (`sendgrid.tsx:1351, 1371`) |
@@ -241,7 +241,7 @@ Migration 066 widened from "both NULL" to "trial_end_date NULL" so a partial ins
 
 ## The Send Chokepoint — `gatedSend`
 
-`OPS-Web/src/lib/email/sendgrid.tsx:122` — every send funnels through this function. Order of operations:
+`ops-web/src/lib/email/sendgrid.tsx:122` — every send funnels through this function. Order of operations:
 
 1. **Ensure SendGrid initialized** (lazy, once per process).
 2. **Lowercase recipient**; reject empty.
@@ -262,7 +262,7 @@ Pause takes precedence over suppression because pauses are reversible and we wan
 
 ## Suppression List
 
-API surface: `OPS-Web/src/lib/email/suppressions.ts`.
+API surface: `ops-web/src/lib/email/suppressions.ts`.
 
 | Function | Purpose |
 |---|---|
@@ -280,7 +280,7 @@ Auto-suppress reasons map: `bounce` → `hard_bounce`, `spamreport` → `spam_re
 
 ## Pause Killswitches
 
-API surface: `OPS-Web/src/lib/email/pause.ts`.
+API surface: `ops-web/src/lib/email/pause.ts`.
 
 **Three scope shapes**, resolved in order:
 
@@ -314,7 +314,7 @@ Audit insert failures do NOT roll back the pause — the killswitch must activat
 
 ## RFC 8058 Unsubscribe Tokens
 
-Implementation: `OPS-Web/src/lib/email/unsubscribe-token.ts`.
+Implementation: `ops-web/src/lib/email/unsubscribe-token.ts`.
 
 **Format**: `base64url(email|list|expiresAt).base64url(HMAC-SHA256(email|list|expiresAt))`.
 
@@ -355,7 +355,7 @@ Each entry has `{id, label, description, sender}` where `sender(ctx)` is an asyn
 
 ### Templates on disk
 
-Twenty-five React Email TSX files in `OPS-Web/src/lib/email/react/templates/`:
+Twenty-five React Email TSX files in `ops-web/src/lib/email/react/templates/`:
 
 | File | Bucket / kind | Used by |
 |---|---|---|
@@ -382,7 +382,7 @@ Twenty-five React Email TSX files in `OPS-Web/src/lib/email/react/templates/`:
 | `PortalEstimateReady.tsx` | portal / `portal_estimate_ready` | `sendEstimateReady` |
 | `PortalInvoiceReady.tsx` | portal / `portal_invoice_ready` | `sendInvoiceReady` |
 | `PortalQuestionsReminder.tsx` | portal / `portal_questions_reminder` | `sendQuestionsReminder` |
-| `PmfThresholdAlert.tsx` | dispatch / `pmf_threshold_alert` | PMF — see `OPS-Web/CLAUDE.md` § PMF |
+| `PmfThresholdAlert.tsx` | dispatch / `pmf_threshold_alert` | PMF — see `ops-web/CLAUDE.md` § PMF |
 | `PmfDailyDigest.tsx` | dispatch / `pmf_daily_digest` | PMF |
 | `PmfWeeklyDigest.tsx` | dispatch / `pmf_weekly_digest` | PMF |
 
@@ -400,7 +400,7 @@ Two crons, ten minutes apart each, working off Postgres tables. No queue service
 
 ### Dispatcher — `/api/cron/email/dispatcher` *(every 10 min during business hours)*
 
-`OPS-Web/src/app/api/cron/email/dispatcher/route.ts`. Schedule: `*/10 13-23,0-4 * * *` UTC (= business hours + evening PT).
+`ops-web/src/app/api/cron/email/dispatcher/route.ts`. Schedule: `*/10 13-23,0-4 * * *` UTC (= business hours + evening PT).
 
 Auth: `Bearer ${CRON_SECRET}`. Service-role DB.
 
@@ -415,7 +415,7 @@ Auth: `Bearer ${CRON_SECRET}`. Service-role DB.
 
 ### Worker — `/api/cron/email/worker` *(every 10 min during business hours)*
 
-`OPS-Web/src/app/api/cron/email/worker/route.ts`. Schedule: `*/10 13-23,0-4 * * *` UTC.
+`ops-web/src/app/api/cron/email/worker/route.ts`. Schedule: `*/10 13-23,0-4 * * *` UTC.
 
 1. `bootstrapCampaignTemplates()` — register the 4 campaign templates (idempotent).
 2. Call **`claim_email_jobs(p_limit:=200)`** RPC (`migration 090`). Atomic `FOR UPDATE SKIP LOCKED` claim that transitions `pending → dispatching`, restricted to campaigns currently in `in_flight`. Parallel workers cannot double-dispatch.
@@ -434,7 +434,7 @@ Auth: `Bearer ${CRON_SECRET}`. Service-role DB.
 
 **Counter invariant**: bounce/open/click counts are NOT updated by the worker — they come from the SendGrid webhook ([§16](#sendgrid-event-webhook)). Worker only writes `sent_count`, `suppressed_skipped_count`, `failed_count`.
 
-### Campaign service — `OPS-Web/src/lib/email/campaigns.ts`
+### Campaign service — `ops-web/src/lib/email/campaigns.ts`
 
 | Function | Purpose |
 |---|---|
@@ -473,7 +473,7 @@ Two resolution paths:
 
 `{segment: 'all_users' | 'trial_users' | 'active_subscribers'}`
 
-Hard-coded resolvers in `OPS-Web/src/lib/email/audiences.ts`:
+Hard-coded resolvers in `ops-web/src/lib/email/audiences.ts`:
 
 - `all_users`: `users` where `is_active=true` AND `removed_from_email_list IS NULL OR false` AND `email IS NOT NULL`.
 - `trial_users`: above + INNER JOIN `companies` where `subscription_status='trial'`.
@@ -504,9 +504,9 @@ Saved filters live in `email_audience_templates` ([§5](#data-model)).
 
 ## Trial-Expiry Lifecycle
 
-**Cron**: `/api/cron/trial-expiry` (`OPS-Web/src/app/api/cron/trial-expiry/route.ts`). Schedule: `0 14 * * *` UTC (7am PT). Auth: `Bearer ${CRON_SECRET}`. `maxDuration = 300s`.
+**Cron**: `/api/cron/trial-expiry` (`ops-web/src/app/api/cron/trial-expiry/route.ts`). Schedule: `0 14 * * *` UTC (7am PT). Auth: `Bearer ${CRON_SECRET}`. `maxDuration = 300s`.
 
-Calls `TrialExpiryService.processAll(supabase)` (`OPS-Web/src/lib/api/services/trial-expiry-service.ts`).
+Calls `TrialExpiryService.processAll(supabase)` (`ops-web/src/lib/api/services/trial-expiry-service.ts`).
 
 ### Schedule
 
@@ -547,9 +547,9 @@ The unique `(company_id, notification_type)` constraint on `trial_expiry_notific
 
 ## Deliverability Anomaly Detector
 
-**Cron**: `/api/cron/email/anomaly-check` (`OPS-Web/src/app/api/cron/email/anomaly-check/route.ts`). Schedule: `*/5 13-23,0-4 * * *` UTC.
+**Cron**: `/api/cron/email/anomaly-check` (`ops-web/src/app/api/cron/email/anomaly-check/route.ts`). Schedule: `*/5 13-23,0-4 * * *` UTC.
 
-Pure threshold evaluator in `OPS-Web/src/lib/email/anomaly-thresholds.ts`:
+Pure threshold evaluator in `ops-web/src/lib/email/anomaly-thresholds.ts`:
 
 | Kind | Warn | Critical | Min sends |
 |---|---|---|---|
@@ -579,11 +579,11 @@ Snapshot inputs from `email_event_metrics(p_minutes_back)` RPC (migration 106):
 
 ## SendGrid Event Webhook
 
-**Endpoint**: `POST /api/webhooks/sendgrid?secret=<SENDGRID_WEBHOOK_SECRET>` (`OPS-Web/src/app/api/webhooks/sendgrid/route.ts`).
+**Endpoint**: `POST /api/webhooks/sendgrid?secret=<SENDGRID_WEBHOOK_SECRET>` (`ops-web/src/app/api/webhooks/sendgrid/route.ts`).
 
 **Defense in depth**:
 
-- Rate limit: 600 req/min/IP via Vercel KV (`rateLimit` in `OPS-Web/src/lib/utils/ratelimit.ts`).
+- Rate limit: 600 req/min/IP via Vercel KV (`rateLimit` in `ops-web/src/lib/utils/ratelimit.ts`).
 - Shared secret query param — leaked credential alone cannot DoS.
 - Batch size cap: 1000 events/request (matches SendGrid default).
 
@@ -601,7 +601,7 @@ Aggregate engagement queries are served by `campaign_engagement_stats(uuid)` and
 
 ## Cron Schedule
 
-Email-related entries from `OPS-Web/vercel.json`. All UTC. Auth: `Bearer ${CRON_SECRET}`. The `13-23,0-4` time window = business hours + evening PT — most marketing/lifecycle crons are gated to it so we never ship at 3am.
+Email-related entries from `ops-web/vercel.json`. All UTC. Auth: `Bearer ${CRON_SECRET}`. The `13-23,0-4` time window = business hours + evening PT — most marketing/lifecycle crons are gated to it so we never ship at 3am.
 
 | Path | Schedule | Purpose |
 |---|---|---|
@@ -618,13 +618,13 @@ Email-related entries from `OPS-Web/vercel.json`. All UTC. Auth: `Bearer ${CRON_
 
 Inbound-email crons (`/api/cron/email-sync`, `/api/cron/email-ingest-heartbeat`, `/api/cron/auto-send`, `/api/cron/webhook-renewal`) belong to `04_API_AND_INTEGRATION.md` §20.
 
-PMF crons (`/api/cron/pmf/*`) are documented in `OPS-Web/CLAUDE.md` § PMF Dashboard and consume `sendTransactionalEmail`.
+PMF crons (`/api/cron/pmf/*`) are documented in `ops-web/CLAUDE.md` § PMF Dashboard and consume `sendTransactionalEmail`.
 
 ---
 
 ## Admin Console — `/admin/email`
 
-Page: `OPS-Web/src/app/admin/email/page.tsx`. Components in `OPS-Web/src/app/admin/email/_components/`. Admin-gated via `verifyAdminAuth` + `isAdminEmail`.
+Page: `ops-web/src/app/admin/email/page.tsx`. Components in `ops-web/src/app/admin/email/_components/`. Admin-gated via `verifyAdminAuth` + `isAdminEmail`.
 
 ### Tabs (component → purpose)
 
@@ -645,7 +645,7 @@ Page: `OPS-Web/src/app/admin/email/page.tsx`. Components in `OPS-Web/src/app/adm
 
 ### API routes
 
-`OPS-Web/src/app/api/admin/email/`:
+`ops-web/src/app/api/admin/email/`:
 
 - `campaigns/` — list, create, detail, cancel
 - `campaigns/audience-estimate` — POST a filter, get count via `email_audience_count`
@@ -678,13 +678,13 @@ Page: `OPS-Web/src/app/admin/email/page.tsx`. Components in `OPS-Web/src/app/adm
 | `PMF_OPERATOR_COMPANY_ID` | yes (anomaly auto-pause) | `notifications.company_id` NOT NULL satisfies |
 | `PMF_NOTIFICATION_EMAIL` | yes (anomaly auto-pause) | Actor email recorded on `email_pause_audit_log` |
 
-PMF telemetry vars (`TWILIO_*`) belong to the PMF subsystem; see `OPS-Web/CLAUDE.md` § PMF.
+PMF telemetry vars (`TWILIO_*`) belong to the PMF subsystem; see `ops-web/CLAUDE.md` § PMF.
 
 ---
 
 ## What Fires on a New Signup
 
-A new trades business signs up at `/register`. Firebase Auth creates the credential (`signUpWithEmail` in `OPS-Web/src/lib/firebase/auth.ts:185` — three lines, no backend call). Frontend syncs the user + company rows into Supabase. The `initialize_company_trial` trigger ([§5](#data-model)) stamps `subscription_status='trial'`, `trial_end_date=now()+30d`.
+A new trades business signs up at `/register`. Firebase Auth creates the credential (`signUpWithEmail` in `ops-web/src/lib/firebase/auth.ts:185` — three lines, no backend call). Frontend syncs the user + company rows into Supabase. The `initialize_company_trial` trigger ([§5](#data-model)) stamps `subscription_status='trial'`, `trial_end_date=now()+30d`.
 
 **Day 0 — zero OPS-sent emails.** No welcome, no verification (no `sendEmailVerification()` call exists in code; Firebase Console may send one if configured, but that's invisible to this codebase). No internal alert to the operator. No CRM activity downstream.
 

@@ -45,7 +45,7 @@ The `/spec` route ships today as scaffolded marketing copy + a 50% Stripe handof
 
 - Marketing page: `ops-site/src/app/spec/` (rewrite per [04_CUSTOMER_UX.md](04_CUSTOMER_UX.md))
 - Legal pages: `ops-site/src/app/legal/` with `spec-terms` tab added to existing `terms / privacy / eula / dpa` set
-- Admin surface: `OPS-Web/src/app/admin/spec/` (NEW per [05_ADMIN_UX.md](05_ADMIN_UX.md))
+- Admin surface: `ops-web/src/app/admin/spec/` (NEW per [05_ADMIN_UX.md](05_ADMIN_UX.md))
 - Stripe webhook: existing consolidated `/api/shop/webhook` in OPS-Web, dispatched on `metadata.type === 'spec_deposit'` and `charge.dispute.created`
 - Email infrastructure: existing SendGrid + `email_template_versions` / `email_campaigns` system in OPS-Web
 - Supabase project: `ops-app` (`ijeekuhbatykdomumfjx`), shared with all OPS surfaces

@@ -792,10 +792,10 @@ service_role has USAGE on `private` (granted above) and EXECUTE on the function.
 
 **Proof — live OPS-Web signup flow on 2026-05-25:**
 
-1. `OPS-Web/src/app/api/auth/sync-user/route.ts` creates a `users` row with `company_id = null`, `is_company_admin = false` on first Firebase sign-in. The response shape is `{ user, company: null }`.
-2. `OPS-Web/src/app/(auth)/register/page.tsx` routes the new user to `/account-type` after `sync-user` returns.
-3. `OPS-Web/src/components/account-type/AccountTypeScreen.tsx` (`handleContinue` line ~156) routes the "Run a Crew" choice to `/setup`.
-4. `OPS-Web/src/app/api/setup/progress/route.ts` (lines 103–161) creates the company on `step='company'`:
+1. `ops-web/src/app/api/auth/sync-user/route.ts` creates a `users` row with `company_id = null`, `is_company_admin = false` on first Firebase sign-in. The response shape is `{ user, company: null }`.
+2. `ops-web/src/app/(auth)/register/page.tsx` routes the new user to `/account-type` after `sync-user` returns.
+3. `ops-web/src/components/account-type/AccountTypeScreen.tsx` (`handleContinue` line ~156) routes the "Run a Crew" choice to `/setup`.
+4. `ops-web/src/app/api/setup/progress/route.ts` (lines 103–161) creates the company on `step='company'`:
    - Inserts `companies` row with `account_holder_id = userId`, `admin_ids = [userId]`, plus `name`, `industries`, `company_size`, `company_age`, `weather_dependent` from the form data.
    - Calls `initialize_company_defaults(p_company_id)` RPC to seed task types, units, and settings.
    - Updates the user: `company_id = <new>`, `is_company_admin = true`.
@@ -859,7 +859,7 @@ async function resolveSpecCompanyForProject(buyerUserId: string, tier: 'setup'|'
 
 The `isBuyerAccountHolder` flag drives Path A vs Path B branching (see § 03_WORKFLOW.md).
 
-**`/setup` returnTo support.** This requires a one-line addition to `OPS-Web/src/app/(onboarding)/setup/page.tsx` (or its corresponding completion handler): after `step='company'` succeeds, check the `returnTo` query param and, if present, push the user there instead of the default post-setup destination. Implementation cost: trivial. This is in the OPS-Web critical files list and tracked as a Phase 1 implementation task.
+**`/setup` returnTo support.** This requires a one-line addition to `ops-web/src/app/(onboarding)/setup/page.tsx` (or its corresponding completion handler): after `step='company'` succeeds, check the `returnTo` query param and, if present, push the user there instead of the default post-setup destination. Implementation cost: trivial. This is in the OPS-Web critical files list and tracked as a Phase 1 implementation task.
 
 **Stage C.1 implementation status (2026-05-26):** Landed on OPS-Web `feat/spec-setup-returnto`. `handleCompanyNext` now calls `readSafeReturnTo()` after the `/api/setup/progress` POST. The helper reads `returnTo` from `window.location.search` and only honors **same-origin relative paths** (must start with `/`, must not start with `//`, must not contain a URL scheme). Protocol-relative URLs and absolute schemes are rejected to prevent open-redirect phishing. When honored, the navigation uses `window.location.assign(returnTo)`; otherwise the flow continues to `setPhase("starfield")` as before. The matching ops-site `resolveSpecCompanyForProject()` lives at `ops-site/src/lib/spec/resolve-company.ts` on `feat/spec-checkout-flow` (Stage C.1, P1-2-6).
 
@@ -873,13 +873,13 @@ The `isBuyerAccountHolder` flag drives Path A vs Path B branching (see § 03_WOR
 
 **Proof — live OPS-Web state on 2026-05-25:**
 
-- `OPS-Web/src/components/layouts/dashboard-layout.tsx:15` imports `NotificationsDrawer`.
-- `OPS-Web/src/components/layouts/dashboard-layout.tsx:291` mounts `<NotificationsDrawer />`.
-- `OPS-Web/src/components/layouts/dashboard-layout.tsx:292` mounts `<NotificationsTab />` (the edge tab that toggles the drawer).
-- `OPS-Web/src/components/layouts/notifications-drawer.tsx:41` calls `useNotifications()` which reads from `public.notifications`.
+- `ops-web/src/components/layouts/dashboard-layout.tsx:15` imports `NotificationsDrawer`.
+- `ops-web/src/components/layouts/dashboard-layout.tsx:291` mounts `<NotificationsDrawer />`.
+- `ops-web/src/components/layouts/dashboard-layout.tsx:292` mounts `<NotificationsTab />` (the edge tab that toggles the drawer).
+- `ops-web/src/components/layouts/notifications-drawer.tsx:41` calls `useNotifications()` which reads from `public.notifications`.
 - Live data: `public.notifications` has 291 rows, max `created_at = 2026-05-19`, 16 distinct `type` values active in the last 30 days (e.g. `mention`, `task_review_stack`, `system_alert`, `gmail_sync`, `trial_expiry`, `expense_submitted`, `payment_review_stack`, `leads_waiting`, `task_completion`).
-- The PMF system writes `type='pmf_alert'` rows to the same table (`OPS-Web/CLAUDE.md` § PMF Dashboard → Notifications pipeline).
-- The TopBar (`OPS-Web/src/components/layouts/top-bar.tsx`) does NOT contain a notification icon — the rail UI was moved to the edge-tab drawer pattern. This is the only thing the "deprecated" flag was right about: the visual placement changed. The notification *system* is alive.
+- The PMF system writes `type='pmf_alert'` rows to the same table (`ops-web/CLAUDE.md` § PMF Dashboard → Notifications pipeline).
+- The TopBar (`ops-web/src/components/layouts/top-bar.tsx`) does NOT contain a notification icon — the rail UI was moved to the edge-tab drawer pattern. This is the only thing the "deprecated" flag was right about: the visual placement changed. The notification *system* is alive.
 
 **Locked routing for SPEC events (replaces all "after live-code verification" hedge language):**
 
@@ -897,7 +897,7 @@ The `isBuyerAccountHolder` flag drives Path A vs Path B branching (see § 03_WOR
 **Updated dispatch pattern (Phase 1 implementation):**
 
 ```typescript
-// OPS-Web/src/lib/notifications/spec-dispatch.ts (NEW)
+// ops-web/src/lib/notifications/spec-dispatch.ts (NEW)
 // Mirrors the existing notification-dispatch.ts helpers but for SPEC.
 
 export async function dispatchSpecOperatorNotification(args: {

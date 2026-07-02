@@ -5,7 +5,7 @@
 **Purpose**: Complete documentation of the OPS financial system — pipeline/CRM, estimates, invoices, payments, products catalog, and accounting integrations. All financial data lives in **Supabase** (PostgreSQL), separate from operational data in Bubble.io.
 
 **Last Updated**: February 28, 2026
-**Source Reference**: `C:\OPS\ops-web\src\lib\types\pipeline.ts`, `src\lib\api\services\`, iOS source at `OPS/OPS/`
+**Source Reference**: `C:\OPS\ops-web\src\lib\types\pipeline.ts`, `src\lib\api\services\`, iOS source at `ops-ios/OPS/`
 
 ---
 
@@ -1324,7 +1324,7 @@ The full Pipeline, Estimates, Invoices, and Accounting system is implemented nat
 
 ### iOS View Layer
 
-**Location**: `OPS/OPS/Views/Estimates/`, `OPS/OPS/Views/Invoices/`, `OPS/OPS/Views/Accounting/`
+**Location**: `ops-ios/OPS/Views/Estimates/`, `ops-ios/OPS/Views/Invoices/`, `ops-ios/OPS/Views/Accounting/`
 
 #### Estimates Views (6 files)
 
@@ -1348,7 +1348,7 @@ The full Pipeline, Estimates, Invoices, and Accounting system is implemented nat
 
 #### Expense Views (7 files)
 
-**Location**: `OPS/OPS/Views/Expenses/`
+**Location**: `ops-ios/OPS/Views/Expenses/`
 
 | File | Purpose |
 |---|---|
@@ -1368,7 +1368,7 @@ The full Pipeline, Estimates, Invoices, and Accounting system is implemented nat
 
 ### iOS ViewModels
 
-**Location**: `OPS/OPS/ViewModels/`
+**Location**: `ops-ios/OPS/ViewModels/`
 
 All ViewModels are `@MainActor` `ObservableObject` classes. Each exposes `@Published` state, sets up a repository via `setup(companyId:)`, and provides async methods for data operations.
 
@@ -1422,7 +1422,7 @@ Manages activities and follow-ups for a single opportunity detail screen.
 
 ### iOS Supabase Repositories
 
-**Location**: `OPS/OPS/Network/Supabase/Repositories/`
+**Location**: `ops-ios/OPS/Network/Supabase/Repositories/`
 
 All repositories take `companyId` in their initializer and use `SupabaseService.shared.client` for the Supabase connection.
 
@@ -1497,7 +1497,7 @@ All repositories take `companyId` in their initializer and use `SupabaseService.
 
 ### iOS Financial DTOs
 
-**Location**: `OPS/OPS/Network/Supabase/DTOs/`
+**Location**: `ops-ios/OPS/Network/Supabase/DTOs/`
 
 7 DTO files cover the financial system. All use `Codable` with `CodingKeys` for `snake_case` <-> `camelCase` mapping. Each read-DTO has a `toModel()` method to convert to the local domain model.
 
@@ -1556,7 +1556,7 @@ All repositories take `companyId` in their initializer and use `SupabaseService.
 
 ### iOS Financial Enums
 
-**Location**: `OPS/OPS/DataModels/Enums/FinancialEnums.swift`
+**Location**: `ops-ios/OPS/DataModels/Enums/FinancialEnums.swift`
 
 All enums are `String`-backed, `Codable`, and match Supabase column values.
 
@@ -1631,7 +1631,7 @@ Cases: `pending`, `synced`, `error`
 
 ### iOS OCR Service
 
-**Location**: `OPS/OPS/Services/ExpenseOCRService.swift`
+**Location**: `ops-ios/OPS/Services/ExpenseOCRService.swift`
 
 Protocol-based architecture for receipt OCR:
 
@@ -1850,7 +1850,7 @@ Recipients lookup via `public.users_with_permission(company_id, 'finances.view')
 - Auto-detection of recurring expenses from history — v2.
 - Auto-creation of expense rows when a recurring entry hits its due date — v2.
 - Outflow projection from labor cost / open POs / catalog allocations (iOS has no labor-cost or PO model today).
-- OPS-Web cashflow forecast — tracked at `OPS-Web/docs/bugs/2026-05-11-cashflow-forecast-web-followup.md`. Web ships a placeholder route initially; full web build is a separate plan.
+- OPS-Web cashflow forecast — tracked at `ops-web/docs/bugs/2026-05-11-cashflow-forecast-web-followup.md`. Web ships a placeholder route initially; full web build is a separate plan.
 
 ### Spec & plan
 
@@ -1861,4 +1861,4 @@ Recipients lookup via `public.users_with_permission(company_id, 'finances.view')
 
 **Last Updated**: 2026-05-25
 **Document Version**: 1.5
-**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `OPS/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
+**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.

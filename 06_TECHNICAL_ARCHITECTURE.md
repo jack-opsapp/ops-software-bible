@@ -85,7 +85,7 @@ OPS uses a **field-first architecture** designed for reliability, offline capabi
 ### Complete File Organization (437 Swift Files)
 
 ```
-OPS/OPS/
+ops-ios/OPS/
 ├── OPSApp.swift                    # App entry point, model container setup (24 models)
 ├── AppDelegate.swift               # Remote notifications, background tasks
 ├── AppState.swift                  # Global app state (project mode, UI flags)
@@ -2367,7 +2367,7 @@ The offline-first architecture, defensive SwiftData/Room patterns, and operation
 
 ### OPS-Web App Shell (rebuilt 2026-06-11 — WEB OVERHAUL P2)
 
-The web app shell was rebuilt from scratch in P2 of the web overhaul (master plan: `OPS-Web/docs/specs/2026-06-11-web-overhaul-master-plan.md`; shell design + parity inventory: `OPS-Web/docs/specs/2026-06-11-web-overhaul-p2-shell-design.md`).
+The web app shell was rebuilt from scratch in P2 of the web overhaul (master plan: `ops-web/docs/specs/2026-06-11-web-overhaul-master-plan.md`; shell design + parity inventory: `ops-web/docs/specs/2026-06-11-web-overhaul-p2-shell-design.md`).
 
 **Route registry — single source of truth.** `src/lib/navigation/route-registry.ts` owns every top-level route's href, icon, i18n label key (`navigation.json`, en + es), nav placement/order/group, RBAC permission, Phase C posture, badge binding, full-height layout mode, palette search aliases, and P3 absorption schedule (`absorbedBy`). Consumers: sidebar, top-bar titles, mobile drawer, command-palette nav section, 1–9 number shortcuts, the `(dashboard)/layout.tsx` route-permission gate, and `dashboard-layout.tsx` full-height modes. It replaced six drifted parallel tables (sidebar dict keys, top-bar hardcoded titles, breadcrumbs dict, layout permission map, palette literals, shortcut map). 42 invariant tests at `tests/unit/navigation/route-registry.test.ts`. Transition rule: nav entries exist only for routes that exist; each P3 wave swaps its absorbed entries + adds redirects in its landing commit.
 
