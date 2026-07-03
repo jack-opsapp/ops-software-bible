@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: 2026-05-07
+**Last Updated**: 2026-07-02
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -9,7 +9,7 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [SwiftData Models (48 Registered Entities)](#swiftdata-models-48-registered-entities)
+2. [SwiftData Models (Registered Entities)](#swiftdata-models-registered-entities)
 3. [Subscription Add-ons — `data_setup_requests`](#subscription-add-ons--data_setup_requests)
 4. [Project Workspace Modal Tables (Web-Only)](#project-workspace-modal-tables-web-only)
 5. [Permissions System Tables](#permissions-system-tables)
@@ -58,9 +58,9 @@ The OPS data layer follows a **three-tier architecture**:
 - **Type Safety**: DTOs handle field name mapping and type conversion
 - **Task-Based Scheduling**: Project dates are computed from task start/end dates (CalendarEvent entity has been removed)
 
-### The 49 Registered Schema Models
+### The Current Registered Schema Models
 
-As defined in `OPSSchemaCommon.unchangedModels` + `WizardState` (per-version) + `CalendarMirrorMap` (V5+) + additive per-version model groups. The schema container is built via `OPSSchemaV8` in `OPSApp.swift` (latest as of 2026-05-21 — catalog setup data foundation, see § V8 below).
+As defined in `OPSSchemaCommon.unchangedModels` + `WizardState` (per-version) + `CalendarMirrorMap` (V5+) + additive per-version model groups. The schema container is built via `OPSSchemaV11` in `OPSApp.swift` (latest as of 2026-06-26 — site-visit capture packet, see § V11 below).
 
 **Core Entities (11):**
 1. **User** -- Team member with role-based permissions
@@ -122,7 +122,7 @@ As defined in `OPSSchemaCommon.unchangedModels` + `WizardState` (per-version) + 
 48. **ProductBundleItem** -- Child row of a bundle product (kind=package); enumerates bundle composition with per-row quantity + display order. See `product_bundle_items` table.
 
 **Deck Builder (1):**
-49. **DeckDesign** -- Canvas drawing data for design components (railing, deck_board, stair_set, gate, post_set)
+49. **DeckDesign** -- Canvas drawing data for design components and deck-scoped JSON blocks (`components[]`, `framing`, `terrain`)
 
 **Per-Schema-Version (1):**
 - **WizardState** -- Onboarding wizard state (schema-versioned; appended in each `OPSSchemaV*.models`)
@@ -131,7 +131,7 @@ As defined in `OPSSchemaCommon.unchangedModels` + `WizardState` (per-version) + 
 
 ---
 
-## SwiftData Models (48 Registered Entities)
+## SwiftData Models (Registered Entities)
 
 ### 1. Project
 
@@ -1416,7 +1416,7 @@ Nullable text column on `products`, CHECK `bundle_pricing_mode IS NULL OR bundle
 @Model
 class SiteVisit: Identifiable {
     @Attribute(.unique) var id: String
-    var opportunityId: String
+    var opportunityId: String?
     var companyId: String
     var status: SiteVisitStatus
     var scheduledAt: Date?
@@ -1427,6 +1427,64 @@ class SiteVisit: Identifiable {
     var createdAt: Date
 }
 ```
+
+**iOS site-visit capture packet (added 2026-06-26; identity draft added 2026-06-27):** `OPS/OPS/Views/SiteVisits/SiteVisitCaptureView.swift` opens from lead detail, the FAB direct site-visit action, or the new-lead flow and creates/reuses an active `SiteVisit` before a project exists. `opportunityId` is optional so capture can start before the operator has selected or created the lead. The visit stores the schedule/status shell; individual field artifacts live in `SiteVisitCaptureArtifact` until the operator reviews the packet and creates the project. Site visits can now carry a `SiteVisitType` template and per-visit `SiteVisitChecklistAnswer` snapshots so a company can run a generic visit, CanPro deck estimate, repair inspection, or custom checklist without changing the base `SiteVisit` table.
+
+### 22A. SiteVisitIdentityDraft (Local-First)
+
+**File**: `OPS/DataModels/SiteVisits/SiteVisitIdentityDraft.swift`
+**Purpose**: Local-first client/lead identity packet for an active site visit.
+
+`SiteVisitIdentityDraft` is keyed by `siteVisitId` and stores the onsite identity fields that may be collected before, during, or after capture: `opportunityId`, `clientId`, `subClientId`, search text, client name, contact name, preferred email, additional emails, phone, address, and client notes. The draft autosaves locally as the operator types or dictates and can bind to an existing `Opportunity`, bind to an existing `Client`, or create a `Client` + `Opportunity` when connection is available. Additional emails become `SubClient` records tied to the client. Project creation from the site visit stays gated on a linked opportunity, but photos, notes, measurements, checklist answers, and deck designs are not blocked while the visit is still unlinked.
+
+### 22B. SiteVisitCaptureArtifact (Local-First)
+
+**File**: `OPS/DataModels/SiteVisits/SiteVisitCaptureArtifact.swift`
+**Purpose**: Pre-project site-visit evidence packet for rapid field capture.
+
+**Properties**:
+
+```swift
+@Model
+final class SiteVisitCaptureArtifact: Identifiable {
+    @Attribute(.unique) var id: String
+    var siteVisitId: String
+    var companyId: String
+    var opportunityId: String?
+    var kind: SiteVisitCaptureArtifactKind   // photo, annotatedPhoto, dimensionedPhoto, note, transcript, measurement, deckDesign
+    var source: SiteVisitCaptureSource       // camera, gallery, microphone, keyboard, laser, lidar, deckBuilder, manual
+
+    var title: String?
+    var body: String?
+    var localAssetURL: String?
+    var renderedAssetURL: String?
+    var thumbnailURL: String?
+    var dimensionsJSON: String?
+    var deckDesignId: String?
+
+    var includedInProjectReview: Bool
+    var capturedAt: Date
+    var createdBy: String?
+    var createdAt: Date
+    var updatedAt: Date?
+    var deletedAt: Date?
+    var needsSync: Bool
+    var lastSyncedAt: Date?
+}
+```
+
+Project handoff is local-first: reviewed photo artifacts become `ProjectPhoto(source: "site_visit")`, reviewed notes and measurements are consolidated into a `ProjectNote`, and reviewed deck-design artifacts attach the standalone `DeckDesign.projectId` after project creation. Dimensioned site-visit photos open the same `DimensionedCaptureView`/`DimensionedAnnotationView` pipeline used by projects, but save through `SiteVisitDimensionedCaptureStore` before a project exists; project creation restores the measured photo as both `ProjectPhoto` and `PhotoAnnotation` with `DimensionsData`. Deck design capture is gated by the `deck_builder` feature and create/edit permissions; it is not a general site-visit feature.
+
+### 22C. SiteVisitType + SiteVisitChecklistAnswer (Local-First)
+
+**File**: `OPS/DataModels/SiteVisits/SiteVisitType.swift`
+**Purpose**: Company-scoped visit templates and per-visit checklist answer snapshots layered on top of the base capture packet.
+
+`SiteVisitType` stores a slug, display name, default flag, and encoded field definitions (`checkbox`, `yes_no_na`, `short_text`, `long_text`, `measurement`, `photo`, `photo_markup`, `deck_design`). Built-in templates seed locally for Generic Site Visit, Deck Estimate, and Repair Inspection; deck-design fields only appear when the `deck_builder` feature is enabled. Companies can add custom visit types/fields later without changing the base capture artifact model.
+
+`SiteVisitChecklistAnswer` snapshots the selected type's fields onto the active visit. Answers store `siteVisitId`, `opportunityId`, `siteVisitTypeId`, the field label/kind/required state, and encoded answer value. Reassigning a visit moves active checklist answers to the new opportunity with the rest of the packet. Required checklist answers gate project creation from the review sheet, and answered checklist lines are included in the staged `SiteVisitProjectPayload` so project creation writes them into the consolidated `ProjectNote`.
+
+Capture UX is field-first: note draft text autosaves into one live note/transcript artifact as the operator types or finishes dictation, clearing the text soft-deletes that draft artifact, and there is no separate Save Note command. Photo artifacts expose `previewAssetURL` (`renderedAssetURL ?? thumbnailURL ?? localAssetURL`) so capture-packet rows can show thumbnails and open a zoomable preview before markup. Checklist fields can auto-link matching captured evidence: photo fields use active photo/dimensioned-photo artifacts, measurement fields use measurement artifact text, and deck-design fields use the active deck-design artifact. The lead/client panel is part of the same capture console, not a pre-step: inline search suggests local active leads and clients, manual fields autosave into `SiteVisitIdentityDraft`, completed fields get completion treatment, and the operator can create/link the lead from the same panel before project handoff. Reassigning a visit moves the open `SiteVisit` plus all active `SiteVisitCaptureArtifact.opportunityId` and `SiteVisitChecklistAnswer.opportunityId` values to another active lead before project creation.
 
 ---
 
@@ -2154,6 +2212,32 @@ Two migrations closed the gap, both replacing the old policies with the layered 
 
 **Verification (2026-05-31)**: executed as the anon role, all five tables now return 0 rows; an `own`-scope user sees only expenses where `submitted_by` matches their own user id. Migration SQL is mirrored in `migrations/` and the per-table contracts are echoed in `09_FINANCIAL_SYSTEM.md` (Expense Tracking System, Supabase Schema Reference).
 
+### Security Posture Sweep — W3 (2026-07-03)
+
+**Context**: bug `c5ff388e` ("31 public tables have RLS disabled") was found **stale** — as of 2026-07-03, 0 of 266 public tables have RLS disabled (verified via `pg_class`). A fresh `get_advisors(security)` sweep (167 lints) was dispositioned against the current posture. The 2026-05-31 hardening (above) fixed the expense/payment/opportunity `USING(true)` exposures; this pass covers the remaining ones. Full per-item disposition: `ops-web/docs/artifacts/w3-security-posture-disposition-2026-07-03.md`.
+
+**Standing model reaffirmed**: the app (web + iOS) executes as the **anon** role under the Firebase JWT bridge; `auth.uid()` is unusable (`sub` is a non-uuid Firebase UID). `private.get_user_company_id()` returns **uuid**; `public.get_user_company_id()` returns **text** — do not confuse them in policy/function predicates. `service_role` and `postgres` carry `rolbypassrls = true`, so cron/agent writes survive removing anon policies.
+
+**Migrations authored on branch `fix/security-posture-sweep` (sentinel-proven; pending operator apply — direct prod DB, no auto-deploy):**
+
+| Migration | Change |
+|-----------|--------|
+| `20260703170000_sec_w3_fix_always_true_policies` | `qa_bugs` ALL/`true`/`{public}` (full anon CRUD incl. DELETE on 234 rows) → `qa_bugs_ops_admin_all` (`private.is_ops_admin()`); `beta_access_requests` SELECT/`true` (leaked every signup email) → own-rows (`user_id = private.get_current_user_id()::text`); `duplicate_reviews` INSERT/`true` → own-company. |
+| `20260703170100_sec_w3_storage_public_bucket_listing` | Dropped 6 broad `storage.objects` SELECT/list policies (client-images, images, logos, product-thumbnails, profiles, project-photos). Public object URLs unaffected (advisor lint 0025); no app `.list()` usage. |
+| `20260703170200_sec_w3_revoke_anon_execute_functions` | Revoked anon/authenticated EXECUTE on 7 no-client-caller SECURITY DEFINER fns: `audit_trigger_fn`, `tr_activity_first_log_auto_advance` (triggers), `fire_due_task_reminders` (cron), `resolve_task_reminder_recipients`, `users_with_permission` (internal helpers), `increment_opportunity_correspondence`, `qbo_match_customer_candidates` (server-only; latter leaked cross-company client name/email/phone). service_role retains EXECUTE. |
+| `20260703170300_sec_w3_revoke_anon_grants_asc_tables` | Revoked anon/authenticated table grants on 8 `asc_*` App Store Connect tables (service-role-only operator analytics; the grants were a latent RLS-toggle landmine). |
+| `20260703170400_sec_w3_harden_secdef_function_bodies` | Added caller guards to `get_inbox_density_per_client` (silent-empty unless `private.get_user_company_id() = p_company_id`) and `remove_seated_employee` (end-user callers must be an admin of the target company; service_role bypasses). Batch 2 — apply after the iOS remove-seat flow is confirmed. |
+
+**`rls_enabled_no_policy` (26 tables)** — all confirmed correct **service-role-only** (RLS-deny + service_role-only grants); no new policy needed. Tables: `ad_briefings`, `ads_daily_account/campaign/keyword/search_term`, `ads_sync_status`, `admin_feature_overrides`, `lifecycle_email_config`, `newsletter_content`, `email_events`, `email_ingest_heartbeat_log`, `onboarding_events`, `portal_sessions`, `portal_tokens`, `project_team_members` + `task_team_members` (both 0 rows — the app uses the denormalized `projects/tasks.team_member_ids` array + the `assign/remove_project_team_member` RPCs; the join tables are reserved), `deck_zoning_parcel_records`, `private.identity_linkage_metrics`. The 8 `asc_*` tables were the only defect (over-broad grants → M4).
+
+**Anon SECURITY DEFINER function surface** — the ~42 remaining anon-executable SECURITY DEFINER functions are the **intentional app RPC surface** under the anon bridge (project/opportunity table-view CRUD, lead/estimate/opportunity conversions, expense + catalog + product import RPCs, `get_user_company_id`/`get_user_id`/`has_permission`/`is_company_admin`, `get_photo_annotations_since` + `upsert_markup_layer`, `record_auto_bug`, `submit_feature_request`). `check_user_exists_by_email` is kept as accepted low-risk email enumeration (boolean only; backs signup/login UX). The `p_company_id`-taking catalog/conversion/product RPCs were not body-audited this pass (owned by active workstreams) — flagged for a follow-up caller-company-enforcement audit.
+
+**Cross-app exposure flagged (not DB-fixable here)** — ops-learn `assessment_responses`/`assessment_sessions`/`assessment_submissions`/`enrollments` carry `SELECT USING (true)` to anon, a genuine PII leak (`assessment_sessions` exposes email/first_name/ai_analysis for 62 real sessions / 10 distinct emails; 600 synthetic). The correct fix is a token-scoped SECURITY DEFINER read RPC inside ops-learn (a repo not checked out here) — coordinate with the ops-learn owner; do not blind-change (would break 662 live sessions).
+
+**Storage (additional finding)** — the `images` and `social-media` public buckets have anon INSERT/UPDATE/DELETE policies with no auth check (named "Service…" but targeting `{public}`). Recommend tightening to `authenticated` after verifying the upload-presign flow; not shipped this pass.
+
+**Sentinel evidence (all against prod, in rolled-back transactions)** — `request.jwt.claims` simulation across Canpro + Maverick (admin + member each), a pure ops-admin, and raw anon confirmed every scoping predicate; end-to-end `SET ROLE anon` proved qa_bugs row visibility = {operator 234, member 0, anon 0} and the hardened `get_inbox_density_per_client` = {own-company 241, cross-company 0, raw anon 0}.
+
 ### Web Implementation Reference
 
 The web app (OPS-Web) implements the permission system with:
@@ -2633,6 +2717,8 @@ final class CompanyDefaultProduct {
 
 PRIMARY KEY `(company_id, component_type)`.
 
+Phase 2 OPS Decks framing adds additive `components[]` rows with structural strings (`joist`, `beam`, `post`, `rim_joist`, `blocking`), but this enum-backed default-product model still represents the original configured product vocabulary until the adapter/web configuration surface is extended. Unknown or unmapped structural rows must be skipped, not treated as decode failures.
+
 ### Configurable Product extensions
 
 The four Product-side extensions live alongside the catalog models in `DataModels/Supabase/Catalog/`. See § 21 (Product) → "Configurable Products (NEW)" for resolver flow and worked examples.
@@ -2904,6 +2990,16 @@ Live schema verified 2026-05-12 in project `ijeekuhbatykdomumfjx`: `deck_designs
 
 Live data verified 2026-05-20 in project `ijeekuhbatykdomumfjx`: active `deck_designs` rows exist for project-attached designs, and some legacy `drawing_data` payloads omit the top-level `surfaces` key while still carrying valid vertices, edges, footprint, config, levels, and level connections. Active rows also store `drawing_data.footprint.isClosed` as numeric `0`/`1`, not strict JSON booleans. Inbound iOS decoders must treat missing optional/defaulted `DeckDrawingData` fields as empty/default values and tolerate legacy numeric/string/strict boolean values for deck drawing booleans. A single legacy row must not cause the full `[SupabaseDeckDesignDTO]` pull to fail, because a fresh install depends on that inbound pass to repopulate deck designs.
 
+Phase 1 standalone OPS Decks contract added 2026-06-26: standalone sketches reuse `deck_designs` with `company_id` scoped to the provisioned deck-only company and `project_id = nil`. The OPS Decks app must not create a project shell just to save a deck. If the operator later upgrades into full OPS and creates a project, the existing repair path attaches `project_id` to the saved `DeckDesign` row. `drawing_data` remains additive and backward-decodable; future framing, parcel/zoning, code overlay, rendering, roofing, wall/opening, railing, stair, and material blocks must round-trip even before those systems are active.
+
+OPS Decks zoning parcel lookup contract added 2026-07-02: `public.deck_zoning_parcel_records` is a service-role-only verified cache for `POST /api/decks/zoning/parcel`. Rows are keyed by `normalized_site_address`, optional `jurisdiction_id`, optional `company_id`, and `deleted_at IS NULL`; `parcel_zoning` stores DeckKit `ParcelZoningPlan` JSON exactly as the standalone app decodes it. The route may return only verified `available`, `partial`, or `userEntered` plans. It must not infer setbacks, lot coverage, height limits, or code criteria from an address. Missing records return 404 so OPS Decks can switch to manual criteria entry without fabricating zoning data. OPS-Web admins populate the cache through `POST /api/admin/decks/zoning/parcel-records/import`, which supports dry-run validation, rejects mixed valid/invalid batches before writing, and idempotently updates active key matches before inserting new rows.
+
+Phase 2 OPS Decks framing contract added 2026-06-26: `drawing_data.framing` is active and rows with a generated frame stamp schema version 2. `drawing_data.terrain` is active for the ground-cover subset only. Framing is a plausible visualization/scoping model, not an engineered sizing/code result; `FramingMember.sizing` stays nil until the sizing/code phase writes `MemberSizingResult`. Runtime capability split is intentional: embedded OPS uses `DeckCapabilities.light` and must not author framing or ground-cover data; standalone OPS Decks uses `DeckCapabilities.full` for the full authoring surface. Data preservation is independent from capabilities.
+
+Phase 6 OPS Decks surface/overhead contract added 2026-06-30: `drawing_data.surfaceFeatures` and `drawing_data.overhead` are active optional blocks and rows carrying either block stamp schema version 6. `surfaceFeatures` stores per-surface decking patterns, fastener system, finishes, fascia, skirting, built-ins, and lighting. `overhead` stores pergola/louvered/solid-roof structures with optional roof shape, footprint, shared framing members, shade percent, and product model. These blocks are FULL-authoring data owned by standalone OPS Decks; embedded OPS light mode must preserve and display them without exposing the authoring sheets or invoking sizing engines.
+
+Standalone company provisioning is defined in `ops-ios/docs/superpowers/specs/2026-06-25-ops-decks-phase-1-backend-contract.md`. The provisioning endpoint creates a company-of-one for the deck-only user and may mark the row with a clear deck origin or `subscription_plan = 'decks'` for routing, but deck entitlement state belongs in the deck subscription mirror. Do not write RevenueCat deck access into `companies.subscription_status`, `trial_end_date`, or other OPS base-plan lockout fields.
+
 ### `drawingDataJSON` schema
 
 `drawingDataJSON` is the serialized form of `DeckDrawingData`. The catalog-relevant subset is:
@@ -2926,6 +3022,117 @@ Live data verified 2026-05-20 in project `ijeekuhbatykdomumfjx`: active `deck_de
   "levels":           [ ... ],          // multi-level only
   "levelConnections": [ ... ],          // multi-level only
 
+  // PHASE 2 FRAMING - optional, additive, schema version 2 when present.
+  // `sizing` is reserved and remains null/nil until the sizing/code engine.
+  "framing": {
+    "members": [
+      {
+        "levelId": "<level id or empty string>",
+        "members": [
+          {
+            "id": "<uuid>",
+            "role": "joist | beam | post | ledger | rimBand | blocking | bridging | cantilever",
+            "start": [0, 0],
+            "end": [0, 144],
+            "nominalSize": "2x6 | 2x8 | 2x10 | 2x12 | 4x4 | 4x6 | 6x6 | null",
+            "plyCount": 1,
+            "spacingInchesOC": 16,
+            "species": "southern_pine | df_l | hem_fir | spf | redwood_cedar | null",
+            "grade": "select_structural | no1 | no2 | null",
+            "sizing": null,
+            "locked": false
+          }
+        ]
+      }
+    ],
+    "loadPreset": {
+      "liveLoadPSF": 40,
+      "deadLoadPSF": 10,
+      "snowLoadPSF": null,
+      "species": "spf",
+      "grade": "no2"
+    },
+    "generationSource": "auto | manual | autoThenEdited",
+    "generatedAtSchemaVersion": 2
+  },
+
+  // PHASE 2 TERRAIN - ground-cover only. Grade points/slope are for the
+  // later footing/grade phase and are not interpreted by Phase 2 framing.
+  "terrain": {
+    "gradePoints": [],
+    "groundCover": [
+      {
+        "id": "<uuid>",
+        "polygon": [[0, 0], [144, 0], [144, 144], [0, 144]],
+        "cover": "grass | dirt | gravel | rock | concrete | pavers"
+      }
+    ],
+    "slopeSource": "manual"
+  },
+
+  // PHASE 6 SURFACE FEATURES - optional, additive, schema version 6 when present.
+  "surfaceFeatures": {
+    "patterns": [
+      {
+        "surfaceId": "<detected/persisted surface id>",
+        "pattern": "parallel | diagonal | picture_frame | herringbone | chevron",
+        "boardAngleDegrees": 0,
+        "pictureFrameCourses": 1
+      }
+    ],
+    "fastenerSystem": "hidden_clip | face_screw | null",
+    "finishes": [
+      { "kind": "cut-end seal", "coats": 2 }
+    ],
+    "fascia": true,
+    "skirting": {
+      "material": "ventilated lattice",
+      "ventilated": true
+    },
+    "builtIns": [
+      {
+        "id": "<uuid>",
+        "kind": "bench | planter | privacyWall",
+        "polygon": [[0, 0], [144, 0], [144, 24], [0, 24]],
+        "heightInches": 18
+      }
+    ],
+    "lighting": {
+      "fixtures": [[0, 0], [144, 0]],
+      "transformerWatts": 60,
+      "receptacles": []
+    }
+  },
+
+  // PHASE 6 OVERHEAD - optional, additive, schema version 6 when present.
+  "overhead": {
+    "structures": [
+      {
+        "id": "<uuid>",
+        "kind": "pergola | louvered_roof | solid_roof",
+        "roofShape": "shed | gable | hip | null",
+        "footprint": [[0, 0], [144, 0], [144, 120], [0, 120]],
+        "framing": [
+          {
+            "id": "<uuid>",
+            "role": "beam | joist | post",
+            "start": [0, 0],
+            "end": [144, 0],
+            "nominalSize": "2x10",
+            "plyCount": 1,
+            "spacingInchesOC": null,
+            "species": "spf",
+            "grade": "no2",
+            "sizing": null,
+            "locked": false
+          }
+        ],
+        "shadePercent": 40,
+        "productModel": null
+      }
+    ]
+  },
+
   // CATALOG PROJECTION — derived from geometry on every save by
   // ComponentEmitter.emit(self). One row per visible component.
   // Forward-compatible: clients that don't recognize the key
@@ -2936,14 +3143,19 @@ Live data verified 2026-05-20 in project `ijeekuhbatykdomumfjx`: active `deck_de
     { "component_type": "post_set",  "metadata": { ... } },
     { "component_type": "stair_set", "metadata": { ... } },
     { "component_type": "deck_board","metadata": { ... } },
-    { "component_type": "gate",      "metadata": { ... } }
+    { "component_type": "gate",      "metadata": { ... } },
+    { "component_type": "joist",     "metadata": { ... } },
+    { "component_type": "beam",      "metadata": { ... } },
+    { "component_type": "post",      "metadata": { ... } },
+    { "component_type": "rim_joist", "metadata": { ... } },
+    { "component_type": "blocking",  "metadata": { ... } }
   ]
 }
 ```
 
 ### `components[]` projection — per-type metadata schema
 
-`component_type` matches `DesignComponentType` raw values exactly. Adding new component_type strings is fine; renaming is a contract break with `DesignToEstimateAdapter`. Metadata keys map 1:1 to the keys the adapter reads via `option_default_source = "$design.<key>"` and via `computeQuantity(unit:metadata:)`.
+The original catalog component rows match `DesignComponentType` raw values exactly. Phase 2 framing adds structural component rows as additive strings; they must round-trip and may be mapped by future product-default surfaces, but the current enum-backed adapter skips unknown strings before default lookup. Adding new `component_type` strings is fine; renaming existing strings is a contract break with `DesignToEstimateAdapter`. For mapped rows, metadata keys map 1:1 to the keys the adapter reads via `option_default_source = "$design.<key>"` and via `computeQuantity(unit:metadata:)`.
 
 | `component_type` | Source in geometry | Required metadata keys |
 |---|---|---|
@@ -2952,6 +3164,13 @@ Live data verified 2026-05-20 in project `ijeekuhbatykdomumfjx`: active `deck_de
 | `stair_set` | One per `DeckEdge` with `stairConfig`, plus one per `LevelConnection` (multi-level) | `tread_count` (Int, `StairConfig.calculateTreadCount` or override), `width` (Double inches, `StairConfig.width`), `color` (String, `StairConfig.color`), `mount_type` (String — vocabulary `Surface | Top | Side`, distinct from railing), `edge_id` OR `connection_id` + `level_id` (upper level) |
 | `deck_board` | One per `DeckSurface` with a detected face match (per-face area), or one per legacy footprint when surfaces empty | `sqft` (Double, `PolygonMath.realWorldArea(face) / 144.0`), `color` (String, `DeckSurface.color`), `material` (String, `DeckSurface.boardMaterial`), `surface_id` (String — the persisted DeckSurface id, or sentinel `"footprint"` for the legacy fallback), optional `level_id` |
 | `gate` | One per `isGate=true` AssignedItem on an edge | `count` (Int — 1 per row), `width` (Double inches — default 36), `color` / `mount_type` / `mount_surface` (mirror parent railing or fall back to defaults Black / Topmount / Surface), `edge_id`, optional `level_id` |
+| `joist` | One per `FramingMember` with role `.joist` | `linear_feet` (Double), `nominal_size` (String or null), `ply_count` (Int), `count` (Int, always 1 per row), `species` (String or null), `grade` (String or null), `level_id` (String), `member_id` (String) |
+| `beam` | One per `FramingMember` with role `.beam` | `linear_feet`, `nominal_size`, `ply_count`, `count`, `species`, `grade`, `level_id`, `member_id` |
+| `post` | One per `FramingMember` with role `.post`; length represents modeled post height | `linear_feet`, `nominal_size`, `ply_count`, `count`, `species`, `grade`, `level_id`, `member_id` |
+| `rim_joist` | One per `FramingMember` with role `.rimBand` | `linear_feet`, `nominal_size`, `ply_count`, `count`, `species`, `grade`, `level_id`, `member_id` |
+| `blocking` | One per `FramingMember` with role `.blocking` | `linear_feet`, `nominal_size`, `ply_count`, `count`, `species`, `grade`, `level_id`, `member_id` |
+
+Framing roles `.ledger`, `.bridging`, and `.cantilever` are valid in `FramingPlan` but intentionally do not emit structural `components[]` rows in Phase 2.
 
 Default vocabulary on partially-configured drawings — emitter still fires so a barebones design produces line items via the company's `CompanyDefaultProduct` mapping:
 
@@ -3204,7 +3423,7 @@ product_tax_rates
 ```sql
 company_default_products
   company_id      uuid FK companies(id) NOT NULL
-  component_type  text NOT NULL                  -- 'railing' | 'deck_board' | 'stair_set' | 'gate' | 'post_set'
+  component_type  text NOT NULL                  -- enum-backed defaults: 'railing' | 'deck_board' | 'stair_set' | 'gate' | 'post_set'
   product_id      uuid FK products(id) NOT NULL
   created_at      timestamptz NOT NULL
   updated_at      timestamptz NOT NULL
@@ -3212,6 +3431,8 @@ company_default_products
 ```
 
 **RLS**: company_isolation. Only one default per (company, component_type). Missing mapping → adapter logs to `app_events.adapter_skip_component` and continues.
+
+Phase 2 deck framing can emit additive `components[]` rows for `joist`, `beam`, `post`, `rim_joist`, and `blocking`, but this table's iOS SwiftData enum and configuration UI still cover only the original defaults until the catalog adapter is extended. Treat unmapped structural rows as skip-safe projection data.
 
 ### `catalog_orders` and `catalog_order_items`
 
