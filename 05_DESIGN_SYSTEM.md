@@ -2920,6 +2920,19 @@ Future consumers (Books tab, JobBoard cards, Schedule, Settings) should migrate 
 
 ---
 
+## 21. OPS-Web List Surfaces — TableShell / Workbar / MetricsStrip / Picker (Web)
+
+The five web list surfaces (Projects, Pipeline, Books, Catalog, Clients) all render through **one shared frame** so they read identically. Do not hand-arrange a per-surface toolbar or metrics bar; compose these primitives. Full design log: `ops-web/docs/design/2026-06-29-table-unification/DECISION.md` (WEB OVERHAUL P6-2 + REWORK 1–7).
+
+- **`TableShell`** (`ops-web/src/components/ui/table-shell/`) — the full-bleed instrument frame both table archetypes consume (the virtualized div-grid for Projects/Pipeline; the semantic `RegisterTable` for Books/Catalog/Clients). Metrics scroll away; toolbar + column header pin. No glass panel, no route gutter.
+- **`Workbar`** — the ONE canonical toolbar grammar; slot positions are owned here so they can't drift per tab. Row 1: `[ search ] [ filters ] ──(elastic)── [ meta ] [ tools ] [ create ]`; Row 2: the segment/mode + saved-view tab strip. Row 1 is a CSS grid (`auto · minmax(min-content,1fr) · auto · auto`) so it never line-breaks; the filters cell is the sole elastic track. `search` = the shared `SearchInput` at a single 240px width; `create` = the single `WorkbarButton` (28px filled-accent chip — the one place the steel-blue accent appears in a workbar); **`meta` = the one home for a surface's row-count readout** (`WorkbarCount`: `9/9 ROWS`, `67 SKUS`, `44 TOTAL`), pinned just left of the tools cluster.
+- **`MetricsStrip`** (`ops-web/src/components/ui/metrics-strip/`) — one thin pinned strip of hairline-divided cells (`// LABEL` + mono value + optional per-cell mini-viz: meter / sparkline / aging-ramp), count-up 800ms. Unifies the five former per-tab metrics treatments. Books' ledger strip enriches its A/R cell sub with invoice collection-health on the invoices tab only.
+- **Picker kit** (`ops-web/src/components/ui/picker/` + `entity-picker.tsx`) — the ONE popover-select shell behind every client / team / assignee / stage / category / unit picker (Radix Popover + cmdk). Compact ~32px desktop rows (authored in real px — the repo spacing scale is doubled, so scale tokens render 2×). Never hand-roll an `absolute` listbox; forbidden by the kit docstring. `EntityPicker.createAction` gives any picker a query-seeded "+ New …" footer (e.g. one-tap create-and-link a client).
+
+**Voice/token rules unchanged:** all values trace to tokens; the accent (`#6F94B0`) is CTA + focus-ring only; inputs brighten their border on focus (no accent ring — spec §340); numbers are mono/tabular/11px-min.
+
+---
+
 **End of Design System Documentation**
 
 This document serves as the complete design system reference for OPS iOS, Android, and Web implementations. All code must conform to these standards to maintain brand consistency and field-first usability.
