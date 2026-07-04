@@ -201,7 +201,7 @@ final class Project: Identifiable {
     // updated_at       TIMESTAMPTZ — auto-maintained by Supabase trigger; read-only from iOS, drives the JobBoard "latest edited" sort (see OPS/Views/JobBoard/JobBoardProjectListView.swift `recencyStamp(for:)`).
     // vinyl_order_status TEXT DEFAULT 'not_ordered' CHECK ∈ {not_ordered, ordered} — Deck Builder marker-only vinyl status.
     // vinyl_ordered_at   TIMESTAMPTZ NULL — when project vinyl was marked ordered.
-    // vinyl_ordered_by   UUID FK → auth.users(id) NULL — who marked project vinyl ordered.
+    // vinyl_ordered_by   UUID FK → auth.users(id) NULL — MISTARGETED FK (see note); iOS writes NULL. Was "who marked vinyl ordered".
 }
 ```
 
@@ -212,6 +212,23 @@ catalog orders, reserve inventory, deduct stock, resolve recipes, or materialize
 `task_materials`. iOS stores an offline projection in `ProjectVinylOrderMarker`
 so the Details tab can read the marker without mutating the historical
 `Project` SwiftData model shape.
+
+> **`vinyl_ordered_by` FK trap (verified 2026-07-04, bug 0f86b9b0/c6e90385):** the
+> column FKs to `auth.users(id)`, but under the Firebase JWT bridge a user's
+> `public.users.id` is never present in `auth.users`, so any real id FK-fails and
+> a Firebase UID 22P02s. The column has **never** been successfully written
+> (0 rows) and its value is never surfaced in-app. Both "mark ordered" paths
+> (Vinyl Order sheet + Job Board vinyl filter) therefore persist status +
+> timestamp and write `vinyl_ordered_by = NULL`. To enable attribution, retarget
+> the FK to `public.users(id)` (mirrors `catalog_orders.created_by_id`) — SQL at
+> `ops-ios/docs/artifacts/vinyl-ordered-by-fk-retarget.sql`; gated prod DDL.
+
+**Job Board vinyl filter (2026-07-04)**: a `VINYL` pill on the Job Board action
+row (shown only when the company defines a task type whose display contains
+"vinyl") filters the project list to jobs with a vinyl task and renders a
+per-card ordered-state strip with a one-tap `MARK ORDERED` (gated `projects.edit`).
+Reads/writes the same `vinyl_order_*` marker — no new schema. See
+`OPS/Views/JobBoard/VinylOrderFilter.swift`.
 
 **Key Computed Properties**:
 
