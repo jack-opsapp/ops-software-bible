@@ -1749,7 +1749,11 @@ CREATE INDEX idx_project_notes_event_kind
 
 **iOS-additive contract** — both columns are nullable, no `CHECK`, default `NULL`. Existing rows are untouched. The current iOS Codable types decode unknown columns gracefully, and rows with `event_kind` set still have a populated `content` field, so they render on iOS as plain notes (slightly weird visually, fixed in the next iOS release). No iOS schema migration is required during the workspace rollout.
 
-**`event_kind` discriminator values** — `status_change`, `estimate_sent`, `estimate_approved`, `estimate_declined`, `invoice_sent`, `payment_received`, `expense_logged`, `photo_uploaded`, `project_created`, `project_archived`, `task_completed`. `NULL` = user-authored note (default). The web `useProjectActivity` hook maps `NULL` to the `kind: 'note'` enum branch and uses non-null values to dispatch icon / color / dot styling on the timeline.
+**iOS now reads both columns (2026-07-04, bug burndown I2).** `ProjectNote` gained optional `eventKind` + `contentMetadataJSON` (SwiftData schema **V13**, additive) and the DTO decodes `content_metadata` loosely (`AnyJSON` → raw JSON string). The iOS Activity feed branches on `eventKind`: `status_change` renders as a quiet one-line system row (`FROM → TO` from `{from,to}`), the iOS-authored `site_visit` kind renders as a rich packet card (see below), and any other / unknown `event_kind` falls back to the plain note card. So the "renders as a plain note" caveat above is resolved on iOS ≥ the I2 release.
+
+**iOS writes `event_kind = 'site_visit'`.** The site-visit packet (lead → project conversion) is now one `project_notes` row: `content` keeps the legacy plain-text packet (web + older iOS render it unchanged) and `content_metadata` carries the structured summary the iOS feed card + detail sheet render from — `{ "site_visit_id", "photo_count", "measurements": [{ "label", "value" }], "notes": [...], "checklist": [...] }`. Photos in the sheet resolve from synced `project_photos` rows (`site_visit_id`, else `source = 'site_visit'`), never from the capturing device's local artifacts. The packet is written through the iOS durable sync queue (`DataController.createProjectNote` → outbound create carrying both columns); the previous direct insert set `needsSync` but recorded no op, and project notes have no `needsSync` sweep, so packets never reached the server.
+
+**`event_kind` discriminator values** — `status_change`, `estimate_sent`, `estimate_approved`, `estimate_declined`, `invoice_sent`, `payment_received`, `expense_logged`, `photo_uploaded`, `project_created`, `project_archived`, `task_completed`, `site_visit` (iOS-written). `NULL` = user-authored note (default). The web `useProjectActivity` hook maps `NULL` to the `kind: 'note'` enum branch and uses non-null values to dispatch icon / color / dot styling on the timeline.
 
 **`content_metadata` payload shapes** — JSONB blob keyed by event kind. Examples:
 
@@ -1765,6 +1769,7 @@ CREATE INDEX idx_project_notes_event_kind
 | `project_created` | `{}` |
 | `project_archived` | `{}` |
 | `task_completed` | `{ "taskId": "<uuid>", "title": "..." }` |
+| `site_visit` (iOS) | `{ "site_visit_id": "<uuid>", "photo_count": 4, "measurements": [{ "label": "Deck width", "value": "14 ft 6 in" }], "notes": ["..."], "checklist": ["..."] }` |
 
 **Write paths** — `ProjectLifecycleService.onProjectStageChange` writes `status_change` rows with the `{from, to}` payload. The workspace `useProjectMutations` hook writes `project_created`, `project_archived`, and `photo_uploaded` rows. Estimate / invoice / payment / expense writes happen inside their respective services as those features are wired into the workspace timeline (later phases).
 
