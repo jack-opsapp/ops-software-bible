@@ -2095,6 +2095,35 @@ Permission tables have their own RLS policies:
 - **Write**: Only users with `team.assign_roles` permission can create/modify custom roles, assign roles, and modify role permissions
 - Preset roles cannot be updated or deleted (enforced by `NOT is_preset` checks on write policies)
 
+### Per-Member Permission Overrides (Migration `20260703120000`, 2026-07-03)
+
+**Context** (BUG BURNDOWN W5): `user_permission_overrides` existed with iOS write/resolve support but was inert on web and **ignored by the server** — `public.has_permission()` and the RLS ceilings (`private.current_user_scope_for` → `current_user_has_permission`) consulted only the admin bypass + role grants. The web Team surface also could not render RBAC data: `user_roles` / `role_permissions` had own-row-only read policies, so a company admin saw phantom/blank roles for every member but themselves. Migration `20260703120000_permission_overrides_engine` fixes all of this additively.
+
+**Effective-permission contract** (identical across the DB functions, iOS `PermissionService`, and web `src/lib/permissions/resolve.ts`):
+
+1. **Admin bypass** — account holder ∪ `companies.admin_ids` ∪ `users.is_company_admin` ⇒ every registered permission at scope `all`. Overrides are ignored for admins.
+2. **Override** — a `user_permission_overrides` row for `(user, permission)` **in the user's current company**:
+   - `granted = false` ⇒ **denied** (revokes a role grant).
+   - `granted = true, scope IS NOT NULL` ⇒ that scope is authoritative (widen *or* narrow vs the role).
+   - `granted = true, scope IS NULL` ⇒ inert; falls through to the role.
+   - Rows whose `company_id` ≠ the user's current company are ignored (stale).
+3. **Role** — widest scope among the user's role's `role_permissions` (`all` > `assigned` > `own`).
+
+**Functions changed** (`CREATE OR REPLACE`, signatures unchanged): `public.has_permission(uuid,text,text)` and `private.current_user_scope_for(text)` fold in the override lookup between the admin bypass and the role lookup. `private.current_user_has_permission` composes the latter and needed no edit.
+
+**Read policies added** (permissive, `TO public` — the app executes as anon): `user_roles` SELECT for same-company members; `role_permissions` SELECT for preset-or-same-company roles. These un-break the Team roster + Roles editor + the member access view with **no app release** (iOS reads benefit too).
+
+**Write policies:** the four `user_permission_overrides` admin policies were widened to `current_user_is_admin() OR current_user_has_permission('team.assign_roles','all')` (matches the stated write contract). The `roles` write policies were tightened to **same-company + (admin OR `team.assign_roles`)**, closing a prior cross-tenant hole (any member could previously mutate any company's custom roles). No new anon write grants — RBAC writes go through guarded service-role routes (below).
+
+**Registry rule (load-bearing):** `src/lib/types/permissions.ts` `ALL_PERMISSIONS` must remain a **superset** of every permission string granted in the DB — account holders/admins derive access from the registry via the bypass, so an unregistered DB string is silently denied to the owner while grantable to crew (the inverted-privilege trap). W5 registered the live-but-unregistered strings: `deck_builder.{view,create,edit}`, `projects.view_financials`, `inventory.manage`, `finances.view`, `time_off.approve`, `profile.edit`. **`spec.admin` is deliberately excluded** — registering it would hand the internal SPEC console to every company admin via the bypass; the override write route validates against the registry so the product surface can never display or write it.
+
+**Write routes** (service-role, Firebase-token verified, company-matched — mirror `PATCH /api/users/[id]/role`):
+- `PUT /api/users/[id]/permission-overrides` — `{ set:[{permission,scope,granted}], clear:[permission] }`. Rejects bypass-admin targets (409), unregistered permissions, and unsupported scopes; upserts on `(user_id, permission)` with the target's `company_id`; notifies the member. Powers the Team member access editor.
+- `PUT /api/roles/[id]/permissions` — transactional replace of a non-preset, same-company role's grants (the prior client-side write bounced off RLS as anon).
+- `DELETE /api/users/[id]/role` — removes a `user_roles` row + resets legacy `users.role` to `unassigned`.
+
+**iOS note:** iOS already resolves overrides client-side and writes them via `PermissionAdminService`; this migration aligns the server to that behavior (widen-only for the 18 pre-existing grant rows — zero revokes — so no live traffic is affected). iOS adoption of the guarded web write routes is a future item; today iOS RBAC writes rely on its own direct-table paths.
+
 ### Mention-Based Project Access (Migration 074, 2026-04-20)
 
 **Rule**: a user tagged in any live (non-soft-deleted) `project_notes.mentioned_user_ids` entry for a project gains read-only view access to the project and its tasks, regardless of `projects.team_member_ids` membership.
