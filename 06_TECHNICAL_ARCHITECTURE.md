@@ -182,7 +182,7 @@ ops-ios/OPS/
 │   │   ├── SyncEngine.swift             # @MainActor @Observable orchestrator; dispatches through DataActor when FeatureFlags.useDataActor is on (default true 2026-04-19)
 │   │   ├── OutboundProcessor.swift      # LEGACY @MainActor path for local→server push; retained behind FeatureFlags.useDataActor for rollback
 │   │   ├── InboundProcessor.swift       # LEGACY @MainActor path for server→local pull; retained behind FeatureFlags.useDataActor for rollback
-│   │   ├── RealtimeProcessor.swift      # @MainActor Supabase Realtime WebSocket subscription (9 entity types); SwiftData writes dispatch to DataActor when flag on
+│   │   ├── RealtimeProcessor.swift      # @MainActor Supabase Realtime WebSocket subscription (9 merged entity types + 3 notification-only leads tables: opportunities/activities/follow_ups → post .opsLeadsDidChange, no SwiftData merge); SwiftData writes dispatch to DataActor when flag on
 │   │   ├── PhotoProcessor.swift         # @MainActor adaptive photo uploads (WiFi 3 concurrent, cellular 1) — moves to PhotoActor in Phase 3
 │   │   ├── BackgroundSyncScheduler.swift  # BGTaskScheduler wrapper (refresh 15min, processing 30min)
 │   │   ├── SyncTypes.swift              # Shared enums (SyncError, ConnectionState, SyncEntityType — 27 registered, 12 inbound-synced)
@@ -199,7 +199,7 @@ ops-ios/OPS/
 ├── ViewModels/ (7 files)
 │   ├── CalendarViewModel.swift     # Calendar state, date selection, filters
 │   ├── ProjectsViewModel.swift     # Project list state
-│   ├── PipelineViewModel.swift     # Sales pipeline state
+│   ├── PipelineViewModel.swift     # Sales pipeline / LEADS state; direct-fetch (outside SwiftData sync). Merge-based auto-refresh: realtime (.opsLeadsDidChange) + foreground-resume + pull-to-refresh funnel through one debounced, coalesced reload that merges server rows into existing Opportunity instances by id (identity preserved, pushed detail stays live)
 │   ├── OpportunityDetailViewModel.swift  # Opportunity detail state
 │   ├── EstimateViewModel.swift     # Estimate management state
 │   ├── InvoiceViewModel.swift      # Invoice management state
@@ -1763,9 +1763,16 @@ class ImageCache {
 - Fields with pending local changes are preserved (local wins for pending ops)
 
 **Realtime (RealtimeProcessor.swift):**
-- Supabase Realtime WebSocket subscriptions for 9 entity types
+- Supabase Realtime WebSocket subscriptions for 9 merged entity types
 - Field-level merge protection same as InboundProcessor
 - Tracks disconnect/reconnect timestamps for catch-up delta sync on reconnect
+- **Notification-only tables (no merge):** `opportunities`, `activities`,
+  `follow_ups` (added 2026-07-03, bug 0b7e9b17) post `.opsLeadsDidChange`
+  exactly like `expenses`/`expense_batches` — no DTO decode, no actor dispatch,
+  no SwiftData write. LEADS is outside the sync engine (direct-fetch); the event
+  triggers a debounced REST re-fetch in `PipelineViewModel.scheduleRefresh`.
+  All three are in the `supabase_realtime` publication with REPLICA IDENTITY
+  FULL + `company_id` (verified 2026-07-03).
 - `calendar_user_events` events are merged live on the actor path (own-user rows
   only, matching `fetchForUser` visibility) via `RealtimeUpdate.calendarUserEvent`
   with a Supabase-tolerant date decoder (`SupabaseDate.makeISODecoder()`), and
@@ -2358,7 +2365,7 @@ When mobile apps eventually migrate (Phase 4), the changes will be concentrated 
 | API Client | SupabaseService + Repositories (partially migrated) | Supabase Swift/Kotlin client (full) |
 | Auth | Static API token + Firebase | Supabase Auth JWT |
 | Image Upload | Direct S3 + Bubble registration | Direct S3 (presigned URLs) via PhotoProcessor |
-| Real-time | Polling (3-min timer) | RealtimeProcessor — Supabase Realtime WebSocket (9 entity types) |
+| Real-time | Polling (3-min timer) | RealtimeProcessor — Supabase Realtime WebSocket (9 merged entity types + 3 notification-only leads tables) |
 | Offline Queue | `needsSync` flag pattern | **SyncOperation** records in SwiftData with OutboundProcessor coalescing |
 | Connectivity | ConnectivityMonitor (basic reachability) | **ConnectivityManager** — NWPathMonitor with quality scoring + lying WiFi detection |
 | Background Sync | BackgroundTaskManager | **BackgroundSyncScheduler** — BGTaskScheduler (refresh 15min, processing 30min) |
@@ -2504,7 +2511,7 @@ GeofenceManager uses iOS region monitoring (`CLCircularRegion`) for the nearest 
 3. **Exponential backoff** - `min(pow(2, retryCount), 60)` seconds with max 20 retries
 4. **Adaptive photo uploads** - 3 concurrent on WiFi, 1 on cellular
 5. **Lying WiFi detection** - ConnectivityManager detects connected-but-no-internet states
-6. **Realtime WebSocket** - RealtimeProcessor subscribes to 9 entity types with catch-up delta sync on reconnect
+6. **Realtime WebSocket** - RealtimeProcessor subscribes to 9 merged entity types with catch-up delta sync on reconnect, plus 3 notification-only leads tables (opportunities/activities/follow_ups → `.opsLeadsDidChange`, debounced REST re-fetch, no merge)
 7. **UI sync visibility** - SyncRingView in AppHeader, SyncStatusSection in NotificationListView
 
 ### Architectural Challenges

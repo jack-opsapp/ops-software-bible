@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: June 2, 2026
+**Last Updated**: July 2, 2026
 **iOS Reference**: `OPS/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -52,6 +52,8 @@ OPS uses **Supabase (PostgreSQL)** as the primary backend for both the iOS app a
 - Presigned URL generation for S3 image uploads (`/api/uploads/presign`)
 - OneSignal push notification routing (`/api/notifications/send`)
 - Stripe subscription management
+- OPS Decks verified zoning parcel lookup (`/api/decks/zoning/parcel`)
+- OPS Decks verified zoning parcel import (`/api/admin/decks/zoning/parcel-records/import`)
 
 **Bubble.io** is **legacy** -- see the [Bubble.io (Legacy)](#bubbleio-legacy) section for details on what remains.
 
@@ -65,6 +67,8 @@ iOS App (SwiftData)                   OPS Web (Next.js)
     |-- HTTPS --------> app.opsapp.co ----+--- /api/uploads/presign --> AWS S3
     |                                      +--- /api/notifications/send --> OneSignal
     |                                      +--- /api/stripe/* --> Stripe
+    |                                      +--- /api/decks/zoning/parcel --> Verified zoning cache
+    |                                      +--- /api/admin/decks/zoning/parcel-records/import --> Verified zoning cache ingest
     |                                      +--- /api/integrations/email/* --> Email Pipeline (17 routes)
     |                                      +--- /api/integrations/microsoft365/* --> M365 OAuth (2 routes)
     |                                      +--- /api/cron/auto-send --> Auto-send cron (5 min)
@@ -84,6 +88,14 @@ iOS App (SwiftData)                   OPS Web (Next.js)
 3. Supabase creates or matches a user, returns a session JWT
 4. All subsequent Supabase requests use the session JWT automatically (anon key + RLS)
 5. Server-side API calls to OPS-Web pass the Supabase `accessToken` as `Bearer` header
+
+### OPS Decks Zoning Parcel Lookup
+
+`POST /api/decks/zoning/parcel` is the standalone OPS Decks gateway route for address-based site-plan import. The app sends `Authorization: Bearer <Supabase/Firebase access token>` and JSON `{ site_address, jurisdiction_id?, source_app: "ops_decks" }`. OPS-Web verifies the token with the shared Supabase/Firebase verifier, resolves the caller through `users.auth_id` / `users.firebase_uid` / `users.email`, and uses the caller's `company_id` for the lookup boundary.
+
+The route reads `public.deck_zoning_parcel_records` via service role only. It first checks company-specific verified records, then global verified records. A hit returns DeckKit's native shape: `{ request: { siteAddress, jurisdictionId? }, parcelZoning }`, where `parcelZoning` is a `ParcelZoningPlan` JSON object with `status` in `available`, `partial`, or `userEntered`. A miss returns `404 { error: "Parcel zoning record not found" }` so the standalone app can open manual criteria entry. The route must never invent setbacks, lot coverage, height limits, parcel geometry, or jurisdiction rules from an address.
+
+`POST /api/admin/decks/zoning/parcel-records/import` is the OPS-Web admin-only ingest route for verified zoning cache rows. The body is `{ dry_run?: boolean, records: [...] }`; each record must include `site_address` and a DeckKit `parcel_zoning` object with `siteAddress`, valid `status`, and either `parcel` or `criteria` for `available` / `partial` sources. The route normalizes the address, derives provider/source URL/jurisdiction from the record when possible, supports dry-run previews with no writes, rejects the whole batch when any row is invalid, and idempotently updates active matches before inserting new rows. This route is for controlled OPS ingestion only; standalone clients consume the read route above.
 
 ### Cross-Platform Onboarding & Signup Contract
 
@@ -647,7 +659,9 @@ The previous `ConflictResolver.merge()` static method (timestamp-based, whole-re
 
 ### Architecture
 
-RealtimeProcessor subscribes to Postgres changes on 9 entity tables filtered by `company_id`. When an INSERT, UPDATE, or DELETE event arrives, it decodes the payload into the appropriate DTO, converts to a SwiftData model, and performs a field-by-field upsert with merge protection.
+RealtimeProcessor subscribes to Postgres changes on 9 merged entity tables filtered by `company_id`. When an INSERT, UPDATE, or DELETE event arrives, it decodes the payload into the appropriate DTO, converts to a SwiftData model, and performs a field-by-field upsert with merge protection.
+
+It additionally subscribes to 3 **notification-only** tables — `opportunities`, `activities`, `follow_ups` (added 2026-07-03, bug `0b7e9b17`) — which follow the `expenses`/`expense_batches` idiom: no DTO decode, no SwiftData merge, they simply post the `.opsLeadsDidChange` NotificationCenter event. LEADS is deliberately outside the SwiftData sync engine (direct-fetch via `OpportunityRepository`), so the event drives a debounced, coalesced REST re-fetch in `PipelineViewModel.scheduleRefresh` that merges server rows into the existing `Opportunity` instances by id. All three are in the `supabase_realtime` publication with `REPLICA IDENTITY FULL` + a `company_id` column (verified 2026-07-03).
 
 ### Configuration
 
