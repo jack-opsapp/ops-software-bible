@@ -1089,7 +1089,7 @@ The app must function fully without internet connectivity. All features must be 
 - **Stale Indicators** — Cards flagged if no activity within threshold (7 days default)
 - **Days in Stage** — Displayed on each card
 - **Won/Lost Prompts** — Loss reason required when moving to Lost; actual value for Won
-- **Discard** — Terminal stage for leads not worth pursuing. No confirmation dialog. Discarded leads stay in the system for analytics but are off the active board. Enables ad targeting quality measurement: won+lost (real leads) vs discarded (junk quality).
+- **Discard** — Terminal stage for a lead that was never real (junk: spam, wrong number, duplicate, test data). Off the active board, retained for data-quality analytics (won+lost = real leads vs discarded = junk quality). Operator-settable on iOS (2026-07-05): the long-press menu on any open lead + a "Discard instead" escape hatch in the mark-as-lost sheet (`ops-ios/OPS/Views/Leads/`), via `move_opportunity_stage` (stage=`discarded`) — no separate delete. iOS UX per founder direction: a one-time "discard vs lost" explainer on first use, then a lightweight one-line confirm each subsequent time — this supersedes the "no confirmation dialog" default for the manual iOS action.
 - **Terminal Columns** — Won, Lost, and Discarded are separate from active stages. Won/Lost shown in metrics bar with expandable deal lists. Discarded count shown in metrics bar for ad quality tracking.
 
 #### Pipeline Tab — iOS
