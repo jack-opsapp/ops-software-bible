@@ -4957,6 +4957,16 @@ Feature flags and RBAC permissions work together:
 
 If either check fails, the feature is inaccessible. Feature flags are the "master switch"; RBAC is the "granular control."
 
+### iOS offline resolution (cache-first)
+
+The iOS client resolves flags **cache-first**, and a failed *fresh* fetch is treated as "unknown", never "disabled":
+
+- On launch, `PermissionStore.loadCachedPermissions()` hydrates the last cached flag state from the Keychain, so entitlements are available instantly and offline.
+- `PermissionStore.fetchPermissions()` fetches RBAC and flags in parallel. `FeatureFlagService.fetchFlags` **throws** on a network failure (it is two extra round-trips, so it drops out first under weak reception). On a throw, `fetchPermissions` keeps the last-known-good flag state via `FeatureFlagService.resolve(fresh:lastKnown:)` rather than failing closed.
+- **Fail-closed** (`failClosedResult()`, which disables every known flag) applies **only** when there is genuinely no prior state — a fresh install with an empty cache.
+
+Rationale (bug `d5c899e6`): overwriting cached entitlements with a fail-closed result on any reception wobble hid DECK / pipeline / estimates / accounting for entitled field users mid-job ("the tab disappears as if it's live-syncing my permissions"). Absence of a fresh permission fetch is not absence of permission. **Do not "restore" fail-closed-on-fetch-failure** — it is a regression.
+
 ### Database Schema
 
 #### `feature_flags` Table
