@@ -5917,8 +5917,8 @@ All social content is generated Sunday evening and posted to `#social-media` for
 
 | Bucket | Public | Purpose | RLS |
 |--------|--------|---------|-----|
-| `images` | Yes | Blog thumbnails, in-post images | Anon read; admin write via upload route |
-| `social-media` | Yes | Generated social graphics | Anon upload restricted to generator paths |
+| `images` | Yes | Blog thumbnails, in-post images | Public read (URL); **service_role** write (server upload routes). Anon write policies revoked — W3 §7 (`03_DATA_ARCHITECTURE.md`) |
+| `social-media` | Yes | Generated social graphics | Public read (URL); **service_role** write (`supabase_upload.py`). Anon write policies revoked — W3 §7 |
 
 - Blog thumbnails: `images/blog-thumbnails/{name}.webp`
 - In-post images: `images/blog/{timestamp}-{random}.{ext}`
@@ -5981,7 +5981,7 @@ python supabase_upload.py --prefix blog-carousel slide_1.png slide_2.png
 
 Returns public URLs: `https://ijeekuhbatykdomumfjx.supabase.co/storage/v1/object/public/social-media/{prefix}/{timestamp}/slide_*.png`
 
-Auth: Uses anon key (hardcoded in file, lines 25–26). RLS restricts anon uploads to generator-convention paths within `social-media` bucket.
+Auth: Uses the **service_role** key (env override `SUPABASE_SERVICE_ROLE_KEY`, else a hardcoded service_role fallback, lines 35–38), which **bypasses storage RLS**. The `social-media` (and `images`) buckets' legacy `{anon}`/`{public}` write policies were vestigial from an early anon prototype (the `test-anon-write.jpg`/`probe-*.png` objects are its fingerprint) and are revoked by W3 §7 migration `20260705170000_sec_w3_storage_anon_write_revoke` (pending operator go) — service_role writes are unaffected. See `03_DATA_ARCHITECTURE.md` § Storage.
 
 ### Automated Social Content Schedule
 
