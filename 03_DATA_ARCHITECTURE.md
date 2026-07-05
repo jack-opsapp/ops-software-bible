@@ -2289,6 +2289,8 @@ Two migrations closed the gap, both replacing the old policies with the layered 
 
 **Sentinel evidence (all against prod, in rolled-back transactions)** — `request.jwt.claims` simulation across Canpro + Maverick (admin + member each), a pure ops-admin, and raw anon confirmed every scoping predicate; end-to-end `SET ROLE anon` proved qa_bugs row visibility = {operator 234, member 0, anon 0} and the hardened `get_inbox_density_per_client` = {own-company 241, cross-company 0, raw anon 0}.
 
+**Applied 2026-07-03 (operator-approved):** M1–M4 + a follow-up (M6) are **live on prod** (advisor delta 167 → 149; smoke check: a live Canpro admin still sees 332 projects / 407 photos / 395 clients / 437 opportunities). M6 revokes anon/authenticated grants on the `asc_conversion_daily` **security_invoker view** — a 9th App Store object surfaced during post-apply verification; M4 had already closed its read path (base-table revoke), M6 removes the vestigial grant. The seven other anon-granted `security_invoker` views (`inventory_*`, `project_table_rows`) are intentional company-scoped product views and were left in place. M5 (function-body hardening) was **corrected before apply**: `remove_seated_employee`'s only caller is the iOS account-self-deletion cleanup (target already soft-deleted), not admin removal, so its guard was retargeted from "admin of the company" to "target is an already-soft-deleted member" (blocks evicting active members; permits the cleanup). M5 remains **pending operator go**.
+
 ### Web Implementation Reference
 
 The web app (OPS-Web) implements the permission system with:
