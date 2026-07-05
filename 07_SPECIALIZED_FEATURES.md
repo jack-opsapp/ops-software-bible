@@ -5981,7 +5981,7 @@ python supabase_upload.py --prefix blog-carousel slide_1.png slide_2.png
 
 Returns public URLs: `https://ijeekuhbatykdomumfjx.supabase.co/storage/v1/object/public/social-media/{prefix}/{timestamp}/slide_*.png`
 
-Auth: Uses the **service_role** key (env override `SUPABASE_SERVICE_ROLE_KEY`, else a hardcoded service_role fallback, lines 35–38), which **bypasses storage RLS**. The `social-media` (and `images`) buckets' legacy `{anon}`/`{public}` write policies were vestigial from an early anon prototype (the `test-anon-write.jpg`/`probe-*.png` objects are its fingerprint) and are revoked by W3 §7 migration `20260705170000_sec_w3_storage_anon_write_revoke` (pending operator go) — service_role writes are unaffected. See `03_DATA_ARCHITECTURE.md` § Storage.
+Auth: Uses the **service_role** key (env override `SUPABASE_SERVICE_ROLE_KEY`, else a hardcoded service_role fallback, lines 35–38), which **bypasses storage RLS**. The `social-media` (and `images`) buckets' legacy `{anon}`/`{public}` write policies were vestigial from an early anon prototype (the `test-anon-write.jpg`/`probe-*.png` objects are its fingerprint) and were revoked by W3 §7 migration `20260705170000_sec_w3_storage_anon_write_revoke` (applied to prod 2026-07-05) — service_role writes are unaffected. See `03_DATA_ARCHITECTURE.md` § Storage.
 
 ### Automated Social Content Schedule
 
