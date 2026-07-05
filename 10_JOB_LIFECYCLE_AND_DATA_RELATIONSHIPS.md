@@ -4,7 +4,7 @@
 
 **Purpose**: Defines the complete data flow for a trade job from first contact through to a paid invoice. Documents all entity relationships, automation triggers, new entities, and required changes to existing entities. This is the master reference for how leads, pipeline, clients, estimates, projects, tasks, and invoices inter-operate.
 
-**Last Updated**: May 29, 2026
+**Last Updated**: June 26, 2026
 **Designed With**: ops-web codebase + ops-software-bible review session
 
 ---
@@ -198,6 +198,7 @@ Project (Closed)
 - Manual entry by office staff
 - Web inquiry form submission (auto-creates Opportunity)
 - Staff logs a call/email (creates Opportunity from that log)
+- Staff starts a site visit from the FAB, captures client details onsite, then creates/links the lead from the visit identity panel
 - Gmail integration — unrecognized inquiry email surfaced for staff review → "Create Lead"
 
 **Card shows:** Contact name, source badge, rough estimated value, age in stage
@@ -213,7 +214,7 @@ Staff is assessing scope. Site visit may be booked.
 
 **Actions available from card:**
 - Log activity (call, meeting, site visit)
-- Book site visit (creates SiteVisit — scheduling dates stored on the visit/task directly; CalendarEvent model has been removed)
+- Start or book site visit (creates/reuses SiteVisit — scheduling dates stored on the visit/task directly; CalendarEvent model has been removed)
 - Create follow-up reminder
 - Update estimated value as scope clarifies
 
@@ -723,10 +724,12 @@ DeckBuilderViewModel.save()
    ├─ DeckDrawingData.toJSON() runs
    │     └─ ComponentEmitter.emit(self) populates `components[]` from
    │        canonical geometry — one row per railing / post_set /
-   │        stair_set / deck_board / gate. Per-edge linear_feet is
-   │        net of stair span and gate widths; deck_board sqft is
-   │        per-detected-face; multi-level connection stairs carry
-   │        level_id pinned to the upper level.
+   │        stair_set / deck_board / gate, plus additive Phase 2
+   │        structural rows for joist / beam / post / rim_joist /
+   │        blocking when drawing_data.framing exists. Per-edge
+   │        railing linear_feet is net of stair span and gate widths;
+   │        deck_board sqft is per-detected-face; multi-level
+   │        connection stairs carry level_id pinned to the upper level.
    └─ drawingDataJSON written with up-to-date components projection
    ↓
 DeckBuilderViewModel.mergedCatalogLineItems()
@@ -756,6 +759,8 @@ CatalogEstimateMerger.merge(adapterItems, legacyItems, defaultsCovered)
    │     stair_set            → drop "Stairs", "Connecting Stairs"
    │     deck_board           → drop "Surface"
    │     gate                 → drop nothing
+   │     structural rows      → currently skipped until the enum-backed
+   │                            product-default vocabulary is extended
    ├─ Legacy rows in uncovered categories pass through
    └─ Warning rows always pass through
    ↓
@@ -791,6 +796,7 @@ task_materials rows pinned to concrete catalog_variant_ids
 
 - `components[]` missing on legacy `drawing_data` JSON → `DeckBuilderViewModel.init` backfills via `ComponentEmitter.emit` so the adapter sees a populated projection on first load. Designs the user never reopens stay legacy on disk; adapter no-ops on them.
 - `company_default_products[component_type]` missing → adapter skips the component silently. Merger then falls through to legacy for that category.
+- Phase 2 framing rows (`joist`, `beam`, `post`, `rim_joist`, `blocking`) are additive projection rows. They are safe to persist before catalog/web product-default support lands because unknown or unmapped rows skip rather than failing the estimate flow.
 - Line items without `configured_options` (legacy rows or barebones flat products) → `CutListMaterializer.materialize` returns 0 rows (no recipe to resolve); install task carries no `task_materials` and the field crew works from the line item directly.
 - ops-web round-trips the same `drawingDataJSON`. The components key is forward-compatible (web ignores keys it doesn't recognize). If web strips the key on save, iOS backfills again on next load.
 
@@ -803,6 +809,11 @@ task_materials rows pinned to concrete catalog_variant_ids
 | `stair_set` | `tread_count`, `width`, `color`, `mount_type`, `edge_id` OR `connection_id`, `level_id` (multi-level) |
 | `deck_board` | `sqft`, `color`, `material`, `surface_id`, optional `level_id` |
 | `gate` | `count`, `width`, `color`, `mount_type`, `mount_surface`, `edge_id`, optional `level_id` |
+| `joist` | `linear_feet`, `nominal_size`, `ply_count`, `count`, `species`, `grade`, `level_id`, `member_id` |
+| `beam` | `linear_feet`, `nominal_size`, `ply_count`, `count`, `species`, `grade`, `level_id`, `member_id` |
+| `post` | `linear_feet`, `nominal_size`, `ply_count`, `count`, `species`, `grade`, `level_id`, `member_id` |
+| `rim_joist` | `linear_feet`, `nominal_size`, `ply_count`, `count`, `species`, `grade`, `level_id`, `member_id` |
+| `blocking` | `linear_feet`, `nominal_size`, `ply_count`, `count`, `species`, `grade`, `level_id`, `member_id` |
 
 Adding new metadata keys is fine; renaming or removing breaks the adapter contract — see `OPS/DataModels/Supabase/Catalog/CompanyDefaultProduct.swift` (`DesignComponentType` enum) and `OPS/Services/DesignToEstimateAdapter.swift:148-173` (`computeQuantity`).
 
@@ -1126,7 +1137,7 @@ Activity: Sent Estimate #042 to John Smith        ● 2 hours ago
 
 A scheduled or ad-hoc visit to a job site for scope assessment, client meeting, or project check-in. Can exist before a project (on an Opportunity) or after (on a Project).
 
-> **iOS status**: The `SiteVisit` SwiftData model exists (`OPS/OPS/DataModels/Supabase/SiteVisit.swift`) but no dedicated iOS views have been built yet. The site visit UI described below is design spec only at this time.
+> **iOS status (updated 2026-06-27)**: Lead detail, New Lead, and the FAB Site Visit action now open a dedicated site-visit capture console (`OPS/OPS/Views/SiteVisits/SiteVisitCaptureView.swift`). The FAB path can start without a linked lead. The console creates or reuses an active `SiteVisit`, autosaves a `SiteVisitIdentityDraft` for client/lead details, captures a local-first packet of photos, dictated/typed notes, manual measurements, real dimensioned-photo captures, feature-gated deck-design references, and selected/custom checklist answers, then stages the reviewed packet for project creation after a lead is linked.
 
 ```typescript
 type SiteVisitStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled'
@@ -1166,16 +1177,41 @@ interface SiteVisit {
 
 **Site visit lifecycle:**
 ```
-BOOK SITE VISIT (from Opportunity card or Calendar)
+BOOK SITE VISIT (from Opportunity card, New Lead, FAB, or Calendar)
   → SiteVisit created (status: scheduled)
   → SiteVisit scheduled (scheduling dates stored on SiteVisit/task directly; CalendarEvent model removed)
   → Activity auto-logged: "Site visit scheduled — Feb 20 @ 10am"
   → Opportunity stage → qualifying (if currently new_lead)
 
+START SITE VISIT FROM FAB
+  → Capture console opens immediately, with no lead pre-step
+  → SiteVisit created with opportunityId = null until the operator links or creates the lead
+  → Operator can search active leads/clients inside the same console
+  → If lead exists: bind the visit and all active packet records to that opportunity
+  → If only the client exists: bind client details and keep capturing until the lead is created
+  → If neither exists: fill client/contact/address fields inline and create the lead from the identity panel when connection is available
+
 ON-SITE (staff opens visit on mobile/web)
   → SiteVisit.status → in_progress
-  → Staff adds photos (camera or gallery)
-  → Staff fills notes, measurements
+  → SiteVisitIdentityDraft autosaves client/contact/address/search fields locally
+  → Selected SiteVisitType fields snapshot into SiteVisitChecklistAnswer rows
+  → If the attached lead, client, or address is wrong:
+      Operator expands the lead/client panel
+      Corrects address/contact/client fields inline
+      Or reassigns the entire capture packet to another active lead
+  → Staff captures photos rapid-fire
+  → Staff dictates or types notes; iOS autosaves one live draft artifact as text changes
+  → Staff records measurements
+  → Staff reviews captured photo thumbnails, opens zoomable previews, and marks up captured photos
+  → If deck_builder is enabled and the user can create/edit designs:
+      Staff creates the CanPro deck design during the site visit
+  → If dimensioned capture is available:
+      iOS opens DimensionedCaptureView during the visit
+      Operator captures/annotates the measured photo before leaving site
+      SiteVisitDimensionedCaptureStore saves a local dimensioned-photo artifact
+  → Checklist fields autosave as the operator answers them
+  → Photo, measurement, and deck-design checklist fields can use the matching captured evidence already in the packet
+  → Operator can add ad-hoc checklist questions during the visit
 
 MARK COMPLETE
   → SiteVisit.status → completed, completedAt = now
@@ -1184,12 +1220,16 @@ MARK COMPLETE
       subject: "Site visit completed"
       content: siteVisit.notes (preview)
       siteVisitId: siteVisit.id
-  → Opportunity stage prompt: "Ready to build estimate?"
-    → if Yes → creates Estimate (draft) → stage → quoting
+  → Operator reviews which packet artifacts pipe into the project
+  → Project creation stays blocked until a lead is linked and required checklist answers are complete
+  → Create Project opens the normal conversion flow with the packet staged
 
 JOB WON (opportunity converts to project)
-  → For each photo in siteVisit.photos:
+  → For each reviewed photo artifact:
       ProjectPhoto created (source: 'site_visit', siteVisitId: siteVisit.id)
+  → Reviewed notes/transcripts/measurements become a project note
+  → Answered checklist lines become part of the same project note
+  → Reviewed deck-design artifact attaches the standalone DeckDesign to the project
   → Photos appear in project gallery under "Site Visit" group
 ```
 
@@ -1387,6 +1427,10 @@ For each SiteVisit WHERE siteVisit.opportunityId = opportunity.id:
 | First ProjectTask status → InProgress | `project.status → InProgress` |
 | All ProjectTasks status = Completed | `project.status → Completed` (prompt) |
 | Invoice status → Paid | `project.status → Closed` |
+
+> **Archived is never a completion outcome.** The paid-invoice cascade above is the ONLY automatic terminal transition for a finished job, and its target is `Closed`, not `Archived`. A job that is complete **and** paid is a *success* → `Closed`. `Archived` is reserved for operator-initiated **pause/cancel**.
+>
+> **Web correction required (recorded 2026-07-04, bug `af27ea82`).** `ProjectLifecycleService.proposeArchiveActions` (`ops-web/src/lib/api/services/project-lifecycle-service.ts`, ~L1180–1308) currently proposes an `archive_project` agent action for completed projects whose tasks are all done and whose `outstandingBalance == 0` — i.e. complete **and** paid — and `ApprovalQueueService.executeArchiveProject` (`ops-web/src/lib/api/services/approval-queue-service.ts`, ~L481–503) sets `status = 'archived'` on accept. That contradicts this table: those projects must land in `Closed`. Fix: (1) ensure the paid-invoice cascade actually fires `→ Closed` so complete+paid projects don't linger in `Completed`; (2) retarget the completed+paid suggestion + executor to `Closed` (add a `close_project` action type/executor, or branch `executeArchiveProject` to `closed` when the project is complete+paid), reserving `archived`/`executeArchiveProject` for operator pause/cancel. Requires a web worktree off `origin/main` + Jackson's deploy go. iOS already suppresses the misleading `agent_suggestion` rail notification (it has no agent-queue surface).
 
 ---
 
@@ -2664,8 +2708,10 @@ EmailConnection ────── Company ──── CompanySettings
 | `Accepted` | Estimate approved, work authorized | Estimate approved |
 | `InProgress` | Field work started | First task goes InProgress |
 | `Completed` | All tasks done, ready to invoice | All tasks Completed |
-| `Closed` | Invoice fully paid | Invoice status → Paid |
-| `Archived` | Manually archived | Manual action |
+| `Closed` | Complete **and** fully paid — terminal *success* | All tasks Completed **and** invoice status → Paid (auto, Automation F) |
+| `Archived` | Paused or cancelled — work will not continue | Operator action only — **never** an automatic post-completion state |
+
+> **Closed vs Archived (canonical rule).** `Closed` is the terminal *success* state — the job finished and the money is in. `Archived` is the terminal *non-completion* state — work that was paused or cancelled. Completion never auto-archives: a completed, fully-paid project moves to `Closed`; `Archived` is reserved for operator-initiated pause/cancel. Any automation that archives a completed+paid project is a defect — it must move the project to `Closed` (see the web-correction note under Automation F).
 
 ### Estimate Statuses
 
@@ -2920,9 +2966,24 @@ Invoices are fully implemented on iOS with the following views in `OPS/OPS/Views
 | `InvoiceCard.swift` | Summary card for invoice lists |
 | `PaymentRecordSheet.swift` | Record a payment against an invoice |
 
-#### SiteVisit — Model Only (No iOS Views)
+#### SiteVisit — iOS Capture Packet (Built 2026-06-26, identity panel updated 2026-06-27)
 
-The `SiteVisit` data model exists at `OPS/OPS/DataModels/Supabase/SiteVisit.swift` (SwiftData `@Model` with fields: `id`, `opportunityId`, `companyId`, `status`, `scheduledAt`, `completedAt`, `notes`, `address`, `assignedTo`, `createdAt`). However, no dedicated iOS views exist for site visits yet. Site visit UI (create, on-site capture, complete) is not yet built on iOS.
+The `SiteVisit` data model exists at `OPS/OPS/DataModels/Supabase/SiteVisit.swift`; `opportunityId` is optional so the FAB can start capture before a lead is selected. Lead detail, New Lead, and the FAB now open a full-screen site-visit capture console from `OPS/OPS/Views/SiteVisits/`.
+
+Built iOS files:
+
+| File | Purpose |
+|---|---|
+| `SiteVisitIdentityDraft.swift` | SwiftData model for local-first client/lead identity capture: client/contact/address/search fields, additional emails, linked client/opportunity ids, and completion state |
+| `SiteVisitCaptureView.swift` | Field-first capture console: inline lead/client search + manual identity fields, rapid photos, autosaved dictated/typed notes, measurements, dimensioned capture, photo thumbnails/preview/markup, gated deck-design capture, packet review |
+| `SiteVisitCaptureViewModel.swift` | Creates/reuses an active visit, seeds/selects visit types, snapshots checklist answers, autosaves identity and note drafts, creates/links lead/client records, saves local artifacts, links captured evidence to checklist answers, reassigns packets to another lead, completes the visit, builds the reviewed project payload |
+| `SiteVisitDimensionedCaptureStore.swift` | Saves pre-project `CapturedAssets` + `DimensionsData` as a local dimensioned-photo artifact |
+| `SiteVisitProjectHandoff.swift` | Applies reviewed artifacts to a newly created project as `ProjectPhoto`, dimensioned `PhotoAnnotation`, `ProjectNote`, and attached `DeckDesign` rows |
+| `SiteVisitProjectHandoffStore.swift` | Stages the reviewed packet between the site-visit review sheet and the existing project conversion sheet |
+| `SiteVisitCaptureArtifact.swift` | SwiftData model for the local pre-project packet and reviewed project payload |
+| `SiteVisitType.swift` | SwiftData models for company-scoped visit templates, custom fields, and per-visit checklist answer snapshots |
+
+The site-visit measure-photo action now uses the real dimensioned capture/annotation screen when `feature.measurement.dimensioned_capture` and device capability allow it. Simulator and no-AR devices still cannot validate LiDAR hardware capture; physical-device QA is required before claiming the scanner is field-proven.
 
 #### Email Pipeline Integration — Web Only (No iOS Implementation)
 
