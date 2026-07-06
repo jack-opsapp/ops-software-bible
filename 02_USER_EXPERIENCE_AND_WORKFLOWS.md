@@ -1366,6 +1366,25 @@ in the 2026-04-27 Phase 1+2 rework)
 
 ---
 
+### Unified Log Activity Capture
+
+**Purpose:** One OPS-native capture for every logged interaction — replaces the three former loggers (generic "Log Activity", "Log a Call", and the lead-detail LOG action).
+
+**Source:** `Views/Pipeline/UnifiedLogActivitySheet.swift` + `ViewModels/UnifiedLogActivityViewModel.swift` (single write path: `ActivityRepository`).
+
+**Entry points (all land in the same sheet):**
+- **FAB → Log Activity** — opens unbound; operator picks the target (lead / client / job) from `ActivityTargetPickerView`, or a new lead is created inline when nothing matches.
+- **Lead detail → LOG** — target locked to that opportunity.
+- **Post-call return / Siri / App Shortcut** — target + call provenance (`call_source`, `caller_number`, `call_started_at`) carried in; live phone dedup resolves the lead for the unbound capture path.
+
+**Sheet anatomy (top→bottom):** header (+ optional `// CALLED <name>` provenance subline) · NOTE with an inline DICTATE voice pill · TYPE chips (CALL / EMAIL / MEETING / NOTE — correspondence only; no SITE VISIT, no TEXT) · AGAINST (locked chip or picker row) · DETAIL (DIRECTION for call/email, DURATION for call/meeting, OUTCOME for all but note, optional SUBJECT) · optional FOLLOW-UP row · footer CANCEL / LOG. The steel-blue accent appears once (the primary CTA); selection is a white surface shift, never green.
+
+**Voice capture:** dictation streams a live transcript; on stop it folds into the NOTE body and `VoiceActivityParser` infers type, target, and a follow-up suggestion (date + title). A dictation that ends in an *error* still flushes the partial words (never silently discarded). Follow-up suggestions are never auto-persisted — the operator taps SET (opportunity targets only; `follow_ups` has no client/job parent).
+
+**First-log auto-advance:** the first activity on a `new_lead` opportunity advances it to `qualifying` and writes a `stage_transitions` row — free server behavior preserved by threading `opportunity_id` + `created_by`.
+
+---
+
 ### EstimatesListView (Estimates Segment)
 
 **Purpose:** List all company estimates with filtering, search, and swipe actions.

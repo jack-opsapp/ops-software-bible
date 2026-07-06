@@ -986,7 +986,7 @@ class Opportunity: Identifiable {
 ### 13. Activity (Supabase-Backed)
 
 **File**: `DataModels/Supabase/Activity.swift`
-**Purpose**: Timeline event per opportunity.
+**Purpose**: Timeline event parented to EXACTLY ONE of a lead (opportunity), a client, or a job (project).
 
 **Properties**:
 
@@ -994,7 +994,9 @@ class Opportunity: Identifiable {
 @Model
 class Activity: Identifiable {
     @Attribute(.unique) var id: String
-    var opportunityId: String
+    var opportunityId: String?      // lead parent (uuid, FK opportunities); nil for a client/job-scoped row
+    var clientId: String?           // client parent (uuid, NO FK); unified-activity widening (OPSSchemaV13)
+    var projectId: String?          // job parent (Supabase TEXT, NO FK); unified-activity widening (OPSSchemaV13)
     var companyId: String
     var type: ActivityType
     var subject: String?            // mirrors NOT NULL DB column; Optional locally for migration safety
@@ -1022,6 +1024,7 @@ class Activity: Identifiable {
     // call_source     TEXT                         — around-call provenance from iOS (post_call_prompt | fab | app_shortcut); nullable (feature 154cb8a3)
     // caller_number   TEXT                         — normalized digits of the call's number, for dedup; nullable
     // call_started_at TIMESTAMPTZ                  — best-effort call start captured around-call by iOS; nullable
+    // site_visit_id   UUID FK site_visits          — parent for a completed-site-visit activity; nullable (not in the SwiftData model, sent via CreateActivityDTO)
 
     // Project Workspace Modal column (Supabase only — added 2026-05-06)
     // attachment_ids  UUID[] DEFAULT ARRAY[]::UUID[] — references to project_photos.id for activity entries with photo attachments.
@@ -1033,7 +1036,11 @@ class Activity: Identifiable {
 
 **Subject invariant**: `activities.subject` is `TEXT NOT NULL` with no default. Trigger `trg_activities_default_subject` (migration `add_activities_subject_default_trigger`, BEFORE INSERT) auto-fills it as a defense-in-depth measure: first non-empty line of `content` (truncated to 100 chars), else a type-derived label (`Call`, `Note`, `Site visit`, etc.), else `Activity`. Clients should send an explicit `subject` for best UX — iOS Log Activity flow derives `"{first line of notes}"` or `"Call with {contactName}"` style from form state.
 
-**iOS payload (CreateActivityDTO)** sends: `opportunity_id, company_id, type, subject, content, direction (call/email only), outcome (when non-empty), duration_minutes (call/meeting only and >0), created_by`. Other columns rely on Postgres defaults (`is_read`, `match_needs_review`, `has_attachments`, `attachment_count`, `sent_by_agent`, `created_at`).
+**Parent invariant (unified-activity widening, OPSSchemaV13)**: every activity has EXACTLY ONE parent — `opportunity_id` (lead, FK), `client_id` (client, no FK), or `project_id` (job, Supabase `TEXT`, no FK). The iOS write path is `ActivityRepository.logActivity(target: ActivityTarget, …)`, where `ActivityTarget` (`.opportunity | .client | .project | .unbound`) makes the single-parent rule unrepresentable-otherwise and drives which column `CreateActivityDTO` sets (the nil parents are omitted from the encoded JSON so PostgREST never receives `opportunity_id: null`). `company_id` (NOT NULL, RLS gate) and `created_by` (Supabase `users.id`, never the Firebase UID) are always stamped. The three legacy iOS loggers (Log Activity / Log a Call / lead-detail LOG) are consolidated into one `UnifiedLogActivitySheet` + `UnifiedLogActivityViewModel` that routes every write through this single path — correspondence types only (`call/email/meeting/note`), with direction/outcome/duration gated per type. Today only the lead timeline renders activities; client- and job-scoped rows persist for the deferred client/job timeline surfaces.
+
+**iOS payload (CreateActivityDTO)** sends: the single parent (`opportunity_id` | `client_id` | `project_id`), `company_id`, `type`, `subject`, `content`, `direction` (call/email only), `outcome` (when non-empty), `duration_minutes` (call/meeting only and >0), `call_source`/`caller_number`/`call_started_at` (call only), `site_visit_id` (site-visit auto-post only), `created_by`. Other columns rely on Postgres defaults (`is_read`, `match_needs_review`, `has_attachments`, `attachment_count`, `sent_by_agent`, `created_at`).
+
+**Site-visit → timeline auto-post (app-side).** iOS `SiteVisit` is LOCAL-ONLY (never synced to Supabase — zero `from("site_visits")` calls), so a DB trigger on `site_visits` can never fire; the completed-visit timeline entry is an app-side `activities` insert. On `SiteVisitCaptureViewModel.completeVisit()` the app best-effort posts one `type='site_visit'` activity (`subject=nil` → `trg_activities_default_subject` backfills "Site visit"; `body` = notes + answered-checklist roll-up; `site_visit_id` = the visit id) parented to the bound opportunity (falls back to the client, skips when fully unbound). It is idempotent: the local-only `SiteVisit.loggedActivityId` (added in `OPSSchemaV14`, nullable, never synced) is stamped on success so a re-completion or offline retry cannot double-post. Distinct from the site-visit **packet** written to `project_notes` (`event_kind='site_visit'`) for the project-workspace Activity tab — see § project_notes unified timeline.
 
 **Around-call provenance (feature 154cb8a3, migration `add_call_provenance_to_activities`).** Three nullable, additive columns — `call_source`, `caller_number`, `call_started_at` — let iOS record where a `call` activity came from when captured via the around-call lead-capture flow. `call_source` ∈ `post_call_prompt | fab | app_shortcut`; `caller_number` is the normalized digit form of the dialed/received number (NANP country code stripped); `call_started_at` is the best-effort call start. NO check constraints / NO defaults / NO NOT NULL — the additive-only rule keeps iOS↔Supabase sync intact across App Store releases. Web and older rows carry nil. See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Around-call lead capture.
 
