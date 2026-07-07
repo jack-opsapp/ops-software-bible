@@ -3070,6 +3070,67 @@ also stamps `vinyl_ordered_at` and `vinyl_ordered_by`. This marker is a status
 field only. It does not create catalog orders, inventory deductions, recipes, or
 task material rows.
 
+### Deck Materials List (iOS — added 2026-07-06)
+
+The project Deck tab (`DeckTabView`) renders an auto-calculated `// MATERIALS`
+section below the 3D/2D viewport for vinyl jobs: the vinyl cut list, drip edge /
+clip / 90° flashing totals + stick counts, and glue buckets. Non-vinyl designs
+render nothing — the tab is byte-identical for them.
+
+**Pure engine stack** (`OPS/DeckBuilder/Engine/`), each a pure, unit-tested
+function composed by `DeckMaterialsResolver.resolve`:
+
+- `VinylOrderScaleResolver` — the strict vinyl-order scale, extracted verbatim
+  from `DeckBuilderViewModel` so read-only surfaces resolve scale without the
+  editor view model. Any stale/disagreeing dimension → nil (CONFIRM ONE EDGE
+  LENGTH).
+- `DeckMaterialsInputBuilder` — read-only equivalent of
+  `vinylOrderSurfaceInputs`: persisted `DeckSurface` ↔ detected-face Jaccard
+  matching WITHOUT `reconcileSurfaces()` mutation, plus a detected-faces fallback
+  for legacy empty stores. Returns each input paired with its assigned area items.
+- `DeckVinylDetection` — smart auto-detect (spec § 5). A surface is **vinyl** iff
+  it carries a vinyl-ish area item (`id == "std.decking.vinyl"`, OR name contains
+  "vinyl", OR its catalog product's name/description contains "vinyl"). A surface
+  with a non-vinyl area material is **excluded** even under a job signal. An
+  **unassigned** surface joins the vinyl set only when the job carries a vinyl
+  signal: a non-deleted `ProjectTask` whose `taskType.display` contains "vinyl"
+  (case/diacritic-insensitive), OR `drawing_data.config.vinylCatalogItemId` is
+  set. Adds the `std.decking.vinyl` "Vinyl Membrane" built-in area standard.
+- `DeckMaterialsEngine` — classifies each vinyl-face edge (first match wins):
+  interior seam (vertex pair shared by ≥2 detected faces on the level) → no
+  flashing; house edge → 90 flash; parapet-wall railing → 90 flash; otherwise
+  (incl. stair-carrying edges, full span) → drip edge + clip. Drip and clip share
+  the same edge set and feet; each has its own stick length. `sticks =
+  ceil(exactFeet / stickFeet)`; totals display as whole feet rounded up; a
+  zero-length class shows `—`. Glue = `ceil(vinyl surface area ÷ coverage)` on the
+  actual `PolygonMath.realWorldArea` (not ordered-with-waste area). The vinyl
+  block reuses `VinylCutListEngine.makePlan` (no offcut seeds in the tab's
+  read-only context).
+
+**Presets.** `drawing_data.materialsSettings` (`DeckMaterialsSettings`) holds
+crew-editable presets: `glueCoverageSqFt` (default 400, clamp 100–1000 step 25),
+`dripStickFeet` (8), `ninetyStickFeet` (8), `clipStickFeet` (10, all clamp 4–20
+step 1). Inline steppers on the live section write the whole node back to the
+design JSON (marks `needsSync` → syncs company-wide). Preset editing is allowed at
+`deck_builder.view` (a calculator preference, not geometry).
+
+**Ordered snapshot + drift.** MARK ORDERED (both entry points — the Vinyl Order
+sheet PROJECT MARKER section and the Details-tab `VinylOrderMarkerSection`) routes
+through the shared `DeckMaterialsOrderService`, which freezes the full materials
+list into `drawing_data.orderedMaterials` (`DeckMaterialsSnapshot`) FIRST
+(local-only), then writes the `projects.vinyl_order_*` marker trio; if the marker
+write throws it reverts the local snapshot so the two never disagree. CLEAR
+ORDERED removes the snapshot node and clears the marker. While a snapshot exists
+the section renders the frozen values, locks the presets, and stamps `ORDERED
+<DATE>`. Drift is detected by recomputing the live list with the snapshot's own
+settings and comparing a seed-/label-independent `DeckMaterialsDriftKey` (the
+multiset of all cut pieces by length × roll width, flashing exact feet ±0.1',
+glue area ±0.1, and vinyl surface count) — surface renames and stock changes do
+NOT flag drift; geometry / classification / scale changes surface `DESIGN CHANGED
+SINCE ORDER`. Both MARK ORDERED entry points compute the snapshot over the whole
+drawing via the same detection pipeline the tab uses, so their vinyl set matches
+the tab's recompute and never false-flags drift.
+
 **Text handoff:** The sheet can open `MFMessageComposeViewController` with no prefilled recipients. The user chooses the contact. The default message body contains only color and purchased cut lengths:
 
 ```
