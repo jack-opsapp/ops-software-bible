@@ -459,10 +459,12 @@ Estimate and invoice numbers are generated server-side via Supabase RPC:
 
 ```sql
 -- RPC: get_next_document_number(p_company_id, p_document_type)
--- Returns: "EST-0001", "EST-0002", ... or "INV-0001", "INV-0002", ...
+-- Returns "PREFIX-YEAR-NNNNN": "EST-2026-00001", ... or "INV-2026-00001", ...
+-- (v_prefix || '-' || v_year || '-' || LPAD(v_next::text, 5, '0');
+--  sequence resets per fiscal_year — 001_pipeline_schema.sql:682)
 ```
 
-This ensures sequential, race-condition-free numbering per company.
+This ensures sequential, race-condition-free numbering per company and fiscal year.
 
 ### Estimate Helpers
 
