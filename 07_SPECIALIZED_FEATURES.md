@@ -3070,7 +3070,7 @@ also stamps `vinyl_ordered_at` and `vinyl_ordered_by`. This marker is a status
 field only. It does not create catalog orders, inventory deductions, recipes, or
 task material rows.
 
-### Deck Materials List (iOS — added 2026-07-06)
+### Deck Materials List (iOS — added 2026-07-06; editable ordered record + full-roll ordering added 2026-07-07)
 
 The project Deck tab (`DeckTabView`) renders an auto-calculated `// MATERIALS`
 section below the 3D/2D viewport for vinyl jobs: the vinyl cut list, drip edge /
@@ -3117,9 +3117,36 @@ function composed by `DeckMaterialsResolver.resolve`:
 **Presets.** `drawing_data.materialsSettings` (`DeckMaterialsSettings`) holds
 crew-editable presets: `glueCoverageSqFt` (default 400, clamp 100–1000 step 25),
 `dripStickFeet` (8), `ninetyStickFeet` (8), `clipStickFeet` (10, all clamp 4–20
-step 1). Inline steppers on the live section write the whole node back to the
-design JSON (marks `needsSync` → syncs company-wide). Preset editing is allowed at
-`deck_builder.view` (a calculator preference, not geometry).
+step 1), plus the two full-roll fields `orderMode` (`VinylOrderMode`: `.cutList`
+default / `.fullRolls`) and `fullRollLengthFeet` (default 75, clamp 25–300 step 5).
+The live section adds an `ORDER` segmented control (`CUT LIST | FULL ROLLS`) and,
+in roll mode only, a `ROLL LENGTH` stepper. Inline steppers/controls write the
+whole node back to the design JSON (marks `needsSync` → syncs company-wide). The
+same `orderMode`/`fullRollLengthFeet` fields are read/written by the Vinyl Order
+sheet SETTINGS section, so the card and the sheet are one source of truth. Preset
+editing is allowed at `deck_builder.view` (a calculator preference, not geometry).
+
+**Editable ordered record (confirm step).** MARK ORDERED must capture what was
+*actually* ordered, not just the calculator's suggestion. Both entry points, when
+a materials list resolves, present `VinylOrderConfirmSheet` (`// CONFIRM ORDER`)
+first: every orderable quantity — vinyl (sq ft in cut-list mode, ROLLS with a
+read-only ≈ SQ FT echo in roll mode), drip/clip/90 stick counts, glue buckets — is
+pre-filled with the calc value and nudgeable, with a `RESET TO CALCULATED` action
+and a medium-haptic `CONFIRM ORDERED`. Confirming returns a
+`DeckMaterialsOrderConfirmation` that `DeckMaterialsOrderService.markOrdered(confirmed:)`
+freezes as the ordered truth. The snapshot's display quantity fields
+(`vinylOrderedSqFt`, `dripSticks`, `clipSticks`, `ninetySticks`, `glueBuckets`,
+plus `orderedRollCount` in roll mode) now carry the CONFIRMED values, while the
+drift-relevant geometry fields (`cutGroups`, flashing exact feet, `glueAreaSqFt`,
+`vinylSurfaceCount`) stay calc-derived. `isOrderedEdited` (true when any confirmed
+value ≠ its calc value at order time) drives a subtle `ADJUSTED` tag by the stamp.
+An `EDIT ORDER` action on the ordered card re-opens the confirm sheet pre-filled
+with the *current* stored values (RESET still targets the calculator) and rewrites
+via `DeckMaterialsOrderService.editOrder` — a local-only path that overwrites only
+the confirmed quantity fields and preserves the frozen geometry, order timestamp
+and orderer verbatim, so the drift key is byte-identical (a correction never needs
+CLEAR + re-order and never touches `DESIGN CHANGED SINCE ORDER`). Human quantity
+edits are never a drift input.
 
 **Ordered snapshot + drift.** MARK ORDERED (both entry points — the Vinyl Order
 sheet PROJECT MARKER section and the Details-tab `VinylOrderMarkerSection`) routes
@@ -3129,7 +3156,7 @@ list into `drawing_data.orderedMaterials` (`DeckMaterialsSnapshot`) FIRST
 write throws it reverts the local snapshot so the two never disagree. CLEAR
 ORDERED removes the snapshot node and clears the marker. While a snapshot exists
 the section renders the frozen values, locks the presets, and stamps `ORDERED
-<DATE>`. Drift is detected by recomputing the live list with the snapshot's own
+<DATE>` (roll-mode orders read `N ROLLS @ L' × W"`). Drift is detected by recomputing the live list with the snapshot's own
 settings and comparing a seed-/label-independent `DeckMaterialsDriftKey` (the
 multiset of all cut pieces by length × roll width, flashing exact feet ±0.1',
 glue area ±0.1, and vinyl surface count) — surface renames and stock changes do
@@ -3142,6 +3169,31 @@ count would diverge from the live side and false-flag drift the instant the desi
 was ordered. Both MARK ORDERED entry points compute the snapshot over the whole
 drawing via the same detection pipeline the tab uses, so their vinyl set matches
 the tab's recompute and never false-flags drift.
+
+**Full-roll ordering.** A `CUT LIST ⇄ FULL ROLLS` mode (persisted on the design as
+`materialsSettings.orderMode`) lets a crew buy whole rolls instead of an exact cut
+list. `VinylRollPacker.rollsNeeded(stripLengthsFeet:rollLengthFeet:)` — a pure
+first-fit-decreasing bin-packer — packs the plan's purchased strips
+(`plan.surfaces.flatMap(\.purchasedCuts).map { $0.lengthInches / 12 }`) into the
+fewest whole rolls of `fullRollLengthFeet` (a strip never spans two rolls; a strip
+longer than a roll is counted as `overlengthStripCount`, never dropped).
+`DeckMaterialsEngine.compute` emits `rollCount` + `overlengthStripCount` on
+`DeckMaterialsList` in roll mode (both 0 in cut-list mode). The materials card and
+the Vinyl Order sheet show the order line as `N ROLLS @ L' × W"` and keep the
+itemized cut list below as the on-site cutting guide; a `CUT LONGER THAN ROLL`
+banner appears when `overlengthStripCount > 0`. The Vinyl Order sheet's SUMMARY,
+CREATE ORDER + NOTE body, and text-message body express whole rolls in roll mode
+(the catalog line-item quantity stays sq ft — the catalog unit). Roll length
+(default 75') is distinct from the inventory `receiveRolls` physical-roll default
+(150'); they are not merged. **Order mode is a purchasing choice, never a design
+change** — `DeckMaterialsDriftKey` is geometry-only, so switching modes on an
+ordered design never flags drift. Sticks and glue are unaffected by roll mode.
+
+**New `drawing_data` JSON fields (additive, zero migration):**
+`DeckMaterialsSettings.orderMode` + `.fullRollLengthFeet`; `DeckMaterialsSnapshot.orderMode`,
+`.fullRollLengthFeet`, `.orderedRollCount` (`Int?`, roll mode only), `.isOrderedEdited`.
+All decode with `decodeIfPresent` + calc-fallback defaults (`.cutList`, 75, nil,
+false), so every legacy design/snapshot round-trips byte-behavior-unchanged.
 
 **Text handoff:** The sheet can open `MFMessageComposeViewController` with no prefilled recipients. The user chooses the contact. The default message body contains only color and purchased cut lengths:
 
@@ -3156,7 +3208,7 @@ The default cut row template is:
 -[quantity] @ [length]
 ```
 
-The `// TEXT TEMPLATE` section in `VinylOrderSheet` lets the user edit the message template, the per-cut row template, and the cut joiner (`lines` or `comma`). Message tokens: `[color]`, `[cuts]`, `[cut_count]`. Cut row tokens: `[quantity]`, `[length]`, `[surface]`, `[roll_width]`. Legacy `{{color}}`, `{{cuts}}`, and `{{cut_count}}` tokens still render. If the device cannot send SMS, it copies the rendered text to the clipboard.
+The `// TEXT TEMPLATE` section in `VinylOrderSheet` lets the user edit the message template, the per-cut row template, and the cut joiner (`lines` or `comma`). Message tokens: `[color]`, `[cuts]`, `[cut_count]`, `[rolls]` (the full-roll summary `N ROLLS @ L'` in roll mode; empty in cut-list mode, so an unused `[rolls]` token quietly disappears). Cut row tokens: `[quantity]`, `[length]`, `[surface]`, `[roll_width]`. Legacy `{{color}}`, `{{cuts}}`, and `{{cut_count}}` tokens still render. If the device cannot send SMS, it copies the rendered text to the clipboard.
 
 ### Cut-List Materialization (NEW)
 
