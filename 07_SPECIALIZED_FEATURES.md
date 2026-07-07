@@ -3090,7 +3090,14 @@ function composed by `DeckMaterialsResolver.resolve`:
   for legacy empty stores. Returns each input paired with its assigned area items.
 - `DeckVinylDetection` — smart auto-detect (spec § 5). A surface is **vinyl** iff
   it carries a vinyl-ish area item (`id == "std.decking.vinyl"`, OR name contains
-  "vinyl", OR its catalog product's name/description contains "vinyl"). A surface
+  "vinyl", OR its `productId` resolves — through `Product.linkedCatalogItemId` — to
+  a linked `CatalogItem` whose name/description contains "vinyl"). The detector is
+  pure: callers inject a `productId → vinyl-hint` map built by `DeckVinylHintBuilder`
+  (keyed by `Product.id` — what an `AssignedItem.productId` references — with each
+  product's own name folded together with its linked catalog item's name +
+  description). NB: an `AssignedItem.productId` is a **Products**-table id, not a
+  `CatalogItem.id` — the two are distinct id spaces bridged by
+  `Product.linkedCatalogItemId`; a map keyed by `CatalogItem.id` never matches. A surface
   with a non-vinyl area material is **excluded** even under a job signal. An
   **unassigned** surface joins the vinyl set only when the job carries a vinyl
   signal: a non-deleted `ProjectTask` whose `taskType.display` contains "vinyl"
@@ -3127,7 +3134,12 @@ settings and comparing a seed-/label-independent `DeckMaterialsDriftKey` (the
 multiset of all cut pieces by length × roll width, flashing exact feet ±0.1',
 glue area ±0.1, and vinyl surface count) — surface renames and stock changes do
 NOT flag drift; geometry / classification / scale changes surface `DESIGN CHANGED
-SINCE ORDER`. Both MARK ORDERED entry points compute the snapshot over the whole
+SINCE ORDER`. The vinyl surface count is **stored** on the snapshot
+(`DeckMaterialsSnapshot.vinylSurfaceCount`, frozen from the live `vinylInputs.count`
+at order time), NOT reconstructed from `cutGroups` — two surfaces sharing a label
+collapse to one cut group and a degenerate face produces no cuts, so a rebuilt
+count would diverge from the live side and false-flag drift the instant the design
+was ordered. Both MARK ORDERED entry points compute the snapshot over the whole
 drawing via the same detection pipeline the tab uses, so their vinyl set matches
 the tab's recompute and never false-flags drift.
 
