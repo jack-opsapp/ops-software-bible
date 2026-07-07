@@ -1587,7 +1587,7 @@ The editor composites every *other* author's overlay as a NON-editable base unde
 ### 25. CalendarUserEvent (Supabase-Backed)
 
 **File**: `DataModels/Supabase/CalendarUserEvent.swift`
-**Purpose**: User-owned calendar events — personal events (birthdays, appointments) and time-off requests requiring admin approval. Separate from project-linked CalendarEvents.
+**Purpose**: User-owned calendar events — personal/custom events and time-off rows. Time off can be submitted by the user as a pending request or booked directly as approved by a user with `time_off.approve`. Separate from project-linked schedule tasks.
 
 **Properties**:
 
@@ -1603,12 +1603,15 @@ class CalendarUserEvent: Identifiable {
     var endDate: Date
     var allDay: Bool
     var notes: String?
-    var status: String               // CalendarUserEventStatus.rawValue: "confirmed" | "pending" | "approved" | "rejected"
+    var status: String               // CalendarUserEventStatus.rawValue: "none" | "pending" | "approved" | "denied"
+    var address: String?
+    var teamMemberIds: [String]?     // Personal/custom event invitees
     var reviewedBy: String?          // User ID of admin who reviewed time-off request
     var reviewedAt: Date?
     var createdAt: Date
     var updatedAt: Date?
     var deletedAt: Date?
+    var seriesId: String?            // Shared UUID for expanded recurring personal events
 
     var lastSyncedAt: Date?
     var needsSync: Bool = false
@@ -1623,10 +1626,10 @@ enum CalendarUserEventType: String, Codable {
 }
 
 enum CalendarUserEventStatus: String, Codable {
-    case confirmed = "confirmed"   // No approval needed (personal events)
-    case pending = "pending"       // Time-off awaiting admin review
+    case none = "none"             // Personal/custom event; no approval workflow
+    case pending = "pending"       // Time off awaiting review
     case approved = "approved"
-    case rejected = "rejected"
+    case denied = "denied"
 }
 ```
 
@@ -1637,15 +1640,15 @@ enum CalendarUserEventStatus: String, Codable {
 - `overlaps(date:) -> Bool` — used by calendar views to show events on relevant days
 
 **Business Rules**:
-- Personal events: `status` is set to `.confirmed`, no approval workflow
-- Time-off requests: created as `.pending`, admin approves (`.approved`) or rejects (`.rejected`)
-- Only the owning user (`userId`) can create/edit their own events
-- Admin can review (approve/deny) time-off requests from any user in their company
+- Personal/custom events: `status` is `.none`; optional `teamMemberIds` invite other members and make the row visible/mirror-eligible for them
+- Time-off self requests: created as `.pending`; users with `time_off.approve` can approve (`.approved`) or deny (`.denied`)
+- Approver-booked time off: users with `time_off.approve` can create company-member time-off rows directly as `.approved`; the insert stamps `reviewedBy` / `reviewedAt`
+- Calendar visibility: own rows always appear; invited personal rows appear for invitees; `calendar.view(all)` can see company user events; `time_off.approve` users can see company time-off rows
 - Soft-delete via `deletedAt` (consistent with all Supabase-backed models)
 
 **Supabase Table**: `calendar_user_events`
 
-**RLS Note**: The `calendar_user_events` table uses `CAST(auth.uid() AS TEXT)` in its RLS policies because `users.id` is a UUID type while `calendar_user_events.user_id` is a text column. Standard `auth.uid() = user_id` comparisons fail without the explicit cast.
+**RLS Note**: The `calendar_user_events` table uses explicit UUID/text casts because `public.users.id` / `public.users.company_id` are UUID columns while `calendar_user_events.user_id` / `calendar_user_events.company_id` are text columns. Standard UUID-to-text comparisons fail without casts. Self-owned rows use the existing owner policy; migration `20260707194500_calendar_user_events_time_off_approver_policies.sql` adds insert/update policies for `time_off.approve` users to book or update active members' company time-off rows.
 
 **Added**: 2026-03-02 (Schedule Tab Redesign)
 

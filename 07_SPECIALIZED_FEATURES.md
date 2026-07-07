@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** May 20, 2026
+**Last Updated:** July 7, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -4746,27 +4746,23 @@ Task card in `DayPageView`. Has a `DayPosition` enum: `.single`, `.start`, `.mid
 **File:** `Views/Calendar Tab/Components/CalendarUserEventCard.swift`
 
 Card for personal events and time-off requests:
-- Shows event title, type badge ("Personal" / "Time Off"), date range
-- Time-off cards show status badge ("Pending" / "Approved" / "Rejected")
-- Supports swipe-to-delete
+- Shows event title, date range, semantic badge, and leading icon
+- Custom/personal events render as `CUSTOM` with a dashed custom-event treatment so they do not read as work cards
+- Time-off cards render with clock icons and semantic status treatment (`PENDING`, `APPROVED`, `DENIED`, `TIME OFF`)
+- Supports tap-to-edit, context-menu edit/delete, and span resize where wired by `DayCanvasView`
 
-#### PersonalEventSheet
-**File:** `Views/Calendar Tab/Components/PersonalEventSheet.swift`
+#### UserEventSheet
+**File:** `Views/Calendar Tab/Components/UserEventSheet.swift`
 
-Bottom sheet for creating a personal calendar event:
-- Fields: title, start date, end date, all-day toggle, notes
-- Creates `CalendarUserEvent` with `type: .personal`, `status: .confirmed`
-- Syncs to `calendar_user_events` Supabase table immediately
-
-#### TimeOffRequestSheet
-**File:** `Views/Calendar Tab/Components/TimeOffRequestSheet.swift`
-
-Bottom sheet for submitting a time-off request:
-- Fields: title, start date, end date, notes
-- Uses amber color scheme (distinct from blue personal event sheet)
-- Wrapped in `ScrollView` so the submit button remains visible above keyboard
-- Creates `CalendarUserEvent` with `type: .timeOff`, `status: .pending`
-- Syncs to `calendar_user_events` Supabase table immediately
+Unified bottom sheet for personal/custom events and time off:
+- Create mode toggles between `EVENT` and `TIME OFF`; edit mode locks to the existing row type
+- Personal/custom events require schedule-edit permission, require a title, support all-day/time-of-day, team invites, recurrence expansion, notes, and `status: .none`
+- Time-off create mode is self-submit by default; it does not require `calendar.edit`
+- Users with `time_off.approve` see a tappable `FOR` row and can book one or more active company members off directly
+- Approver-booked time off creates `CalendarUserEvent` rows with `type: .timeOff`, `status: .approved`, `reviewedBy`, and `reviewedAt`
+- Non-approver time-off submissions create `status: .pending` and notify `time_off.approve` recipients
+- Saves insert locally first for instant calendar feedback, then sync to `calendar_user_events` and replace local ids with server ids
+- First successful save still triggers the iPhone Calendar Mirror permission prompt when needed
 
 #### MonthGridView
 **File:** `Views/Calendar Tab/MonthGridView.swift`
@@ -4782,8 +4778,7 @@ Full month calendar grid:
 
 - Renders `CalendarDaySelector` above `DayCanvasView` (no more view-mode switch)
 - Passes `onMonthTapped: { viewModel.toggleMonthExpanded() }` to `AppHeader`
-- Listens for `ShowPersonalEventSheet` notification → sets `showPersonalEventSheet = true`
-- Listens for `ShowTimeOffRequestSheet` notification → sets `showTimeOffRequestSheet = true`
+- Uses the schedule-mode floating action menu to present `UserEventSheet` as either `EVENT` or `TIME OFF`
 - Passes `isScheduleTab: true` to `FloatingActionMenu`
 
 ### CalendarViewModel Changes
@@ -4792,8 +4787,8 @@ Full month calendar grid:
 |--------|--------|
 | Added `isMonthExpanded: Bool` | Drives week strip ↔ month grid toggle |
 | Added `toggleMonthExpanded()` | Called by AppHeader month icon tap; uses spring animation |
-| Added `userEvents(for:) -> [CalendarUserEvent]` | Returns personal events/time-off for a given date |
-| Added `loadUserEvents() async` | Fetches `CalendarUserEvent` records from Supabase |
+| Added `userEvents(for:) -> [CalendarUserEvent]` | Returns visible personal/custom events and time off for a given date |
+| Added `loadUserEvents()` | Loads visible local `CalendarUserEvent` rows: own rows, invited rows, all rows for `calendar.view(all)`, and company time-off for `time_off.approve` |
 | Removed `shouldShowDaySheet` | No longer needed (DayEventsSheet pattern eliminated) |
 | Removed `resetDaySheetState()` | Removed with the above |
 
@@ -4803,7 +4798,7 @@ Full month calendar grid:
 - **Supabase table:** `calendar_user_events`
 - **Repository:** `CalendarUserEventRepository.swift`
 - **DTOs:** `CalendarUserEventDTOs.swift`
-- **RLS note:** Uses `CAST(auth.uid() AS TEXT) = user_id` due to UUID/text type mismatch
+- **RLS note:** Uses explicit UUID/text casts due to `users.id/company_id` UUID columns and `calendar_user_events.user_id/company_id` text columns. Self-owned rows use the owner policy; migration `20260707194500_calendar_user_events_time_off_approver_policies.sql` adds `time_off.approve` insert/update policies for company time-off rows.
 
 ---
 
@@ -7063,6 +7058,8 @@ The `contentHash` (SHA-256 of canonical "title|start|end|notes|allDay") makes id
 | `CalendarUserEvent.timeOff` (pending) | `[Pending] {title}` | `[Pending] Cottage` |
 | `CalendarUserEvent.timeOff` (denied) | `[Denied] {title}` | `[Denied] Cottage` |
 | `ProjectTask` | `{project.title} — {taskType.display}` | `Smith Deck — Plumbing rough-in` |
+
+Approver-booked time off is created as `approved`, so it mirrors through the approved title path immediately after `CalendarUserEventRepository.create`.
 
 `EKEvent.url` = `ops://event/<calendarUserEventId>` or `ops://projects/<projectId>/tasks/<taskId>` — doubles as deep-link tap-through and reconciler recovery anchor.
 
