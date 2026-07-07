@@ -2177,7 +2177,7 @@ Public-facing SPEC funnel endpoints live in `ops-site/src/app/api/spec/`. Every 
 }
 ```
 
-**Auth**: Reads OPS user from any of: `Authorization: Bearer <token>` header, `__session` cookie, `ops-auth-token` cookie, `sb-<ref>-auth-token` cookie. Verifies via Supabase or Firebase JWKS (jose). Matches against `public.users` by auth_id → firebase_uid → email.
+**Auth**: Reads OPS user from any of: `Authorization: Bearer <token>` header, `__session` cookie, `ops-auth-token` cookie, `sb-<ref>-auth-token` cookie. Verifies the **Firebase ID token** (jose, Google JWKS). OPS authenticates every client — web dashboard AND both iOS apps — with Firebase Auth; Supabase is only the database (the Firebase JWT is bridged to Postgres via third-party auth). No client presents a Supabase-issued auth token. Matches against `public.users` by auth_id → firebase_uid → email. *(The legacy Supabase-token verifier — dead since no caller issued one — is retired in ops-web `fix/auth-identity-hardening`, staged 2026-07-07, pending prod deploy; `verifyAuthToken` is now Firebase-only.)*
 
 **Status codes**:
 
