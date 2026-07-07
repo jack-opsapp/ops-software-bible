@@ -687,6 +687,7 @@ Phase 3 on `OPS-Web/src/app/(dashboard)/calendar/`. Spec at `docs/superpowers/sp
 - Project rows are not manual scheduling targets. Project start/end dates are computed from the project's task schedule span; `projects.start_date` / `projects.end_date` are maintained as task-derived sync/cache fields, not operator-editable schedule inputs.
 - Universal Search project-row quick schedule only targets active, non-deleted, non-terminal tasks. If the project has zero schedulable tasks, the schedule control is hidden/disabled. If it has one schedulable task, the scheduler opens that task. If it has multiple schedulable tasks, the operator must choose the task before the scheduler opens.
 - `UnscheduledTaskReviewView` auto-schedule placement failures are persistent recovery states: the toast uses operator-readable copy and opens `CalendarSchedulerSheet` for manual task scheduling instead of ending at a no-action error.
+- **iOS month-grid quick actions (2026-07-07):** `EventDetailCard` restores the same field actions as day view: Push, Extend, Cascade, and Pick new date. Cascade actions use `DataController.planCascade` + `CascadePreviewSheet` before committing with `pushTaskWithCascade`, so the preview and write path stay identical.
 
 **Core Implementation:**
 ```swift

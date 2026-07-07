@@ -365,6 +365,8 @@ All auto-advances record a `StageTransition` row. Users can manually drag to any
 
 **Voice note (not call recording).** Recording a native call's audio is not possible for a third-party app — iOS exposes no API. The shipped substitute is an in-app voice note: the operator dictates after the call via mic + **on-device** `SFSpeechRecognizer` (`requiresOnDeviceRecognition`, so audio never leaves the phone), transcript folded into the activity `body_text`. Canada is one-party consent; the operator's own dictation is lawful. Never marketed as "call recording."
 
+**Presentation reliability (updated 2026-07-07).** `CallCaptureCoordinator.present` defers one pending request when another call-capture sheet is already active instead of dropping the shortcut/FAB action. `MainTabView` presents deferred captures immediately after the active sheet clears, before draining older post-call or shortcut queues. Manual voice-note stop now flushes transcription after the `recording -> stopping -> idle` transition, so dictated text lands in the note before save.
+
 **Provenance.** `call_source` / `caller_number` / `call_started_at` on `activities` (see `03_DATA_ARCHITECTURE.md` § Activity) — additive, nullable.
 
 **Deferred (externally gated).** A CallKit **Call Directory** *recognition* extension could label inbound pipeline numbers as "OPS lead: {name}" on the native incoming-call screen. It's pure recognition (no data write) but is the only piece needing a new `.appex` target + `com.apple.developer.callkit.call-directory` entitlement + App Group + portal provisioning — out of scope for this build, flagged for a future scheduled migration.
