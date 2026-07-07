@@ -201,7 +201,7 @@ final class Project: Identifiable {
     // updated_at       TIMESTAMPTZ — auto-maintained by Supabase trigger; read-only from iOS, drives the JobBoard "latest edited" sort (see OPS/Views/JobBoard/JobBoardProjectListView.swift `recencyStamp(for:)`).
     // vinyl_order_status TEXT DEFAULT 'not_ordered' CHECK ∈ {not_ordered, ordered} — Deck Builder marker-only vinyl status.
     // vinyl_ordered_at   TIMESTAMPTZ NULL — when project vinyl was marked ordered.
-    // vinyl_ordered_by   UUID FK → auth.users(id) NULL — MISTARGETED FK (see note); iOS writes NULL. Was "who marked vinyl ordered".
+    // vinyl_ordered_by   UUID FK → public.users(id) ON DELETE SET NULL, NULL — who marked vinyl ordered (retargeted 2026-07-04 from an auth.users default; see note).
 }
 ```
 
@@ -213,15 +213,18 @@ catalog orders, reserve inventory, deduct stock, resolve recipes, or materialize
 so the Details tab can read the marker without mutating the historical
 `Project` SwiftData model shape.
 
-> **`vinyl_ordered_by` FK trap (verified 2026-07-04, bug 0f86b9b0/c6e90385):** the
-> column FKs to `auth.users(id)`, but under the Firebase JWT bridge a user's
-> `public.users.id` is never present in `auth.users`, so any real id FK-fails and
-> a Firebase UID 22P02s. The column has **never** been successfully written
-> (0 rows) and its value is never surfaced in-app. Both "mark ordered" paths
-> (Vinyl Order sheet + Job Board vinyl filter) therefore persist status +
-> timestamp and write `vinyl_ordered_by = NULL`. To enable attribution, retarget
-> the FK to `public.users(id)` (mirrors `catalog_orders.created_by_id`) — SQL at
-> `ops-ios/docs/artifacts/vinyl-ordered-by-fk-retarget.sql`; gated prod DDL.
+> **`vinyl_ordered_by` FK retarget (applied 2026-07-04, bug 0f86b9b0/c6e90385):**
+> the column originally FK'd to `auth.users(id)` (a template default), but under
+> the Firebase JWT bridge a user's `public.users.id` is never present in
+> `auth.users`, so any real id FK-failed and a Firebase UID 22P02s. It had never
+> been successfully written (0 rows). The FK was **retargeted to
+> `public.users(id) ON DELETE SET NULL`** (mirrors `catalog_orders.created_by_id`);
+> the migration is a no-op on data (0 rows) and transparent to installed iOS
+> builds (the column stays uuid). Both "mark ordered" paths (Vinyl Order sheet +
+> Job Board vinyl filter) now attribute to the operator's lowercased
+> `public.users.id`. The outbound `SupabaseUUID` guard still nulls any non-uuid
+> attribution so a legacy queued Firebase-UID write can't wedge the sync queue.
+> Migration SQL archived at `ops-ios/docs/artifacts/vinyl-ordered-by-fk-retarget.sql`.
 
 **Job Board vinyl filter (2026-07-04)**: a `VINYL` pill on the Job Board action
 row (shown only when the company defines a task type whose display contains
