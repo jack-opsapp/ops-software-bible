@@ -3166,7 +3166,15 @@ SINCE ORDER`. The vinyl surface count is **stored** on the snapshot
 at order time), NOT reconstructed from `cutGroups` — two surfaces sharing a label
 collapse to one cut group and a degenerate face produces no cuts, so a rebuilt
 count would diverge from the live side and false-flag drift the instant the design
-was ordered. Both MARK ORDERED entry points compute the snapshot over the whole
+was ordered. Likewise the cut-pair multiset is **stored** as
+`DeckMaterialsSnapshot.driftCutGroups` (ALL cut pieces — purchased + intra-job
+reused), NOT reconstructed from the purchased-only `cutGroups`: the live drift key
+counts every cut piece (`plan.surfaces.flatMap(\.cuts)`), so a deck with intra-job
+offcut reuse (a small surface's strip cut from a larger surface's leftover, no
+banked offcuts needed) would otherwise drop the reused strip on the snapshot side
+and false-flag the instant it was ordered. `cutGroups` stays purchased-only for the
+ordered display ("what was ordered"); `driftCutGroups` and `vinylSurfaceCount` are
+the drift basis. Both MARK ORDERED entry points compute the snapshot over the whole
 drawing via the same detection pipeline the tab uses, so their vinyl set matches
 the tab's recompute and never false-flags drift.
 
