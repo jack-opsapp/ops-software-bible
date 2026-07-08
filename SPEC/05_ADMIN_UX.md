@@ -34,6 +34,13 @@ Files:
 - Data layer: `src/lib/admin/spec-queries.ts` extended additively with `getPendingRefundRequests`, `getProcessedRefundRequests`, `getRefundRequestDetail`, `getPendingOwnerApprovals`. Types in `src/lib/admin/spec-types.ts` (`SpecRefundQueueRow`, `SpecRefundPaymentSummary`, `SpecRefundEligibility`, `SpecOwnerApprovalQueueRow`).
 - Migration: `migrations/2026-05-26-05-spec-stage-f3-refund-deny-columns.sql` adds `denied_at`, `denial_reason_text`, `denied_by_user_id`, `internal_note` columns + a status/processed_at index to `spec_refund_requests`. **Must be applied before code goes live** — the deny-refund action and the processed-detail view both reference these columns.
 
+**Stage F.5 implementation status (2026-07-08):** Staged on OPS-Web local `main` through the held-merge integration. Adds the operator-only SPEC analytics surface at `/admin/spec/analytics`, backed by Google Ads campaign, keyword, and search-term history plus ZIP export routes.
+
+- Page: `src/app/admin/spec/analytics/page.tsx` with the client surface in `src/app/admin/spec/analytics/_components/spec-analytics-content.tsx`.
+- Routes: `GET /api/admin/spec/analytics` returns redacted analytics by default; `GET /api/admin/spec/analytics/export` returns a ZIP with optional sensitive export mode. Both routes are server-only and operator-gated through the same SPEC admin auth path.
+- Data layer: `src/lib/admin/spec-analytics-queries.ts`, `src/lib/admin/spec-analytics-types.ts`, and `src/lib/admin/spec-analytics-export.ts`; Google Ads history helpers live in `src/lib/admin/ads-history-*` and `src/lib/analytics/google-ads-*`.
+- Storage: production already carries the additive `public.ads_daily_search_term` table from migration history version `20260619052545 ads_daily_search_terms` (singular table name in code and DB). RLS is enabled; no anon/authenticated grants exist; server-side service-role paths own reads/writes.
+
 Refund processing contract (`processRefundAction`):
 - Form payload: `refundRequestId`, repeated `milestone` checkboxes, optional `internalNote`, optional `setGoodwill` (operator can flag a post-30-day request as goodwill at process time).
 - Idempotency: re-checks `spec_refund_requests.status` before any Stripe call. Already-processed / partial / failed → returns `{ ok: true, status: 'noop' }`.
