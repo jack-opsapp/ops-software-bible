@@ -3981,6 +3981,22 @@ Emitted by the daily envelope sweep (`public.expense_envelope_sweep()`, pg_cron 
 
 Migration: `migrations/20260601213757_expense_envelope_sweep_deep_link_expense.sql` (supersedes the initial `…211633` cut that used the non-routable `invoice_detail`).
 
+### §14.3.4b Expenses Paid Out (`expense_paid`, 2026-07-10)
+
+Dispatched **client-side by OPS-Web** (`notification-dispatch.ts → dispatchExpensePaid`, fired from `useMarkBatchPaid` after the `mark_expense_batch_paid` RPC succeeds) to tell the submitter their approved batch was settled up. Registered in the web rail meta (`NOTIF_TYPE_META.expense_paid` — `PAID` / `receipt-text` / ambient) and safe on shipped iOS via the type-switch `default:` fallbacks (renders with the generic icon + `OPEN`). Rides the `expense_approved` channel preference in the dispatch route — a submitter who wants approval pings wants payout pings; no separate settings toggle.
+
+| Field | Value |
+|-------|-------|
+| `type` | `expense_paid` |
+| `title` | `Expenses Paid Out` |
+| `body` | `Your expense batch <batch_number> has been paid out` |
+| `action_url` | `/expenses` (middleware 308s to `/books?segment=expenses` on web; iOS routes via pushData `screen: expenses`) |
+| `action_label` | `View` |
+| Recipient | the batch's `submitted_by` only |
+| `persistent` | `false` (dismissible) |
+
+Undoing a payout (`unmark_expense_batch_paid`) intentionally sends nothing — a correction shouldn't ping the crew twice.
+
 ### §14.3.5 Lead / Opportunity lifecycle notification contract (2026-06-09)
 
 Hardens the **write contract** for every lead/opportunity lifecycle notification (types `leads_waiting` and `role_needed`) so a lead is recoverable from the row alone — no `email_threads` join at tap time. Prompted by an iOS lead-notification deep-link bug (`bug_reports` `2c51ca25-a718-4cfe-977f-4ecd31d74ccc`, fixed iOS-side in ops-ios `1ff9c2dc`): production rows shipped `deep_link_type = NULL` with an `action_url` pointing at an inbox *thread* id, so the only reliable opportunity id lived in the trailing UUID of `dedupe_key`. iOS is now self-sufficient (it resolves the opportunity from `action_url` query params, the `dedupe_key` UUID, or an `email_threads.opportunity_id` lookup); this change removes the dependency on that last, brittle fallback by making the web builders stamp the id and a routable `deep_link_type` directly. **iOS was not changed.**

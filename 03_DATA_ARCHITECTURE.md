@@ -4969,6 +4969,15 @@ Additive schema deltas for the server-authoritative expense-batching brain (full
 
 `expense_batches.status` is plain `text` (no enum, no CHECK constraint, verified on prod), so the new filling-phase value needs no type change. Lifecycle: `open` (filling) → `pending_review` (auto-sent) → `approved` / `auto_approved` (done). `auto_approved` envelopes live in History.
 
+### Payout columns on `expense_batches` (2026-07-10)
+
+| Table | Column | Type | Default | Purpose |
+|-------|--------|------|---------|---------|
+| `expense_batches` | `paid_at` | `timestamptz NULL` | — | When the operator recorded the envelope as paid out to the submitter. `NULL` on an approved envelope = money still owed. Written only by `mark_expense_batch_paid` / cleared by `unmark_expense_batch_paid`. |
+| `expense_batches` | `paid_by` | `uuid NULL` | — | Who recorded the payout (`expenses.approve` holder, derived server-side from the session). |
+
+Additive + nullable — iOS cross-release safe (shipped clients ignore unknown columns). Deliberately **not** a new `status` value: the paid stage is orthogonal to the approval lifecycle, and per-line "paid" rides the existing `expenses.status = 'reimbursed'` value shipped iOS already renders. Migration `migrations/20260710180000_expense_batch_paid.sql`; behavior in `09_FINANCIAL_SYSTEM.md § OPS-Web Expense Console + Paid-Out Lifecycle`.
+
 ### Widened active-envelope unique index
 
 `expense_batches_open_unique` — partial unique index on `(company_id, submitted_by, period_start, period_end, scope_project_id)` `NULLS NOT DISTINCT`, widened from `WHERE status = 'pending_review'` to **`WHERE status IN ('open','pending_review') AND amendment_number = 0`** so the new `open` (filling) phase is also one-active-envelope-per-scope (race-safe get-or-create). Migration `migrations/20260601210311_expense_envelope_schema.sql`.

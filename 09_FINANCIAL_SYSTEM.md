@@ -809,7 +809,7 @@ CHECK constraint `(catalog_variant_id IS NOT NULL) <> (catalog_item_id IS NOT NU
 
 ### Overview
 
-Full expense submission, receipt OCR scanning, batch approval workflow, and accounting sync system. All roles can submit expenses; office/admin approve field crew submissions. Expenses live in the Pipeline tab under a dedicated "EXPENSES" segment.
+Full expense submission, receipt OCR scanning, batch approval workflow, payout tracking, and accounting sync system. All roles can submit expenses; office/admin approve field crew submissions. On OPS-Web, expenses live in **Books → EXPENSES segment** (`/books?segment=expenses` — the batch review console, 2026-07-10); on iOS they live in the Expenses surface + Books review hub.
 
 ### Expense Lifecycle
 
@@ -888,6 +888,29 @@ Subsequent expenses by the same user in the same scope accumulate into the same 
 - **Review hub.** `ExpensesListView` excludes `open` (filling) envelopes from review, hero totals, and period pills (no iOS peek surface); `auto_approved` envelopes live under the **History** tab; `ExpenseBatchDetailView.isReviewable` is false for filling envelopes (no APPROVE). The dead `CrewInvoiceHistoryView` was removed. iOS whole-envelope approval still uses direct writes (succeeds for a real approver under the `expense_batches_approve_scope` RLS policy); the atomic `approve_expense_batch` RPC is the OPS-Web path.
 - **Realtime.** `RealtimeProcessor` subscribes `expense_batches` (plus the existing `expenses`); both were added to the `supabase_realtime` publication with `REPLICA IDENTITY FULL` (they were not published before — the `expenses` subscription had been silently dead), so envelope status flips (filling → with the office, auto-approved) and total recalcs render live in the review hub + crew list.
 
+### OPS-Web Expense Console + Paid-Out Lifecycle (2026-07-10)
+
+The Books EXPENSES segment (`ops-web/src/components/books/segments/expenses-segment.tsx`) is the batch review console — it replaced the period-pill / review-history split (`expense-review-dashboard.tsx`, `invoice-card.tsx`, `invoice-detail-panel.tsx`, `expense-line-item-table.tsx`, `expense-filters.tsx` all deleted). User-facing noun is **batch** ("invoice" was retired on this surface — it collided with A/R invoices one segment over).
+
+**Lifecycle buckets** (`ops-web/src/lib/utils/expense-buckets.ts` — every batch lands in exactly one; workbar chips + URL `&view=`):
+
+| Bucket | Contents | Actions |
+|---|---|---|
+| TO REVIEW | `pending_review` + legacy `submitted`, **cross-period** (the old month pills hid prior-month pending batches), grouped by person (oldest outstanding period leads; batches oldest-first) | hover APPROVE (clean rows), APPROVE n per person, APPROVE ALL workbar CTA (flagged batches always excluded from bulk runs), detail APPROVE ALL / flag-driven REJECT |
+| TO PAY | `approved` / `partially_approved` / `auto_approved` with `paid_at IS NULL`, grouped by person (largest owed first) | hover MARK PAID, PAY n per person, PAY ALL CTA, detail MARK PAID |
+| PAID | `paid_at IS NOT NULL` — month subheaders by payout date, newest first | UNDO PAID (detail footer + toast action) |
+| WITH CREW | `open` (filling; shows the sweep's auto-send date = `period_end + auto_submit_grace_days`) + `rejected` batches still holding ≥1 line (a drained returned batch disappears as the crew re-files its lines) | none — read-only + per-line early CLEAR |
+
+**Owed amount rule** (`batchOwedAmount`): `approved_amount` is authoritative only for `partially_approved` (the reject flow writes clean-total there). `approve_expense_batch` never writes it, so a zero/absent figure on a full approval means the whole envelope — fall back to `total_amount`.
+
+**Instrument row** (`expense-instrument-row.tsx`, shared `MetricsStrip`, stacked under the LedgerStrip in the scroll-away metrics tier): SPEND · THIS MONTH (6-mo sparkline, MoM trend where up=cost-negative, jobs/overhead split from allocations) · TO REVIEW ($, tan) · TO PAY ($ owed) · PAID · THIS MONTH ($, olive). Computed by `expense-metrics.ts` from the same two queries the list renders (`useExpenseBatches` + `useAllExpenses`) so the strip and queue can never disagree. Unit-tested: `tests/unit/expenses/`.
+
+**Web client parity with the DB contract** (previously trapped on the inbox branch): `useApproveBatch` now calls the atomic `approve_expense_batch` RPC + best-effort `accounting-sync-expense` per line (replacing the two direct writes on main); `useEarlyClearLine` added. `useExpenseRealtime` subscribes `expense_batches` + `expenses` postgres_changes and invalidates the query namespace — the console is live-wired.
+
+**Paid-out flow**: MARK PAID → `mark_expense_batch_paid` RPC (stamps `paid_at`/`paid_by`, lines `approved → reimbursed`) → client dispatches `expense_paid` to the submitter → toast carries an UNDO action (`unmark_expense_batch_paid` reverses everything). iOS renders `reimbursed` lines as "paid" natively — the feature required zero iOS changes and holds the cross-release sync constraint (nullable columns only, no new status values on `expense_batches.status`).
+
+**Deep link**: `/books?segment=expenses&batch=<id>` selects the batch and switches to its home bucket (consumed once). Stored `expense_submitted` action_urls (`/accounting?tab=expenses&batch=…`) keep resolving through the middleware's param-preserving 308.
+
 ### Receipt OCR (Apple Vision)
 
 On-device OCR using Apple's Vision framework (`VNRecognizeTextRequest` with `.accurate` recognition level). No external vendor dependency.
@@ -916,7 +939,7 @@ Expenses can be attributed to zero or more projects via `expense_project_allocat
 | `expense_project_allocations` | Many-to-many linking expenses to projects with percentage split |
 | `expense_categories` | Company-configurable categories with icons (9 defaults seeded) |
 | `expense_settings` | Per-company settings (review frequency, thresholds, policy toggles) |
-| `expense_batches` | Per-person/per-period **envelopes**. `status`: `open` (filling) → `pending_review` (sent) → `approved` / `auto_approved` (done; auto-approved live in History). **`scope_project_id` (nullable uuid)** identifies per-job envelopes; NULL for period envelopes. One active (`open`/`pending_review`) envelope per scope via `expense_batches_open_unique` |
+| `expense_batches` | Per-person/per-period **envelopes**. `status`: `open` (filling) → `pending_review` (sent) → `approved` / `auto_approved` (done; auto-approved live in History). **`paid_at` / `paid_by` (nullable, 2026-07-10)** record the payout stage after approval — `paid_at IS NULL` on an approved envelope = money still owed to the submitter (`migrations/20260710180000_expense_batch_paid.sql`). **`scope_project_id` (nullable uuid)** identifies per-job envelopes; NULL for period envelopes. One active (`open`/`pending_review`) envelope per scope via `expense_batches_open_unique` |
 | `accounting_category_mappings` | Maps OPS categories to external chart of accounts (QB/Sage) |
 
 ### Supabase Functions (expense-related)
@@ -933,6 +956,8 @@ Expenses can be attributed to zero or more projects via `expense_project_allocat
 | `public.get_next_expense_batch_number(p_company_id)` | Returns next sequential batch number, format `EXP-BATCH-NNNN`. |
 | `public.approve_expense_batch(p_batch_id uuid)` | Atomic whole-envelope approve — permission-checked (`expenses.approve` via `has_permission`), sets the batch + its non-rejected lines `approved` + recalc in one txn. OPS-Web calls this instead of two direct writes. `migrations/20260602042258_expense_approval_rpcs.sql`. |
 | `public.early_clear_expense_line(p_expense_id uuid)` | Early-clear — permission-checked; approves a single line, leaves the envelope `open`, recalcs, notifies the submitter (`expense_approved`). `migrations/20260602042258_expense_approval_rpcs.sql`. |
+| `public.mark_expense_batch_paid(p_batch_id uuid)` | Records a payout — permission-checked (`expenses.approve`); requires status ∈ (`approved`,`partially_approved`,`auto_approved`) and `paid_at IS NULL`; stamps `paid_at`/`paid_by` and flips the envelope's `approved` lines to **`reimbursed`** (shipped iOS already renders that as "paid" — zero iOS changes). OPS-Web dispatches the `expense_paid` notification client-side after success. `migrations/20260710180000_expense_batch_paid.sql`. |
+| `public.unmark_expense_batch_paid(p_batch_id uuid)` | Payout undo (mis-click recovery) — permission-checked; clears `paid_at`/`paid_by` and returns the envelope's `reimbursed` lines to `approved`. Same migration. |
 
 ### Default Expense Categories (9)
 
