@@ -6702,7 +6702,9 @@ If an entity needs a fundamentally different layout (e.g. estimate line-item edi
 
 ## 23. Quick Add Task Suggestions (iOS, 2026-05-10)
 
-**Surface:** the TASKS section card on Project Details → Details tab.
+**Surfaces:** the TASKS section card on Project Details -> Details tab, the
+Project Form task section, and each expanded project card in Projects Needing
+Tasks.
 
 **Source bug:** `e3996ac3-4180-4bdf-9423-f1d3b0c7b6de` — "Create suggested actions (like if user commonly adds 'rail install' task with Jake Strickler assigned, then allow user to add that with one tap)".
 
@@ -6714,10 +6716,38 @@ A horizontal scrollable chip rail sits inside the TASKS section card, between th
 - **Long-press chip → "Edit Before Adding"** → opens `TaskFormSheet(mode: .create)` with the task type + team members preselected via two new optional init params (`prefilledTaskTypeId`, `prefilledTeamMemberIds`).
 - **Long-press chip → "Dismiss Suggestion"** → suppresses just this chip for just this project. Stored locally in `UserDefaults` under `quickadd.dismissed.<projectId>` as an array of SHA-256 base64 hashes. Never synced. Dismissal is per-project scope: a chip dismissed on Project A still surfaces on Project B.
 
+### Shared project task composer (2026-07-13)
+
+Project Form and Projects Needing Tasks use the same `ProjectTaskComposer`
+instead of separate compact task rows.
+
+- Suggestions appear first as horizontally scrolling task-type + crew cards.
+  One tap adds the complete suggestion.
+- Added tasks remain visible as two-line summary rows. Saving another task does
+  not clear or replace the existing list.
+- Tapping a summary expands a full-width editor inside that task row. Task type,
+  crew, and schedule are stacked fields with field-sized touch targets rather
+  than compressed horizontal chips.
+- A manual `ADD TASK` action opens the same editor as an unsaved row. The row is
+  appended only after a valid task type is selected and the user confirms.
+- Existing rows can be edited, opened in the advanced `TaskFormSheet`, or
+  deleted. Edits replace the row in place and preserve its stable local id.
+- Project Form owns an in-memory `[LocalTask]` until the project is saved, then
+  uses its existing reconciliation path. Projects Needing Tasks persists every
+  add/edit/delete immediately and maps the returned `ProjectTask.id` into
+  `LocalTask.existingTaskId` so later changes update the same record.
+- The composer is rendered inside the expanded project card in Projects Needing
+  Tasks, beneath client, crew, start date, address, phone, and email details.
+  The task controls never detach visually from their owning project.
+- The tutorial keeps the existing `add_task` wizard target and scripted
+  `TutorialAddTaskTapped` handoff; live suggestions are hidden during tutorial
+  mode.
+
 ### Signal model
 
 - **Source set:** `project_tasks WHERE company_id = current AND deleted_at IS NULL`. No status filter — cancelled tasks count, since "rail install with Jake" being cancelled doesn't mean the setup isn't a habit.
-- **Window:** 60 days, measured by `lastSyncedAt` on the local `ProjectTask` row. (When `ProjectTask.createdAt` lands via the parallel `recency-suggestions` work, swap the read site in `TaskSuggestionEngine` to prefer `createdAt`.)
+- **Window:** 60 days, measured by the stable `createdAt` stamp on the local
+  `ProjectTask` row, falling back to `lastSyncedAt` for older records.
 - **Suggestion key:** `(taskTypeId, sortedTeamMemberIds.joined(","))`. Two tasks count as the same suggestion only if they share both task type AND the exact crew composition (order-insensitive).
 - **Threshold:** ≥ 2 occurrences within the window.
 - **Ranking:** `score = sum(exp(-daysAgo / 30))` across all occurrences in the window. Tiebreak by most-recent occurrence desc, then alphabetical task-type display.
@@ -6732,6 +6762,9 @@ A horizontal scrollable chip rail sits inside the TASKS section card, between th
 | `OPS/Views/Components/Project/QuickAddSuggestionsRail.swift` | The chip rail view. `@Query`s `[TaskType]` + `[User]` for chip rendering, builds the DTO + enqueues sync on commit. |
 | `OPS/Views/Components/Project/Tabs/DetailsTabView.swift` | Inserts the rail in `TaskListSection.body` above the ADD TASK row, gated by `canEdit`. |
 | `OPS/Views/JobBoard/TaskFormSheet.swift` | Init gains `prefilledTaskTypeId`, `prefilledTeamMemberIds` optionals for the long-press path. |
+| `OPS/Styles/Components/ProjectTaskComposer.swift` | Houses the shared suggestion rail, persistent summaries, stacked editor, picker sheets, advanced editor, and delete confirmation. |
+| `OPS/Views/JobBoard/ProjectFormSheet.swift` | Binds the composer to the form's draft `[LocalTask]` and preserves tutorial gating plus final project/task reconciliation. |
+| `OPS/Views/Review/ProjectsWithoutTasksReviewView.swift` | Binds one composer to each expanded project card and adapts local rows to immediate `DataController` create/update/delete operations. |
 
 ### Gates (no rail rendered)
 
