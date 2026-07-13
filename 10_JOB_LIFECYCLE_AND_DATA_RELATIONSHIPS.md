@@ -2974,7 +2974,7 @@ Invoices are fully implemented on iOS with the following views in `OPS/OPS/Views
 | `InvoiceCard.swift` | Summary card for invoice lists |
 | `PaymentRecordSheet.swift` | Record a payment against an invoice |
 
-#### SiteVisit — iOS Capture Packet (Built 2026-06-26, identity panel updated 2026-06-27)
+#### SiteVisit — iOS Capture Packet (Built 2026-06-26, identity panel updated 2026-06-27, conversion durability fix 2026-07-13)
 
 The `SiteVisit` data model exists at `OPS/OPS/DataModels/Supabase/SiteVisit.swift`; `opportunityId` is optional so the FAB can start capture before a lead is selected. Lead detail, New Lead, and the FAB now open a full-screen site-visit capture console from `OPS/OPS/Views/SiteVisits/`.
 
@@ -2986,8 +2986,8 @@ Built iOS files:
 | `SiteVisitCaptureView.swift` | Field-first capture console: inline lead/client search + manual identity fields, rapid photos, autosaved dictated/typed notes, measurements, dimensioned capture, photo thumbnails/preview/markup, gated deck-design capture, packet review |
 | `SiteVisitCaptureViewModel.swift` | Creates/reuses an active visit, seeds/selects visit types, snapshots checklist answers, autosaves identity and note drafts, creates/links lead/client records, saves local artifacts, links captured evidence to checklist answers, reassigns packets to another lead, completes the visit, builds the reviewed project payload |
 | `SiteVisitDimensionedCaptureStore.swift` | Saves pre-project `CapturedAssets` + `DimensionsData` as a local dimensioned-photo artifact |
-| `SiteVisitProjectHandoff.swift` | Applies reviewed artifacts to a newly created project as `ProjectPhoto`, dimensioned `PhotoAnnotation`, `ProjectNote`, and attached `DeckDesign` rows |
-| `SiteVisitProjectHandoffStore.swift` | Stages the reviewed packet between the site-visit review sheet and the existing project conversion sheet |
+| `SiteVisitProjectHandoff.swift` | Applies reviewed artifacts to a newly created project as `ProjectPhoto`, dimensioned `PhotoAnnotation`, `ProjectNote`, and attached `DeckDesign` rows — each with a durable sync path (photos enter `ImageSyncManager`'s restart-surviving upload queue and heal `local://`→S3 in place; deck links record a `deckDesign` update SyncOperation). Also `derivePayload`, which rebuilds the packet from persisted rows when the staging store was lost (see § 22B in 03_DATA_ARCHITECTURE) |
+| `SiteVisitProjectHandoffStore.swift` | In-memory fast path staging the reviewed packet between the review sheet and the conversion sheet; when it is empty at conversion (app kill in between), the sheet falls back to `SiteVisitProjectHandoff.derivePayload` |
 | `SiteVisitCaptureArtifact.swift` | SwiftData model for the local pre-project packet and reviewed project payload |
 | `SiteVisitType.swift` | SwiftData models for company-scoped visit templates, custom fields, and per-visit checklist answer snapshots |
 
