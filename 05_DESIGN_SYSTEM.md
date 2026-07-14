@@ -2825,6 +2825,18 @@ Each mode supplies a `ModeFooterConfig` object that drives which buttons render 
 
 One `primary` per footer maximum. The shared `<WorkspaceFooter>` reads the config and lays out destructive (left) → meta → spacer → secondary → ghost → primary (right). Adding a new mode means adding a new config — the shell does not change.
 
+### Invalid submit is never silent (2026-07-14)
+
+The editing/creating footer CTA submits via the HTML `form="..."` association, from outside the `<form>` — so a validation failure can land on a field whose error renders in the tab that is **not** mounted (trade is required for creating but its error lives in the identity tab; a >200-char pasted name fails in editing). Before `3dd5d8d3` that click did literally nothing: no error on screen, nothing focusable (the trade `Controller` wires no `field.ref`), same failure class as the create-lead untouched ESTIMATED VALUE bug (`f4e85e75`).
+
+Contract now:
+
+- `ProjectEditCreateBody` accepts `onInvalid?: (tabWithError: EditCreateTabId) => void` and reports the tab owning the **first** erroring field (schema field order, via the `FIELD_TAB` map in `project-edit-create-body.tsx`).
+- `ProjectWorkspaceContainer` wires `onInvalid={setActiveTab}` — an invalid CREATE/SAVE flips the window to the tab where the error is visible.
+- The name input renders its validation error inline (`identity-name-error`, `role="alert"`, Field-atom treatment); trade already rendered via `Field error`.
+- Schemas are exported (`buildEditingSchema` / `buildCreatingSchema`) and pinned by `tests/unit/project-edit-create-schema.test.ts`: an untouched creating submit fails **only** on trade; `duration` stays `z.string()` ("" = cleared, folded to number in onSubmit — never a `z.number()` on a registered number input); `latitude`/`longitude` are setValue-only `z.number().nullable()` fed exclusively by number|null write paths (Mapbox result filter, DOUBLE PRECISION columns).
+- Task form audited clean the same day: no registered number input feeds its schema; pinned by `tests/unit/task-form-schema.test.ts`.
+
 ### Persistence
 
 Window position and size persist to `localStorage` keyed by `opsWin:project-{projectId}`. New projects use the in-memory window default until a project is created, then the key flips to the new ID. Default size 1080×760, min 780×600.
