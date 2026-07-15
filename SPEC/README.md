@@ -1,8 +1,8 @@
 # SPEC — Custom Software Build Service
 
-**Status:** Fourth revision pass complete (2026-05-25). Gate-resolution pass complete (2026-05-25). Phase 0 conversation-only launch approved; automated live SPEC deposits not approved until final customer-facing legal prose ships.
+**Status:** Fourth revision pass complete (2026-05-25). Gate-resolution pass complete (2026-05-25). **Tier Model v2 approved 2026-07-14 — see [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md); it supersedes the tier table below and every tier semantic in 01/04/05/09 pending the implementation doc-pass.** Phase 0 conversation-only launch approved; automated live SPEC deposits not approved until final customer-facing legal prose ships (v2 legal rewrite scope in 10 § 9).
 **Owner:** Jackson Sweet.
-**Last updated:** 2026-05-25.
+**Last updated:** 2026-07-14.
 
 This directory is the authoritative spec for OPS SPEC — the custom-software-build service sold at `/spec` on `opsapp.co`. It captures the full business operating model, data architecture, customer journey, admin operations, contractual terms, and phased rollout plan.
 
@@ -10,15 +10,17 @@ The current revision incorporates a fourth-pass legal/commercial correction afte
 
 ## What SPEC is
 
-A productized custom-software-development service for trades businesses. Three deposit tiers:
+A productized custom-software-development service for trades businesses. Three deposit tiers — **Tier Model v2 (2026-07-14, [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md)):**
 
 | Tier | Total | Description |
 |---|---|---|
-| Setup | $3,000 CAD | OPS configured around the customer's workflow (custom pipeline stages, fields, configurations) |
-| Build | $8,500 CAD | A custom module built for the customer's trade on the OPS platform |
-| Enterprise | $18,000 CAD | Multiple custom modules + integrations + data migration |
+| SPEC-01 · WORKFLOWS | $2,000 CAD | The customer's existing tools wired together (inbox→ledger, email→spreadsheet); up to 3 production automations. Does not require OPS. Paid 50/50 |
+| SPEC-02 · SYSTEMS | $7,500 CAD + $395/mo care | Workflows plus a structured, maintained data backbone (in the customer's OPS or standalone) + dashboards + import/cleanup. Paid 25/25/25/25 |
+| SPEC-03 · YOUR OWN SOFTWARE | from $25,000 CAD + from $750/mo care | A standalone purpose-built app (Deckset-class) on its own database, operated by OPS. White label +$4,000 / +$200/mo. Deposit $6,250; total locked at scope sign-off |
 
-Each engagement uses a **25 / 25 / 25 / 25** four-milestone payment structure (deposit / scope sign-off / midpoint demo / delivery), Net-15 invoicing, and includes a **30-day post-walkthrough Guarantee Refund** with explicit exclusions and anti-abuse rules.
+*(v1 Setup $3,000 / Build $8,500 / Enterprise $18,000 with universal 25/25/25/25 is superseded; the docs below retain v1 language pending the implementation doc-pass.)*
+
+SPEC-02/03 use the **25 / 25 / 25 / 25** four-milestone payment structure (deposit / scope sign-off / midpoint demo / delivery); SPEC-01 is 50/50 (deposit / delivery). Net-15 invoicing and a **30-day post-walkthrough Guarantee Refund** with explicit exclusions and anti-abuse rules apply to every tier (per-tier refund levers in 10 § 4).
 
 Canada-only at launch (Quebec excluded by billing address, head office, operating address, establishment, and material SPEC use). Multi-engagement supported per company.
 
@@ -35,6 +37,7 @@ Read in order for a complete understanding. Each document is self-contained but 
 | [05_ADMIN_UX.md](05_ADMIN_UX.md) | `/admin/spec` in OPS-Web — TODAY command queue, Kanban, project detail (incl. Entitlements tab), capacity config, refund queue with eligibility chips |
 | [06_CONTRACT_AND_EMAILS.md](06_CONTRACT_AND_EMAILS.md) | SPEC Terms drafting requirements plus required final-prose clauses (Quebec exclusion, regulated-workflow prohibitions, revised LIL, IP/license, guarantee, subprocessors, DPA reference, order-of-precedence) + email/event triggers |
 | [07_ROLLOUT.md](07_ROLLOUT.md) | Phase 0 (immediate safety mitigation), Phase 1 (ads-launch-ready), Phase 2 (volume polish), Phase 3 (scale), verification scenarios, critical files, open items |
+| [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) | **Tier Model v2 (2026-07-14, current)** — SPEC-01/02/03 definitions, pricing + payment shapes, care plans, white-label add-on, per-tier guarantee levers, schema/seed deltas, /spec redesign contract, legal-rewrite scope |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in the May 2026 revision pass |
 
 ## Why this exists

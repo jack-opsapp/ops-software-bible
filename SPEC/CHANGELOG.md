@@ -1,5 +1,9 @@
 # SPEC — Spec Revision Changelog
 
+## 2026-07-14 — Tier Model v2 (design approved, implementation pending)
+
+Jackson redefined the tier ladder in a brainstorm session; the approved design is captured in [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md). Summary: Setup/Build/Enterprise → **SPEC-01 · WORKFLOWS** ($2,000, 50/50, customer-owned tool wiring, no OPS required), **SPEC-02 · SYSTEMS** ($7,500 + required $395/mo care, outcome-defined data backbone in-OPS or standalone), **SPEC-03 · YOUR OWN SOFTWARE** (from $25,000 locked at scope sign-off + from $750/mo care, standalone Deckset-class app), plus a **white-label add-on** on SPEC-03 (+$4,000 / +$200/mo, published turnkey under OPS's Apple Developer account, App Transfer as the off-boarding escape). Retired: the subscription-multiplier concept and the universal 25/25/25/25 (01 is 50/50; 03 has a variable total). Carried unchanged: owner-approval-before-Stripe, Quebec exclusion, guarantee policy (per-tier levers now vary), $399 Data Setup add-on, Phase 0 conversation-only posture until the v2 legal prose ships. Pricing grounded in a sourced 2025-26 market sweep (see 10 § header). README status + tier table updated; the full doc-pass across 01-07 lands with implementation.
+
 ## 2026-05-25 — Gate resolution pass
 
 The six implementation bug_reports added by the fourth-pass were resolved in a dedicated investigation pass against live infrastructure on 2026-05-25. The pass verified every assumption against the live `ops-app` Supabase project (`ijeekuhbatykdomumfjx`), the live OPS-Web signup/company-provisioning code, the live OPS-Web `dashboard-layout.tsx` + `notifications-drawer.tsx` mount, and the current Stripe Checkout API documentation. After this pass, the spec has zero open implementation gates. All resolution detail lives in [07_ROLLOUT.md](07_ROLLOUT.md) § Gate resolutions; this entry summarizes what changed and where the locked answers live.
