@@ -1,6 +1,6 @@
 # SPEC — Tier Model v2 (2026-07-14)
 
-**Status:** Approved design (Jackson, 2026-07-14 session). Implementation NOT started.
+**Status:** Approved design (Jackson, 2026-07-14 session). **Implemented 2026-07-14:** database re-seeded (spec01/02/03 live in `spec_capacity` + v2 engagement columns), `/spec` rebuilt per § 8 on ops-site `feat/spec-tier-model-v2` (EN + ES, guide remapped per § 7), ops-web admin renamed on `worktree-spec-launch-consolidation` (`514d4bbf`), ToS v2 prose shipped to `/legal?page=spec-terms` (hash rotated). Deposits remain OFF; the § 9-gated flip checklist lives in 07_ROLLOUT § Phase 0.
 **Owner:** Jackson Sweet.
 **Supersedes:** the tier *semantics* everywhere they appear — 01_BUSINESS_MODEL § 2 pricing table + midpoint definitions, 04_CUSTOMER_UX package copy, 09_TIER_GUIDE_DESIGN outcome space, the `spec_capacity` seed, the `/spec` page, and the `SPEC_TIERS` constants in ops-site + ops-web.
 **Leaves intact:** buyer identity + owner-approval-before-Stripe (01 § 1), the contract/legal architecture (01 § 3 — prose requires a rewrite pass, § 9 below), the engagement state machine (03), admin UX structure (05, renamed tiers), the capacity board machinery, Quebec exclusion, regulated-workflow exclusions, the chargeback posture, and the Phase 0 launch rule (conversation-only until final legal prose ships).

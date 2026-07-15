@@ -1,5 +1,7 @@
 # SPEC — Customer-facing UX
 
+> **Superseded in part 2026-07-14: the `/spec` page composition and all package copy are now governed by [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) § 8 (implemented on `feat/spec-tier-model-v2`).** v2 section order: hero (guide entry as the secondary CTA) → the ladder (SPEC-01/02/03 escalation with per-tier payment shapes) → live OPS BOARD → white-label strip → included/ongoing (flat numbers) → guarantees (per-tier levers) → FAQ (14 v2 items) → bottom CTA. The tier guide is the 09-v3.1 method with v2 outcomes ({ops, data_setup rider, spec01, spec02, spec03-conversation}). The route inventory, checkout/intake/approval/refund flows, and conversion tracking below survive v2; the "marketing page" section reflects the v1 page and is retained for history.
+
 Every customer-touching surface on ops-site. Maps to the existing `/spec` scaffold and adds new routes. Revised 2026-05-25 (third pass) to:
 
 - Insert a pre-Stripe billing-address form (Quebec rejection happens here, not at Stripe).

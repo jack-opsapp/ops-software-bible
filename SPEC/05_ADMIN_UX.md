@@ -1,5 +1,7 @@
 # SPEC — Admin UX (OPS-Web)
 
+> **Tier Model v2 (2026-07-14):** tier slugs across the admin console are `spec01|spec02|spec03`, rendered as the `SPEC-0N` designation short form (`formatTier` in `src/app/admin/spec/_components/format.ts`); capacity-form hints carry the v2 prices/shapes; `SPEC_TIER_TOTAL_CENTS` mirrors ops-site pricing (spec03's value is the floor). Landed on the `worktree-spec-launch-consolidation` branch, commit `514d4bbf`. Everything structural below survives v2.
+
 Operator-facing surface. Lives at `/admin/spec` in OPS-Web alongside existing admin pages (`/admin/companies`, `/admin/shop`, `/admin/email`, etc.). Revised 2026-05-25 (third pass) to:
 
 - Replace the generic `has_permission('spec.admin')` gate with the dedicated `is_spec_operator()` SECURITY DEFINER function (CR-1). Customer-side company admins NEVER satisfy the SPEC operator gate.

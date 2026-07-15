@@ -40,26 +40,28 @@ This eliminates the original spec's chargeback risk where SPEC charged first and
 
 ## 2. Payment terms
 
-**Structure: 25 / 25 / 25 / 25 across all three tiers. Locked. No exceptions.**
+> **Superseded 2026-07-14 by [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) § 2 — per-tier checkpoint shapes.** The v1 "25/25/25/25 across all tiers" structure is retired. Current terms below; implementation in `ops-site/src/lib/spec/pricing.ts` (`computeTierCheckpoints`).
 
-| Tier | P1 deposit | P2 scope sign-off | P3 midpoint demo | P4 delivery | Total |
-|---|---|---|---|---|---|
-| Setup | $750 | $750 | $750 | $750 | $3,000 |
-| Build | $2,125 | $2,125 | $2,125 | $2,125 | $8,500 |
-| Enterprise | $4,500 | $4,500 | $4,500 | $4,500 | $18,000 |
+**Structure: per-tier checkpoint shapes. Locked per tier. No exceptions.**
+
+| Tier | Shape | P1 deposit | P2 scope sign-off | P3 midpoint review | P4 delivery | Total |
+|---|---|---|---|---|---|---|
+| SPEC-01 · WORKFLOWS | 50/50 | $1,000 | — (no invoice) | — (no checkpoint) | $1,000 | $2,000 fixed |
+| SPEC-02 · SYSTEMS | quarters | $1,875 | $1,875 | $1,875 | $1,875 | $7,500 fixed |
+| SPEC-03 · PROPRIETARY | floor + locked total | $6,250 (fixed against the $25,000 floor) | (locked − $6,250) ÷ 3 | (locked − $6,250) ÷ 3 | (locked − $6,250) ÷ 3 + residual cents | from $25,000 — locked at scope sign-off (`spec_projects.locked_total_cents`) |
 
 **Payment triggers:**
 
 1. **P1 — Deposit** at click-to-book on `/spec` via the approved Stripe payment flow. Funds discovery + scope work. Refundability governed by the refund matrix in §3.
-2. **P2 — Scope sign-off** when the scope doc is countersigned via `spec_acceptance_events.event_type = 'scope_signoff'`. Stripe Invoice, net-15. Funds build kickoff.
-3. **P3 — Midpoint demo** when the midpoint deliverable is accepted via `spec_acceptance_events.event_type = 'midpoint_accepted'`. Stripe Invoice, net-15.
-4. **P4 — Delivery** when modules are deployed AND the walkthrough has been held AND `walkthrough_completed_at` is stamped. Stripe Invoice, net-15. The walkthrough timestamp is the single canonical anchor for the support window, the 30-day guarantee, referral payout eligibility, and the retainer offer (see §6, §8, §9).
+2. **P2 — Scope sign-off** when the scope doc is countersigned via `spec_acceptance_events.event_type = 'scope_signoff'`. SPEC-02: Stripe Invoice, net-15, funds build kickoff. SPEC-03: the Locked Total is written to `spec_projects.locked_total_cents` at this event and the P2 invoice issues against it. **SPEC-01: the sign-off event is recorded but carries no invoice** — the 50/50 schedule changes when money moves, not the evidence chain.
+3. **P3 — Midpoint review** when the midpoint deliverable is accepted via `spec_acceptance_events.event_type = 'midpoint_accepted'`. Stripe Invoice, net-15. SPEC-01 has no midpoint checkpoint.
+4. **P4 — Delivery** when the deliverables are live AND the walkthrough has been held AND `walkthrough_completed_at` is stamped. Stripe Invoice, net-15. The walkthrough timestamp is the single canonical anchor for the support window, the 30-day guarantee, referral payout eligibility, and the care-plan billing start (see §6, §8, §9).
 
 **Midpoint definition per tier** (locked at scope sign-off, written into the versioned scope doc):
 
-- **Setup:** Workflow analysis complete; custom pipeline stages + custom fields deployed to a staging environment for customer review.
-- **Build:** Working prototype of the custom module on staging, demonstrating roughly 50 percent of the agreed feature list.
-- **Enterprise:** Same as Build, applied to the first of multiple custom modules. Subsequent modules remain in build phase at P3.
+- **SPEC-01:** n/a — delivery-only. The schedule runs deposit → delivery; the sign-off work order is the only intermediate evidence event.
+- **SPEC-02:** The backbone staged for customer review with the customer's records loaded.
+- **SPEC-03:** Working prototype of the application, demonstrating roughly 50 percent of the locked scope.
 
 **Non-payment policy.** If a milestone invoice is unpaid 7 calendar days past the net-15 due date, the relevant entitlements in `spec_module_entitlements` flip `enabled = false` with `disabled_reason = 'non_payment'`. Work pauses. Re-enable on payment. The 30-day guarantee window does not run during a non-payment disabled period (see §3 anti-abuse rules).
 
@@ -261,6 +263,8 @@ Capacity logic in [02_DATA_MODEL.md](02_DATA_MODEL.md) and the workflow in [03_W
 
 ## 7. OPS subscription interaction
 
+> **Superseded in part 2026-07-14 by [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) § 5 — the subscription multiplier is retired.** Published surfaces show flat care plans only; `subscription_multiplier_estimate` is seeded `0` and unread. The entitlement machinery below survives for deliverables that live inside a customer's OPS instance (a SPEC-02 in-OPS backbone). SPEC-01 deliverables live in the customer's own accounts and SPEC-03 runs standalone — neither touches OPS entitlements.
+
 **Multi-engagement entitlements.** A company may run multiple SPEC engagements over time. Each engagement gets one or more entries in `spec_module_entitlements`, keyed by `(spec_project_id, company_id, module_key)`. The original spec's two booleans on `companies` (`spec_subscription_active`, `spec_modules_enabled`) cannot represent partial entitlement, one disputed engagement coexisting with one retained engagement, or a feature-flagged subset; they are removed. All subscription premium math and module enable/disable flags read `spec_module_entitlements`.
 
 Each entitlement row carries:
@@ -303,7 +307,9 @@ The actual locked multiplier (plus any module-specific surcharge) is determined 
 
 ## 8. Maintenance retainer
 
-**Enrollment.** Opt-in. Email offer with a one-click Stripe subscription/payment link after support window closes. No silent enrollment. Retainer offer emails are commercial electronic messages and must include OPS sender identity, mailing/contact information, unsubscribe mechanism, and a documented consent basis.
+> **Superseded 2026-07-14 by [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) § 2 — care plans replace the optional retainer.** SPEC-01: none. SPEC-02: $395/mo, 2 change-hours, **required while OPS operates a standalone backbone**, optional after the support window when the backbone lives in the customer's OPS. SPEC-03: from $750/mo (+$200 white label), 3 change-hours, **required while OPS hosts**. Overage $200/hr, quoted first. Billing starts when the support window ends. ToS: [06A](06A_SPEC_TOS_PROSE.md) § 11. The CASL posture below carries unchanged (care-plan offers are commercial electronic messages).
+
+**Enrollment (v1, superseded).** Opt-in. Email offer with a one-click Stripe subscription/payment link after support window closes. No silent enrollment. Retainer offer emails are commercial electronic messages and must include OPS sender identity, mailing/contact information, unsubscribe mechanism, and a documented consent basis.
 
 **Retainer pricing (fixed monthly per tier).**
 

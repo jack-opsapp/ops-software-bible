@@ -16,6 +16,8 @@ Time: hours. Risk: zero (no automated payment flow).
 
 A new env flag `SPEC_LIVE_DEPOSITS_ENABLED` (default `false`) may gate the create-checkout-session route. When false, the route returns a 503 with a UI message redirecting to a contact form. The page rendering reads the same flag — when false, the Pay Deposit buttons render as "Talk to the founder" CTAs. The flag can only flip true after Phase 1 launch gates pass.
 
+> **Deposit-flip checklist additions (Tier Model v2, 2026-07-14 — [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md)):** before the flag flips true, ALL of the following must hold in addition to the Phase 1 gates: (1) the v2 SPEC Terms prose is live at `/legal?page=spec-terms` with the v2 `SPEC_TERMS_VERSION_HASH` in the build (shipped 2026-07-14 on `feat/spec-tier-model-v2`); (2) **Stripe test-mode proof of both new payment shapes** — a `spec01` checkout session showing the $1,000 50/50 deposit line and a `spec03` session showing the $6,250 floor deposit line, with `metadata.type='spec_deposit'`, v2 `metadata.tier` slugs, consent collection, and automatic tax intact (evidence: `ops-site` `docs/artifacts/spec-v2/stripe-test/`); (3) the Stripe Dashboard `consent_collection` ToS URL still points at `/legal?page=spec-terms`; (4) Jackson's explicit go.
+
 Time: < 1 hour. Risk: low (flag default is off).
 
 **Phase 0 also:**

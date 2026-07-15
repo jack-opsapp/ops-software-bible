@@ -1,5 +1,7 @@
 # SPEC — Tier Guide Design (2026-06-13)
 
+> **Outcome space superseded 2026-07-14 by [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) § 7; implemented on `feat/spec-tier-model-v2` (ops-site).** The v3.1 *method* below — branch on OPS experience, cold questions only about the prospect's own world, honest-floor rules (ties resolve down, `not_sure` never causes monetization, the free door leads every result it can) — is carried verbatim. The *outcomes* remap to `{ops, data_setup rider, spec01, spec02, spec03-conversation}`: C4 is now `// THE RE-TYPING` (inbox/paper re-typing → the SPEC-01 automation signal — the first honestly cold-diagnosable paid outcome), C5 is `// YOUR TRADE'S TOOL` (whole-tool signal → founder-conversation escape; **SPEC-03 never headlines cold**), and the old C5 setup-preference is C6. Existing-user path: feature-gap → SPEC-02 headline + founder escape; simple migration → the $399 Data Setup rider; complex migration → SPEC-02; whole-capability → SPEC-03 founder conversation. Routing lives in `ops-site/src/lib/spec/recommend.ts` behind a 24-persona war-game suite (`recommend-v2.test.ts`). The v1 outcome table in § 2 and the § 3.2/§ 3.4 routing blocks below are retained for method provenance only.
+
 Design spec + implementation plan for a **net-new** feature on the public `/spec`
 marketing page: a short questionnaire ("the guide") that gives a prospect a straight
 answer about what they actually need — **standard OPS (no paid build), or Setup,

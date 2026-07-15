@@ -1,5 +1,7 @@
 # SPEC — Workflow & State Machine
 
+> **Tier Model v2 (2026-07-14, [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) § 6):** the engagement state machine below survives v2 unchanged, with three per-tier payment deltas layered on top. (1) **SPEC-01 collapses the payment milestones to P1 → P4**: the `scope_signoff` acceptance event still fires (the intake distills into a countersigned work order before build), but **no invoice attaches to it** and there is no midpoint checkpoint — the invoice-issuing side effects at scope sign-off and midpoint are skipped for `tier='spec01'`. (2) **SPEC-03 writes `spec_projects.locked_total_cents` at the `scope_signoff` event** — P2/P3/P4 invoice amounts derive from `computeTierCheckpoints('spec03', locked_total_cents)`; until sign-off, the floor governs. (3) Care-plan state: `care_monthly_cents` is copied from capacity at insert (plus the white-label bump when `white_label = true`), and `care_started_at` stamps when the support window ends. Tier slugs everywhere are `spec01|spec02|spec03`.
+
 The customer journey, start to finish. Every state transition, every timestamp, every side effect. Revised 2026-05-25 (third pass) to:
 
 - Insert the pre-Stripe eligibility-address step so Quebec is rejected server-side BEFORE any Stripe payment session is created (CR-6, fourth-pass tightened Quebec rule).
