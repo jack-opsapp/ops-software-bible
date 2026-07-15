@@ -1,8 +1,8 @@
-# SPEC Engagement Terms of Service — Final Customer-Facing Prose (2026-05-25)
+# SPEC Engagement Terms of Service — Final Customer-Facing Prose (v2, 2026-07-14)
 
-This file is the production-ready Terms of Service prose for SPEC engagements. A follow-up implementation chip ports this content into `ops-site/src/lib/legal-content.ts` under `legalDocuments['spec-terms']` and registers `spec-terms` in `VALID_TABS` at `ops-site/src/app/legal/page.tsx`. Acceptance happens in the SPEC Stripe Checkout flow via `consent_collection.terms_of_service='required'`; the build-time `SPEC_TERMS_VERSION_HASH` is captured into `spec_projects.tos_version_accepted` and into a `spec_acceptance_events` row with `event_type='tos_accepted'`.
+This file is the production-ready Terms of Service prose for SPEC engagements, rewritten for **Tier Model v2** ([10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) § 9): SPEC-01 · WORKFLOWS / SPEC-02 · SYSTEMS / SPEC-03 · PROPRIETARY, per-tier payment shapes, care plans, the white-label rider, and the precisely-scoped SPEC-03 exclusivity clause. It is ported into `ops-site/src/lib/legal-content.ts` under `legalDocuments['spec-terms']` (`spec-terms` is registered in `VALID_TABS` at `ops-site/src/app/legal/page.tsx`). Acceptance happens in the SPEC Stripe Checkout flow via `consent_collection.terms_of_service='required'`; the build-time `SPEC_TERMS_VERSION_HASH` (a sha256 of the ported prose — any prose change bumps it automatically) is captured into `spec_projects.tos_version_accepted` and into a `spec_acceptance_events` row with `event_type='tos_accepted'`.
 
-Review status: Jackson-reviewed (founder review). Counsel review by BC business counsel is recommended risk mitigation per [07_ROLLOUT.md](07_ROLLOUT.md) § Phase 1 Legal but is not a hard launch blocker. Mandatory verbatim clauses from [07_ROLLOUT.md](07_ROLLOUT.md) § 2 are embedded in Sections 9, 15, and 19 below — those sentences are inviolable and must port verbatim into `legal-content.ts`.
+Review status: v2 rewrite per Jackson's approved Tier Model v2 design (2026-07-14). Counsel review by BC business counsel remains recommended-not-blocking per Jackson's standing decision. The v1 "inviolable verbatim" clauses from [07_ROLLOUT.md](07_ROLLOUT.md) § 2 (Sections 9, 15, 19) are carried with v2-required extensions: the Section 9 invocation mechanics and Section 19 cap sentences are intact; Section 9 gains the per-tier refund levers and Section 15 gains the per-tier license surfaces + the SPEC-03 exclusivity scope, both mandated by 10 § 9. **Deposits remain OFF (`SPEC_LIVE_DEPOSITS_ENABLED=false`) regardless of this prose shipping.**
 
 Section IDs in the heading anchors (`agreement`, `definitions`, etc.) map directly to the kebab-case `id` field on each `LegalSection` when porting.
 
@@ -12,8 +12,9 @@ Section IDs in the heading anchors (`agreement`, `definitions`, etc.) map direct
 
 ```
 title: 'SPEC Engagement Terms of Service'
-lastUpdated: '2026-05-25'
-effectiveDate: '2026-06-01'   // set to the actual go-live date when the prose ships
+lastUpdated: '2026-07-14'
+effectiveDate: '2026-07-14'
+version: 'v2.0'
 ```
 
 ---
@@ -36,7 +37,19 @@ The following terms have the meanings given below when capitalized in the SPEC T
 
 - "Change Order" — a written addition or modification to the Scope Document, accepted as an Acceptance Event under Section 7.
 
-- "Custom Modules" or "Modules" — the configurations, integrations, custom data fields, custom pipeline stages, custom user interface components, custom reports, custom data exports, and any other deliverables OPS builds for you under a SPEC engagement, deployed inside your OPS instance and gated by entitlements OPS controls.
+- "Care Plan" — the monthly service subscription described in Section 11, covering monitoring, fixes, hosting for Hosted Deliverables, store compliance for published applications, and the included Change-Hours for the tier.
+
+- "Change-Hours" — the hours of change work included in a Care Plan each month: 2 hours per month on SPEC-02, 3 hours per month on SPEC-03. Work beyond the included Change-Hours is billed at the Overage Rate, always quoted and approved before the work starts.
+
+- "Deliverables" — everything OPS builds for you under an Engagement. Depending on the Package Tier, Deliverables take one of three forms: (a) production automations configured in your own third-party accounts (SPEC-01); (b) a structured data backbone with dashboards, running either inside your OPS instance or as a Hosted Deliverable (SPEC-02); or (c) a standalone software application on its own database, designed, built, published, and operated by OPS (SPEC-03). Where these SPEC Terms refer to "Custom Modules," the reference means Deliverables deployed inside your OPS instance and gated by entitlements OPS controls.
+
+- "Floor Price" — the published minimum total for a SPEC-03 Engagement (currently $25,000 CAD), against which the P1 deposit is fixed. The final total for a SPEC-03 Engagement is the Locked Total.
+
+- "Hosted Deliverables" — Deliverables that OPS operates on infrastructure OPS controls: a SPEC-02 standalone backbone, or a SPEC-03 application. Hosted Deliverables require an active Care Plan under Section 11.
+
+- "Locked Total" — the fixed total price for a SPEC-03 Engagement, set in the Scope Document and counter-signed at scope sign-off. The Locked Total is never less than the Floor Price and does not change after sign-off except through Change Orders.
+
+- "Overage Rate" — $200 CAD per hour, the rate for change work beyond the included Change-Hours. Overage work is always estimated and approved by you in writing before it starts.
 
 - "Engagement" — a single SPEC purchase, identified by one engagement record. Each Engagement is governed independently by its own Scope Document and its own copy of the SPEC Terms (the version accepted at the Engagement's deposit).
 
@@ -46,27 +59,33 @@ The following terms have the meanings given below when capitalized in the SPEC T
 
 - "Guarantee Refund" — the customer-initiated refund described in Section 9 (Delivery and 30-Day Guarantee Refund).
 
-- "Milestones" — the four payment milestones P1 (Deposit), P2 (Scope Sign-Off), P3 (Midpoint Demo), and P4 (Delivery), described in Section 6.
+- "Milestones" or "Checkpoints" — the payment checkpoints for an Engagement, described in Section 6. The checkpoint schedule differs by Package Tier: SPEC-01 pays at two checkpoints (P1 Deposit and P4 Delivery); SPEC-02 pays at four (P1 Deposit, P2 Scope Sign-Off, P3 Midpoint Review, P4 Delivery); SPEC-03 pays a fixed P1 Deposit against the Floor Price, with P2, P3, and P4 splitting the remainder of the Locked Total.
 
 - "Owner Approval Step" — the workflow described in Section 6 for engagements where the buyer is not the OPS account holder. The account holder's approval is recorded as a binding "owner_purchase_approved" Acceptance Event.
 
-- "Package Tier" — the SPEC tier you purchase (Setup, Build, or Enterprise), as published on the SPEC marketing page at /spec.
+- "Package Tier" — the SPEC tier you purchase (SPEC-01 · WORKFLOWS, SPEC-02 · SYSTEMS, or SPEC-03 · PROPRIETARY), as published on the SPEC marketing page at /spec.
 
-- "Retainer" — the optional monthly maintenance subscription described in Section 11.
+- "White-Label Rider" — the SPEC-03 add-on described in Section 12, under which the SPEC-03 application is published under your brand.
 
 - "Scope Document" — the versioned written statement of work for an Engagement, including the feature list, per-feature acceptance criteria, midpoint deliverable definition, delivery deliverable definition, explicit exclusions, estimated delivery window, locked SPEC subscription multiplier, locked module surcharge (if any), and a reference to the active version of the SPEC Terms. Each Scope Document is identified by a content hash. Counter-signature is recorded as a "scope_signoff" Acceptance Event.
 
-- "Support Window" — the post-delivery support period described in Section 10. Setup tier: 30 days. Build tier: 60 days. Enterprise tier: 90 days. The Support Window anchors on the Walkthrough Date.
+- "Support Window" — the post-delivery support period described in Section 10. SPEC-01: 30 days. SPEC-02: 60 days. SPEC-03: 90 days. The Support Window anchors on the Walkthrough Date.
 
-- "Walkthrough Date" — the calendar date on which OPS holds the live delivery walkthrough call with you, recorded as `walkthrough_completed_at` on your engagement record. The Walkthrough Date is the single anchor for the Guarantee Period, the Support Window, the Retainer offer window, and the SPEC subscription premium billing-start date.
+- "Walkthrough Date" — the calendar date on which OPS holds the live delivery walkthrough call with you, recorded as `walkthrough_completed_at` on your engagement record. The Walkthrough Date is the single anchor for the Guarantee Period, the Support Window, the Care Plan offer window, and the Care Plan billing-start date.
 
 Capitalized terms not defined here have the meanings given to them in the body of these SPEC Terms or in the Scope Document.
 
 ## 3. The SPEC Engagement {#the-spec-engagement}
 
-SPEC is OPS's custom software service for trade businesses. Through a SPEC Engagement, OPS designs, builds, and deploys Custom Modules inside your OPS instance to match how your business operates. SPEC is not a separate product — it is a service that extends the OPS platform you subscribe to.
+SPEC is OPS's custom build service for trade businesses. The three Package Tiers deliver three different classes of work:
 
-Each SPEC purchase is a single Engagement. You may run multiple Engagements simultaneously or sequentially. Each Engagement has its own Scope Document, its own Milestones, its own Guarantee Period, and its own Custom Module entitlement set inside your OPS instance.
+- **SPEC-01 · WORKFLOWS** — up to three production automations configured in your own third-party accounts (for example: supplier invoices from your inbox logged into your ledger; email attachments filed into job folders; a lead form feeding a call list). SPEC-01 Deliverables run in accounts you own and control. An OPS subscription is not required; you create a free OPS account so approvals and notices under these SPEC Terms have a home.
+
+- **SPEC-02 · SYSTEMS** — a structured data backbone (jobs, clients, and money in one system) with dashboards, import and cleanup of your existing records, and training. The backbone's location is decided in discovery and recorded in the Scope Document: inside your OPS instance when you run OPS, or as a Hosted Deliverable on OPS-operated infrastructure when you do not.
+
+- **SPEC-03 · PROPRIETARY** — a standalone software application on its own database, designed, built, published, and operated by OPS as a Hosted Deliverable. A SPEC-03 application may connect to your OPS account or run fully independent. SPEC-03 is scoped to a trade tool — an application that does a specific job for your trade. Anything approaching a full operations platform is out of tier and separately quoted.
+
+Each SPEC purchase is a single Engagement. You may run multiple Engagements simultaneously or sequentially. Each Engagement has its own Scope Document, its own Checkpoints, its own Guarantee Period, and its own Deliverables.
 
 The published Package Tiers and the deliverables expected for each tier are described on the SPEC marketing page at /spec. The Scope Document is the binding statement of what is included for your specific Engagement — if the Scope Document and the marketing page disagree, the Scope Document governs that Engagement.
 
@@ -108,45 +127,71 @@ OPS may decline any prospective Engagement, or terminate an active Engagement, t
 
 ## 6. Payment Terms {#payment-terms}
 
-SPEC Engagements are billed in four equal Milestones across all Package Tiers. The Milestone structure is locked; no Engagement is billed on any other cadence.
+Each Package Tier is billed on its own fixed checkpoint schedule. The schedule for your tier is locked at deposit; no Engagement is billed on any other cadence.
 
-| Milestone | Trigger | Amount |
+**SPEC-01 · WORKFLOWS — $2,000 CAD fixed, paid 50/50:**
+
+| Checkpoint | Trigger | Amount |
 |---|---|---|
-| P1 — Deposit | Click-to-book in the SPEC checkout flow | 25% of total |
-| P2 — Scope Sign-Off | Customer counter-signs the Scope Document; recorded as a "scope_signoff" Acceptance Event | 25% of total |
-| P3 — Midpoint Demo | Customer accepts the midpoint deliverable; recorded as a "midpoint_accepted" Acceptance Event | 25% of total |
-| P4 — Delivery | Modules are deployed to your OPS instance, the live walkthrough is held, and `walkthrough_completed_at` is recorded | 25% of total |
+| P1 — Deposit | Click-to-book in the SPEC checkout flow | $1,000 (50% of total) |
+| P4 — Delivery | Deliverables are live in your accounts, the live walkthrough is held, and `walkthrough_completed_at` is recorded | $1,000 (50% of total) |
 
-P1 is paid through Stripe Checkout at deposit time. P2, P3, and P4 are issued as Stripe Invoices with net-15 payment terms.
+SPEC-01 scope sign-off carries no payment, but it is not skipped: your intake responses distill into a written work order that you counter-sign as a "scope_signoff" Acceptance Event before build starts. The payment schedule changes when money moves — the evidence chain does not.
+
+**SPEC-02 · SYSTEMS — $7,500 CAD fixed, paid in four equal checkpoints:**
+
+| Checkpoint | Trigger | Amount |
+|---|---|---|
+| P1 — Deposit | Click-to-book in the SPEC checkout flow | $1,875 (25% of total) |
+| P2 — Scope Sign-Off | Customer counter-signs the Scope Document; recorded as a "scope_signoff" Acceptance Event | $1,875 |
+| P3 — Midpoint Review | Customer accepts the midpoint deliverable; recorded as a "midpoint_accepted" Acceptance Event | $1,875 |
+| P4 — Delivery | The backbone is live, the walkthrough is held, and `walkthrough_completed_at` is recorded | $1,875 |
+
+**SPEC-03 · PROPRIETARY — from $25,000 CAD; total locked at scope sign-off:**
+
+| Checkpoint | Trigger | Amount |
+|---|---|---|
+| P1 — Deposit | Click-to-book in the SPEC checkout flow | $6,250, fixed against the Floor Price |
+| P2 — Scope Sign-Off | Customer counter-signs the Scope Document, which sets the Locked Total; recorded as a "scope_signoff" Acceptance Event | (Locked Total − $6,250) ÷ 3 |
+| P3 — Midpoint Review | Customer accepts the midpoint deliverable | (Locked Total − $6,250) ÷ 3 |
+| P4 — Delivery | The application is live, the walkthrough is held, and `walkthrough_completed_at` is recorded | (Locked Total − $6,250) ÷ 3, plus any residual cents |
+
+The SPEC-03 Locked Total is set in the Scope Document at scope sign-off and is never less than the Floor Price. If you decline the proposed Locked Total at sign-off, you may cancel the Engagement and the refund matrix in Section 22 applies to the deposit. Until the Locked Total is set, all published SPEC-03 figures are quoted against the Floor Price.
+
+P1 is paid through Stripe Checkout at deposit time. All later checkpoints are issued as Stripe Invoices with net-15 payment terms.
 
 For Engagements where the buyer is not the OPS account holder, the Owner Approval Step gates the payment session. The account holder must approve the purchase electronically before any Stripe Checkout Session is created. The approval is recorded as an "owner_purchase_approved" Acceptance Event capturing the account holder's identifier, IP, user agent, signature method, and a hash of the version of these SPEC Terms they reviewed. The buyer's later ToS acceptance at Stripe Checkout is a separate "tos_accepted" Acceptance Event. Both events are part of the Engagement's evidence chain in any dispute.
 
 Currency is Canadian dollars (CAD) only. Stripe Tax calculates and collects GST, HST, and PST based on the billing address recorded at Stripe Checkout. QST does not apply because Quebec is excluded (Section 4). You may optionally provide a GST/HST number at checkout, which OPS attaches to your Stripe customer record so input-tax-credit-eligible invoices reflect it.
 
-If a Milestone invoice is unpaid more than 7 calendar days past its net-15 due date, OPS may disable the affected Custom Modules in your OPS instance until the invoice is paid in full. Disablement is recorded with the reason "non_payment" and is reversed immediately on payment. The Guarantee Period clock is tolled while Modules are disabled for non-payment (Section 9).
+If a checkpoint invoice is unpaid more than 7 calendar days past its net-15 due date, OPS may disable the affected Deliverables until the invoice is paid in full — Custom Modules inside your OPS instance are entitlement-disabled, and Hosted Deliverables are suspended. Disablement is recorded with the reason "non_payment" and is reversed immediately on payment. The Guarantee Period clock is tolled while Deliverables are disabled for non-payment (Section 9). SPEC-01 Deliverables live in your own accounts and cannot be disabled by OPS; an unpaid SPEC-01 delivery balance remains a debt owing, OPS may suspend Support Window service until it is paid, and OPS may pursue ordinary collection.
 
-OPS may decline to begin work on a subsequent Milestone while a prior Milestone invoice is overdue. Repeated non-payment is a material breach and may result in termination under Section 20.
+OPS may decline to begin work on a subsequent checkpoint while a prior checkpoint invoice is overdue. Repeated non-payment is a material breach and may result in termination under Section 20.
 
 ## 7. Scope, Change Orders, and Pricing {#scope-and-change-orders}
 
-The signed Scope Document is the binding statement of what OPS will build for your Engagement. The Engagement is fixed-price at the Milestone amounts shown in Section 6; there is no hours-tracking, hourly-overage billing, or "demonstrate your time" reconciliation on the core engagement. If OPS completes the Scope Document faster than estimated, the Milestone amounts do not change. If OPS takes longer than estimated (subject to Section 8 delivery-date language), OPS absorbs the additional time.
+The signed Scope Document is the binding statement of what OPS will build for your Engagement. The Engagement is fixed-price at the checkpoint amounts shown in Section 6 (for SPEC-03, at the Locked Total once set); there is no hours-tracking, hourly-overage billing, or "demonstrate your time" reconciliation on the core engagement. If OPS completes the Scope Document faster than estimated, the checkpoint amounts do not change. If OPS takes longer than estimated (subject to Section 8 delivery-date language), OPS absorbs the additional time.
+
+For SPEC-03 Engagements, the Scope Document sets the Locked Total at scope sign-off. The Locked Total is built from the counter-signed feature list and is never less than the Floor Price. After sign-off the Locked Total changes only through accepted Change Orders.
 
 After scope sign-off you may request changes. OPS classifies each requested change into one of two categories:
 
-- A minor change is one OPS estimates at less than approximately 4 hours of work. Minor changes are billed at $225 CAD per hour, in 30-minute increments. You pre-approve the estimate; the pre-approval is recorded as a "change_order_accepted" Acceptance Event. Minor changes are invoiced at the end of the current Milestone or at the end of the Engagement, net-15.
+- A minor change is one OPS estimates at less than approximately 4 hours of work. Minor changes are billed at the Overage Rate ($200 CAD per hour), in 30-minute increments. You pre-approve the estimate; the pre-approval is recorded as a "change_order_accepted" Acceptance Event. Minor changes are invoiced at the end of the current checkpoint or at the end of the Engagement, net-15.
 - A major change is one OPS estimates at 4 hours or more. Major changes are quoted as a fixed price for a defined scope. OPS provides the scope, the price, and the impact on the delivery window; you accept in writing as a "change_order_accepted" Acceptance Event. Major changes are tracked as separate Change Order records and invoiced on completion, net-15.
 
-OPS determines the estimate and the minor-versus-major classification using the signed Scope Document and the per-feature acceptance criteria. Your option is to accept or decline the estimate; estimates are not negotiable.
+OPS determines the estimate and the minor-versus-major classification using the signed Scope Document and the per-feature acceptance criteria. Your option is to accept or decline the estimate; estimates are not negotiable. No change work is billed that you did not approve in writing first.
 
-Tier upgrades requested before scope sign-off are full pro-rated upgrades: you pay the difference between the new tier total and the amounts already paid, and discovery work counts toward the new tier. Tier upgrades requested after scope sign-off are case-by-case fixed-price quotes tracked as Change Orders.
+Tier upgrades requested before scope sign-off are full pro-rated upgrades: you pay the difference between the new tier total (for SPEC-03, the Floor Price pending the Locked Total) and the amounts already paid, and discovery work counts toward the new tier. Tier upgrades requested after scope sign-off are case-by-case fixed-price quotes tracked as Change Orders.
 
 ## 8. Acceptance and Quality {#acceptance-and-quality}
 
-Each feature in the Scope Document carries a written acceptance criterion. A feature is "accepted" when it meets the written criterion. Acceptance of all features required for a Milestone triggers the Milestone invoice.
+Each feature in the Scope Document carries a written acceptance criterion. A feature is "accepted" when it meets the written criterion. Acceptance of all features required for a checkpoint triggers the checkpoint invoice.
 
-After the midpoint demo and after the delivery walkthrough, OPS may invite you to rate each feature on a 1-to-5 satisfaction scale. The rating is non-binding feedback. A passing acceptance criterion triggers the Milestone invoice regardless of rating. OPS reviews 1-star and 2-star ratings against the acceptance criterion and repairs or rebuilds the feature at no charge if the criterion objectively fails. Subjective preferences with passing acceptance criteria are handled through the polish budget (described below) or through the Change Order process in Section 7.
+The midpoint deliverable differs by tier and is defined in the Scope Document: for SPEC-02, the backbone staged for your review with your records loaded; for SPEC-03, a working prototype covering approximately half of the locked scope. SPEC-01 Engagements have no midpoint checkpoint — the schedule runs deposit to delivery.
 
-OPS may include a discretionary post-scope polish budget on each Engagement — typically 2 hours for Setup, 4 hours for Build, and 8 hours for Enterprise. Polish hours are at OPS's sole discretion, are not billed, and may be exhausted before all subjective preferences are addressed. Once polish is exhausted, additional changes flow through the Change Order process.
+After the midpoint review (where the tier has one) and after the delivery walkthrough, OPS may invite you to rate each feature on a 1-to-5 satisfaction scale. The rating is non-binding feedback. A passing acceptance criterion triggers the checkpoint invoice regardless of rating. OPS reviews 1-star and 2-star ratings against the acceptance criterion and repairs or rebuilds the feature at no charge if the criterion objectively fails. Subjective preferences with passing acceptance criteria are handled through the polish budget (described below) or through the Change Order process in Section 7.
+
+OPS may include a discretionary post-scope polish budget on each Engagement — typically 2 hours for SPEC-01, 4 hours for SPEC-02, and 8 hours for SPEC-03. Polish hours are at OPS's sole discretion, are not billed, and may be exhausted before all subjective preferences are addressed. Once polish is exhausted, additional changes flow through the Change Order process.
 
 Delivery dates in the Scope Document are good-faith estimates, not firm deadlines. OPS will notify you of any anticipated delay greater than 7 days within 48 hours of identifying the delay, and will provide a revised estimate. No automatic credits, refunds, or penalties apply to delivery-window slips. If a delay is unacceptable to you, you may invoke the cancellation and refund process in Section 22.
 
@@ -154,7 +199,7 @@ Delivery dates in the Scope Document are good-faith estimates, not firm deadline
 
 Delivery of an Engagement consists of all of the following:
 
-- The Custom Modules are deployed to your OPS instance and the corresponding entitlements are activated.
+- The Deliverables are live: SPEC-01 automations running in your accounts; a SPEC-02 backbone live in your OPS instance or on OPS-operated infrastructure; a SPEC-03 application live and, where applicable, published.
 - OPS holds a 30 to 60 minute live delivery walkthrough on a video call. The walkthrough is recorded and the recording link is stored on your engagement record.
 - The `walkthrough_completed_at` timestamp is recorded on your engagement record.
 
@@ -164,13 +209,18 @@ P4 fires immediately on delivery. The Walkthrough Date is the calendar date on w
 
 You may submit a Guarantee Refund request through the in-app refund route at /account/spec/[id]/request-refund or by emailing jackson@opsapp.co. The request must come from the buyer or the OPS account holder.
 
-On issuance of a Guarantee Refund:
+The refund lever on issuance depends on where your Deliverables live:
 
-- OPS disables the Custom Modules covered by the Engagement (entitlements set to disabled, with reason "refunded"). You agree to stop using the disabled Modules immediately. Continued workaround use of refunded Modules — including exporting Module-built data and reinserting it elsewhere in OPS — is a material breach.
-- Your underlying base OPS subscription is unaffected. Only the SPEC-built Modules and the SPEC subscription premium for those Modules are removed.
-- Each Milestone is settled according to the per-state mechanics in Section 22 so that you owe nothing further for the refunded Engagement.
+- **SPEC-01 (your own accounts):** your money back. The automations run in accounts you own — OPS cannot and does not disable them. OPS refunds the SPEC-01 build fees per Section 22 and stops supporting the automations. OPS's maximum exposure on a SPEC-01 guarantee is the $2,000 engagement total; this is an accepted term of the tier.
+- **SPEC-02 backbone inside your OPS instance:** the Custom Module entitlements are set to disabled with reason "refunded." You agree to stop using the disabled Modules immediately. Continued workaround use of refunded Modules — including exporting Module-built data and reinserting it elsewhere in OPS — is a material breach.
+- **Hosted Deliverables (a standalone SPEC-02 backbone, or a SPEC-03 application):** access is disabled and any published application listing is removed. Your data is exported and delivered to you per the off-boarding terms in Section 11.
 
-The Guarantee Refund may be invoked once per Engagement. If you have multiple Engagements, each Engagement carries its own Guarantee Refund right. The Guarantee Refund does not extend to the base OPS subscription, to Retainer fees that have already accrued for support rendered, or to Change Order fees already billed for work delivered.
+In every case:
+
+- Your underlying base OPS subscription is unaffected. Only the SPEC Deliverables (and any Care Plan for them) are removed.
+- Each checkpoint is settled according to the per-state mechanics in Section 22 so that you owe nothing further for the refunded Engagement.
+
+The Guarantee Refund may be invoked once per Engagement. If you have multiple Engagements, each Engagement carries its own Guarantee Refund right. The Guarantee Refund does not extend to the base OPS subscription, to Care Plan fees that have already accrued for service rendered, or to Change Order fees already billed for work delivered.
 
 The Guarantee Refund is your sole and exclusive remedy for dissatisfaction with the SPEC Engagement during the Guarantee Period, except as provided in Sections 15, 17, 18, and 19 with respect to Excluded Claims.
 
@@ -180,9 +230,9 @@ OPS provides a Support Window beginning on the Walkthrough Date.
 
 | Package Tier | Support Window length |
 |---|---|
-| Setup | 30 days |
-| Build | 60 days |
-| Enterprise | 90 days |
+| SPEC-01 · WORKFLOWS | 30 days |
+| SPEC-02 · SYSTEMS | 60 days |
+| SPEC-03 · PROPRIETARY | 90 days |
 
 During the Support Window:
 
@@ -190,37 +240,43 @@ During the Support Window:
 - High-severity defects (defects that degrade but do not block) are repaired at no charge if the defect violates an acceptance criterion in the Scope Document. OPS targets 3-business-day resolution.
 - Cosmetic and enhancement requests are billable Change Orders under Section 7.
 
-After the Support Window closes, ordinary bugs and enhancement requests are billable unless covered by an active Retainer or by a still-active accepted support obligation. OPS does not disclaim its duties for security obligations, privacy obligations, confidentiality obligations, willful misconduct, gross negligence, or defects covered by a still-active express warranty or an accepted support obligation.
+After the Support Window closes, ordinary bugs and enhancement requests are billable unless covered by an active Care Plan or by a still-active accepted support obligation. OPS does not disclaim its duties for security obligations, privacy obligations, confidentiality obligations, willful misconduct, gross negligence, or defects covered by a still-active express warranty or an accepted support obligation.
 
 OPS targets but does not guarantee specific response or resolution times for tickets filed during the Support Window. Targets are good-faith service levels, not contractual commitments backed by credits.
 
-## 11. Maintenance Retainer {#maintenance-retainer}
+## 11. Care Plans {#care-plans}
 
-The Retainer is an opt-in monthly subscription you may purchase as the Support Window approaches its close. Retainer enrollment is never silent — you must affirmatively subscribe through a Stripe-hosted subscription link.
+A Care Plan is the monthly service subscription that keeps OPS-operated work running after delivery. When OPS operates your system, someone is contractually on the hook for it — that is the Care Plan.
 
-| Package Tier | Retainer | Coverage |
-|---|---|---|
-| Setup | $250 CAD per month | Bug fixes, minor enhancements within the original scope, and OPS platform-update compatibility patches |
-| Build | $450 CAD per month | Same as Setup, applied to the Custom Module |
-| Enterprise | $750 CAD per month | Same as Setup, applied to all delivered Modules under the Engagement |
+| Package Tier | Care Plan | Required? | Coverage |
+|---|---|---|---|
+| SPEC-01 · WORKFLOWS | None | — | SPEC-01 carries no monthly fee. The automations run in your own accounts; you are responsible for those accounts and any third-party fees they carry. |
+| SPEC-02 · SYSTEMS | $395 CAD per month | **Required while OPS operates a standalone backbone.** Optional after the Support Window when the backbone lives in your own OPS instance. | Monitoring, defect fixes, hosting of the standalone backbone, and up to 2 Change-Hours per month. |
+| SPEC-03 · PROPRIETARY | From $750 CAD per month (base; the White-Label Rider adds $200 per month) | **Required while OPS hosts and operates the application.** | Infrastructure, updates, support, application-store compliance, and up to 3 Change-Hours per month. |
 
-The Retainer does not cover new features, scope expansions, third-party integrations, or module rewrites — those flow through the Change Order process. There is no formal hour cap on the Retainer; OPS may propose a tier change or a transition to billable Change Orders if usage materially exceeds normal patterns (for example, more than ten hours per month on a Build Retainer or more than twenty hours per month on an Enterprise Retainer).
+**Billing start.** Care Plan billing begins when your Support Window ends — 30, 60, or 90 days after the Walkthrough Date by tier. The Support Window itself carries no Care Plan charge. Care Plans are billed monthly through a Stripe subscription; enrollment is confirmed in writing before the first charge, never silent.
 
-Retainer cancellations take effect at the end of the current billing period. There is no proration on cancellation, and the Retainer does not bank unused hours into future months.
+**Change-Hours and overage.** Included Change-Hours cover ongoing change work — adjustments, small enhancements, evolution of the delivered scope. Unused Change-Hours do not bank into future months. Work beyond the included hours is billed at the Overage Rate ($200 CAD per hour) and is always estimated and approved by you in writing before it starts. New features, scope expansions, and rewrites beyond Change-Hour scale flow through the Change Order process in Section 7.
 
-Retainer-offer emails sent at or near the close of the Support Window are commercial electronic messages under CASL and comply with the requirements in Section 24.
+**Service posture — stated plainly.** OPS operates Hosted Deliverables on commercially reasonable efforts. OPS does not offer a contractual uptime service-level agreement, uptime percentage commitment, or service credits at these price points, and you should not purchase a SPEC Engagement expecting one. OPS targets prompt response and repair consistent with Section 10's support posture, monitors Hosted Deliverables, and carries the same operational care for your system as for OPS's own platform — but targets are good-faith service levels, not credit-backed commitments.
 
-## 12. SPEC Subscription Premium {#subscription-premium}
+**Cancellation and off-boarding.** You may cancel a Care Plan effective at the end of the current billing period; there is no proration. Because a Care Plan is required while OPS operates Hosted Deliverables, cancelling it triggers off-boarding: OPS will wind down operation on 30 days' notice, export your data to you in CSV or JSON (and any other format reasonably available), and — for white-labelled SPEC-03 applications — offer the App Transfer path described in Section 12. If you stop paying a required Care Plan without cancelling, OPS may suspend the Hosted Deliverables after notice, and Section 21's data-export obligations still apply. OPS does not hold your business data hostage: data export under this paragraph is included, not billable.
 
-Each SPEC Engagement adds a SPEC subscription premium to your base OPS subscription. The published estimate is +15% (Setup), +30% (Build), and +50% (Enterprise) of your base OPS subscription. The actual premium for an Engagement is locked in the Scope Document at scope sign-off and may differ from the published estimate based on the final feature list and the infrastructure footprint of the Custom Modules.
+**In-OPS backbones and subscription lapse.** Where a SPEC-02 backbone lives in your own OPS instance, the backbone depends on your base OPS subscription. If the base subscription lapses, the SPEC-built modules are disabled automatically (reason "subscription_lapse"); the module code is retained on OPS infrastructure, and resuming your subscription re-enables them at no charge.
 
-Premium billing begins on your first regular OPS billing cycle that occurs after the Walkthrough Date plus 30 days. The first 30 days after the Walkthrough Date are a soft post-delivery trial during which the premium is not charged. If you are on a monthly base subscription, the premium is added to your monthly invoice from the first eligible cycle. If you are on an annual base subscription, OPS prorates the premium to the remaining annual term as a one-time line item, and applies the full premium from the next annual renewal.
+Care Plan offer emails sent at or near the close of the Support Window are commercial electronic messages under CASL and comply with the requirements in Section 24.
 
-OPS may add a module-specific surcharge for Engagements with infrastructure-heavy Modules — for example, modules that require dedicated background processing, frequent external API calls, or significant storage. Surcharges are disclosed before scope sign-off and locked in the Scope Document.
+## 12. White-Label Rider (SPEC-03) {#white-label-rider}
 
-The locked premium and surcharge for an Engagement are fixed for 12 months following the Walkthrough Date. After 12 months, OPS may propose a revised premium if actual infrastructure cost diverges materially from the locked figure. Any revised premium takes effect prospectively on your next billing cycle following 30 days' notice.
+The White-Label Rider is an optional SPEC-03 add-on: the application OPS builds for you is published under your brand — your name, your icon, your application-store listing, your screenshots, your description. The Rider is $4,000 CAD one-time, added to the Locked Total at scope sign-off, plus $200 CAD per month added to the SPEC-03 Care Plan.
 
-If your base OPS subscription lapses, the SPEC-built Custom Modules are disabled automatically (disabled reason "subscription_lapse"). The Module code is retained on OPS infrastructure; resuming your subscription re-enables the Modules at no charge. The license granted in Section 15 ends when the base OPS subscription ends or when the Engagement is refunded.
+**Publisher of record — disclosed plainly.** White-labelled applications are published under OPS's Apple Developer organization account (and equivalent accounts on other stores where applicable). This is turnkey by design: you set up no developer account, renew nothing, and manage no store relationship. One consequence is fixed by Apple, not by OPS: the App Store "Seller" line displays OPS's legal entity name, because Apple binds that field to the developer account. Everything above the fold — name, icon, listing content — is your brand. You accept this seller-line presentation by purchasing the Rider.
+
+**Brand warranty and publishing license.** You warrant that you own or control the brand assets you supply — names, logos, icons, marks, screenshots content — and that OPS's use of them for the white-labelled application infringes no third party's rights. You grant OPS a non-exclusive license to use those brand assets solely to build, publish, operate, and maintain the white-labelled application for you. This license ends at off-boarding, subject to store-imposed wind-down timelines. Your brand assets remain yours; nothing in the Rider transfers brand ownership to OPS.
+
+**Store compliance.** OPS administers the listing end to end: store review submissions, compliance updates, certificate and account renewals, and store-policy responses are OPS's responsibility while the Care Plan is active. If a store policy change makes continued publication impracticable in OPS's reasonable judgment, OPS will notify you and propose the best available path (re-publication in altered form, transfer under the paragraph below, or wind-down with data export).
+
+**App Transfer — the off-boarding escape hatch.** Turnkey today is not lock-in forever. If you want full publisher-of-record ownership, Apple's App Transfer mechanism moves the application to your own Apple Developer account with reviews and install history preserved. OPS administers the transfer at your request, billed at the Overage Rate as time-and-materials work, quoted first. After transfer you own the store relationship; continued OPS operation of the backend, if desired, is negotiated as a fresh services arrangement.
 
 ## 13. Confidentiality {#confidentiality}
 
@@ -250,11 +306,19 @@ If OPS becomes aware of a breach of security safeguards involving your personal 
 
 **IP and license.** OPS owns all code, configurations, designs, templates, and reusable know-how created for SPEC. Customer owns its business data. While Customer maintains an active OPS subscription and is not in breach, OPS grants Customer a limited, non-exclusive, non-transferable license to use the delivered modules inside OPS. The license ends when the OPS subscription ends or the engagement is refunded.
 
-Expanding on the license grant: the license is non-sublicensable, non-assignable, restricted to your own internal business operations, and exercisable only inside the OPS platform. You may not extract, decompile, reverse-engineer, copy, or re-host the Custom Modules outside OPS. You may not white-label or resell access to the Custom Modules to third parties. You may use the operational outputs of the Custom Modules — your invoices, your customer records, your project data, your photos, your reports — freely; the license restriction applies to the Module code and configuration, not to the data the Modules produce.
+The license surface differs by where your Deliverables live:
+
+- **Custom Modules inside your OPS instance** (a SPEC-02 in-OPS backbone): the paragraph above applies as written — the license is exercisable only inside the OPS platform and ends when your base OPS subscription ends or the Engagement is refunded.
+- **Hosted Deliverables** (a standalone SPEC-02 backbone, or a SPEC-03 application): OPS grants you a limited, non-exclusive, non-transferable license to use the Hosted Deliverable for your own internal business operations while the Engagement is in good standing and the required Care Plan is active. The license does not depend on a base OPS subscription. It ends on refund, on termination, or on off-boarding under Section 11 — except that data exported to you at off-boarding is yours without restriction.
+- **SPEC-01 automations delivered into your own accounts:** the delivered configurations run in accounts you own, and you may run, modify, and retire them freely after delivery. OPS retains ownership of the underlying patterns, templates, and know-how, and post-delivery support for modified automations is limited to the Support Window terms in Section 10.
+
+In every case the license is non-sublicensable, non-assignable, and restricted to your own internal business operations. You may not extract, decompile, reverse-engineer, copy, or re-host Custom Modules or Hosted Deliverables, and you may not white-label or resell access to any Deliverable to third parties (the Section 12 White-Label Rider is the sole white-label path, and it covers presentation of your own application to your own clients, not resale). You may use the operational outputs of the Deliverables — your invoices, your customer records, your project data, your photos, your reports — freely; the license restriction applies to code and configuration, not to the data the Deliverables produce.
+
+**Exclusivity — scoped precisely (SPEC-03).** OPS will not sell, license, or transfer *your application* — the SPEC-03 application built for you, meaning your instance, your brand, your configuration, and your data — to any other company, including a competitor. That is the exclusivity you buy. It is equally important to state what is *not* exclusive: OPS retains unrestricted rights to reuse the code, components, patterns, and know-how underneath your application, up to and including building a functionally equivalent tool for another customer or folding components into OPS's own products. Exclusive to you: your instance, your brand, your configuration, your data, and your license. Not exclusive: the code, the patterns, and the concept.
 
 OPS may reuse anonymized patterns, generic configurations, and reusable know-how learned across SPEC Engagements in future SPEC work. OPS will never reuse your business data — customer names, employee names, financials, project records, photos, or any other identifying information — in any other customer's Engagement.
 
-OPS provides the following express IP indemnity. If a third party claims that the OPS-developed Custom Modules, as delivered, infringe the third party's intellectual property rights, OPS will defend you against the claim and indemnify you against damages awarded against you, provided that you (a) promptly notify OPS of the claim, (b) give OPS sole control of the defence and settlement, and (c) reasonably cooperate at OPS's expense. OPS's obligations under this paragraph do not apply to claims arising from (i) your modification of the Modules, (ii) your combination of the Modules with third-party software or data not provided or approved by OPS, or (iii) your use of the Modules other than as described in the Scope Document and the SPEC Terms. This IP indemnity is the express IP indemnity obligation referenced in the Excluded Claims definition and sits outside the liability cap in Section 19.
+OPS provides the following express IP indemnity. If a third party claims that the OPS-developed Deliverables, as delivered, infringe the third party's intellectual property rights, OPS will defend you against the claim and indemnify you against damages awarded against you, provided that you (a) promptly notify OPS of the claim, (b) give OPS sole control of the defence and settlement, and (c) reasonably cooperate at OPS's expense. OPS's obligations under this paragraph do not apply to claims arising from (i) your modification of the Deliverables, (ii) your combination of the Deliverables with third-party software or data not provided or approved by OPS, or (iii) your use of the Deliverables other than as described in the Scope Document and the SPEC Terms. This IP indemnity is the express IP indemnity obligation referenced in the Excluded Claims definition and sits outside the liability cap in Section 19.
 
 OPS may use de-identified, aggregated information about platform usage patterns derived from the Custom Modules to improve the OPS platform. Any feedback, suggestions, or ideas you provide regarding the Modules or the OPS platform may be used by OPS without restriction or compensation, subject to the confidentiality obligations in Section 13.
 
@@ -338,9 +402,9 @@ Refund eligibility depends on where the Engagement is in its lifecycle:
 |---|---|
 | Pre-discovery — before the first discovery session is held | Typically a full deposit refund at OPS's discretion, since no work has been done. |
 | Post-discovery, pre-scope sign-off | Pro-rated. OPS retains the portion of the deposit corresponding to discovery work performed; the remainder is refunded. |
-| Post-scope sign-off, pre-delivery | Pro-rated. Completed Milestones are non-refundable; unstarted Milestones are refundable. |
+| Post-scope sign-off, pre-delivery | Pro-rated. Completed checkpoints are non-refundable; unstarted checkpoints are refundable. |
 | Within the Guarantee Period (30 days after the Walkthrough Date) | Guarantee Refund per Section 9 on your written request stating dissatisfaction. No defect proof and no cure period. One invocation per Engagement, subject to the Section 9 exclusions. |
-| After the Guarantee Period | Build fees are non-refundable. You may request a goodwill refund; OPS may grant or deny at its sole discretion. Granted goodwill refunds are flagged accordingly in the refund record. |
+| After the Guarantee Period | Engagement build fees are non-refundable. You may request a goodwill refund; OPS may grant or deny at its sole discretion. Granted goodwill refunds are flagged accordingly in the refund record. |
 
 Because Milestones are issued on net-15 invoicing, some Milestones may be unpaid at the time a refund is granted. OPS's refund obligation is fulfilled by, for each Milestone, taking the action below that matches the Milestone's payment state at refund time:
 
@@ -356,7 +420,7 @@ The aggregate effect of these actions is that you owe nothing further for the re
 
 Refunds are processed within 7 business days of the date OPS confirms the request is valid. Funds typically settle into your account 5 to 7 business days after the refund is issued, depending on your card issuer or bank.
 
-If you have paid no-show fees, Change Order fees, or Retainer fees for work that was delivered, those amounts are not refunded under the Guarantee Refund. The Guarantee Refund covers the SPEC build fees for the refunded Engagement only.
+If you have paid no-show fees, Change Order fees, or Care Plan fees for service that was rendered, those amounts are not refunded under the Guarantee Refund. The Guarantee Refund covers the SPEC build fees for the refunded Engagement only.
 
 If your Engagement is cancelled under Section 20 for three discovery no-shows, the deposit is forfeited and no refund is issued.
 
@@ -374,7 +438,7 @@ OPS sends two categories of email in connection with SPEC Engagements: operation
 
 Operational/transactional messages include deposit receipts, owner-approval requests and decisions, intake reminders, scope-sign-off confirmations, Milestone invoices, refund confirmations, Stripe dispute notices, Support Window notices, service-disruption notices, and Custom Module status alerts. Operational messages are required to complete the contractual relationship under the SPEC Terms and are not subject to CASL consent requirements. You receive these messages regardless of your marketing preferences.
 
-Commercial electronic messages include Retainer offers, referral-program promotions, SPEC marketing follow-ups, and any future cross-sell offers. Each commercial message complies with CASL by identifying OPS as sender, including OPS's mailing address (303-1121 Oscar Street, Victoria BC V8V2X3), providing a functional unsubscribe mechanism processed within 10 business days, and stating the consent basis on which OPS sent the message (express consent, implied consent under the existing-business-relationship two-year window, or otherwise).
+Commercial electronic messages include Care Plan offers, referral-program promotions, SPEC marketing follow-ups, and any future cross-sell offers. Each commercial message complies with CASL by identifying OPS as sender, including OPS's mailing address (303-1121 Oscar Street, Victoria BC V8V2X3), providing a functional unsubscribe mechanism processed within 10 business days, and stating the consent basis on which OPS sent the message (express consent, implied consent under the existing-business-relationship two-year window, or otherwise).
 
 You give your consent to receive operational messages by accepting the SPEC Terms, and that consent applies for as long as the Engagement is active. You may give or withdraw consent for commercial messages independently of operational messages. Operational messages will continue even if you have unsubscribed from commercial messages.
 
@@ -458,10 +522,10 @@ info@opsapp.co
 
 ---
 
-## Implementation notes for the follow-up porting chip
+## Implementation notes (v2 port, 2026-07-14)
 
-- Each `## N. Title {#anchor-id}` heading maps to a `LegalSection` entry with `id: 'anchor-id'`, `title: 'N. Title'`, and `content` derived from the prose below the heading.
+- Each `## N. Title {#anchor-id}` heading maps to a `LegalSection` entry with `id: 'anchor-id'`, `title: 'N. Title'`, and `content` derived from the prose below the heading. v2 renamed two anchors: Section 11 is now `care-plans` (was `maintenance-retainer`) and Section 12 is now `white-label-rider` (was `subscription-premium`).
 - Preserve all UPPERCASE legal-language passages in Sections 17 and 19 — they are intentional and load-bearing.
-- The Section 9 Guarantee Refund clause, the Section 15 IP and license clause, and the Section 19 limitation of liability clause are reproduced verbatim from [07_ROLLOUT.md](07_ROLLOUT.md) § 2. They must port verbatim into `legal-content.ts`. The bolded label sentences (`**Guarantee Refund.**`, `**IP and license.**`, `**Limitation of liability.**`) immediately precede each verbatim block.
-- The `consent_collection.terms_of_service` URL configured in the Stripe Dashboard must point at `https://opsapp.co/legal?page=spec-terms`. The build-time `SPEC_TERMS_VERSION_HASH` is appended via URL fragment so the version is captured at acceptance.
+- The Section 9 Guarantee Refund invocation clause, the Section 15 "IP and license" lead paragraph, and the Section 19 limitation-of-liability clause carry verbatim from the v1 prose (origin: [07_ROLLOUT.md](07_ROLLOUT.md) § 2). v2 adds the per-tier refund levers after the Section 9 clause and the per-tier license surfaces + SPEC-03 exclusivity scope after the Section 15 clause, per [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) § 9. The bolded label sentences (`**Guarantee Refund.**`, `**IP and license.**`, `**Limitation of liability.**`) immediately precede each carried block.
+- The `consent_collection.terms_of_service` URL configured in the Stripe Dashboard must point at `https://opsapp.co/legal?page=spec-terms`. The build-time `SPEC_TERMS_VERSION_HASH` is appended via URL fragment so the version is captured at acceptance. The v2 prose produces a new hash automatically — acceptance events after the port pin v2.
 - After porting, run the build and confirm the new `SPEC_TERMS_VERSION_HASH` constant exists and that the `/legal?page=spec-terms` route renders all 31 sections in initial HTML (no JS gating).

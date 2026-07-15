@@ -1,4 +1,6 @@
-# SPEC Privacy Policy Additions — Final Customer-Facing Prose (2026-05-25)
+# SPEC Privacy Policy Additions — Final Customer-Facing Prose (2026-05-25; tier terms updated for Tier Model v2, 2026-07-14)
+
+> **2026-07-14 (Tier Model v2):** commercial-message examples now say "Care Plan offers" (the v2 name for the retainer), and cross-referenced definitions point at the v2 SPEC Terms. Data flows, subprocessors, and retention are unchanged by v2 — see [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) § 9.
 
 This file is the production-ready Privacy Policy additions that cover SPEC-specific data flows. The follow-up implementation chip merges this content into `ops-site/src/lib/legal-content.ts` under `legalDocuments['privacy']`. Each section below indicates where it lands in the existing Privacy Policy structure.
 
@@ -18,7 +20,7 @@ The existing Privacy Policy (`legalDocuments['privacy']` in `ops-site/src/lib/le
 | § 3 — How We Use Your Information | New row added to the purpose table for SPEC engagement processing and SPEC conversion-tracking |
 | § 4 — Third-Party Processors | New entries added to the processors table: SendGrid, Vercel, Meta (CAPI), Google Ads, Cal.com |
 | § 8 — Data Retention | New rows added to the retention table for SPEC engagement records, intake responses + uploads, scope docs, satisfaction ratings, and communications log |
-| § 11 — Communications | New paragraph added covering SPEC-specific commercial messages (Retainer offers, referral promotions, SPEC marketing follow-ups) |
+| § 11 — Communications | New paragraph added covering SPEC-specific commercial messages (Care Plan offers, referral promotions, SPEC marketing follow-ups) |
 
 The full prose for each addition is below. Section numbers in the additions match the numbering style of the existing Privacy Policy.
 
@@ -55,7 +57,7 @@ Add the following rows to the purpose-of-processing table:
 | Delivering a SPEC engagement: discovery, scope drafting, build, midpoint demo, walkthrough, support window, retainer support | Contract performance |
 | Processing SPEC milestone payments and refunds via Stripe | Contract performance |
 | Sending operational SPEC emails (deposit confirmations, owner approvals, intake reminders, invoices, refund confirmations, dispute notices, support-window notices) | Contract performance |
-| Sending commercial SPEC emails (Retainer offers, referral program promotions, SPEC marketing follow-ups) | Express or implied CASL consent, as applicable |
+| Sending commercial SPEC emails (Care Plan offers, referral program promotions, SPEC marketing follow-ups) | Express or implied CASL consent, as applicable |
 | Enforcing eligibility rules — including the Canada-excluding-Quebec geographic restriction and the regulated-workflow exclusions | Legitimate interest; legal obligation |
 | Measuring SPEC ad-campaign performance through conversion tracking to Meta and Google | Legitimate interest; consent where required by applicable law |
 | Detecting fraud and misuse of the SPEC pipeline — including chargeback fraud, self-referral attempts, and Quebec-misrepresentation cases | Legitimate interest |
@@ -107,7 +109,7 @@ Add the following paragraph after the existing CASL paragraphs in § 11:
 For SPEC engagements specifically, you receive two categories of email:
 
 - Operational/transactional messages — deposit receipts, owner-approval requests and decisions, intake reminders, scope-sign-off confirmations, milestone invoices, refund confirmations, Stripe dispute notices, support-window notices, and Custom Module status alerts. These messages are required to complete the SPEC contract and are not subject to CASL consent requirements. You receive them regardless of marketing preferences.
-- Commercial messages — Retainer offers around the close of the support window, SPEC referral-program promotions, and SPEC marketing follow-ups. Each commercial message identifies OPS as sender, includes our mailing address (303-1121 Oscar Street, Victoria BC V8V2X3), provides a functional unsubscribe link processed within 10 business days, and states the consent basis (express or implied under the existing-business-relationship two-year window).
+- Commercial messages — Care Plan offers around the close of the support window, SPEC referral-program promotions, and SPEC marketing follow-ups. Each commercial message identifies OPS as sender, includes our mailing address (303-1121 Oscar Street, Victoria BC V8V2X3), provides a functional unsubscribe link processed within 10 business days, and states the consent basis (express or implied under the existing-business-relationship two-year window).
 
 The SPEC referral program is link-based. We do not send commercial messages on your behalf to your referrals. Messages to referred prospects start only after the referred party submits a form, starts checkout, or otherwise expressly opts in to OPS communications.
 
@@ -115,6 +117,6 @@ The SPEC referral program is link-based. We do not send commercial messages on y
 
 ## Cross-references for the porting chip
 
-- The terms "engagement record," "Scope Document," "Walkthrough Date," "Support Window," "Retainer," and "Custom Modules" used here are defined in the SPEC Engagement Terms of Service at /legal?page=spec-terms. The Privacy Policy itself does not need to re-define them; readers can cross-reference.
+- The terms "engagement record," "Scope Document," "Walkthrough Date," "Support Window," "Care Plan," and "Custom Modules" used here are defined in the SPEC Engagement Terms of Service at /legal?page=spec-terms. The Privacy Policy itself does not need to re-define them; readers can cross-reference.
 - The Meta and Google conversion-tracking flows are operationally implemented at `ops-site/src/lib/spec/conversion-events.ts` (per [07_ROLLOUT.md](07_ROLLOUT.md) Phase 1 file list). The hashing pre-send happens server-side in that module — confirm during porting that the implementation matches the disclosure here.
 - The 7-year retention period for SPEC engagement records is the Canadian standard for tax and accounting records under the Income Tax Act (Canada) and the Excise Tax Act (Canada). If the OPS bookkeeping policy adopts a longer period for any record type (some compliance regimes extend to 10 years), update the retention rows to match.

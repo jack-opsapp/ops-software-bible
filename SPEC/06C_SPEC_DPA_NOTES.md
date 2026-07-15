@@ -1,4 +1,6 @@
-# SPEC DPA Scope Notes — Recommendation and Drafted Updates (2026-05-25)
+# SPEC DPA Scope Notes — Recommendation and Drafted Updates (2026-05-25; tier terms updated for Tier Model v2, 2026-07-14)
+
+> **2026-07-14 (Tier Model v2):** the Annex B consent-basis example now says "Care Plan offers" (the v2 name for the retainer). DPA scope, subprocessors, and retention are unchanged by v2 — see [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) § 9.
 
 This file documents whether the existing OPS Data Processing Agreement covers SPEC engagement data, and, where it does not, provides the precise drafted changes needed to bring it into scope. The follow-up implementation chip ports these changes into `ops-site/src/lib/legal-content.ts` under `legalDocuments['dpa']`.
 
@@ -65,7 +67,7 @@ Add the following new Annex B at the end of the DPA, after Annex A.
 >
 > **B.1 Scope.** Each SPEC engagement is processed under this DPA. The SPEC engagement data categories and subprocessors are listed in Section 3 and Annex A respectively, as amended in v1.1.
 >
-> **B.2 Lawful basis under PIPEDA and Canadian provincial law.** OPS processes SPEC engagement data primarily under the lawful basis of contract performance — the data is necessary to perform the SPEC engagement Customer has purchased. OPS additionally relies on legitimate interest for fraud detection, eligibility enforcement (Canada excluding Quebec, regulated-workflow exclusions), and evidence preservation for Stripe dispute defence; and on consent (express or implied under CASL's existing-business-relationship two-year window) for commercial electronic messages such as Retainer offers, referral promotions, and SPEC marketing follow-ups.
+> **B.2 Lawful basis under PIPEDA and Canadian provincial law.** OPS processes SPEC engagement data primarily under the lawful basis of contract performance — the data is necessary to perform the SPEC engagement Customer has purchased. OPS additionally relies on legitimate interest for fraud detection, eligibility enforcement (Canada excluding Quebec, regulated-workflow exclusions), and evidence preservation for Stripe dispute defence; and on consent (express or implied under CASL's existing-business-relationship two-year window) for commercial electronic messages such as Care Plan offers, referral promotions, and SPEC marketing follow-ups.
 >
 > **B.3 Ad conversion tracking.** OPS sends server-side conversion events to Meta Conversions API and Google Ads Enhanced Conversions for the purpose of optimizing SPEC ad campaigns. Personal data sent to these platforms is limited to SHA-256 hashed email and hashed phone identifiers plus event metadata (event name, value, currency, deduplication ID). Raw identifiers are never transmitted. OPS does not authorize the advertising platforms to retarget the SPEC engagement audience beyond the campaigns OPS itself runs.
 >
