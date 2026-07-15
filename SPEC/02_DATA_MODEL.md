@@ -39,6 +39,12 @@ Revised 2026-05-25 (third pass) to:
 - Add `is_test boolean not null default false` to every SPEC engagement table (MJ-10).
 - Add fourth-pass bug_reports: `SPEC-SERVER-ROUTES-VS-RAW-RLS-DECISION`, `SPEC-SECURITY-DEFINER-PRIVATE-SCHEMA`, `SPEC-LIVE-SCHEMA-MISMATCHES`, and `SPEC-NO-COMPANY-BUYER-FLOW-LOCK` (all resolved 2026-05-25 — see 07_ROLLOUT.md § Gate resolutions).
 
+Revised 2026-07-14 (**Tier Model v2** — applied to prod; see [10_TIER_MODEL_V2.md](10_TIER_MODEL_V2.md) § 6, the implementation contract):
+
+- **Tier slugs are now `spec01` / `spec02` / `spec03`.** `spec_capacity` re-seeded per 10 § 2 (prices 200000/750000/2500000 — spec03 is the FLOOR; retainer cents 0/39500/75000; slots 6/3/1; support 30/60/90; discovery 2-4/5-10/10-15; build 3-7/15-25/30-60). Tier CHECK constraints on `spec_capacity` + `spec_projects` retargeted to the v2 slugs only (`spec_projects` was 0 rows — re-seed, not a data migration). The `spec_capacity` seed block below (§ Core tables) documents the v1 shape; the live seed is `migrations/20260715035835_spec_tier_model_v2_reseed.sql`.
+- `subscription_multiplier_estimate` retired from all published surfaces (column remains NOT NULL, seeded `0`, unread). `polish_hours_budget` is an unpublished internal budget; v1 ladder (2/4/8) carried.
+- **New `spec_projects` columns** (`migrations/20260715035945_spec_projects_v2_columns.sql`, additive/nullable): `locked_total_cents` (SPEC-03 total locked at scope sign-off; null = floor pricing), `white_label` (boolean not null default false), `care_monthly_cents` (copied from capacity at insert + white-label bump; null = no care plan), `care_started_at` (stamped when the support window ends and care billing starts).
+
 ## Status enum
 
 ```sql
