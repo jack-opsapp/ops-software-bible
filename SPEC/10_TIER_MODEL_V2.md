@@ -17,14 +17,14 @@ Tier 1 deliberately does not require OPS. It is the acquisition wedge: every SPE
 
 ## 2. Canonical tier table
 
-Designation lockup: `SPEC-0N · DESCRIPTOR`. Short form `SPEC-01` / `SPEC-02` / `SPEC-03` (board cells, chips, conversation). Stripe display names: `OPS SPEC-01 — WORKFLOWS`, `OPS SPEC-02 — SYSTEMS`, `OPS SPEC-03 — YOUR OWN SOFTWARE`.
+Designation lockup: `SPEC-0N · DESCRIPTOR`. Short form `SPEC-01` / `SPEC-02` / `SPEC-03` (board cells, chips, conversation). Stripe display names: `OPS SPEC-01 — WORKFLOWS`, `OPS SPEC-02 — SYSTEMS`, `OPS SPEC-03 — PROPRIETARY`. The SPEC-03 descriptor is a classification stamp, not a noun phrase — deliberate pattern-break at the top of the ladder (Jackson, 2026-07-14).
 
-| | SPEC-01 · WORKFLOWS | SPEC-02 · SYSTEMS | SPEC-03 · YOUR OWN SOFTWARE |
+| | SPEC-01 · WORKFLOWS | SPEC-02 · SYSTEMS | SPEC-03 · PROPRIETARY |
 |---|---|---|---|
-| One-liner | Your tools, wired together | Your operation's backbone, run for you | A purpose-built app, your name on it |
+| One-liner | Your tools, wired together | Your operation's backbone, run for you | A standalone app, built only for you |
 | Total (CAD) | **$2,000** fixed | **$7,500** fixed | **from $25,000** — locked at scope sign-off |
 | Payments | **50/50** — $1,000 books the slot, $1,000 at delivery walkthrough (net-15 invoice) | **25/25/25/25** — $1,875 per checkpoint | P1 **$6,250** fixed at booking; P2/P3/P4 = (locked total − $6,250) ÷ 3, residual cents on P4 |
-| Deliverable | Up to **3 production automations** in the customer's own accounts (inbox→ledger, email→spreadsheet, form→list), documented, plus a training walkthrough | Everything in 01 **+ a structured data backbone** (jobs/clients/money in one system) + dashboards + import/cleanup of existing records + training | A standalone app on its own database (Deckset-class), designed, built, shipped, and operated by OPS |
+| Deliverable | Up to **3 production automations** in the customer's own accounts (inbox→ledger, email→spreadsheet, form→list), documented, plus a training walkthrough | Everything in 01 **+ a structured data backbone** (jobs/clients/money in one system) + dashboards + import/cleanup of existing records + training | A standalone **trade tool** on its own database, designed, built, shipped, and operated by OPS — a Deckset, a bespoke roofing estimator, a plumbing planning tool, a landscaping equivalent. Connects to the customer's OPS account or runs fully independent. **Scope boundary: not an OPS-scale platform** — anything approaching a full operations platform is out of tier, custom-quoted well above the SPEC-03 band |
 | Backbone location (02) | — | **Outcome-defined, case-by-case:** in the customer's OPS account when they run OPS; standalone (OPS-operated infra) when they don't | Own database, always |
 | OPS requirement | Free OPS account (identity, approvals, notifications). **No subscription required** | Free account; subscription only if the backbone lives in OPS | Free account; no subscription |
 | Support window | 30 days | 60 days | 90 days |
@@ -100,7 +100,7 @@ Design-system compliance per DESIGN.md; marketing surface keeps the heavier Moha
 
 ## 9. Legal rewrite (gates the deposit flip, not the page relaunch)
 
-Scope for the ToS/rider pass (06A/06B/06C update): per-tier scope-of-services and acceptance definitions; per-tier guarantee levers (§ 4) including the SPEC-01 money-back posture; SPEC-03 variable-total mechanics (deposit against floor, total locked at scope sign-off); care-plan terms (required-while-hosted, billing start, cancellation/off-boarding, reasonable-efforts uptime posture — **no SLA at these price points, stated plainly**); white-label rider (customer brand warranty + publishing license to OPS, OPS publisher-of-record disclosure incl. the seller line, App Transfer off-boarding at billable hours); IP unchanged (OPS owns code, customer licensed; brand assets remain the customer's). Quebec exclusion, prohibited workflows, refund matrix skeleton, LIL cap all carry from the fourth pass.
+Scope for the ToS/rider pass (06A/06B/06C update): per-tier scope-of-services and acceptance definitions; per-tier guarantee levers (§ 4) including the SPEC-01 money-back posture; SPEC-03 variable-total mechanics (deposit against floor, total locked at scope sign-off); care-plan terms (required-while-hosted, billing start, cancellation/off-boarding, reasonable-efforts uptime posture — **no SLA at these price points, stated plainly**); white-label rider (customer brand warranty + publishing license to OPS, OPS publisher-of-record disclosure incl. the seller line, App Transfer off-boarding at billable hours); **SPEC-03 build-exclusivity clause** — the PROPRIETARY name obligates it: OPS will not sell the customer's app to another company (patterns, infrastructure, and non-customer-specific components remain reusable; the app itself is exclusive); IP otherwise unchanged (OPS owns code, customer licensed; brand assets remain the customer's). Quebec exclusion, prohibited workflows, refund matrix skeleton, LIL cap all carry from the fourth pass.
 
 ## 10. Implementation phasing (input to the plan doc)
 

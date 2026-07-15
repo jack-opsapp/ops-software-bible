@@ -16,7 +16,7 @@ A productized custom-software-development service for trades businesses. Three d
 |---|---|---|
 | SPEC-01 · WORKFLOWS | $2,000 CAD | The customer's existing tools wired together (inbox→ledger, email→spreadsheet); up to 3 production automations. Does not require OPS. Paid 50/50 |
 | SPEC-02 · SYSTEMS | $7,500 CAD + $395/mo care | Workflows plus a structured, maintained data backbone (in the customer's OPS or standalone) + dashboards + import/cleanup. Paid 25/25/25/25 |
-| SPEC-03 · YOUR OWN SOFTWARE | from $25,000 CAD + from $750/mo care | A standalone purpose-built app (Deckset-class) on its own database, operated by OPS. White label +$4,000 / +$200/mo. Deposit $6,250; total locked at scope sign-off |
+| SPEC-03 · PROPRIETARY | from $25,000 CAD + from $750/mo care | A standalone trade tool built only for the customer (a Deckset, a bespoke roofing estimator) on its own database, operated by OPS; connects to their OPS or runs independent. Not OPS-scale platform builds (out of tier). White label +$4,000 / +$200/mo. Deposit $6,250; total locked at scope sign-off |
 
 *(v1 Setup $3,000 / Build $8,500 / Enterprise $18,000 with universal 25/25/25/25 is superseded; the docs below retain v1 language pending the implementation doc-pass.)*
 
