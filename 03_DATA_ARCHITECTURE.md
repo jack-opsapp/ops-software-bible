@@ -5074,4 +5074,14 @@ Landed in the cashflow-forecast → main merge (ops-ios `41204a5`, 2026-05-19). 
 
 Migration: `OPSMigrationPlan.addForecastModelsV5toV6` — lightweight `V5 → V6` stage. No data transform, no field rename.
 
+## Durable Email Attachments (prepared 2026-07-15)
+
+Migrations `20260714230000_email_attachment_persistence` and `20260714232000_guarded_email_thread_reassignment` make email files OPS-owned, private, mailbox-scoped records. They are prepared in code and are not live until deployed separately.
+
+`email_attachments` uses canonical identity `(company_id, connection_id, message_id, attachment_id)`. Each row also records the exact `activity_id`, provider thread and MIME-part identity, optional current `opportunity_id`, attribution state, provider/reporting metadata, detected MIME, verified byte count, SHA-256, private object key, ingest state, and retry/error timestamps. The exact-identity trigger locks and re-reads the activity before accepting lead attribution; a stale worker result cannot attach a file to a lead after reassignment. Once stored, detected MIME cannot be downgraded by later provider metadata.
+
+`email_attachment_scans` is one durable exact-message job per activity. `email_attachment_inspection_jobs` is one independently leased acceptance/vision job per canonical attachment. Both queues use generation fencing, `FOR UPDATE SKIP LOCKED`, bounded leases, exponential retry, and terminal `failed` state. The activity-insert trigger queues every email, including provider false negatives for inline content. The private `email-attachments` Storage bucket has no browser object policy; API routes stream authorized bytes through OPS.
+
+Attribution begins only from `(company_id, email_connection_id, email_message_id)`. Inbound sender or outbound external recipients must match the activity's current lead/client/contact identity, and `match_needs_review` always fails closed. Activity reassignment increments scan/inspection generations and re-evaluates cached acceptance. Lead merge uses guarded evidence-bound RPCs. Won conversion needs no duplicate file row because projects retain `opportunity_id`.
+
 **End of Data Architecture Documentation**

@@ -7490,6 +7490,16 @@ Version-aware in-app messages shown on launch: force-update walls, optional upda
 
 **No automatic version detection beyond the App Store nudge** — the force-update floor is admin-set and bumped only for blocker bugs; the app never force-updates on every release.
 
+## 32. Email File Capture and Lead Attribution (Web, prepared 2026-07-15)
+
+Every synced Gmail or Microsoft 365 activity receives a durable attachment scan, even when the provider says `hasAttachments=false`. Gmail recursion retains nested parts, CID/inline images, filename-less body data, documents, and small real photos. Microsoft enumeration retains inline, file, item, and reference attachments across validated same-message pagination. Pathological responses are capped at five Graph pages / 500 descriptors, 20 reference-metadata calls, or 500 Gmail parts; truncation creates an explicit review marker. Enumeration is time-bounded and raw downloads are byte- and request-bounded.
+
+Each worker run copies at most 20 provider files and 50 MiB aggregate. Work beyond that budget is deferred without burning a per-file retry. Provider 404/410 is terminal unavailable; 400/413/422 are not blindly discarded. Oversize and unsupported external references remain visible provenance. Stored raster images flow into the lead/project Photos surfaces; all canonical files appear in Inbox Files and document surfaces. Existing manual lead photos are never overwritten.
+
+Vision runs only from verified OPS-stored bytes and is cached per canonical attachment. Reattribution replays acceptance against the cached inspection rather than paying for vision twice. Eight exhausted attempts terminalize scan/inspection jobs and create one internal notification deep-linking to the affected inbox thread. Auth failures park only the mailbox scan and create a persistent reconnect notification; resource-specific attachment denial does not pause an otherwise healthy Microsoft mailbox.
+
+Costs are usage-based: private Supabase Storage/egress, Vercel worker invocations, provider read calls, and vision tokens for eligible stored images. Bounded idempotent work prevents duplicate storage and repeat vision charges. This subsystem has no provider write or email-send capability.
+
 ---
 
 **End of Document**

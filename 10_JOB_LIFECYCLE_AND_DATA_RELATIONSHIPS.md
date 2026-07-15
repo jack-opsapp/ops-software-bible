@@ -3012,4 +3012,15 @@ The web app includes a full in-app email client at `/inbox` (inbox view, compose
 
 ---
 
+### Email activity -> canonical file -> lead/project lifecycle (prepared 2026-07-15)
+
+1. Inbound or outbound sync persists one exact provider-backed email activity and its correspondence projection.
+2. The activity trigger upserts one generation-fenced `email_attachment_scans` job. Attachment work is not cursor-critical.
+3. A bounded worker enumerates that immutable provider message, records every descriptor, validates the activity's current lead identity, copies supported bytes into private OPS storage, verifies size/hash/MIME, and refreshes stable activity attachment URLs.
+4. A separate inspection job reads only stored bytes. Signed-estimate/acceptance evidence may update the current lead only after exact attribution is re-checked.
+5. Reassignment or merge clears stale attribution and increments job generations. A worker holding an older generation cannot commit ownership to either the old or newly assigned lead.
+6. Won conversion retains access through `projects.opportunity_id`; no duplicate storage copy or lossy photo-array move is required.
+
+Unknown or mismatched identity remains activity-scoped `needs_review` and is absent from lead/project photo surfaces. Disconnected mailboxes resume queued work after reconnect. Stored OPS copies remain accessible after provider deletion or disconnect.
+
 *This document supersedes any prior informal notes about entity relationships. All implementation decisions should reference this document.*

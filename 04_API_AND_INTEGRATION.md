@@ -2801,6 +2801,19 @@ Tab 6-11 (Change orders / Satisfaction / Tickets / Comms / Entitlements / Notes)
 
 **spec_internal_notes additive migration:** `2026-05-26-06-spec-stage-f2b-internal-notes.sql` (mirrored at `ops-software-bible/migrations/`). Table is operator-only (RLS via `private.is_spec_operator()`). Row shape: `id uuid PK`, `spec_project_id uuid FK`, `body text NOT NULL`, `created_at timestamptz`, `created_by_user_id uuid FK to users`, `is_test boolean`. Index on `(spec_project_id, created_at desc)`.
 
+## Canonical Email Attachment Routes (prepared 2026-07-15)
+
+| Route | Contract |
+|-------|----------|
+| `GET /api/cron/email-attachment-worker` | Cron-secret-only bounded dispatcher. Claims durable scan and inspection jobs; never sends mail or mutates provider mailboxes. |
+| `GET /api/inbox/threads/[id]/attachments` | Authenticated, company/mailbox-scoped canonical metadata for the thread. Reads OPS rows only and chunks large attachment-ID lookups. |
+| `GET /api/integrations/email/attachment?id=<uuid>` | Authenticated byte stream by canonical attachment UUID. Requires `inbox.view` or `pipeline.view`, verifies tenant/mailbox ownership, ignores caller MIME/provider identifiers, and reads only private OPS storage. Conservative raster types may render inline; everything else downloads with `nosniff`, restrictive CSP/sandbox, and private caching. |
+| `POST /api/integrations/email/extract-images` | Backward-compatible import dispatcher. Resolves exact activities and enqueues canonical scans; it no longer uploads public images or overwrites `opportunities.images`. |
+
+Email sync persists the activity and correspondence state, then advances its provider cursor without downloading files or running vision. The database activity trigger owns durable scan enqueue, so a slow/large attachment cannot replay or stall ordinary mail ingestion. The five-minute worker cron performs bounded read-only provider enumeration/download and private copy afterward. Gmail and Microsoft provider requests have abort deadlines; enumeration/file/aggregate budgets produce retry or explicit review provenance instead of unbounded work.
+
+No attachment route or worker calls Gmail/Graph send, draft, label, delete, move, or modify operations.
+
 ---
 
 **End of Document**
