@@ -2,9 +2,9 @@
 
 **Document Purpose**: Complete technical reference for OPS iOS app architecture, file organization, state management patterns, and development best practices.
 
-**Last Updated**: March 8, 2026
+**Last Updated**: July 16, 2026
 **iOS Codebase**: 437+ Swift files, SwiftUI + SwiftData architecture
-**Target Platform**: iOS 17.0+, iPhone/iPad
+**Target Platform**: iOS 17.6+, iPhone/iPad
 
 ---
 
@@ -68,7 +68,7 @@ OPS uses a **field-first architecture** designed for reliability, offline capabi
 │   Managers, Services, Utilities (25 files)         │
 ├─────────────────────────────────────────────────────┤
 │                   Data Layer                         │
-│   SwiftData Models (24 entities), DTOs (16 types)  │
+│   Versioned SwiftData models and API DTOs          │
 ├─────────────────────────────────────────────────────┤
 │                  Network Layer                       │
 │   SyncEngine, Processors, Supabase Repositories    │
@@ -86,7 +86,7 @@ OPS uses a **field-first architecture** designed for reliability, offline capabi
 
 ```
 ops-ios/OPS/
-├── OPSApp.swift                    # App entry point, model container setup (24 models)
+├── OPSApp.swift                    # App entry point, versioned model container setup
 ├── AppDelegate.swift               # Remote notifications, background tasks
 ├── AppState.swift                  # Global app state (project mode, UI flags)
 ├── ContentView.swift               # Root view, auth routing, PIN gating
@@ -697,47 +697,25 @@ By Category:
 // OPSApp.swift
 @main
 struct OPSApp: App {
-    // Shared model container for entire app (24 models)
     var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            // Core data models (11)
-            User.self,
-            Project.self,
-            Company.self,
-            TeamMember.self,
-            Client.self,
-            SubClient.self,
-            ProjectTask.self,
-            TaskType.self,
-            TaskStatusOption.self,
-            SyncOperation.self,
-            OpsContact.self,
-            // Supabase-backed models (13)
-            Opportunity.self,
-            Activity.self,
-            FollowUp.self,
-            StageTransition.self,
-            Estimate.self,
-            EstimateLineItem.self,
-            Invoice.self,
-            InvoiceLineItem.self,
-            Payment.self,
-            Product.self,
-            SiteVisit.self,
-            ProjectNote.self,
-            PhotoAnnotation.self
-        ])
-
-        let modelConfiguration = ModelConfiguration(
+        let schema = Schema(versionedSchema: OPSSchemaV16.self)
+        let isHostedXCTest = ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
+        let modelConfiguration = OPSModelStore.configuration(
             schema: schema,
-            isStoredInMemoryOnly: false,
-            allowsSave: true
+            isStoredInMemoryOnly: isHostedXCTest
         )
 
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(
+                for: schema,
+                migrationPlan: OPSMigrationPlan.self,
+                configurations: modelConfiguration
+            )
         } catch {
-            fatalError("Failed to create model container: \(error.localizedDescription)")
+            fatalError(
+                "Failed to open SwiftData store at \(modelConfiguration.url.path). "
+                    + "The store was preserved. \(error)"
+            )
         }
     }()
 
@@ -752,6 +730,12 @@ struct OPSApp: App {
     }
 }
 ```
+
+`OPSModelStore` is the sole production configuration contract. It selects `ModelConfiguration.GroupContainer.identifier("group.co.opsapp.ops")`, so SwiftData's `default.store` lives in the primary OPS App Group. The app-root container uses in-memory storage without an App Group when hosted by XCTest; migration tests use isolated temporary disk stores.
+
+The schema graph is append-only and released model shapes are immutable. A persistent-property edit to a model referenced by an older `VersionedSchema` changes that version's absolute Core Data checksum and can make installed stores fail with error 134504 (`Cannot use staged migration with an unknown model version`). The required sequence is: freeze the released shape, register the widened live type only in a new schema, add one adjacent migration stage, and extend `OPSTests/Fixtures/swiftdata-released-schema-fingerprints.json`.
+
+Error 134504 is never authorization to delete local data. Bootstrap preserves the SQLite store and sidecars and fails visibly with the exact configuration URL. This protects local-only and not-yet-synced field work. Current implementation: ops-ios commit `a554ee7c`; full data-model history: `03_DATA_ARCHITECTURE.md § Schema V16 — App-update migration reliability`.
 
 ### Model Definition Pattern
 
@@ -1972,31 +1956,9 @@ TabView(selection: $selectedTab)
 TabView(selection: $selectedTab)
 ```
 
-### 6. Complete Data Wipe on Logout
+### 6. Logout Data Wipe Contract
 
-```swift
-func logout() {
-    guard let modelContext = modelContext else { return }
-
-    // Delete all data to prevent cross-user contamination
-    try? modelContext.delete(model: Project.self)
-    try? modelContext.delete(model: User.self)
-    try? modelContext.delete(model: Client.self)
-    try? modelContext.delete(model: ProjectTask.self)
-    try? modelContext.delete(model: TaskType.self)
-    try? modelContext.delete(model: Opportunity.self)
-    try? modelContext.delete(model: Estimate.self)
-    try? modelContext.delete(model: Invoice.self)
-    try? modelContext.save()
-
-    // Clear UserDefaults
-    UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
-
-    // Reset state
-    isAuthenticated = false
-    currentUser = nil
-}
-```
+`DataController.performCompleteDataWipe()` owns logout cleanup through an explicit per-model deletion list, followed by authentication/default-state cleanup. It does not derive its list from `OPSSchemaV16.models`. Every new registered model therefore requires a matching audit of this method; do not infer completeness from an older example or model count. Source: `OPS/Utilities/DataController.swift`; data-layer contract: `03_DATA_ARCHITECTURE.md § Logout Data Wipe Contract`.
 
 ### 7. Soft Delete Strategy
 

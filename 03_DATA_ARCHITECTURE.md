@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: 2026-07-02
+**Last Updated**: 2026-07-16
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -60,7 +60,7 @@ The OPS data layer follows a **three-tier architecture**:
 
 ### The Current Registered Schema Models
 
-As defined in `OPSSchemaCommon.unchangedModels` + `WizardState` (per-version) + `CalendarMirrorMap` (V5+) + additive per-version model groups. The schema container is built via `OPSSchemaV11` in `OPSApp.swift` (latest as of 2026-06-26 — site-visit capture packet, see § V11 below).
+As defined by the version-scoped model groups in `OPSSchemaCommon`, plus `WizardState` and `CalendarMirrorMap`. The production container is built from `OPSSchemaV16` through `OPSMigrationPlan` in `OPSApp.swift` (ops-ios commit `a554ee7c`, 2026-07-16).
 
 **Core Entities (11):**
 1. **User** -- Team member with role-based permissions
@@ -4074,9 +4074,9 @@ Inside `DataActor` methods, use `self.modelContext` (the actor's background cont
 
 **DataActor's background context:** autosave off. Wrap all mutation sequences in `try modelContext.transaction { ... }` — atomic at the SQLite level, persists on block exit, composes cleanly with SwiftData inverse-relationship cascades. Do NOT call `save()` inside a DataActor method; the transaction block handles commit.
 
-### 5. Complete Data Wipe on Logout
+### 5. Logout Data Wipe Contract
 
-Delete all 24 model types to prevent cross-user contamination.
+`DataController.performCompleteDataWipe()` implements logout cleanup as an explicit per-model deletion list. It is not derived automatically from `OPSSchemaV16.models`; any newly registered model must be audited against that list before the logout wipe can be treated as complete. Source: `OPS/Utilities/DataController.swift`.
 
 ---
 
@@ -4084,7 +4084,7 @@ Delete all 24 model types to prevent cross-user contamination.
 
 This data architecture provides:
 
-- **24 registered SwiftData entities** (11 core + 13 Supabase-backed) plus 5 inventory models
+- **Versioned SwiftData schema graph** with immutable compatibility checksums for every declared version
 - **Soft delete support** for data integrity
 - **Supabase DTOs** for clean API separation with snake_case column mapping
 - **Task-based scheduling** with dates stored directly on ProjectTask (CalendarEvent removed)
@@ -4950,11 +4950,11 @@ Consolidated iOS SwiftData schema bump shipped as ops-ios merge commit `41204a5`
 - `PaymentMilestone` — iOS parity for the existing server `payment_milestones` table (was Supabase-only until V6). Read-side only in v1; estimate-form writes still go via the `EstimateService` payload.
 - `RecurringExpense` — owner-managed recurring outflows (rent, insurance, payroll, subscriptions). Drives the recurring layer of the cashflow forecast.
 
-These new model types are the *real* checksum differentiator vs V5 — V6's hash diverges from V5 organically because `v6ForecastModels` is appended.
+These new model types distinguish V6 from V5 in the migration graph because `v6ForecastModels` is appended. That avoids duplicate adjacent checksums; it does **not** make later edits to a released model safe.
 
-**Implicitly absorbs `PhotoAnnotation.renderedPhotoURL`** — the property added by ops-ios commit `6b62f40` ("Persist rendered dimensioned photo deliverables") rides on the live `PhotoAnnotation` class which is referenced by every historical schema via `OPSSchemaCommon.unchangedModels`. When a persistent property lands on a live `@Model` like that, every schema's hash shifts by the same delta — relative distinctness between schemas is preserved as long as every adjacent pair (Vn, Vn+1) already declared a real model-list difference. V6 satisfies that contract because `v6ForecastModels` is genuinely new.
+**`PhotoAnnotation.renderedPhotoURL` compatibility note.** The property added by ops-ios commit `6b62f40` is part of the compatibility shape now locked for V1–V14. The former guidance that shifting every historical hash by the same delta is safe was incorrect for any version already installed: Core Data matches an on-disk store against an absolute model checksum, not merely against the differences between adjacent stages. Once a schema is declared for release, its model graph is immutable. Any later persistent-property change requires a frozen pre-change model, a new versioned schema, and an adjacent migration stage.
 
-**The crash this resolves.** Pre-merge, a sibling-WIP attempt to mint a V6 whose models list was *identical* to V5 (no new model types — just an excuse to "own" the renderedPhotoURL property) collapsed the stage chain and produced the `Duplicate version checksums detected` crash at `ModelContainer` init on app launch. The merge consolidates V6 around the cashflow-forecast pattern, which differentiates organically. See `OPS/DataModels/Migrations/OPSSchemaV6.swift` and the comment block at the top of `OPS/OPSApp.swift` for the long-form rationale and forward-looking guidance for V7+.
+**The duplicate-checksum crash this resolved.** Pre-merge, a sibling-WIP attempt to mint a V6 whose models list was identical to V5 collapsed the stage chain and produced `Duplicate version checksums detected` at `ModelContainer` initialization. The merge consolidated V6 around the cashflow-forecast model set. This is separate from unknown-version error 134504, which occurs when an installed store's absolute checksum matches no schema in the plan. See the V16 section below for the permanent release rule.
 
 **Migration:** `OPSMigrationPlan.addForecastModelsV5toV6` — `MigrationStage.lightweight(fromVersion: OPSSchemaV5.self, toVersion: OPSSchemaV6.self)`. No data transform.
 
@@ -4962,7 +4962,7 @@ These new model types are the *real* checksum differentiator vs V5 — V6's hash
 
 ## Schema V8 — Catalog Setup Data Foundation (2026-05-21)
 
-Current iOS SwiftData schema version after the catalog/inventory setup foundation pass. V7 introduced `ProjectVinylOrderMarker`; V8 is the next additive bump. Historical V3-V7 schemas keep a frozen legacy `ProductBundleItem` model, and V8 is the first schema stage that swaps in the live top-level `ProductBundleItem` shape with relationship metadata.
+This was the current iOS SwiftData schema after the catalog/inventory setup foundation pass. V7 introduced `ProjectVinylOrderMarker`; V8 was the next additive bump. Historical V3-V7 schemas keep a frozen legacy `ProductBundleItem` model, and V8 is the first schema stage that swaps in the live top-level `ProductBundleItem` shape with relationship metadata.
 
 **Adds two new `@Model` entities** (`OPSSchemaCommon.v8CatalogSetupModels`):
 
@@ -4976,6 +4976,19 @@ Current iOS SwiftData schema version after the catalog/inventory setup foundatio
 **Supabase side:** migrations `migrations/2026-05-21-04-catalog-stock-units.sql` and `migrations/2026-05-21-05-catalog-setup-relationships.sql` are additive and must be applied only to an approved target. The second migration intentionally does not add a DB-level matrix-signature uniqueness constraint because live preflight found an active Diverter duplicate signature. iOS validation blocks new duplicate matrix signatures before commit.
 
 **iOS setup UI:** `CatalogSetupFlowSheet` refreshes `CatalogSchemaCapabilityGate` and blocks before the first repository write if the draft includes stock units but `catalog_stock_units` is unavailable. It writes through the existing repository layer only after preflight: `CatalogRepository` creates the family, catalog axes, option values, variants, and variant-option joins; `CatalogStockUnitRepository` creates physical roll/offcut rows with label, lot code, original length, remaining length, width, unit, location, status, and notes; `CatalogProductOptionMappingRepository` creates axis/value bridges only after the capability gate confirms `catalog_product_option_mappings`; `ProductRepository` links an optional sellable Product through `products.linked_catalog_item_id`. Draft validation treats duplicate SKUs as warnings, duplicate matrix signatures as blockers, and product-option value mappings as blockers when a selected product value does not belong to the selected product option. Available stock-unit rows (`full` / `partial`) mirror their aggregate into the created `catalog_variants.quantity`; dimensional roll/offcut rows mirror area when length and width share a unit. Reserved, consumed, and scrapped rows do not inflate availability.
+
+## Schema V16 — App-update migration reliability (2026-07-16)
+
+Ops-ios commit `a554ee7c` repairs app-update launches that failed with `NSCocoaErrorDomain 134504` (`Cannot use staged migration with an unknown model version`). V15 referenced the live `Opportunity` and `DeckDesign` types from every historical schema. Later persisted-property additions changed the absolute checksums of V1–V15 after V15 was already installed:
+
+- `Opportunity.images`, `Opportunity.latitude`, and `Opportunity.longitude` (ops-ios commit `daee6491`)
+- `DeckDesign.opportunityId` (ops-ios commit `c06f81b3`)
+
+V1–V15 now register exact frozen pre-addition shapes (`OPSSchemaLegacyOpportunityV15.Opportunity` and `OPSSchemaLegacyDeckDesignV15.DeckDesign`). V16 is the first schema that registers the widened live types. `OPSMigrationPlan.addOpportunityMediaAndDeckLeadV15toV16` is a lightweight V15→V16 stage; the new collection defaults empty and the three new optional values default `nil`, preserving all historical rows. Sources: `OPS/DataModels/Migrations/OPSSchemaCommon.swift`, `OPS/DataModels/Migrations/OPSSchemaV16.swift`, and `OPS/DataModels/Migrations/OPSMigrationPlan.swift`.
+
+Production storage is explicitly pinned to App Group `group.co.opsapp.ops` through `OPSModelStore`. The app-root container uses in-memory storage without an App Group when hosted by XCTest; migration tests use isolated temporary disk stores. Container error 134504 is never a reset signal: startup reports the exact store path and terminates without deleting or replacing `default.store` or its WAL/SHM sidecars. Local-only or not-yet-synced work must never be deleted as recovery. Sources: `OPS/OPSApp.swift` and `OPS/Utilities/OPSModelStore.swift`.
+
+`OPSTests/Fixtures/swiftdata-released-schema-fingerprints.json` locks Core Data's compatibility checksum for every declared schema V1–V16. Any future persistent model change must freeze the prior shape, add a new schema and adjacent stage, then extend the fixture. A copied installed V15 store reported checksum `mFW4cSIxny6ksYQ8VtN0+K4F6DUNqLzqZMwmzYPIQ4k=`, exactly matching the frozen V15 declaration, and migrated to V16 without row loss. Test source: `OPSTests/DataModels/AppUpdateMigrationTests.swift`.
 
 ## Expense Auto-Batching — Envelope Schema (2026-06-01)
 
