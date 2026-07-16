@@ -1411,6 +1411,20 @@ For each lineItem WHERE lineItem.type = 'LABOR':
 2. Prompt: "Ready to build an estimate?" (dismissible)
 3. If Yes → open Estimate creation form pre-linked to this opportunity → `opportunity.stage → quoting`
 
+**iOS review sheet (bug 56c37df2 follow-on, site-visit report).** The review
+sheet has two exits, and completing a visit must **never** auto-convert the
+lead to WON:
+- **SAVE VISIT** (primary) — completes the visit, posts the timeline activity,
+  and moves the bound lead to the operator-selected stage. The default comes
+  from `SiteVisitStageDefault.defaultStage(current:)`: a `new_lead` advances to
+  `qualifying`; a lead already in flight holds (never regresses); a terminal
+  lead is never touched. The operator can pick any non-terminal stage from the
+  "LEAD STAGE AFTER VISIT" chips (won/lost/discarded are excluded). No project
+  is created.
+- **CREATE PROJECT** (secondary, explicit opt-in) — the conversion path
+  (`ConvertToProjectSheet`), which is where WON + project creation happens.
+  Reachable only when the visit has project-ready evidence and a bound lead.
+
 ---
 
 ### Automation E: Opportunity Won → Attach Site Visit Photos
