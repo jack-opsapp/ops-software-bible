@@ -371,6 +371,15 @@ All auto-advances record a `StageTransition` row. Users can manually drag to any
 
 **Deferred (externally gated).** A CallKit **Call Directory** *recognition* extension could label inbound pipeline numbers as "OPS lead: {name}" on the native incoming-call screen. It's pure recognition (no data write) but is the only piece needing a new `.appex` target + `com.apple.developer.callkit.call-directory` entitlement + App Group + portal provisioning — out of scope for this build, flagged for a future scheduled migration.
 
+### Client picker phone-contact blending (iOS, feature 388663d4)
+
+**The client picker reads the device address book so a client you already have as a phone contact is one tap from being an OPS client.** Two surfaces share the behavior: the create-project client field (`ProjectFormSheet`) and the change-client sheet (`ClientPickerSheet`).
+
+- **Inline blend.** As the operator types, matching device contacts that are **not already in OPS** appear *inline* beneath the OPS client matches, each tagged with an `IN CONTACTS` badge (`PhoneContactRow`). Unbadged rows are existing OPS clients — the badge is the only signal needed (origin, not a separate list or button).
+- **Not-in-OPS dedupe.** `PhoneContactSearch` (pure, unit-tested) matches contacts by name / phone (digits-only, format-insensitive) / email, then `ClientIdentityIndex` drops any contact already represented by an OPS client **or sub-client** (by name, phone, or email) so only genuinely-absent contacts are badged. Intra-address-book duplicates collapse too.
+- **Background create on select.** Tapping a badged row creates the OPS client in the background via `PhoneContactImporter` — the single shared path that also backs the manual "import from contacts" button (feature 33403492): avatar uploaded to S3 when present, client persisted through `DataController.createClient`, and the matching pipeline lead seeded exactly as `ClientSheet.createNewClient` does (`ClientCreatedSuccess` toast fires identically). In the project form the new client is selected; in the change-client sheet it is assigned to the project via `onSelect`.
+- **Access + degradation.** Contacts permission (`NSContactsUsageDescription`, already shipped) is requested lazily on first client-field focus / first keystroke — never in tutorial mode. A denial degrades silently to OPS-only; the out-of-process `CNContactPicker` import button (permission-free) remains as the manual fallback. The lightweight searchable index is built off the main thread and the full `CNContact` (image + postal) is re-fetched by identifier only at import time (`PhoneContactsProvider`).
+
 ---
 
 ## Data Model Changes (Modified Entities)
@@ -1299,14 +1308,18 @@ interface EmailConnection {
   userName: string;
   syncProfile: SyncProfile;         // pattern detection rules (JSONB)
   syncIntervalMinutes: number;
-  lastSyncHistoryId: string | null;  // Gmail historyId or M365 deltaLink
+  lastSyncHistoryId: string | null;  // Gmail historyId or versioned M365 folder cursor
   lastSyncAt: Date | null;
+  historyRecoveryAnchor: Date | null;       // Gmail expired-history replay lower bound
+  historyRecoveryPageToken: string | null; // durable messages.list continuation
+  historyRecoveryTargetToken: string | null; // fresh historyId held until replay completes
   opsLabelId: string | null;        // Gmail label ID or M365 category ID
   webhookSubscriptionId: string | null;
   webhookExpiresAt: Date | null;
+  webhookClientStateHash: string | null; // SHA-256; M365 only
   aiReviewEnabled: boolean;
   aiMemoryEnabled: boolean;
-  status: 'active' | 'paused' | 'error' | 'setup_incomplete';
+  status: 'active' | 'paused' | 'error' | 'setup_incomplete' | 'needs_reconnect' | 'disconnected';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1650,8 +1663,8 @@ As of Lead Lifecycle P1, provider-backed email lifecycle writes must reject blan
 
 Required behavior:
 - Provider-backed sync/send/backfill paths require a nonblank provider thread id and nonblank provider message id.
-- Import wizard activities are synthetic timeline records, so they may omit provider message id only through the explicit import-synthetic path. They still require a nonblank provider thread id before creating opportunities, thread links, activities, labels, or image-extraction work.
-- Rejected provider-backed emails are quarantined by skipping lifecycle writes, logging a structured server warning, and incrementing sync diagnostics. A single invalid email must not crash the entire sync cycle.
+- Import wizard leads must carry every exact provider message id, raw provider thread id, occurrence time, and persisted direction observed during full-thread analysis. Ordinary imports without that exact set stop before CRM writes and require mailbox reanalysis; they never create an ambiguous synthetic thread shell. One activity/event is written per provider message, and every ordinary raw thread receives an `opportunity_email_threads` link. Message-scoped contact-form submissions deliberately do not inherit/link the reused platform thread, because one provider thread may contain unrelated customers.
+- Rejected provider-backed emails create no lifecycle writes, log a structured server warning, and increment sync diagnostics. The cycle fails closed and leaves the provider cursor unchanged so the message can be repaired/replayed; it is never silently skipped as though ingestion completed.
 - The contact-form parsed sender identity must remain consistent across matching, activity creation, and thread-cache writes for newly processed provider-backed emails.
 - Existing bad rows are report-only until an operator approves cleanup. The P1 dry-run artifact lives at `docs/data-cleanup/lead-lifecycle-p1-bad-thread-dry-run-2026-05-26.md`.
 
@@ -1668,17 +1681,20 @@ Allowed P2 writeback targets:
 - `opportunities.source_email_id` (provider thread id)
 - `clients.name`, `email`, `phone_number`, `address`
 
-P2 writes only blanks or clearly weak placeholders such as empty values, unknown/new-lead markers, raw email-address names, zero estimated values, and known platform/system email addresses. It must not overwrite operator-entered client or opportunity values. Contact-form submitter identity remains preferred over the platform sender; platform sender emails such as Wix, HomeStars, or website form notifications are not written as customer email addresses.
+P2 writes only blanks or clearly weak placeholders such as empty values, unknown/new-lead markers, raw email-address names, zero estimated values, and known platform/system email addresses. It must not overwrite operator-entered client or opportunity values. Contact-form submitter identity remains preferred over the platform sender; platform sender emails such as Wix, HomeStars, or website form notifications are not written as customer email addresses. Canonical enrichment is company-scoped on every opportunity/client read and write, and the opportunity's stored `client_id` is authoritative; an explicit caller client that disagrees is rejected. Exact-email fallback matching escapes SQL `ILIKE` wildcards before querying and any lookup failure stops the lifecycle write.
+
+The AI classifier cannot author customer identity. Deterministic sender/recipient/form facts establish the candidate name, email, phone, address, and client relationship. AI output may classify lead/business/noise, select a valid stage, and fill a previously missing estimate or description, but returned identity fields never replace deterministic facts. Transport, parse, partial-result, duplicate-result, unknown-result, and missing-result failures stop the sync cycle before its provider cursor advances. A valid lead is not discarded merely because the model omits its optional client object.
 
 Existing provenance support:
-- `activities.email_thread_id` and `activities.email_message_id` preserve the provider thread/message proof for actual email activities.
+- `activities.email_thread_id`, `activities.email_message_id`, and `activities.email_connection_id` preserve provider thread/message/mailbox proof for actual email activities. Provider-message uniqueness is scoped to `(company_id, email_connection_id, email_message_id)`, not globally.
 - `opportunity_email_threads.thread_id` + `connection_id` preserve the opportunity-to-provider-thread link.
 - `email_threads.provider_thread_id` preserves the inbox cache provider thread id.
 - `opportunities.source_email_id` can hold the provider thread id for the lead source.
+- `opportunities.source_thread_key` stores the connection-scoped logical ingestion identity. Ordinary correspondence uses `email:<provider>:<connection_id>:thread:<provider_thread_id>`; known contact-form notifications use `email:<provider>:<connection_id>:message:<provider_message_id>` so separate submissions cannot inherit one another merely because Gmail or the form platform reused a thread.
+- `lead_field_provenance` records canonical field names (`contact_name`, `contact_email`, `contact_phone`, `contact_address`), the constrained source class (`operator`, `ai`, `contact_form`, `inbound`, `outbound`, `import`, or `merge`), confidence, provider thread/message proof, and confirmation metadata. Provenance participates in survivorship: stronger verified evidence may replace weak machine inference, while operator-confirmed values remain protected.
 
 Current schema gaps for full provenance and company/source detail:
 - No `clients.company_name` or `opportunities.company_name` column exists. Company name can only fill weak `clients.name` values when that is safe.
-- No field-level provenance table or JSON column exists for canonical client/opportunity facts. Needed shape: entity type/id, field name, proposed value, extraction source, confidence, provider thread id, provider message id, confirmed/edited actor, and confirmed/edited timestamp.
 - No `opportunities.source_platform` / `source_platform_label` column exists for HomeStars, Wix, website form, or other lead platform names.
 - No provider message id column exists on `opportunities`; message-level proof lives on `activities.email_message_id`.
 - No explicit contact relationship column exists on opportunities for spouse/PM/site-super relationships; `sub_clients.title` can hold that relationship only after a sub-client exists.
@@ -1688,7 +1704,7 @@ Current schema gaps for full provenance and company/source detail:
 As of Lead Lifecycle P3, provider thread id is no longer the only lifecycle unit. New provider threads are evaluated against existing opportunities before OPS creates a cold duplicate. The matching boundary is the opportunity: once a new thread is deterministically linked, `opportunity_email_threads` receives the new `(thread_id, connection_id)` link, the inbound activity attaches to the winning opportunity, correspondence counters update there, and P2 enrichment runs against that same winning opportunity without overwriting operator-entered canonical values.
 
 P3 deterministic gates:
-- **Existing provider thread link**: if `(thread_id, connection_id)` is already linked, use that opportunity deterministically.
+- **Existing provider thread link**: for ordinary correspondence, if `(thread_id, connection_id)` is already linked, use that opportunity deterministically. Parsed contact-form submissions are message-scoped and bypass this gate; the raw thread remains on their activities for mailbox proof but never becomes a one-thread/one-opportunity inheritance link. Ownership is first-writer immutable: every application writer inserts if absent, reads back the canonical owner, and never updates it to a competing opportunity. The expand-phase database trigger rejects both cross-company connection/opportunity links and any `opportunity_id` rewrite, including writes from an older application instance during rolling deploy. Manual send preflights a caller-supplied thread before the irreversible provider send. If a verified same-company owner still wins while the provider request is in flight, the already-sent message is recorded against that canonical owner and reported successful; it is never returned as a retryable send failure that could duplicate customer email. Activity, correspondence event/projection, inbox cache, and lifecycle writes all use that same owner.
 - **Exact known contact**: exact `clients.email`, `sub_clients.email`, or `opportunities.contact_email` can link to an existing active opportunity.
 - **Existing related contact**: an exact sub-client email relationship links to the parent client's active opportunity.
 - **Exact phone**: exact normalized phone match across opportunity/client/sub-client facts can link when the opportunity is active or the linked project is active.
@@ -1866,7 +1882,8 @@ Conversion fires automatically when an opportunity moves to `won`, via a guarded
 - The RPC creates the `projects` row and writes the FK-backed `opportunity_ref` on the project plus the FK-backed `project_ref` on the opportunity, and writes the legacy text mirrors alongside each FK so iOS stays consistent.
 - It **re-links estimates** from the opportunity onto the new project, writing both the FK-backed `project_ref` and the legacy `project_id` text mirror on each estimate.
 - It writes an `opportunity_dispositions` row with `disposition = 'converted_to_project'`.
-- It is **idempotent**: an opportunity that already has a `project_ref` is never converted twice; a repeat call is a no-op. The opportunity remains `won`, remains linked to its project, and is **not archived** — conversion is not a removal from the pipeline, it is a hand-off that preserves the sales trail (matching the "Project inherits sales trail" intent above).
+- It is **idempotent and repairing**: an opportunity that already has a `project_ref` is never converted twice, but a repeat call repairs all four project/opportunity mirrors and still honors a later `p_win_opportunity = true` request. The opportunity remains `won`, remains linked to its project, and is **not archived** — conversion is not a removal from the pipeline, it is a hand-off that preserves the sales trail (matching the "Project inherits sales trail" intent above).
+- Direct project writes mirror `projects.opportunity_ref` and legacy `projects.opportunity_id`. A database invariant repairs the reverse `opportunities.project_ref` / `project_id` mirrors and writes one `won` transition for a newly linked project. Approval-queue RFQ creation may explicitly defer the win inside the conversion transaction; moving that linked project to `accepted`, `in_progress`, `completed`, or `closed` then wins the opportunity. Unrelated project edits do not alter sales stage.
 - Additive iOS-safe `projects` columns support the link and analytics: `opportunity_ref` (FK to opportunities), `estimated_value`, `source`, and `platform_metadata` (jsonb).
 
 ##### Frontend — merge conflict resolution + operator Lead Data Review Queue
@@ -2035,20 +2052,35 @@ Source: web `feat/lead-lifecycle-auto-disposition` → ops-web `main` (PR #84, s
 
 ### Provider Support
 
+**Prepared hardening status (2026-07-13):** The provider identity, cursor, OAuth, and correspondence rules in this section are implemented in the isolated `ops-web-email-pipeline-hardening` worktree but are **not deployed**. Five executable expand migrations are prepared but unapplied. Contract SQL `2050` is held under `docs/migrations/`, outside the normal migration runner, so apply-all cannot contract the schema before the compatible application is proven. The rollout is `2000`-`2040` expand -> application deploy and controlled sync proof -> separate reviewed `2050` contract. Production Canpro was inspected read-only and currently has one Gmail connection and no Microsoft 365 connection.
+
 | Provider | Auth | Scopes | Incremental Sync | Push Notifications |
 |----------|------|--------|-------------------|--------------------|
-| Gmail | Google OAuth 2.0 | `gmail.readonly`, `gmail.modify`, `gmail.labels` | History API (`startHistoryId`) | Google Cloud Pub/Sub (`users.watch()`) |
-| Microsoft 365 | Microsoft Identity Platform (MSAL) | `Mail.Read`, `Mail.ReadWrite` | Delta queries (`/me/messages/delta`) | Graph Change Notifications (`POST /subscriptions`) |
+| Gmail | Google OAuth 2.0 | `https://mail.google.com/` | History API (`startHistoryId`) | Google Cloud Pub/Sub (`users.watch()`) |
+| Microsoft 365 | Microsoft Identity Platform | `User.Read`, `Mail.Read`, `Mail.ReadWrite`, `Mail.Send`, `offline_access` | Mail-folder inventory delta plus one resumable message delta per live folder | Graph Change Notifications (`POST /subscriptions`) |
 
-A single company can connect both providers (e.g., owner uses Gmail, office manager uses M365). Each connection is a separate `email_connections` row with its own sync profile, webhook subscription, and sync token. Client matching and duplicate detection operate across all connections for a company.
+A single company can connect both providers (e.g., owner uses Gmail, office manager uses M365). Each connection is a separate `email_connections` row with its own sync profile, webhook subscription, and sync token. The target connection identity is normalized email unique by `(company_id, provider, email)`, so the same address may exist once per provider without sharing tokens, cursors, webhook state, or settings. Expand migration `2030` adds that identity alongside the live provider-agnostic index and normalizes old/new callbacks; post-deploy contract migration `2050` removes the old index. Client matching and duplicate detection operate across all connections for a company.
+
+Provider identity and cursor rules:
+- Gmail history expiry takes an overlap from the last successful sync (or connection creation on first setup) and stores a durable recovery triple on `email_connections`: anchor, `messages.list` page token, and fresh target history ID. Each fully persisted page advances the stored continuation, so a gap larger than one function invocation resumes instead of restarting forever. The fresh history ID becomes the normal cursor only after every recovery page and message is durable. Disconnect preserves both provider identity and the prior normal cursor; any incomplete recovery also remains resumable and fails closed rather than skipping the gap.
+- Microsoft 365 stores one mail-folder delta plus one message delta/continuation per discovered live folder in a versioned `m365:v2` cursor. A durable pending-folder queue covers Inbox, Sent, Archive, and rule/custom folders under one 50-page cycle budget. The returned cursor becomes durable only after its messages are durable; legacy Inbox/Sent or raw cursors replay a complete folder inventory. Unsent drafts are excluded.
+- Every Microsoft Graph message/subscription request asks for `IdType="ImmutableId"`, so moving a message between folders does not change the dedupe identity. Folder/message `@removed` tombstones advance only their proven streams and are not normalized as correspondence. Full-thread reads follow `@odata.nextLink` and fail explicitly if the safety bound is exceeded.
+- A sync lease stores both a timestamp and random owner token. Long cycles renew the lease; renewal/release match the owner so a stale worker cannot clear a successor's lock.
+- Disconnect is a soft tombstone (`status='disconnected'`, sync disabled, OAuth/webhook secrets cleared) rather than a hard delete. The stable connection row and history cursor remain as provider identity/audit proof; reconnect reuses only that same-provider row.
+- Cron sync returns non-2xx when any connection or semantic sweep reports failure. Staleness heartbeat rows are alert-delivery receipts, not positive ingestion receipts: an alert is deduped/logged only when notification or email delivery actually succeeds. If all configured channels fail, the route returns non-2xx and writes no false success receipt so the next run may retry. This still does not prove message completeness; provider-vs-OPS parity requires an independent 48-72 hour anti-join/repair monitor.
 
 ### OAuth Flow
 
 ```
 Settings → Integrations → Email
-  ├─ Connect Gmail → Google OAuth → email_connections (provider: gmail)
-  └─ Connect Microsoft 365 → MSAL OAuth → email_connections (provider: microsoft365)
+  ├─ authenticated initiation → one-time opaque state → Google OAuth
+  └─ authenticated initiation → one-time opaque state → Microsoft OAuth
+       callback → verified mailbox identity → email_connections
 ```
+
+OAuth initiation requires a verified Firebase operator, exact company and user ownership, and `settings.integrations`. The browser-visible `state` contains no tenant context: it is a 256-bit random nonce with a 10-minute lifetime, while `email_oauth_states` stores only its SHA-256 digest plus the server-verified context behind RLS. The callback atomically deletes and returns one unexpired provider-bound row through a service-role-only function, then re-verifies that the returning OPS cookie is the same permitted company/user before token exchange. This browser-session binding blocks relayed-consent mailbox attachment. Expired, replayed, wrong-provider, different/no-session, legacy raw-company, and unsigned base64 state all fail closed. Existing-row lookup errors also fail closed; a callback never treats an unknown read result as a new connection or resets settings by accident. Wizard connects read and upsert only the exact `(company_id, provider, email)` identity.
+
+Alert-email reconnects require OPS login and bind the short-lived state to a server-verified connection ID plus expected normalized mailbox. The confirmation page and provider initiation both re-check that exact connection/company/provider/type/mailbox tuple and require the row to be sync-enabled with status `active` or `needs_reconnect` before displaying tenant identity or issuing consent. Gmail reads the mailbox address from `users/me/profile`; Microsoft requests `User.Read` and reads `/me`. A callback for a different mailbox is rejected. A matching callback re-reads the same eligibility, then compare-and-set updates the exact email/status/sync-enabled snapshot; a stale link cannot resurrect a connection disconnected before or during the callback. Settings and cursor state remain intact. Neither provider may persist a connection without a valid mailbox email.
 
 ### Provider Abstraction Layer
 
@@ -2297,9 +2329,11 @@ When emails are imported or synced, each is matched against existing clients via
 
 **Microsoft 365:**
 1. On connection setup, create subscription: `POST /subscriptions` on `me/messages`
-2. M365 sends change notifications to: `POST /api/integrations/email/webhook/microsoft365`
-3. Validate subscription (M365 requires validation handshake), queue sync job, return 200
-4. Subscription expires every 3 days — cron renews every 2 days
+2. Generate a random Graph `clientState`, store only its SHA-256 digest, and bind it to the returned subscription id
+3. M365 sends change notifications to: `POST /api/integrations/email/webhook/microsoft365`
+4. Before any service-role dispatch, reject the entire batch unless every `{subscriptionId, clientState}` matches one active M365 connection
+5. Queue the authenticated sync dispatch and return 202; the validation-token handshake still returns plain text 200
+6. Subscription expires every 3 days — cron renews every 2 days and recreates any legacy/missing-secret subscription
 
 **Shared webhook endpoint logic:**
 1. Validate request authenticity (Pub/Sub signature / M365 validation token)
@@ -2407,7 +2441,7 @@ AI reads thread content and detects:
 
 **5C: Correspondence Tracking on Opportunity**
 
-Email threads are linked to opportunities via the `opportunity_email_threads` junction table (not a column on opportunities). This enables fast O(1) sync lookup via a unique index on `thread_id`. See `03_DATA_ARCHITECTURE.md` for the full schema.
+Email threads are linked to opportunities via the `opportunity_email_threads` junction table (not a column on opportunities). This enables fast sync lookup via the unique `(thread_id, connection_id)` mailbox-scoped identity. The first successful owner is immutable; ordinary replies inherit it, while message-scoped contact-form submissions do not create this link. See `03_DATA_ARCHITECTURE.md` for the full schema.
 
 Additional columns on `opportunities` for correspondence tracking:
 
