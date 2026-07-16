@@ -3128,10 +3128,19 @@ task material rows.
 
 ### Deck Materials List (iOS — added 2026-07-06; editable ordered record + full-roll ordering added 2026-07-07)
 
-The project Deck tab (`DeckTabView`) renders an auto-calculated `// MATERIALS`
-section below the 3D/2D viewport for vinyl jobs: the vinyl cut list, drip edge /
-clip / 90° flashing totals + stick counts, and glue buckets. Non-vinyl designs
-render nothing — the tab is byte-identical for them.
+The project Deck tab (`DeckTabView`) carries the auto-calculated materials
+list as a full sibling tab — the mode row reads `3D | 2D | MATERIALS`
+(`DeckTabViewMode.materials`, 2026-07-16; previously a `// MATERIALS` section
+scrolling below the viewport). The MATERIALS tab body is the vinyl cut list,
+drip edge / clip / 90° flashing totals + stick counts, and glue buckets; the
+card's `// MATERIALS` header is gone (the segment names it) and the EDIT verb
+sits trailing in the mode row. Non-vinyl designs show a quiet empty state
+("NO VINYL ON THIS DESIGN" + the assign-vinyl path) instead of a blank tab —
+`DeckMaterialsSection.body` hangs its recompute `.task` off a real `VStack`
+container, never `Group` (a childless `Group` forwards modifiers to nothing,
+so the task would never fire and `resolved` would deadlock nil). The
+fullscreen viewer stays canvas-only: its presenter remaps `.materials` to
+`.twoD` on open and its own control keeps just 3D/2D.
 
 **Pure engine stack** (`OPS/DeckBuilder/Engine/`), each a pure, unit-tested
 function composed by `DeckMaterialsResolver.resolve`:
