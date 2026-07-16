@@ -5573,6 +5573,14 @@ Below the rails, a horizontal strip of **category filter chips** (ALL + 12 categ
 
 **Global AUTO_SEND gate:** The router caps any category-level `auto_send` / `auto_follow_up` to `auto_draft` behavior until the global Phase C autonomy level in `AutonomyMilestoneService` reaches AUTO_SEND (level 4). This prevents any email from being sent before the overall writing profile is proven.
 
+#### Human-authority learning, subjects, and signatures (prepared 2026-07-14)
+
+Phase C learns only from an outcome whose human authority the database can verify. Authenticated in-app manual sends are `operator_authored` and may update the full writing profile; a matched OPS/provider draft that the operator sends is `operator_approved` and may teach only the operator's durable edits, never the unchanged AI-authored body. Autonomous sends and generic provider Sent-folder mail do bookkeeping but cannot train profiles or memories. The browser feedback endpoint may discard a draft but may not claim it was sent. Repeated edits are stored as de-identified evidence and need three consistent human examples before promotion; receipts make profile/memory application exactly once across retries.
+
+Reply subjects retain the provider thread subject with exactly one `Re:`. A blank new-thread subject resolves in this order: operator input, configured/template subject, a three-example learned template populated only with current-lead facts, contextual current-lead generation, then `Your inquiry`. Learned templates contain placeholders (`{contact}`, `{company}`, `{address}`, `{project}`, `{email}`, `{number}`), never another lead's raw subject. The subject field remains visible/editable; a manual edit becomes operator provenance.
+
+Every OPS draft/send uses one effective signature: current-operator OPS, mailbox OPS, exact Gmail provider identity, then none. Gmail import is read-only. Microsoft Graph has no Office-signature API, so Microsoft users save/paste an OPS signature. Missing signatures create one persistent operator/mailbox notification that deep-links to Email Settings and resolves/reopens with signature availability. Provider draft hydration strips any exact historical signature revision before appending the current one, preventing duplicate footers and signature contamination in learning. Historical profile scans skip a message entirely unless an exact connection-scoped known signature revision is removed; lookup failures and unmatched footers never enter the learning queue.
+
 **Allowed levels per category:**
 
 | Category | Valid levels |
@@ -6260,12 +6268,14 @@ Runs Mon/Wed/Thu at 9 AM. Checks `#social-media` for posts tagged with today's `
 
 ## iOS Core Spotlight Indexing (2026-04-14)
 
-The iOS app indexes user-accessible data into iPhone Spotlight so OPS records appear in the system-wide search. Projects, Clients, Tasks, Invoices, and Estimates are indexed with thumbnails, phone-number / email metadata, and permission gating. Search works offline (the index is on-device), and taps route into the app via the existing deep-link notification system.
+The iOS app indexes user-accessible data into iPhone Spotlight so OPS records appear in the system-wide search. Projects, Clients, Contacts (sub-clients), Tasks, Invoices, Estimates, and Leads (pipeline opportunities) are indexed with thumbnails, phone-number / email metadata, and permission gating. Search works offline for the on-device (SwiftData) entities, and taps route into the app via the existing deep-link notification system.
+
+**Leads are the one network-only domain.** Every other entity is SwiftData-backed and rides the sync engine's `SpotlightSyncTracker` for incremental updates. Pipeline opportunities are *not* in SwiftData (they're fetched on demand from Supabase), so they are sourced from `OpportunityRepository.fetchAll` and reconciled from `PipelineViewModel` instead — see **Leads (network-only)** below.
 
 ### Architecture
 
 - `SpotlightIndexManager` (`OPS/OPS/Services/Spotlight/SpotlightIndexManager.swift`) — singleton, permission-gated index writer. Bulk backfill + per-entity incremental methods with scope-aware removal.
-- `SpotlightItemBuilder` — converts SwiftData entities to `CSSearchableItem`
+- `SpotlightItemBuilder` — converts entities to `CSSearchableItem` (SwiftData models for most domains; the in-memory `Opportunity` for leads)
 - `SpotlightThumbnailRenderer` — produces 256×256 JPEG thumbnails from cached project images / client avatars, with SF Symbol fallbacks
 - `SpotlightSyncTracker` — collects per-sync-pass dirty / deleted entity IDs so incremental updates are targeted, not full re-indexes
 - `SpotlightBackfillCoordinator` — runs the initial indexing pass with a live iOS local notification showing progress, under a `UIBackgroundTask` so it survives app-background mid-run
@@ -6276,17 +6286,19 @@ The iOS app indexes user-accessible data into iPhone Spotlight so OPS records ap
 ### Trigger points
 
 - **Initial backfill:** after first successful full sync post-login, via `SpotlightBackfillCoordinator.runIfNeeded(context:)` called from `DataController` login flow
-- **Incremental updates:** after every `InboundProcessor.linkAllRelationships` — dispatches the `SpotlightSyncTracker` diff (upserts + removals). Every merge method for an indexed entity (project, client, task, invoice, estimate) calls `markDirty` or `markDeleted` based on whether the server soft-deleted the entity.
-- **Role change:** when `PermissionStore.fetchPermissions` detects a new `roleId`, posts `SpotlightReindexRequested` notification → MainTabView clears and re-runs backfill
+- **Incremental updates (SwiftData domains):** after every `InboundProcessor.linkAllRelationships` — dispatches the `SpotlightSyncTracker` diff (upserts + removals). Every merge method for an indexed entity (project, client, sub-client, task, invoice, estimate) calls `markDirty` or `markDeleted` based on whether the server soft-deleted the entity.
+- **Lead freshness (network-only domain):** leads never touch `SpotlightSyncTracker`. `SpotlightIndexManager.reconcileLeads(_:)` is called from `PipelineViewModel.loadData` after every successful load, passing the full company opportunity set already in hand (no extra fetch). Because every lead change — create, edit, archive, delete, stage move, plus Supabase realtime and foreground-resume — funnels through that one load (`Lead*Success` listeners + `scheduleRefresh`), the single reconcile keeps system search current. It upserts every non-deleted / non-archived lead and prunes anything written last pass that is now absent, using a per-user persisted written-id set (`spotlight.indexedLeadIds.<userId>`). No-op until the initial backfill flag is set (mirrors the SwiftData incremental gate).
+- **Role change:** when `PermissionStore.fetchPermissions` detects a new `roleId`, posts `SpotlightReindexRequested` notification → MainTabView clears and re-runs backfill (which re-fetches leads via `OpportunityRepository`)
 - **Logout:** `DataController.logout()` clears the entire index via `SpotlightIndexManager.clearAll()`
 
 ### Permission gates (index time + tap time)
 
 Using the existing `PermissionStore` keys:
 - `projects.view` → Projects + Tasks (tasks inherit projects gate)
-- `clients.view` → Clients
+- `clients.view` → Clients + Contacts (sub-clients inherit the client gate)
 - `pipeline.view` → Invoices + Estimates (same gate as the Money tab where these live)
 - `estimates.view` → Estimates (also honored if a role grants it without pipeline access)
+- `pipeline.view` **AND** the `pipeline` feature flag → Leads. Both are required — this mirrors `hasLeadsAccess` (the LEADS tab's own gate) exactly, so a lead is never indexed for a user who can't open it. If the feature flag is later turned off, `reconcileLeads` drops the whole lead domain on the next load.
 
 Field crew (without `hasFullAccess("projects.view")`) only gets their assigned projects / tasks indexed. Projects in RFQ/Estimated status are hidden from users without `pipeline.view`.
 
@@ -6296,21 +6308,24 @@ Field crew (without `hasFullAccess("projects.view")`) only gets their assigned p
 
 - `co.opsapp.spotlight.project`
 - `co.opsapp.spotlight.client`
+- `co.opsapp.spotlight.subclient`
 - `co.opsapp.spotlight.task`
 - `co.opsapp.spotlight.invoice`
 - `co.opsapp.spotlight.estimate`
+- `co.opsapp.spotlight.lead`
 
 Item IDs are `"<domain>:<entityId>"` — decoded on tap to determine which entity type to open.
 
 ### Deep linking
 
 Spotlight taps post the same notifications used by push notifications and universal links:
-- `OpenProjectDetails` / `OpenClientDetails` / `OpenTaskDetails` / `OpenInvoiceDetails` / `OpenEstimateDetails`
+- `OpenProjectDetails` / `OpenClientDetails` / `OpenSubClientDetails` / `OpenTaskDetails` / `OpenInvoiceDetails` / `OpenEstimateDetails` / `OpenLeadDetails`
 
 `MainTabView` observes each and routes to the appropriate detail sheet via `AppState`:
 - `showClientDetails` → `ClientSheet(mode: .edit(client))`
 - `showInvoiceDetails` → `InvoiceDetailViewDeepLinkWrapper`
 - `showEstimateDetails` → `EstimateDetailViewDeepLinkWrapper`
+- `OpenLeadDetails` (`userInfo["leadId"]`) → re-checks `hasLeadsAccess`, stashes `AppState.pendingLeadDeepLinkId`, switches to the LEADS tab; `LeadsTabView` drains it and resolves the opportunity from memory or a `fetchOne` network call (leads aren't in SwiftData), then presents `LeadDetailView`. Same route the notification rail and in-app universal search use.
 - `showAccessDenied` → `AccessDeniedSheet`
 
 The `ops://` URL scheme is registered in Info.plist for direct deep-link access: `ops://projects/{id}`, `ops://clients/{id}`, `ops://invoices/{id}`, `ops://estimates/{id}`. Handled in `AppDelegate.application(_:open:options:)`.
@@ -6321,6 +6336,7 @@ The `ops://` URL scheme is registered in Info.plist for direct deep-link access:
 - **Clients:** avatar from `ClientAvatarCache.shared` (`Documents/ClientAvatars/`) — **new in this release**, required because avatars were previously memory-only. Falls back to `person.crop.circle.fill`.
 - **Tasks:** parent project's thumbnail, or `checklist` SF Symbol
 - **Invoices / Estimates:** SF Symbols (`doc.text.fill` / `doc.plaintext.fill`)
+- **Leads:** the OPS opportunity glyph (`OPSStyle.Icons.opportunity`) on the steel-blue `AccentPrimary` brand token. Every lead shares this one static glyph, so it is rendered once and cached (leads re-reconcile on every pipeline load — per-lead rendering would be wasted work).
 - All rendered at 256×256 JPEG quality 0.7
 
 ### Invoice & Estimate local persistence (companion architectural change)
@@ -6333,9 +6349,24 @@ Sync order: `.estimate` before `.invoice` because invoices can reference estimat
 
 Call sites that previously used `invoiceVM.setup(companyId:)` / `estimateVM.setup(companyId:)` now pass a `modelContext`: `setup(companyId:modelContext:)`.
 
+### Leads (network-only)
+
+Pipeline leads (opportunities) are the only indexed domain that is **not** SwiftData-backed. The app fetches them on demand from Supabase (`OpportunityRepository`) and never persists them locally, so they cannot ride the sync engine's `SpotlightSyncTracker` delta path. The lead index is instead **reconciled from the full company set** on the same cadence the LEADS surface refreshes.
+
+**Sourcing.**
+- **Backfill** (`SpotlightIndexManager.indexAllLeads`): during the initial post-login backfill (and the role-change rebuild), the manager instantiates its own `OpportunityRepository(companyId:)` and calls `fetchAll()`, so leads are indexed even if the user never opens the LEADS tab. Runs last in the backfill so a slow network round-trip never delays the on-device SwiftData domains. A failed fetch leaves any prior lead index intact.
+- **Catch-up for existing users** (`backfillLeadsIfNeeded`): leads shipped after the other domains, so a user whose initial backfill already completed would skip the full backfill entirely (its flag is set). `SpotlightBackfillCoordinator.runIfNeeded` therefore calls `backfillLeadsIfNeeded` on that path — a one-time lead index (no banner, no re-churn of the other domains), gated to fire exactly once via the absence of the written-id set and retried next launch if the network fetch fails. Fires at login / reinstall; on a warm relaunch where a local user row already exists the login flow is skipped, so those users pick leads up on first LEADS-tab open instead (via `reconcileLeads`).
+- **Ongoing** (`SpotlightIndexManager.reconcileLeads(_:)`): called from `PipelineViewModel.loadData` after every successful load with the full `allOpportunities` set already in hand — **no extra network call**. Every lead mutation (create/edit/archive/delete/stage move) and every automatic refresh (Supabase realtime, foreground resume, pull-to-refresh) funnels through that load, so one reconcile keeps system search current.
+
+**Reconcile algorithm.** `fetchAll` already excludes `deleted_at` rows server-side; `indexableLeads(_:)` additionally drops archived leads (the one gate that keeps them out of search). The manager then upserts every desired lead and diffs the desired id set against a **per-user persisted written-id set** (`spotlight.indexedLeadIds.<userId>`), issuing targeted removals for anything written last pass that is now gone (server-deleted, archived, or converted-away). The set is cleared on logout and role change alongside the backfill flag. This delta approach avoids a clear-and-rebuild flash and mirrors the "targeted, minimal updates" philosophy the SwiftData domains use.
+
+**Gate.** `reconcileLeads` is a no-op until the initial backfill flag is set (same gate the SwiftData incremental path uses), and drops the entire lead domain via `deleteSearchableItems(withDomainIdentifiers:)` if it ever runs without pipeline access (mid-session role / feature-flag revocation).
+
+**Item shape.** `SpotlightItemBuilder.buildLead` titles the item with the human label (`Opportunity.displayContactName` — contact name, falling back to the inquiry subject, then "Unnamed lead"); the subtitle scans stage → street → contact channel; `contactPhone` / `contactEmail` populate the native searchable `phoneNumbers` / `emailAddresses` attributes so a query on a number or address surfaces the lead.
+
 ### Caps & scaling
 
-No arbitrary caps — Core Spotlight scales to millions of items. Bulk-index methods sort by `updatedAt` / `lastSyncedAt` descending so that if Spotlight ages items out under memory pressure, the most-recently-touched ones stay.
+No arbitrary caps — Core Spotlight scales to millions of items. Bulk-index methods sort by `updatedAt` / `lastSyncedAt` descending so that if Spotlight ages items out under memory pressure, the most-recently-touched ones stay. Leads carry no such sort — the company's active pipeline is small (tens to low hundreds), reconciled whole on each pipeline load.
 
 ### Known limitations (2026-04-14)
 
