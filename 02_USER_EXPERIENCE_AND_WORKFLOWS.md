@@ -1414,6 +1414,15 @@ in the 2026-04-27 Phase 1+2 rework)
 - LineItemEditSheet (edit individual line items)
 - ProductPickerSheet (select products for line items)
 
+**EstimateDetailView document rendering (2026-07-15, bug a8e156a2):**
+- Every standalone line-item row shows its math: `TYPE · qty unit × unit price` (JetBrains Mono metadata). Configured products display their resolved snapshot price — the price the server-generated `line_total` was computed from.
+- Bundle rows (deck-flow parent/child): parents carry the money (`[N items]` tag), children live behind the header's BREAKDOWN ⇄ BUNDLED toggle as indented breakdown rows.
+- All money shows exact cents (`$1,223.58`, never `$1,224`) — line totals, subtotal, tax, total, header amount. Matches web `formatCurrency` (2 fraction digits).
+- Tax rates render at true precision (`TAX (7.5%)`, never rounded to `8%`); `tax_rate` is numeric(_,4) and fractional rates are live in prod.
+- A derived DISCOUNT row (`subtotal + tax − total`, with `(X%)` when `discountPercent` is synced) sits between SUBTOTAL and TAX so the totals card arithmetic always closes on screen.
+- Shared formatting lives in `OPS/Utilities/LineItemDisplay.swift` (also used by InvoiceDetailView and EstimateFormSheet).
+- The screen calls `.hidesGlobalTabBar()`; per bug ce6da104 the FAB yields with the tab bar (`MainTabView.fabVisible` folds `tabBarVisibility.isHidden` into the FAB decision — any screen that owns the bottom edge hides both).
+
 ---
 
 ### InvoicesListView (Invoices Segment)
@@ -1440,6 +1449,11 @@ in the 2026-04-27 Phase 1+2 rework)
 **Related Sheets:**
 - PaymentRecordSheet (record partial or full payment)
 - InvoiceDetailView (full invoice detail)
+
+**InvoiceDetailView document rendering (2026-07-15, bug a8e156a2):**
+- Mirrors EstimateDetailView's line-item contract: `TYPE · qty unit × unit price` row meta via `LineItemDisplay`, exact cents on all money (line totals, subtotal, tax, total, PAID, BALANCE DUE, footer), true-precision tax rate, derived DISCOUNT row.
+- Bundle-aware: `convert_estimate_to_invoice` copies parent/child line items across (children with remapped parent ids), so the invoice groups them exactly like the estimate — parents bundled by default, BREAKDOWN toggle expands children. The previous flat render visually double-counted every converted bundle.
+- The screen calls `.hidesGlobalTabBar()`; the FAB yields with the tab bar (bug ce6da104).
 
 ---
 
