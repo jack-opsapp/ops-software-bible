@@ -1238,6 +1238,35 @@ CREATE TRIGGER update_project_photos_timestamp
 `created_at`, `updated_at`, `is_client_visible` (bool). RLS is company-wide read
 (`company_isolation`), so every teammate can read all rows.
 
+### Capture UI — one standardized camera (iOS)
+
+**`CameraBatchView` is the single photo-capture surface** across every flow
+(`OPS/Views/Components/Images/CameraBatchView.swift`). It is an
+AVCaptureSession-backed multi-shot camera: the live preview stays running
+between captures, shots accumulate into a bottom-right stack, and one DONE
+press returns the whole batch. Library import (PHPicker) lives inside its HUD,
+so a single entry point covers both capture and library paths. Call sites:
+project action bar (home bar + Project Details PHOTO — bug 56c37df2 routed
+both here), site-visit capture, and lead detail.
+
+`ImagePicker` (`.../Images/ImagePicker.swift`) is now a **library-only PHPicker
+wrapper** — its camera source was removed when the action bar migrated to
+`CameraBatchView`; remaining callers (expense receipts, client/company/org
+avatars, project-form gallery) only ever pick from the library.
+
+**Lens/zoom labels use user-facing magnification, not raw AVFoundation zoom
+factors** (bug 56c37df2). A virtual multi-camera device anchors raw
+`videoZoomFactor` 1.0 to its **widest** constituent lens, so on any
+ultra-wide-bearing iPhone raw 1.0 is the "0.5x" lens and the "1x" wide lens
+engages at the device's first `virtualDeviceSwitchOverVideoZoomFactors` value
+(2.0 on every ultra-wide iPhone to date). `CameraLensOptionPlanner`
+(`.../Images/CameraLensOptionPlanner.swift`, pure/tested) computes stops and
+labels in magnification space (raw ÷ wide-lens baseline) and converts back to
+raw factors for the device; `CameraBatchView` detects the baseline from the
+constituent lenses, opens at true 1x, and scales its digital-zoom ceiling to
+it. Telephoto switch-overs surface at their true magnification (a 5x tele on a
+Pro Max labels "5x", not "10x").
+
 ### Android Conversion Notes
 
 **Required Components:**
