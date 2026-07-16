@@ -259,11 +259,21 @@ Token-gated form, link emailed after deposit (Path A) or after owner approval + 
 
 After Stripe payment success (Path A directly; Path B after the buyer used their post-approval checkout token).
 
-**Content:**
+**Content (per-tier since Tier Model v2 — 2026-07-16 rework):**
 - "You're in." header (existing voice)
-- Stripe session details (tier purchased, P1 amount paid)
+- Payment summary card — three cells:
+  - **Package** — the dictionary designation lockup (`packages.<tier>.designation`, e.g. `SPEC-01 · WORKFLOWS`), Stripe long-form display name as fallback. Never the raw slug.
+  - **Paid** — Stripe `amount_total` (deposit + tax), formatted CAD.
+  - **Total** — per tier: SPEC-01 `$2,000 [50/50 · second half at delivery]`; SPEC-02 `$7,500 [across 4 checkpoints]`; SPEC-03 `from $25,000 [locks at scope sign-off]` until `spec_projects.locked_total_cents` is set, the locked total `[locked at scope sign-off]` after.
 - Founder welcome video (Jackson, 60-90s) — embedded
-- "What happens next" timeline visualization (4 milestones, current position highlighted)
+- Checkpoint rail — per-tier shapes (10_TIER_MODEL_V2 § 2/§ 5), current position highlighted:
+  - **SPEC-01 — 3 stops:** Deposit $1,000 → Scope sign-off → Delivery walkthrough $1,000. Scope sign-off renders as the evidence event it is: no amount, "no invoice here" detail, completed chip reads **SIGNED** (payment stops read PAID). Plain 01/02/03 ordinals — SPEC-01 checkout copy never sold P-language, and a P1/P2/P4 rail reads as a mistake.
+  - **SPEC-02 — 4 stops:** P1-P4, $1,875 each.
+  - **SPEC-03 — 4 stops:** P1 fixed $6,250 "against the floor"; P2-P4 render the `—` empty state with "Your total locks here." on P2 until `locked_total_cents` exists, exact thirds (residual cents on P4) after.
+  - Status derivation is monotone over `scope_doc_signed_at` / `midpoint_accepted_at` / `walkthrough_completed_at` (a later timestamp completes earlier stops); SPEC-01 ignores midpoint timestamps — no midpoint stop exists in its journey.
+  - Per-tier delivery-window line under the rail (dictionary `confirmation.timeline.<tier>`).
+  - Malformed/unknown tier metadata degrades to a generic 4-stop rail with no amounts — never invented numbers.
+  - Implementation: `ops-site/src/lib/spec/confirmation-schedule.ts` (pure, unit-tested) feeding `SpecMilestoneTimeline`; every amount derives from `lib/spec/pricing.ts` — no local price maps on the page.
 - Primary CTA: open intake link
 - Secondary CTA: book discovery (greyed until intake done)
 - Refund window reminder: "Your 30-day Guarantee Refund window starts on the Walkthrough Date. Exclusions apply."
