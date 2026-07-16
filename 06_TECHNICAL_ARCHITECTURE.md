@@ -2660,8 +2660,10 @@ File: Views/JobBoard/UniversalSearchSheet.swift
 - Opened via `AppState.showingJobBoardSearch = true` from the header search button
 - Role-filtered: field crew sees only their assigned projects
 - **Pipeline-gated**: users without `specialPermissions.contains("pipeline")` cannot see `.rfq` or `.estimated` projects in search results
-- Searches: project title, client name, address; task `displayTitle` and `taskNotes`
-- Pinned section headers: `[ PROJECTS ]`, `[ TASKS ]`
+- Indexed sections (each a titled group): **projects** (title, client name, address), **tasks** (`displayTitle`, `taskNotes`), **clients**, **team**, **leads**, **invoices**, **estimates**, and **catalog / inventory**
+  - **Leads** (bug ac2ace7a): opportunities are network-only (not in SwiftData), so the sheet loads them via a `PipelineViewModel` on appear, gated on `pipeline` access. Matched by contact name, title, email, phone, address, or linked client name. Active leads show first; terminal stages (won / lost / discarded) sit behind a "WON, LOST & DISCARDED" disclosure. A one-tap Call action dials the contact; tapping the row posts `OpenLeadDetails` (MainTabView re-checks pipeline access and pushes `LeadDetailView`).
+  - **Invoices & estimates** match their number / title **plus resolved client name and project title** — a customer or job search now surfaces the paperwork attached to it, and each row shows the client for scannability.
+  - Lead / invoice / estimate match predicates live in the pure, unit-tested `OPS/Utilities/UniversalSearchMatching.swift` (extracted like `UniversalSearchScheduleTargeting`), covered by `OPSTests/Views/JobBoard/UniversalSearchMatchingTests.swift`.
 - Auto-focuses keyboard on appear
 
 ### DirectionalDragModifier
