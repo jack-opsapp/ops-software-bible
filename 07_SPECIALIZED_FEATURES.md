@@ -3129,12 +3129,18 @@ task material rows.
 ### Deck Materials List (iOS — added 2026-07-06; editable ordered record + full-roll ordering added 2026-07-07)
 
 The project Deck tab (`DeckTabView`) carries the auto-calculated materials
-list as a full sibling tab — the mode row reads `3D | 2D | MATERIALS`
+list as a full sibling tab — the mode row reads `3D | 2D | ☰`
 (`DeckTabViewMode.materials`, 2026-07-16; previously a `// MATERIALS` section
-scrolling below the viewport). The MATERIALS tab body is the vinyl cut list,
-drip edge / clip / 90° flashing totals + stick counts, and glue buckets; the
-card's `// MATERIALS` header is gone (the segment names it) and the EDIT verb
-sits trailing in the mode row. Non-vinyl designs show a quiet empty state
+scrolling below the viewport). The picker owns the LEADING ~3/5 of the screen
+(`containerRelativeFrame`), the materials segment is a `list.bullet` glyph
+(the shared `SegmentedControl` gained icon-capable options on the same
+underline grammar, with a VoiceOver label), and the EDIT verb anchors the far
+right. The MATERIALS tab body is the vinyl cut list, drip edge / clip / 90°
+flashing totals + stick counts, and glue buckets; the card's `// MATERIALS`
+header is gone (the segment names it). Pull-to-expand (and its cue) is inert
+while the materials tab is showing — it is a canvas affordance, and the
+viewport→card height collapse would otherwise stream a transient "pull"
+through the overscroll probe and open fullscreen on a plain segment tap. Non-vinyl designs show a quiet empty state
 ("NO VINYL ON THIS DESIGN" + the assign-vinyl path) instead of a blank tab —
 `DeckMaterialsSection.body` hangs its recompute `.task` off a real `VStack`
 container, never `Group` (a childless `Group` forwards modifiers to nothing,
