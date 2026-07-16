@@ -7571,4 +7571,42 @@ Costs are usage-based: private Supabase Storage/egress, Vercel worker invocation
 
 ---
 
+## 33. Lead Assignment and Scoped Lead Access (Web + iOS, prepared 2026-07-16)
+
+Lead responsibility is a nullable, single-user relationship on `public.opportunities.assigned_to` with an optimistic concurrency counter in `opportunities.assignment_version`. It does not create a project owner or project assignee. When a lead converts, the opportunity retains its assignee, while the resulting project and project tasks remain unassigned. Task assignees continue to be managed only through the task system.
+
+### Permission contract
+
+Lead permissions are independently scoped as `pipeline.create`, `pipeline.view`, `pipeline.edit`, `pipeline.assign`, and `pipeline.convert`. `view`, `edit`, `assign`, and `convert` accept `all | assigned`; `create` accepts `all`. Effective dependencies are enforced in both the permission editor and the database: edit cannot exceed view, and assign/convert cannot exceed edit. Explicit granular role rows or per-user overrides suppress legacy `pipeline.manage` compatibility, including explicit revocations and inert `granted=true, scope=NULL` override rows.
+
+The reviewed Operator preset activates only after the complete assignment and email hardening chain. Its exact lead/mail matrix is:
+
+- `pipeline.create:all`
+- `pipeline.view:assigned`
+- `pipeline.edit:assigned`
+- `pipeline.assign:assigned`
+- `pipeline.convert:assigned`
+- `inbox.view:assigned`
+- `inbox.send:assigned`
+
+The activation will replace the legacy Operator `inbox.view:all` row, will not add `pipeline.manage` or `inbox.view_company`, and will preserve unrelated Operator capabilities. The reviewed `20260715180000_lead_assignment_operator_activation.sql` migration is ordered after the complete email chain through `20260715179000`. It acquires every affected company boundary before role/member rows, then aborts retryably if the membership company set changed during the pre-lock gap. Operators remain fail-closed until that final migration is applied. None of these prepared migrations is documented here as applied to production.
+
+### Guarded writes and identity
+
+All human assignment changes call `public.change_opportunity_assignment(opportunity_id, expected_assignment_version, expected_assigned_to, new_assigned_to, source, suggestion_id, metadata)`. Trusted ingestion and lifecycle workers call the service-role-only `public.change_opportunity_assignment_as_system(...)`. Direct writes to `opportunities.assigned_to` are rejected. Each successful change creates an immutable `opportunity_assignment_events` row and addressed `opportunity_assignment_deliveries` rows. If an assigned-only actor submits a stale write after another actor has already transferred the locked lead, the RPC raises the state-free `assignment_access_lost` outcome. Clients purge the revoked lead without receiving the replacement assignee; ordinary permission denials do not trigger that destructive path.
+
+An assigned-scope actor can reassign an active, nonterminal lead currently assigned to them to another eligible team member. They cannot unassign it or change a terminal lead. An all-scope actor can assign, reassign, and unassign eligible leads according to the same guarded concurrency contract. Assignment targets must be active, nondeleted users in the same company with effective assigned-lead visibility.
+
+Mailbox addresses never establish OPS identity. A personal connection is authorized only by its canonical OPS `email_connections.user_id` owner, and only when `type='individual'`; a company connection's legacy connector `user_id` is never treated as authority. Lead-linked reads and sends use the actor-aware `private.user_can_view_opportunity_inbox` and `private.user_can_send_opportunity_inbox` helpers, which intersect opportunity access, mailbox ownership/type, company, inbox scope, and current assignment.
+
+### Product behavior
+
+The web and iOS lead-detail surfaces display the current assignee and expose the guarded picker only when the current actor can change that row. Both clients send the assignment version and expected assignee, wait for the server response, and refresh on conflict; assignment is never optimistic or queued offline. Assigned-only users see their assigned leads in the Leads tab and do not receive a company-wide assignee filter or assignee column. Company-wide viewers can filter by Mine, Unassigned, or a specific eligible team member.
+
+Assignment changes invalidate actor/scope-keyed lead and aggregate caches and are replayable through durable realtime events. Canonical role, role-permission, user-override, user-admin, and company-admin changes enqueue one recipient-only `user_permission_change_deliveries` row per user/transaction. An open web session synchronously clears lead and email caches and closes lead-backed surfaces before refreshing its permission store. The new assignee receives one deduplicated in-app notification (and push when enabled); the former assignee receives no user-facing notification and their now-inaccessible cached lead is purged. Manual self-assignment is silent. If a conversion succeeds but the actor cannot view the resulting project, the client treats it as committed success without exposing the project identity, navigating to it, or retrying conversion.
+
+Primary implementation sources: `ops-web/supabase/migrations/20260715160000_lead_assignment_foundation.sql`, `20260715160500_lead_assignment_scoped_rls.sql`, `20260715160700_lead_assignment_child_scope.sql`, `20260715161500_lead_assignment_realtime_fanout.sql`, `20260715161600_lead_assignment_delivery_worker.sql`, and `20260715180000_lead_assignment_operator_activation.sql`; `ops-web/src/lib/permissions/lead-access-policy.ts`; `ops-web/src/lib/api/services/lead-assignment-service.ts`; `ops-web/src/lib/hooks/use-lead-assignment.ts`; and the iOS lead assignment repository/detail-view integration under `ops-ios/OPS/`.
+
+---
+
 **End of Document**
