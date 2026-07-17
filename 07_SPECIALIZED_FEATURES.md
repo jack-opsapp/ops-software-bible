@@ -3126,6 +3126,64 @@ also stamps `vinyl_ordered_at` and `vinyl_ordered_by`. This marker is a status
 field only. It does not create catalog orders, inventory deductions, recipes, or
 task material rows.
 
+### VINYL ORDERS Board + Bulk Order Wizard (iOS — 2026-07-16)
+
+Cross-project vinyl procurement console replacing the Job Board's inline
+vinyl filter mode (the `VinylOrderStrip` and `vinylFilter` plumbing were
+deleted; `VinylTaskFilter` detection stays). The `VINYL` pill presents
+`VinylOrdersBoardView` as a full-height sheet:
+
+- **Population:** company projects `status ∈ {accepted, in_progress}` with ≥1
+  non-deleted vinyl task not `TaskStatus.completed` — quotes are not
+  procurement, finished jobs are history, and a job whose vinyl tasks are all
+  done has left the vinyl phase. Pure grouping/sort in `VinylOrdersBoardModel`
+  (unit-tested): `// TO ORDER` by earliest incomplete vinyl-task start
+  (unscheduled after scheduled, newest created first), `// ORDERED` by
+  `vinyl_ordered_at` desc. Glance rows are marker-driven — zero geometry work
+  at list render; materials decode lazily on expand (memoized per design
+  revision).
+- **Expanded row:** order record (design's frozen `DeckMaterialsSnapshot`
+  first — color, PO, sq ft or `N ROLLS @ L'`, cut-group lines, stick/bucket
+  counts — falling back to marker `vinyl_color`/`vinyl_po`), client, address,
+  `OPEN PROJECT` (dismiss → `AppState.viewProjectDetailsById`), and
+  `CLEAR ORDERED` (confirmation → `DeckMaterialsOrderService.clearOrdered`,
+  which nulls all five marker fields).
+- **Bulk MARK ORDERED** (`projects.edit`): serial commits through
+  `VinylBulkMarkService` — full snapshot freeze where the display-candidate
+  design resolves materials (identical to the Details-tab path), marker-fields
+  write otherwise (config-carried color still recorded). Partial failures
+  collect into an `n MARKED · m FAILED` banner whose RETRY reruns only the
+  failed subset.
+- **Bulk ORDER wizard** (deck_builder feature + `deck_builder.view` +
+  `projects.edit`): one review page per job — `// COLOR` (catalog variant via
+  the shared `VinylCatalogSelection` helpers, free-text + `USE FIELD CONFIRM`
+  fallback), `// PO` (defaults to project title), `// CUTS` + extracted
+  `VinylCutPreview` roll visualization, collapsed `// LAYOUT` knobs (direction/
+  pattern/roll/seam/wrap session-transient; order mode + roll length persist to
+  `materialsSettings`). Degenerate jobs (no drawing / unconfirmed scale) order
+  color + PO only, honestly labeled. CONFIRM writes the color pick through to
+  the design config exactly like the order sheet.
+- **Consumables + send:** `VinylConsumablesAggregator` (unit-tested) sums
+  sticks ACROSS jobs then ceils once per type — drip + 90 flash tubes at
+  `flashingPerTube` (default 30), clip tubes at `clipPerTube` (default 50),
+  both device-level @AppStorage (`deckBuilder.vinylOrder.*`); glue sums
+  per-design area/coverage ratios with one final ceil. Steppers seed from the
+  suggestion; zero lines are omitted. `VinylBulkOrderComposer` (unit-tested
+  against Jackson's exact format) assembles per-job sections (`PO [project]` /
+  `Color: [color]` / cut lines through the user's existing cut template +
+  separator; full-roll jobs emit their rolls line) plus a consumables tail with
+  no stick lengths on tube lines. `TEXT ORDER` opens Messages (recipient chosen
+  there — no supplier entity); on `.sent` every job commits through
+  `VinylBulkMarkService` with the page's color/PO/settings frozen into each
+  snapshot (snapshot gains additive `po`). `COPY ORDER` fallback requires the
+  explicit `COPIED. MARK n ORDERED?` confirm. ONE summary notification
+  (`vinyl_bulk_ordered`, `// VINYL ORDERED`, `n PROJECTS · <date>`) — never n.
+- **Ordered rows are not selectable** — re-ordering requires CLEAR ORDERED
+  first, so double-ordering is structurally impossible.
+
+Spec: `ops-ios/docs/superpowers/specs/2026-07-16-vinyl-orders-board-design.md`.
+Snapshot proofs: `ops-ios/docs/artifacts/vinyl-orders/`.
+
 ### Deck Materials List (iOS — added 2026-07-06; editable ordered record + full-roll ordering added 2026-07-07)
 
 The project Deck tab (`DeckTabView`) carries the auto-calculated materials

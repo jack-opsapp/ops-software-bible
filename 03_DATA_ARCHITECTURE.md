@@ -202,6 +202,8 @@ final class Project: Identifiable {
     // vinyl_order_status TEXT DEFAULT 'not_ordered' CHECK ∈ {not_ordered, ordered} — Deck Builder marker-only vinyl status.
     // vinyl_ordered_at   TIMESTAMPTZ NULL — when project vinyl was marked ordered.
     // vinyl_ordered_by   UUID FK → public.users(id) ON DELETE SET NULL, NULL — who marked vinyl ordered (retargeted 2026-07-04 from an auth.users default; see note).
+    // vinyl_color        TEXT NULL — ordered vinyl color record (added 2026-07-16, VINYL ORDERS board; migration add_projects_vinyl_color_po).
+    // vinyl_po           TEXT NULL — supplier PO reference for the vinyl order (added 2026-07-16, same migration).
 }
 ```
 
@@ -226,12 +228,30 @@ so the Details tab can read the marker without mutating the historical
 > attribution so a legacy queued Firebase-UID write can't wedge the sync queue.
 > Migration SQL archived at `ops-ios/docs/artifacts/vinyl-ordered-by-fk-retarget.sql`.
 
-**Job Board vinyl filter (2026-07-04)**: a `VINYL` pill on the Job Board action
-row (shown only when the company defines a task type whose display contains
-"vinyl") filters the project list to jobs with a vinyl task and renders a
-per-card ordered-state strip with a one-tap `MARK ORDERED` (gated `projects.edit`).
-Reads/writes the same `vinyl_order_*` marker — no new schema. See
-`OPS/Views/JobBoard/VinylOrderFilter.swift`.
+**VINYL ORDERS board (2026-07-16 — replaces the 2026-07-04 inline vinyl
+filter)**: the Job Board `VINYL` pill (shown only when the company defines a
+task type whose display contains "vinyl") now presents a full-height
+procurement board sheet (`OPS/Views/JobBoard/VinylOrdersBoardView.swift`)
+instead of an inline list filter; the per-card strip and filter plumbing were
+deleted. The board lists company projects with `status ∈ {accepted,
+in_progress}` carrying ≥1 incomplete vinyl task, grouped `// TO ORDER`
+(earliest vinyl-task start first, unscheduled last) and `// ORDERED`
+(`vinyl_ordered_at` desc), all marker-driven (zero geometry at render). Rows
+expand to the order record (snapshot-first, marker `vinyl_color`/`vinyl_po`
+fallback), client + address, `OPEN PROJECT`, and `CLEAR ORDERED`. Multi-select
+offers bulk `MARK ORDERED` (gated `projects.edit`; full snapshot freeze where a
+deck drawing resolves materials, marker-fields-only otherwise) and the bulk
+`ORDER` wizard (gated deck_builder feature + `deck_builder.view` +
+`projects.edit`) which composes ONE combined supplier text (per-job cuts +
+aggregated drip/90/clip tubes + glue buckets; `deckBuilder.vinylOrder.
+clipPerTube`/`flashingPerTube` @AppStorage, defaults 50/30) and auto-marks
+every job on send. New columns `vinyl_color` + `vinyl_po` ride every
+mark/order write in the same atomic `updateProjectFields` payload as the
+status trio; `clearOrdered` nulls all five. Pure logic:
+`VinylOrdersBoardModel`, `VinylConsumablesAggregator`, `VinylBulkOrderComposer`,
+`VinylBulkMarkService` (all unit-tested). iOS projection
+`ProjectVinylOrderMarker` gained `vinylColor`/`vinylPO` behind SwiftData schema
+V17 (V7–V16 marker shape frozen as `OPSSchemaLegacyVinylOrderV16`).
 
 **Key Computed Properties**:
 
@@ -3082,7 +3102,7 @@ Phase 2 OPS Decks framing contract added 2026-06-26: `drawing_data.framing` is a
 
 Phase 6 OPS Decks surface/overhead contract added 2026-06-30: `drawing_data.surfaceFeatures` and `drawing_data.overhead` are active optional blocks and rows carrying either block stamp schema version 6. `surfaceFeatures` stores per-surface decking patterns, fastener system, finishes, fascia, skirting, built-ins, and lighting. `overhead` stores pergola/louvered/solid-roof structures with optional roof shape, footprint, shared framing members, shade percent, and product model. These blocks are FULL-authoring data owned by standalone OPS Decks; embedded OPS light mode must preserve and display them without exposing the authoring sheets or invoking sizing engines.
 
-Deck materials list contract added 2026-07-06 (embedded OPS): `drawing_data` gains two additive optional keys for the deck-tab vinyl materials list — `materialsSettings` (`DeckMaterialsSettings`: crew-editable `glueCoverageSqFt`/`dripStickFeet`/`ninetyStickFeet`/`clipStickFeet` presets) and `orderedMaterials` (`DeckMaterialsSnapshot`: the full materials list frozen at MARK ORDERED — presets, vinyl settings, color, ordered/surface sq ft, purchased cut groups, drip/clip/90 feet + stick counts, glue area + buckets). Both decode with the DeckGeometry house style (`decodeIfPresent` per field); a corrupt `orderedMaterials` (e.g. missing `orderedAt`) nils the whole node rather than failing the drawing decode. Legacy rows omit both keys and round-trip unchanged. No DB migration — `deck_designs.drawing_data` is `jsonb` and the keys ride inside it. **Extended 2026-07-07** (editable ordered record + full-roll ordering): `DeckMaterialsSettings` gains `orderMode` (`VinylOrderMode`) + `fullRollLengthFeet`; `DeckMaterialsSnapshot` gains `orderMode`, `fullRollLengthFeet`, `orderedRollCount` (`Int?`), `isOrderedEdited`, and `driftCutGroups` (ALL cut pieces — purchased + intra-job reused — the drift basis; `cutGroups` stays purchased-only for display) — all additive, `decodeIfPresent` with calc-fallback defaults (`driftCutGroups` falls back to `cutGroups`) so pre-existing rows round-trip byte-behavior-unchanged. See `07_SPECIALIZED_FEATURES.md` § Deck Materials List for the detection/flashing/snapshot semantics.
+Deck materials list contract added 2026-07-06 (embedded OPS): `drawing_data` gains two additive optional keys for the deck-tab vinyl materials list — `materialsSettings` (`DeckMaterialsSettings`: crew-editable `glueCoverageSqFt`/`dripStickFeet`/`ninetyStickFeet`/`clipStickFeet` presets) and `orderedMaterials` (`DeckMaterialsSnapshot`: the full materials list frozen at MARK ORDERED — presets, vinyl settings, color, ordered/surface sq ft, purchased cut groups, drip/clip/90 feet + stick counts, glue area + buckets). Both decode with the DeckGeometry house style (`decodeIfPresent` per field); a corrupt `orderedMaterials` (e.g. missing `orderedAt`) nils the whole node rather than failing the drawing decode. Legacy rows omit both keys and round-trip unchanged. No DB migration — `deck_designs.drawing_data` is `jsonb` and the keys ride inside it. **Extended 2026-07-07** (editable ordered record + full-roll ordering): `DeckMaterialsSettings` gains `orderMode` (`VinylOrderMode`) + `fullRollLengthFeet`; `DeckMaterialsSnapshot` gains `orderMode`, `fullRollLengthFeet`, `orderedRollCount` (`Int?`), `isOrderedEdited`, and `driftCutGroups` (ALL cut pieces — purchased + intra-job reused — the drift basis; `cutGroups` stays purchased-only for display) — all additive, `decodeIfPresent` with calc-fallback defaults (`driftCutGroups` falls back to `cutGroups`) so pre-existing rows round-trip byte-behavior-unchanged. **Extended 2026-07-16** (VINYL ORDERS board): `DeckMaterialsSnapshot` gains `po` (`String?`) — the supplier PO confirmed in the bulk order wizard; nil for single-project orders and legacy snapshots (additive, `decodeIfPresent`). See `07_SPECIALIZED_FEATURES.md` § Deck Materials List for the detection/flashing/snapshot semantics and § VINYL ORDERS Board for the bulk flow.
 
 Standalone company provisioning is defined in `ops-ios/docs/superpowers/specs/2026-06-25-ops-decks-phase-1-backend-contract.md`. The provisioning endpoint creates a company-of-one for the deck-only user and may mark the row with a clear deck origin or `subscription_plan = 'decks'` for routing, but deck entitlement state belongs in the deck subscription mirror. Do not write RevenueCat deck access into `companies.subscription_status`, `trial_end_date`, or other OPS base-plan lockout fields.
 
