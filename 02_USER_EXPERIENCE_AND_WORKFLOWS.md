@@ -51,6 +51,8 @@ Maximum (Pipeline + Catalog):
 └──────┴──────────┴────────┴─────────┴──────────┴──────────┘
 ```
 
+When the full tab set is wider than the viewport, Settings remains the trailing overflow tab. Selecting or restoring Settings automatically scrolls the tab bar far enough to keep its icon fully visible; returning to a primary tab restores the tab bar to its resting position.
+
 **Tab Items (in insertion order):**
 
 1. **Home** (`house.fill` icon) — Always shown
