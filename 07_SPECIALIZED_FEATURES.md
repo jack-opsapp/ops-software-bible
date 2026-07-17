@@ -1484,6 +1484,8 @@ Each column header shows status name, card count, and total value (accounting pe
 
 **Status change via drag:** Drag cards between columns to change project status. First-time drag shows a confirmation dialog (stored in localStorage as `ops_projects_drag_confirmed`). After confirmation, all subsequent drags are silent. Fires `useUpdateProjectStatus` mutation with optimistic update and toast on error.
 
+Project status writes cross an authenticated server boundary. `Archived` additionally requires `projects.archive:all`; a restrictive project policy blocks direct browser bypasses, and service workflows use the actor-aware `change_project_status_as_system` bridge. Every real transition increments the trigger-owned monotonic `projects.status_version` and atomically inserts `project_status_lifecycle_outbox`. The immutable outbox event—not an editable timeline note—is the historical-actor, current-version, recipient, and permanent-dedupe proof for the leased minute worker. A later actor permission change does not strand an event that was authorized when written, while every recipient must still pass current project-view authorization. Timeline projections cannot be forged or rewritten, and notification plus Phase C task/invoice actions retain event-key uniqueness after rows are read, approved, or executed. The browser callback is only an eager drain, so a callback, retry, or process failure cannot lose or duplicate lifecycle work.
+
 **Free-form positioning:** Drop on empty canvas saves a custom position (Finder-style). Custom positions override layout engine positions. Stored in `customPositions` map.
 
 **Multi-select drag:** Shift/Meta click for multi-select. Drag all selected cards together with batch count badge on overlay.
@@ -3880,6 +3882,19 @@ The web app surfaces notifications via a right-edge vertical drawer, triggered b
 
 **Recipient lookup — permission, never role.** Server-side dispatch (iOS in-app + push, Web in-app) MUST resolve recipients via `public.users_with_permission(p_company_id, p_permission, p_required_scope)`, not by filtering `users.role`. The RPC honors role grants, per-user overrides (`user_permission_overrides`), and the company-admin escape hatches (`users.is_company_admin`, `companies.account_holder_id`, `companies.admin_ids`). Hardcoding role strings ignores custom roles, skips overrides, and silently excludes users whom the operator company has explicitly granted approval rights. Permission keys live in `role_permissions.permission` — examples: `expenses.approve`, `inventory.manage`, `time_off.approve`, `invoices.record_payment`. iOS callers wrap the RPC via `RecipientLookupService.usersWithPermission(companyId:permission:requiredScope:)`.
 
+#### Server-authoritative creation boundary (prepared 2026-07-16)
+
+Notification creation is a trusted-server operation. Browser sessions may read and resolve notifications available through their own RLS scope, but may not insert, delete, or call the generic recipient/copy/navigation RPC. Server paths create rows with `createTrustedNotifications`; its service-only `create_notification_if_new_with_status` RPC reports whether the durable insert won so push delivery occurs only for the first accepted event, not a retry.
+
+The database accepts only internal `action_url` values: a trimmed, single-leading-slash app path with no protocol-relative prefix, backslash, or control character. Legacy unsafe destinations are cleared before the constraint is enabled. Feature routes must derive actor, company, recipients, copy, persistence, and navigation on the server; request bodies cannot override them.
+
+Two narrow self-service paths preserve legitimate browser-triggered behavior without restoring generic creation authority:
+
+- `POST /api/notifications/setup-prompts` accepts no body, resolves the active OPS actor from the bearer token, reads current permissions and setup state, and creates or resolves only deterministic prompts for that actor.
+- `sync_email_signature_notification_as_system(actor_user_id, connection_id)` is service-role only. It accepts the canonical OPS actor UUID, ignores a company mailbox's legacy connector `user_id`, requires an active sync-enabled connection plus effective inbox-send authority, and points the user to the Profile signature editor.
+
+The prepared hardening migration is `ops-web/supabase/migrations/20260715180500_notification_creation_hardening.sql`. It runs before the reserved `20260715181000` Operator activation migration, so any hardening failure leaves Operator grants fail-closed. Neither migration is documented here as applied to production.
+
 ### §14.3.1 Standardized Notification Spec (2026-05-10)
 
 Every notification inserted into the `notifications` table MUST satisfy this contract so the in-app rail (web + iOS) routes it correctly and the user has a clear next action. Added in response to bb63c37e — earlier code shipped `type: "mention"` for an "Email sync complete" event with a body of bare counts and no useful deep link.
@@ -3995,25 +4010,15 @@ Monday-morning summary for the Home `BILLABLE THIS WEEK` rollup (see `09_FINANCI
 
 ---
 
-### §14.3.3b Lead-conversion notification (`lead_converted`, DB-dispatched, 2026-07-04)
+### §14.3.3b Lead-conversion notification (`lead_converted`, durable event delivery, prepared 2026-07-16)
 
-When an opportunity converts to a project — via customer email/AI approval, the web pipeline, **or** iOS `ConvertToProjectSheet` — the operator now gets an in-app notification. Previously the only signal was an external customer email (bug `a2af6e8a`: "I got an email that the work was approved but no in-app notification").
+Every successful conversion path—human, approval queue, accepted customer email, or likely-won email—commits one immutable `public.opportunity_conversion_events` row in the same transaction as the lead/project relationship. Migration `20260715181700_opportunity_conversion_notification_delivery.sql` uses that event as the sole notification proof. Browser callbacks and editable disposition rows are not dispatch authority.
 
-**Dispatch point:** a DB `AFTER INSERT` trigger (`trg_notify_lead_conversion` → `private.notify_lead_conversion()`) on `public.opportunity_dispositions`, gated `WHEN (NEW.disposition = 'converted_to_project')`. `convert_opportunity_to_project` inserts exactly one such disposition per conversion (its `already_converted` guard blocks repeats), so this is the single canonical fan-out covering every conversion path — no client needs to remember to fire it. The trigger body is wrapped in `exception when others then return NEW` so notification dispatch can **never** block a conversion.
+The event-time lead assignee receives one addressed delivery. A minute worker claims it with a fenced lease, rechecks the immutable event, current lead relationship, active recipient, and current opportunity visibility, then creates one permanent-dedupe rail row. Project navigation is included only when that recipient can currently view the project; otherwise the notification routes to the still-authorized lead. Push is optional and preference-gated, while the in-app rail remains authoritative. A permission or relationship change before completion resolves the row as suppressed instead of leaking a hidden project or retrying a stale destination.
 
-| Field | Value |
-|-------|-------|
-| `type` | `lead_converted` |
-| `deep_link_type` | `null` (routes by `project_id`) |
-| `title` | `LEAD WON` |
-| `body` | `<contact> approved. New project: <project title>` (contact prefix omitted when unknown) |
-| `action_url` | `/dashboard?openProject=<project_id>&mode=view` (web) |
-| `action_label` | `OPEN PROJECT` |
-| `project_id` | the converted project id (iOS routing key) |
-| `persistent` | `false` |
-| Recipients | company `account_holder` + `admin_ids`, active & non-deleted, **excluding** `decided_by` (a manual in-app converter isn't told what they just did) |
+The durable delivery key is `(conversion_event_id, recipient_user_id)`, and the notification key is tied to that delivery. Provider or worker failure can retry persistence without repeating conversion or creating a second rail row. Client-side `Project created` self-notifications and the generic `lead_converted` dispatch policy are retired so linking an existing project, retrying conversion, and browser timing cannot double-notify.
 
-**iOS consumption:** `NotificationListView` renders it with a `flag.checkered` / success-tone icon and routes the tap to the new project (explicit `case "lead_converted"` in `handleNotificationTap`, and the `project_id` fallback covers the push path). Because `lead_converted` is deliberately NOT in `LeadNotificationRouteParser.leadRoutingValues`, the lead-routing heuristic never hijacks it to the pipeline.
+The migration is prepared after the assignment/email/notification chain and is not documented here as applied to production. It adds no customer-email send and performs no provider write.
 
 ---
 
@@ -4037,12 +4042,17 @@ All three set `deep_link_type = projectNotes` and `project_id`, so both clients 
 
 ---
 
-**`schedule_change` notification (Phase 3 — 2026-04-27):**
-- Emitted by `useUpdateTask` when the union of (`startDate`, `endDate`, `startTime`, `endTime`, `allDay`) changes on a task. Recipients = union of prior + new `team_member_ids` so removed crew also see the move.
-- Emitted by `/api/cron/recurrence-generate` for each newly-materialized occurrence — one row per assigned crew member.
-- Title: "Task rescheduled" (`useUpdateTask`) or "Recurring task scheduled" (cron). Body includes project title and date.
-- `action_url = /calendar?date=YYYY-MM-DD&task=<uuid>` so clicking deep-links to the affected day with the task panel open.
-- `persistent = false` (standard, dismissible). Use a `task_review_stack` persistent variant only for batch-confirm flows.
+**Task mutation notifications (`task_assigned`, `task_completed`, `schedule_change`; prepared 2026-07-16):**
+
+Migration `20260715181600_task_mutation_automation_outbox.sql` moves ordinary task notifications off browser hooks and recurrence callbacks. Each qualifying task write atomically creates an immutable `task_mutation_events` proof plus a mutable leased outbox row. The minute worker derives recipients, copy, navigation, preferences, and permanent dedupe from that proof; neither a request body nor a stale client chooses them.
+
+- `task_assigned` goes only to newly added, still-assigned users with current task visibility. Rapid add/remove/add sequences keep only the latest relevant assignment proof.
+- `task_completed` goes to current assigned users with task visibility only while completion remains current.
+- `schedule_change` uses the union of the before/after assignee snapshots for real schedule changes. A removed user still receives a generic no-link rail notice, while current authorized users receive the task/project destination. Removal-only changes never claim that the task was rescheduled.
+
+The immutable monotonic event sequence closes same-timestamp and UUID-order races. Later per-recipient events suppress stale ABA deliveries, and the `task-mutation:<event-id>` unique notification key survives read/resolution state and worker retries. The in-app rail is always created for eligible recipients; push alone respects per-event and global push preferences. The recurrence generator relies on the same database trigger and no longer emits a second direct notification.
+
+This migration is prepared after Operator activation and is not documented here as applied to production.
 
 ---
 
