@@ -4471,6 +4471,7 @@ CREATE TABLE agent_writing_profiles (
   greeting_patterns       JSONB,
   closing_patterns        JSONB,
   vocabulary_preferences  JSONB,   -- Also stores common_phrases, hedging_tendency, punctuation_habits
+  subject_preferences     JSONB NOT NULL DEFAULT '{}'::jsonb,
   tone_traits             JSONB,
   emails_analyzed         INT DEFAULT 0,
   updated_at              TIMESTAMPTZ DEFAULT NOW(),
@@ -4479,6 +4480,8 @@ CREATE TABLE agent_writing_profiles (
 ```
 
 **Profile types:** client_new_inquiry, client_quoting, client_active_project, client_followup, vendor_ordering, vendor_inquiry, subtrade_coordination, warranty_claim, internal, general. Clustered for galaxy visualization: client, vendor, subtrade, internal, general.
+
+**Subject learning (prepared 2026-07-14, migration `20260713210000_phase_c_learning_signatures`):** `subject_preferences.preferred_patterns` contains ranked `{ pattern, count, examples, last_promoted_at }` objects. `pattern` and `examples` are de-identified templates only, using `{contact}`, `{company}`, `{address}`, `{project}`, `{email}`, and `{number}`. Raw subjects are not retained in preference evidence. A pattern needs three database-verified human examples before promotion; subsequent evidence continues updating its count/examples.
 
 ### email_templates
 
@@ -4530,7 +4533,7 @@ CREATE TABLE ai_draft_history (
                                             'superseded','sent_from_mailbox','discarded_in_mailbox')),
   profile_type          TEXT NOT NULL DEFAULT 'general',
   subject               TEXT,                  -- derived reply/outreach subject (P4-B)
-  subject_source        TEXT CHECK (subject_source IS NULL OR subject_source IN ('generated','operator')),
+  subject_source        TEXT CHECK (subject_source IS NULL OR subject_source IN ('thread','operator','configured','generated','learned','fallback')),
   source_message_id     TEXT,                  -- provider id of the inbound msg replied to (P4-B)
   origin                TEXT CHECK (origin IS NULL OR origin IN ('operator','template_follow_up','phase_c','system_handoff')),
   mailbox_draft_id      TEXT,                  -- provider Drafts-folder id once pushed (Gmail/M365)
@@ -4548,6 +4551,18 @@ CREATE TABLE ai_draft_history (
 - `edit_distance`: Word-level Levenshtein distance between `original_draft` and `final_version`.
 - `changes_made`: Structured diff — `{ greeting?: {from, to}, closing?: {from, to}, tone?: string }`.
 - When `sent_without_changes` reaches 95% over 20+ drafts, auto-send is suggested to the user.
+
+### email_outbound_learning_queue + edit evidence
+
+Prepared by migrations `20260713205000_email_outbound_learning_queue` and `20260713210000_phase_c_learning_signatures`. The queue is the durable owner of sent-draft bookkeeping, writing-profile learning, and correction-memory application. Provider message identity is immutable and connection-scoped. Prepared outcomes are receipted before apply, leased for retry, and deduplicated across provider replay.
+
+`learning_authority` is one of `autonomous`, `operator_approved`, or `operator_authored`, but the database derives/upgrades it only from verifiable activity/draft provenance; an RPC caller cannot promote its own authority. `apply_full_body_learning` is separately persisted at preparation time and may be true only for verified `operator_authored` rows. `operator_approved` rows can apply de-identified durable edit evidence without sampling the AI-authored final body; autonomous jobs may complete mandatory draft bookkeeping but cannot train writing profiles or memories. `email_outbound_edit_evidence` stores de-identified repeated changes; promotion receipts make profile mutations exactly once. Provenance enrichment clears any uncommitted prepared writing/memory payload before recomputation. Service role owns all queue RPC execution.
+
+### email_signatures
+
+Prepared by migration `20260713210000_phase_c_learning_signatures`. Stores sanitized HTML, canonical plain text, SHA-256 content hash, source, exact provider identity, active revision, operator/mailbox scope, and actor/fetch/confirmation timestamps for one company + connection.
+
+Resolution order is: active OPS signature for the current operator, active mailbox-wide OPS signature, active provider signature whose identity exactly equals the connected mailbox, then none. Guarded service-only replace/deactivate RPCs derive the active OPS actor and company, lock assignment-dependent company-mailbox authorization, force OPS rows to the actor scope, and force provider rows to the exact mailbox identity. The pre-assignment `replace_email_signature` primitive and direct service-role table mutation are revoked from application callers. Old revisions remain available for exact suffix stripping after provider draft round trips. Gmail source rows come from read-only `sendAs` inspection. Microsoft Graph exposes no mailbox signature, so Microsoft users save/paste an OPS signature. RLS is enabled.
 
 ### pending_auto_sends
 
@@ -4603,6 +4618,19 @@ ALTER TABLE opportunities ADD COLUMN ai_summary TEXT;
 - `ai_summary`: 1-2 sentence AI-generated summary of the opportunity, cached and refreshed each sync cycle that touches the thread via `evaluateStagesWithSummary()`.
 
 These columns are used by the sync engine's correspondence-count stage rules (free tier) and AI stage evaluation (gated tier).
+
+**Chase-system columns (iOS Leads redesign, migration `leads_chase_handled_at_and_summary_stamp`, 2026-07-18):**
+
+```sql
+ALTER TABLE public.opportunities
+  ADD COLUMN IF NOT EXISTS handled_at timestamptz NULL,
+  ADD COLUMN IF NOT EXISTS ai_summary_updated_at timestamptz NULL;
+```
+
+- `handled_at`: The operator's "handled — their move now" declaration. A lead is **YOUR MOVE** only while `stage != 'new_lead' AND last_message_direction = 'in' AND (handled_at IS NULL OR last_inbound_at > handled_at)` — a newer inbound after a flip re-arms the lead automatically, no cron. iOS writes it via the card/detail HANDLED ✓ action (one PATCH that also sets `next_follow_up_at` to the comeback date: default now+3d, a sooner FUTURE follow-up is kept, past-due dates always replaced). Web writes + triage parity is a filed handoff (`ops-web docs/plans/2026-07-17-leads-chase-parity-handoff.md`).
+- `ai_summary_updated_at`: Freshness stamp for `ai_summary`. The web summary writer should set it whenever it writes `ai_summary` (same handoff); clients render the "UPDATED 2D AGO" stamp only when present.
+- `activities.type` gained the value `'text_message'` (no DDL — the column is unconstrained text and the web enum already defined `TextMessage`). iOS logs it from the card's do-and-stamp TEXT quick action and the unified log sheet's TEXT chip.
+- RLS note: `email_attachments` gained the additive policy `email_attachments_lead_files_select` (`attribution_status = 'attributed' AND opportunity_id IS NOT NULL AND private.current_user_can_view_opportunity(opportunity_id)`) — the pre-existing SELECT policy keys off a `company_id` JWT claim the iOS Firebase bridge does not carry, so iOS lead-file reads returned zero rows. Web service-role reads are unaffected.
 
 ### Note: companies.industry Column
 
