@@ -3098,19 +3098,39 @@ The sheet converts selected deck surfaces, or every surface in the design, into 
 **Cut-list engine:** `OPS/OPS/DeckBuilder/Engine/VinylCutListEngine.swift`
 
 For each order scope, the engine:
-1. Expands measured face geometry by edge wrap and sweeps the actual polygon by roll-width bands.
+1. Expands measured exterior boundaries by edge wrap and sweeps the actual polygon by roll-width bands. A wall-derived internal direction transition is not an exterior edge, so neither side receives edge wrap along the shared seam.
 2. Emits variable-length cuts by band. L-shaped and stepped surfaces do not collapse to one repeated maximum length.
-3. Resolves run direction. `automatic` compares lengthwise vs widthwise waste. When directional changes are allowed, rectilinear sub-regions may rotate runs if that lowers purchased cut area.
+3. Resolves run direction. `automatic` compares lengthwise, widthwise, and edge-derived axes. When directional changes are allowed, a mixed-direction candidate is legal only when every transition is collinear with the infinite supporting line of a perimeter edge classified `houseEdge`. The planner splits the original polygon on that wall line and carries explicit `VinylDirectionRegion` plus `VinylDirectionTransition` geometry; it never invents a free interior split solely to reduce waste.
 4. Packs all cuts across all ordered surfaces against purchased roll offcut lanes. Reuse is allowed only when one continuous offcut lane has enough width and full length for the target cut; no butt-to-butt joints are planned.
 5. Computes cut count, purchased square feet, reused square feet, waste square feet, and offcut reuse notes.
 6. Renders length-only cut-list lines for the sheet, text handoff, and order-note cut-list section. Cut lengths render as feet/inches. Square-foot metrics stay in the summary/order totals, not in the cut-list rows.
-7. Exposes each cut's band/run geometry and each face's perimeter edge types so the sheet preview can draw clipped cut bands, length labels, house-edge labels, and deck/house lap callouts with leader lines instead of evenly dividing the surface bounds.
+7. Exposes each cut's band/run geometry and direction-region identity, each legal wall-derived transition, and each face's perimeter edge types so the sheet preview can clip cuts to their authoritative region, draw the exact seam, and place length, house-edge, and deck/house lap callouts instead of reconstructing a split from surface bounds.
 
-**Preview contract:** `VinylCutPreview` uses `VinylPreviewAnnotationPlanner` for callout geometry. House-edge wrap bands use neutral gray hatching/strokes, compact monospaced labels, and a small inside offset from the house edge. Lap leader lines terminate before the text bounds rather than drawing through the label center. This applies to non-right-angle polygons as well as rectilinear layouts because all anchors derive from the selected perimeter edge midpoint plus its outward normal.
+If an unlocked solid-color plan requests or materially benefits from a direction
+change but no classified house-wall supporting line can carry that transition,
+`VinylCutPlan.isOrderable` is false and the operator sees
+`NO HOUSE-WALL SPLIT · LOCK RUN OR MARK WALL`. The sheet keeps SETTINGS visible so
+the run can be locked, but hides the fabricated preview/totals/cut list and disables
+TEXT/COPY, CREATE ORDER + NOTE, offcut banking, and MARK ORDERED. Text/note renderers,
+the async draft entry point, the shared materials order service, the Details marker,
+the Materials card, and the Job Board marker all enforce the same plan result; a
+blocked plan cannot fall through to a plain marker or remote write.
+
+`DeckDrawingData.vinylOrderSettings` persists the operator's unlocked/locked run
+choice with the design. Every external marker path resolves the live plan with
+those same settings; closing the sheet cannot silently fall back to the locked
+default and bypass a blocker.
+
+**Preview contract:** `VinylCutPreview` uses `VinylPreviewAnnotationPlanner` for callout geometry. Each cut is clipped to its engine-owned direction polygon, and every mixed-direction seam is drawn from the exact wall-collinear transition segments carried by the plan. House-edge wrap bands use neutral gray hatching/strokes, compact monospaced labels, and a small inside offset from the house edge. Lap leader lines terminate before the text bounds rather than drawing through the label center. This applies to non-right-angle polygons as well as rectilinear layouts because all anchors derive from the selected perimeter edge midpoint plus its outward normal.
 
 **Order persistence:** `VinylOrderSheet.createOrderAndNote()`
 
-On `CREATE ORDER + NOTE`, iOS writes:
+On `CREATE ORDER + NOTE`, iOS rebuilds the scoped plan from the active drawing
+immediately before the first write. If the fresh plan is blocked, the canonical
+wall-split message is shown; if it is valid but differs from the rendered preview,
+the preview refreshes and `DESIGN CHANGED · REVIEW ORDER` requires a second tap.
+TEXT/COPY, offcut banking, and MARK ORDERED use the same fresh-plan boundary. Only
+a reviewed current plan writes:
 - `catalog_orders` row with status `draft`, title `VINYL ORDER - <PROJECT>`, and the full cut list in `notes`. If the item or project-note write fails after order creation, iOS rolls back the item and soft-deletes the draft order to avoid orphan drafts.
 - Optional `catalog_order_items` row only when the user explicitly configured a local active company catalog product and picked one of its active variants. The prior heuristic text match is not used for ordering because vinyl colors/SKUs must come from the user's inventory selection.
 - `project_notes` row containing the cut list and created order id.
@@ -3293,8 +3313,9 @@ ORDERED removes the snapshot node and clears the marker. While a snapshot exists
 the section renders the frozen values, locks the presets, and stamps `ORDERED
 <DATE>` (roll-mode orders read `N ROLLS @ L' × W"`). Drift is detected by recomputing the live list with the snapshot's own
 settings and comparing a seed-/label-independent `DeckMaterialsDriftKey` (the
-multiset of all cut pieces by length × roll width, flashing exact feet ±0.1',
-glue area ±0.1, and vinyl surface count) — surface renames and stock changes do
+multiset of all cut pieces by length × roll width, per-surface normalized
+direction-region polygons/run angles, wall-transition segments, flashing exact feet ±0.1', glue
+area ±0.1, and vinyl surface count) — surface renames and stock changes do
 NOT flag drift; geometry / classification / scale changes surface `DESIGN CHANGED
 SINCE ORDER`. The vinyl surface count is **stored** on the snapshot
 (`DeckMaterialsSnapshot.vinylSurfaceCount`, frozen from the live `vinylInputs.count`
@@ -3309,9 +3330,18 @@ offcut reuse (a small surface's strip cut from a larger surface's leftover, no
 banked offcuts needed) would otherwise drop the reused strip on the snapshot side
 and false-flag the instant it was ordered. `cutGroups` stays purchased-only for the
 ordered display ("what was ordered"); `driftCutGroups` and `vinylSurfaceCount` are
-the drift basis. Both MARK ORDERED entry points compute the snapshot over the whole
-drawing via the same detection pipeline the tab uses, so their vinyl set matches
-the tab's recompute and never false-flags drift.
+the legacy drift basis. New snapshots store `vinylDirectionSurfaces`, grouping each
+boundary with its regions and transitions under the stable persisted surface id;
+this preserves ownership even for congruent surfaces on overlapping levels. The
+flat `vinylDirectionRegions` / `vinylDirectionTransitions` arrays remain only as an
+additive fallback for older snapshots. Both MARK ORDERED entry points compute the
+snapshot over the whole drawing via the same detection pipeline the tab uses. At
+final confirmation they re-resolve the current design and compare material settings,
+vinyl settings, calculated quantities, and drift geometry against the reviewed
+plan. Invalid plans show the canonical wall blocker; any other mismatch shows
+`DESIGN CHANGED · REVIEW ORDER`. The Deck Designer merges the service's frozen or
+cleared snapshot into its active drawing copy so a later autosave cannot erase or
+resurrect the order state.
 
 **Full-roll ordering.** A `CUT LIST ⇄ FULL ROLLS` mode (persisted on the design as
 `materialsSettings.orderMode`) lets a crew buy whole rolls instead of an exact cut
