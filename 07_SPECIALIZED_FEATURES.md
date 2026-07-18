@@ -3882,7 +3882,7 @@ The web app surfaces notifications via a right-edge vertical drawer, triggered b
 
 **Recipient lookup — permission, never role.** Server-side dispatch (iOS in-app + push, Web in-app) MUST resolve recipients via `public.users_with_permission(p_company_id, p_permission, p_required_scope)`, not by filtering `users.role`. The RPC honors role grants, per-user overrides (`user_permission_overrides`), and the company-admin escape hatches (`users.is_company_admin`, `companies.account_holder_id`, `companies.admin_ids`). Hardcoding role strings ignores custom roles, skips overrides, and silently excludes users whom the operator company has explicitly granted approval rights. Permission keys live in `role_permissions.permission` — examples: `expenses.approve`, `inventory.manage`, `time_off.approve`, `invoices.record_payment`. iOS callers wrap the RPC via `RecipientLookupService.usersWithPermission(companyId:permission:requiredScope:)`.
 
-#### Server-authoritative creation boundary (prepared 2026-07-16)
+#### Server-authoritative creation boundary (production 2026-07-17)
 
 Notification creation is a trusted-server operation. Browser sessions may read and resolve notifications available through their own RLS scope, but may not insert, delete, or call the generic recipient/copy/navigation RPC. Server paths create rows with `createTrustedNotifications`; its service-only `create_notification_if_new_with_status` RPC reports whether the durable insert won so push delivery occurs only for the first accepted event, not a retry.
 
@@ -3893,7 +3893,7 @@ Two narrow self-service paths preserve legitimate browser-triggered behavior wit
 - `POST /api/notifications/setup-prompts` accepts no body, resolves the active OPS actor from the bearer token, reads current permissions and setup state, and creates or resolves only deterministic prompts for that actor.
 - `sync_email_signature_notification_as_system(actor_user_id, connection_id)` is service-role only. It accepts the canonical OPS actor UUID, ignores a company mailbox's legacy connector `user_id`, requires an active sync-enabled connection plus effective inbox-send authority, and points the user to the Profile signature editor.
 
-The prepared hardening migration is `ops-web/supabase/migrations/20260715180500_notification_creation_hardening.sql`. It runs before the reserved `20260715181000` Operator activation migration, so any hardening failure leaves Operator grants fail-closed. Neither migration is documented here as applied to production.
+The production hardening migration is `ops-web/supabase/migrations/20260715180500_notification_creation_hardening.sql`. It ran before `20260715180900_internal_spec_permission_guard.sql` and `20260715181000_lead_assignment_operator_activation.sql`, so any hardening failure would have left Operator grants fail-closed. All three migrations were applied to production on 2026-07-17 in that order.
 
 ### §14.3.1 Standardized Notification Spec (2026-05-10)
 
@@ -4010,7 +4010,7 @@ Monday-morning summary for the Home `BILLABLE THIS WEEK` rollup (see `09_FINANCI
 
 ---
 
-### §14.3.3b Lead-conversion notification (`lead_converted`, durable event delivery, prepared 2026-07-16)
+### §14.3.3b Lead-conversion notification (`lead_converted`, durable event delivery, production 2026-07-17)
 
 Every successful conversion path—human, approval queue, accepted customer email, or likely-won email—commits one immutable `public.opportunity_conversion_events` row in the same transaction as the lead/project relationship. Migration `20260715181700_opportunity_conversion_notification_delivery.sql` uses that event as the sole notification proof. Browser callbacks and editable disposition rows are not dispatch authority.
 
@@ -4018,7 +4018,7 @@ The event-time lead assignee receives one addressed delivery. A minute worker cl
 
 The durable delivery key is `(conversion_event_id, recipient_user_id)`, and the notification key is tied to that delivery. Provider or worker failure can retry persistence without repeating conversion or creating a second rail row. Client-side `Project created` self-notifications and the generic `lead_converted` dispatch policy are retired so linking an existing project, retrying conversion, and browser timing cannot double-notify.
 
-The migration is prepared after the assignment/email/notification chain and is not documented here as applied to production. It adds no customer-email send and performs no provider write.
+The migration was applied to production after the assignment/email/notification chain on 2026-07-17. It adds no customer-email send and performs no provider write.
 
 ---
 
@@ -4042,7 +4042,7 @@ All three set `deep_link_type = projectNotes` and `project_id`, so both clients 
 
 ---
 
-**Task mutation notifications (`task_assigned`, `task_completed`, `schedule_change`; prepared 2026-07-16):**
+**Task mutation notifications (`task_assigned`, `task_completed`, `schedule_change`; production 2026-07-17):**
 
 Migration `20260715181600_task_mutation_automation_outbox.sql` moves ordinary task notifications off browser hooks and recurrence callbacks. Each qualifying task write atomically creates an immutable `task_mutation_events` proof plus a mutable leased outbox row. The minute worker derives recipients, copy, navigation, preferences, and permanent dedupe from that proof; neither a request body nor a stale client chooses them.
 
@@ -4052,7 +4052,7 @@ Migration `20260715181600_task_mutation_automation_outbox.sql` moves ordinary ta
 
 The immutable monotonic event sequence closes same-timestamp and UUID-order races. Later per-recipient events suppress stale ABA deliveries, and the `task-mutation:<event-id>` unique notification key survives read/resolution state and worker retries. The in-app rail is always created for eligible recipients; push alone respects per-event and global push preferences. The recurrence generator relies on the same database trigger and no longer emits a second direct notification.
 
-This migration is prepared after Operator activation and is not documented here as applied to production.
+This migration was applied to production after Operator activation on 2026-07-17.
 
 ---
 
@@ -4209,7 +4209,7 @@ Full doc: `OPS-Web/docs/email/suppressions.md`.
 - **Source of truth:** `public.email_suppressions` (added 2026-04-27 via migrations `079`–`083`). Every send checks this table before dispatch.
 - **Auto-population:** trigger `trg_email_events_auto_suppress` fans `bounce` (hard/blocked), `spamreport`, `unsubscribe`, and `group_unsubscribe` events from the SendGrid webhook into the suppression list. Soft bounces and dropped events are not auto-suppressed.
 - **Send-time gate:** every `sendXxx` in `src/lib/email/sendgrid.tsx` routes through `gatedSend`, which calls `isSuppressed(email, list)` and silently skips suppressed recipients. Skipped sends emit `email_log.status='suppression_skipped'` for observability.
-- **Webhook hardening:** `email_events` now has `uq_email_events_idempotency` so SendGrid retries don't duplicate rows. The webhook upserts with `ignoreDuplicates: true` and is rate-limited to 600 req/min/IP via Vercel KV.
+- **Webhook hardening:** `email_events` now has `uq_email_events_idempotency` so SendGrid retries don't duplicate rows. Production migration `20260715181800_sendgrid_email_events_idempotency.sql`, applied on 2026-07-17, replaced the non-inferable partial index with a full NULL-distinct unique index, allowing PostgREST's `ON CONFLICT (sg_message_id,event,timestamp)` upsert to resolve the correct arbiter. The webhook uses `ignoreDuplicates: true` and is rate-limited to 600 req/min/IP via Vercel KV.
 - **Operator controls:** `POST /api/admin/email/suppressions` to add manual entries (single or batch up to 1000), `DELETE /api/admin/email/suppressions/{email}?list=` to unblock.
 
 ### §14.6 Email compliance — CAN-SPAM + CASL
@@ -5656,7 +5656,7 @@ Below the rails, a horizontal strip of **category filter chips** (ALL + 12 categ
 
 **Global AUTO_SEND gate:** The router caps any category-level `auto_send` / `auto_follow_up` to `auto_draft` behavior until the global Phase C autonomy level in `AutonomyMilestoneService` reaches AUTO_SEND (level 4). This prevents any email from being sent before the overall writing profile is proven.
 
-#### Human-authority learning, subjects, and signatures (prepared 2026-07-14)
+#### Human-authority learning, subjects, and signatures (production 2026-07-17)
 
 Phase C learns only from an outcome whose human authority the database can verify. Authenticated in-app manual sends are `operator_authored` and may update the full writing profile; a matched OPS/provider draft that the operator sends is `operator_approved` and may teach only the operator's durable edits, never the unchanged AI-authored body. Autonomous sends and generic provider Sent-folder mail do bookkeeping but cannot train profiles or memories. The browser feedback endpoint may discard a draft but may not claim it was sent. Repeated edits are stored as de-identified evidence and need three consistent human examples before promotion; receipts make profile/memory application exactly once across retries.
 
@@ -7633,7 +7633,7 @@ Version-aware in-app messages shown on launch: force-update walls, optional upda
 
 **No automatic version detection beyond the App Store nudge** — the force-update floor is admin-set and bumped only for blocker bugs; the app never force-updates on every release.
 
-## 32. Email File Capture and Lead Attribution (Web, prepared 2026-07-15)
+## 32. Email File Capture and Lead Attribution (Web, production 2026-07-17)
 
 Every synced Gmail or Microsoft 365 activity receives a durable attachment scan, even when the provider says `hasAttachments=false`. Gmail recursion retains nested parts, CID/inline images, filename-less body data, documents, and small real photos. Microsoft enumeration retains inline, file, item, and reference attachments across validated same-message pagination. Pathological responses are capped at five Graph pages / 500 descriptors, 20 reference-metadata calls, or 500 Gmail parts; truncation creates an explicit review marker. Enumeration is time-bounded and raw downloads are byte- and request-bounded.
 
@@ -7645,7 +7645,7 @@ Costs are usage-based: private Supabase Storage/egress, Vercel worker invocation
 
 ---
 
-## 33. Lead Assignment and Scoped Lead Access (Web + iOS, prepared 2026-07-16)
+## 33. Lead Assignment and Scoped Lead Access (backend + Web production 2026-07-17; iOS implementation staged)
 
 Lead responsibility is a nullable, single-user relationship on `public.opportunities.assigned_to` with an optimistic concurrency counter in `opportunities.assignment_version`. It does not create a project owner or project assignee. When a lead converts, the opportunity retains its assignee, while the resulting project and project tasks remain unassigned. Task assignees continue to be managed only through the task system.
 
@@ -7663,7 +7663,7 @@ The reviewed Operator preset activates only after the complete assignment and em
 - `inbox.view:assigned`
 - `inbox.send:assigned`
 
-The activation will replace the legacy Operator `inbox.view:all` row, will not add `pipeline.manage` or `inbox.view_company`, and will preserve unrelated Operator capabilities. The reviewed `20260715181000_lead_assignment_operator_activation.sql` migration is ordered after the complete email and notification hardening chain through `20260715180500_notification_creation_hardening.sql`. It acquires every affected company boundary before role/member rows, then aborts retryably if the membership company set changed during the pre-lock gap. Operators remain fail-closed until that final migration is applied. None of these prepared migrations is documented here as applied to production.
+The activation replaced the legacy Operator `inbox.view:all` row, did not add `pipeline.manage` or `inbox.view_company`, and preserved unrelated Operator capabilities. `20260715180900_internal_spec_permission_guard.sql` ran after notification hardening and before activation. It waits out writers to `role_permissions`, `user_permission_overrides`, and `user_roles`; preserves only the canonical internal `SPEC Operator / spec.admin:all` role grant and the exact `OPS_OPERATIONS_COMPANY_ID / spec.admin:all / granted=true` override tuple; and makes those protected grants and SPEC-role membership immutable to generic permission and role-assignment writes. Any future SPEC grant or revocation requires a separately reviewed SPEC-only operation. `20260715181000_lead_assignment_operator_activation.sql` then acquired every affected company boundary before role/member rows and retained its retryable abort if the membership company set changes during the pre-lock gap. The complete 36-migration email, assignment, notification, project, and task chain through `20260715181700_opportunity_conversion_notification_delivery.sql` was applied to production on 2026-07-17 with exact canonical migration-history entries.
 
 ### Guarded writes and identity
 
@@ -7675,11 +7675,11 @@ Mailbox addresses never establish OPS identity. A personal connection is authori
 
 ### Product behavior
 
-The web and iOS lead-detail surfaces display the current assignee and expose the guarded picker only when the current actor can change that row. Both clients send the assignment version and expected assignee, wait for the server response, and refresh on conflict; assignment is never optimistic or queued offline. Assigned-only users see their assigned leads in the Leads tab and do not receive a company-wide assignee filter or assignee column. Company-wide viewers can filter by Mine, Unassigned, or a specific eligible team member.
+The production Web lead-detail surface displays the current assignee and exposes the guarded picker only when the current actor can change that row. The staged iOS implementation follows the same contract. Both clients send the assignment version and expected assignee, wait for the server response, and refresh on conflict; assignment is never optimistic or queued offline. Assigned-only users see their assigned leads in the Leads tab and do not receive a company-wide assignee filter or assignee column. Company-wide viewers can filter by Mine, Unassigned, or a specific eligible team member.
 
 Assignment changes invalidate actor/scope-keyed lead and aggregate caches and are replayable through durable realtime events. Canonical role, role-permission, user-override, user-admin, and company-admin changes enqueue one recipient-only `user_permission_change_deliveries` row per user/transaction. An open web session synchronously clears lead and email caches and closes lead-backed surfaces before refreshing its permission store. The new assignee receives one deduplicated in-app notification (and push when enabled); the former assignee receives no user-facing notification and their now-inaccessible cached lead is purged. Manual self-assignment is silent. If a conversion succeeds but the actor cannot view the resulting project, the client treats it as committed success without exposing the project identity, navigating to it, or retrying conversion.
 
-Primary implementation sources: `ops-web/supabase/migrations/20260715160000_lead_assignment_foundation.sql`, `20260715160500_lead_assignment_scoped_rls.sql`, `20260715160700_lead_assignment_child_scope.sql`, `20260715161500_lead_assignment_realtime_fanout.sql`, `20260715161600_lead_assignment_delivery_worker.sql`, and `20260715181000_lead_assignment_operator_activation.sql`; `ops-web/src/lib/permissions/lead-access-policy.ts`; `ops-web/src/lib/api/services/lead-assignment-service.ts`; `ops-web/src/lib/hooks/use-lead-assignment.ts`; and the iOS lead assignment repository/detail-view integration under `ops-ios/OPS/`.
+Primary implementation sources: `ops-web/supabase/migrations/20260715160000_lead_assignment_foundation.sql`, `20260715160500_lead_assignment_scoped_rls.sql`, `20260715160700_lead_assignment_child_scope.sql`, `20260715161500_lead_assignment_realtime_fanout.sql`, `20260715161600_lead_assignment_delivery_worker.sql`, `20260715180900_internal_spec_permission_guard.sql`, and `20260715181000_lead_assignment_operator_activation.sql`; `ops-web/src/lib/permissions/lead-access-policy.ts`; `ops-web/src/lib/api/services/lead-assignment-service.ts`; `ops-web/src/lib/hooks/use-lead-assignment.ts`; and the iOS lead assignment repository/detail-view integration under `ops-ios/OPS/`.
 
 ---
 
