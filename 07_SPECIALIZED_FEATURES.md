@@ -3737,6 +3737,23 @@ Multi-layer notification system combining local (UNUserNotificationCenter), push
 **In-app rail events (iOS-originated)** are created with `NotificationRepository.createNotification(_:)` (Supabase `notifications` table) followed by a `NotificationCenter.default.post(name: .notificationReceived, object: nil)` to refresh the rail. Current iOS-originated rail events:
 - **Stock system built (Guided Stock Setup, 2026-06-01):** on a fully-successful guided build, a **standard** notification — title `STOCK SYSTEM BUILT`, body the summary counts (e.g. `2 families · 6 variants · 7 rolls · 1 offcut`), `action_url` `/catalog?segment=stock`, `action_label` `VIEW STOCK`, `deep_link_type` `catalog_stock`. Partial commits post **no** success notification (the in-flow RETRY governs). See § 13b.
 
+### OpenAI Provider Quota Incident
+
+Every production OpenAI workload is constructed through the monitored factory in `ops-web/src/lib/api/services/openai-clients.ts`. A provider response opens an incident only when the cloned response body contains the exact code `error.code = 'insufficient_quota'`; ordinary HTTP 429 throttling remains retryable and never creates a credit alert.
+
+The authoritative incident is one persistent `notifications` row for the configured canonical OPS platform owner:
+
+- `type = 'ai_provider_quota'`
+- title `OPENAI CREDITS EXHAUSTED`
+- body `OpenAI calls stopped. Add credits now.`
+- dedupe key `platform-provider:openai:insufficient-quota:<configured-key-source>`
+- recipient from `OPS_PLATFORM_ALERT_USER_ID`; company is derived from that active user and compared with `OPS_PLATFORM_ALERT_COMPANY_ID`
+- no email or mailbox identity participates in authorization or recipient selection
+
+The durable row is inserted before a bounded best-effort OneSignal push. Push data uses `{ type: 'ai_provider_quota', screen: 'notifications' }` and the notification UUID is the provider idempotency key. The row carries no iOS deep link, avoiding a dead action; the iOS push route opens the existing notification rail through the cold-launch/PIN-safe deep-link coordinator. When a later OpenAI request succeeds, it may resolve only the exact open notification ID captured before that request began. Automated recovery sets `resolved_by = NULL` and `resolution_reason = 'provider_quota_recovered'`.
+
+Advance warning stays provider-managed: OpenAI Project Limits emails owners at the configured 75%, 90%, and 100% budget thresholds. OPS does not hold an OpenAI Admin API key, poll billing, or send a Gmail alert. Runtime activation requires the service-only quota notification migration plus both platform-owner environment variables.
+
 ### Task Reschedule → Push (cross-client, both origins)
 
 When a task's schedule changes, assigned crew are notified on **both** clients — and the push is fired **server-side (ops-web → OneSignal REST)**, so it reaches a backgrounded/locked teammate independent of the Realtime socket (which iOS tears down ~30s after backgrounding). This is the background-delivery counterpart to the live foreground repaint (ops-ios `deafa95f`).
