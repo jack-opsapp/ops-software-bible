@@ -1473,6 +1473,14 @@ Manages expense list, categories, batches, OCR scanning, and approval actions.
 - **Project-scoped**: `loadExpensesForProject(projectId:)` — loads expenses allocated to a specific project
 - **Repository**: `ExpenseRepository`
 
+#### ClientLeadsViewModel / Client Profile Leads Surface (2026-07-21)
+
+`ClientLeadsViewModel` (`ops-ios/OPS/ViewModels/ClientLeadsViewModel.swift`) backs the **Leads** section on the client profile — `ClientLeadsSection` + `ClientLeadRow` (`ops-ios/OPS/Views/Components/Client/`), spliced into `ContactDetailView` above Projects and gated on `permissionStore.leadAccessPolicy.canViewAny`.
+
+- **Data**: loads via `OpportunityRepository.fetchAllLinked(toClientId:)`, then a pure `apply(...)` transform filters row-by-row on `leadAccessPolicy.can(.view, assignedTo:)`, drops deleted/archived, and splits into open (non-terminal, activity-desc) and closed (won/lost/discarded, close-date-desc) with outcome tallies. Opportunities are not SwiftData-synced, so the section reloads on appear, on the lead-mutation notifications `LeadsTabView` observes (`LeadCreatedSuccess`, `LeadUpdatedSuccess`, `LeadMarked{Lost,Won}Success`, `LeadConvertedSuccess`, `LeadLinkedProjectSuccess`, `LeadArchivedSuccess`, `LeadDeletedSuccess`, `.opsLeadsDidChange`), and when the detail/action sheets dismiss.
+- **Presentation**: header count = open leads; open rows lead with the job (`title` → `displayContactName`) + value + stage badge, capped at 5 with a show-more; a collapsed history peek (`// N WON · M LOST`) expands the terminal leads; empty state mirrors Projects ("No leads yet / Create one?").
+- **Actions**: tap → `LeadDetailView` (edit / mark-lost / convert routed through a local `LeadsSheet` host); header "Add" → `AddLeadSheet(seedClient:)`, which pre-fills the form from the client and binds the client id directly (bypassing name-based `resolveClientId`, so the new lead links to exactly that client). No new data model, migration, or schema change — a read/create surface over existing `opportunities`.
+
 #### OpportunityDetailViewModel
 
 Manages activities and follow-ups for a single opportunity detail screen.
@@ -1537,6 +1545,7 @@ All repositories take `companyId` in their initializer and use `SupabaseService.
 
 - `fetchAll()` -- selects all opportunities filtered by `company_id`, ordered by `created_at` desc
 - `fetchOne(opportunityId)` -- single opportunity
+- `fetchAllLinked(toClientId:)` -- all non-deleted opportunities for a client across every stage (open + terminal), `created_at` desc. Backs the client-profile Leads section (2026-07-21). Mirror of `fetchFirstActiveLinked` without the `.limit(1)`.
 - `fetchActivities(for opportunityId)` -- selects activities for an opportunity, ordered by `created_at` desc
 - `fetchFollowUps(for opportunityId)` -- selects follow-ups for an opportunity, ordered by `due_at` asc
 - `create(CreateOpportunityDTO)` -- inserts new opportunity
