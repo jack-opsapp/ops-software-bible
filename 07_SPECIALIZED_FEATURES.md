@@ -5986,32 +5986,32 @@ Wizards with `requiredPermission` are hidden entirely if the user lacks that per
 
 **Review-session invariants (iOS):** Both overdue-task review and unscheduled/unassigned review snapshot an ordered, de-duplicated task queue when the sheet opens. Live task mutations may refresh Job Board and FAB badge counts, but they must not reorder or shrink the active card stack. In-sheet progress is tracked exactly once by task ID against that fixed total. Drag movement follows the finger without implicit animation; a committed swipe uses the 150 ms OPS interaction token and advances the stack from animation completion rather than a timer. Reduce Motion replaces the fly-away and stack transforms with a short opacity transition. Review-card photo disk reads, decode, and downsampling run away from the main UI actor. Reschedule completion, cancel, and interactive sheet dismissal share the same idempotent review-finalization path.
 
+**Unassigned/unscheduled review contract (2026-07-21):** `UnscheduledTaskReviewView` uses the same fixed, de-duplicated task session. Each card derives its available directions from current assignment, schedule state, project membership, and exact `tasks.edit`, `tasks.assign`, `tasks.change_status`, and `calendar.edit` scope. Assignment picker dismissal does not advance. Confirmed assignment, auto-schedule, manual schedule, completion, and cancellation advance only after `mutate_task_from_unassigned_review` returns the committed row; stale timestamps or crew snapshots stay on the card for reload/retry. Canonical completion preserves inventory reconciliation and task-automation outboxes. Auto-scheduling plans away from the UI actor, detects dependency cycles, revalidates the task after suspension, and falls back to the manual scheduler when no valid placement exists. A manual scheduling sheet advances only after its write succeeds. Sources: `OPS/Views/Review/UnscheduledTaskReviewView.swift`, `OPS/Network/Supabase/Repositories/UnscheduledReviewRepository.swift`, `OPS/Utilities/AutoScheduleManager.swift`, and `04_API_AND_INTEGRATION.md` § Review Swipe Mutation APIs.
+
 #### 17. Payment Review (`payment_review`)
 
-**Type:** Data-condition | **Icon:** `creditcard.circle` | **Tier:** Office | **Permission:** `finances.view` | **Banner:** "You have completed projects to review — want a quick walkthrough?"
+**Type:** Contextual | **Icon:** `creditcard.circle` | **Tier:** Office | **Permission:** `projects.edit` | **Banner:** "You have completed projects to review — want a quick walkthrough?"
 
 | Step | id | Instruction | Notification | Skippable |
 |------|-----|------------|-------------|-----------|
-| 1 | `open_payment_review` | OPEN PAYMENT REVIEW | `WizardPaymentReviewOpened` | No |
-| 2 | `demo_swipe_right` | SWIPE RIGHT → CLOSE PROJECT | `WizardProjectSwipedRight` | Yes |
-| 3 | `demo_swipe_left` | SWIPE LEFT → SKIP | `WizardProjectSwipedLeft` | Yes |
-| 4 | `demo_swipe_up` | SWIPE UP → SEND REMINDER | `WizardProjectSwipedUp` | Yes |
-| 5 | `free_review` | YOU'RE ALL SET — KEEP REVIEWING | `WizardPaymentReviewDismissed` | Yes |
+| 1 | `open_payment_review` | TAP THE REVIEW ICON | `WizardPaymentReviewOpened` | No |
+| 2 | `tap_review_completed` | TAP "REVIEW COMPLETED PROJECTS" | `WizardCompletedProjectsLoaded` | Yes; auto-skips when overdue projects already opened the stack |
+| 3 | `payment_demo_swipe_right` | SWIPE RIGHT → CLOSE PROJECT | `WizardProjectSwipedRight` | No |
+| 4 | `payment_demo_swipe_left` | SWIPE LEFT → SKIP | `WizardProjectSwipedLeft` | No |
+| 5 | `payment_free_review` | YOU'RE ALL SET — KEEP REVIEWING | `WizardPaymentReviewDismissed` | Yes |
 
 **Notification sources (iOS):**
 | Notification | Posted From |
 |---|---|
 | `WizardPaymentReviewOpened` | `ProjectPaymentReviewView.swift` — onAppear |
+| `WizardCompletedProjectsLoaded` | `ProjectPaymentReviewView.swift` — completed-project review button |
 | `WizardProjectSwipedRight` | `ProjectPaymentReviewView.swift` — handleSwipe `.right` |
 | `WizardProjectSwipedLeft` | `ProjectPaymentReviewView.swift` — handleSwipe `.left` |
-| `WizardProjectSwipedUp` | `ProjectPaymentReviewView.swift` — handleSwipe `.up` |
 | `WizardPaymentReviewDismissed` | `ProjectPaymentReviewView.swift` — onDisappear |
 
 **Production review contract (2026-07-21):** Payment Review snapshots one de-duplicated queue with overdue projects before other completed projects. The total and order remain frozen while the sheet is open; live updates refresh launch counts without shrinking or reordering the current stack. Financial summaries load before financial directions are enabled. A load failure keeps the actions locked instead of guessing. Directions are computed per card from canonical scope: left skips; right closes only when the actor may edit that project and no positive unresolved balance remains; up queues an approval-first reminder only for a genuinely due invoice and never reports an email as sent; down appears only for a locally managed outstanding balance with invoice-edit authority. QuickBooks/Sage-linked positive debt cannot be written off in OPS.
 
 Close, write-off, and reminder actions advance only after the authoritative server response. Write-off confirmation cancellation, prerequisite failures, conflicts, local reconciliation failures, and network errors leave the card available to retry. A UUID write-off key is retained across retries so a committed-but-lost response cannot apply twice. Swipe hints and accessibility actions expose only directions allowed for the current card; blocked drags produce no success stamp or success haptic. The stack honors Reduce Motion and de-duplicates VoiceOver/background content. Sources: `OPS/Views/Review/ProjectPaymentReviewView.swift`, `OPS/Views/Review/ProjectReviewCardStack.swift`, `OPS/Views/Review/ReviewAccessPolicy.swift`, and `04_API_AND_INTEGRATION.md` § Review Swipe Mutation APIs.
-
-**Unassigned/unscheduled review contract (2026-07-21):** `UnscheduledTaskReviewView` uses the same fixed, de-duplicated task session. Each card derives its available directions from current assignment, schedule state, project membership, and exact `tasks.edit`, `tasks.assign`, `tasks.change_status`, and `calendar.edit` scope. Assignment picker dismissal does not advance. Confirmed assignment, auto-schedule, manual schedule, completion, and cancellation advance only after `mutate_task_from_unassigned_review` returns the committed row; stale timestamps or crew snapshots stay on the card for reload/retry. Canonical completion preserves inventory reconciliation and task-automation outboxes. Auto-scheduling plans away from the UI actor, detects dependency cycles, revalidates the task after suspension, and falls back to the manual scheduler when no valid placement exists. A manual scheduling sheet advances only after its write succeeds. Sources: `OPS/Views/Review/UnscheduledTaskReviewView.swift`, `OPS/Network/Supabase/Repositories/UnscheduledReviewRepository.swift`, `OPS/Utilities/AutoScheduleManager.swift`, and `04_API_AND_INTEGRATION.md` § Review Swipe Mutation APIs.
 
 #### 2. Scheduling & Calendar (`scheduling_calendar`)
 

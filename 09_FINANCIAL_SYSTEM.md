@@ -649,6 +649,16 @@ isInvoicePayable(invoice)    // true if balance > 0 and not Draft/Void/WrittenOf
 getDaysUntilDue(invoice)     // Negative = overdue, positive = days remaining
 ```
 
+### Payment Review Closeout Contract (2026-07-21)
+
+The iOS Payment Review sheet is an authoritative closeout surface, not a local status shortcut. `close_project_from_payment_review` closes a completed project only after deriving the current actor/company, checking project edit plus full invoice/financial view, locking the relevant records, and proving that no positive unresolved invoice balance remains. The closed-project invoice guard rejects any later invoice mutation that would leave positive debt on a closed project.
+
+`write_off_project_from_payment_review` additionally requires full `invoices.edit` and atomically writes eligible OPS-owned outstanding invoices to `written_off`, zeros those balances, and closes the project. Positive QuickBooks/Sage-linked balances are provider-owned and always rejected for accounting-side resolution; a local write-off may not hide upstream debt. The UUID request key is persisted in `payment_review_writeoff_receipts`, so lost responses and concurrent same-key retries replay the original invoice count/balance instead of applying again.
+
+The up-swipe queues an approval-first `send_payment_reminder` action through `POST /api/review/payment/reminder`; it does not send immediately or report delivery. Eligibility and copy snapshot the current company timezone, locale, currency, reminder settings/tier, company mailbox, client email, invoice status, balance, due date, and version. A service-only generation claim prevents duplicate paid drafting. Immediately before provider I/O, `claim_approved_action_email_delivery` revalidates the exact snapshot and refuses a reminder that became paid, void, written off, rescheduled, partially paid, disabled, reassigned, or otherwise stale.
+
+Sources: `04_API_AND_INTEGRATION.md` § Review Swipe Mutation APIs; migrations `20260721120000_payment_review_atomic_actions.sql`, `20260721122000_payment_reminder_delivery_guards.sql`, and `20260721123000_payment_review_receipt_fk_indexes.sql`.
+
 ### Payment Entity
 
 ```typescript
