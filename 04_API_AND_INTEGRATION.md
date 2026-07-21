@@ -2097,6 +2097,21 @@ Gmail push notifications require the Pub/Sub topic and the Gmail OAuth client to
 
 **Behavior:** Finds `pending_auto_sends` records where `scheduled_send_at <= now()`, limit 50 per run. Verifies auto-send is still enabled for each connection's company before dispatching. Sends via internal `POST /api/integrations/email/send`. Failed sends are retried up to 3 times, then permanently marked as `"failed"`.
 
+### 24a. GET + POST /api/cron/lead-summary-refresh (2026-07-21)
+
+**Purpose:** Activity-driven `opportunities.ai_summary` coverage — the non-email counterpart to the sync engine's per-thread summary writer. `GET` is the recurring Vercel cron (hourly at :40 inside the email-sync window, `40 13-23,0-4 * * *`); `POST` is the one-time operator backfill.
+
+| Field | Value |
+|-------|-------|
+| Auth | Cron secret (`Authorization: Bearer $CRON_SECRET`), both verbs |
+| GET gate | `LEAD_SUMMARY_REFRESH_ENABLED` env (fail-closed; unset → `{ ok, skipped, reason: "lead_summary_refresh_disabled" }`) |
+| POST body | `{ "mode": "backfill", "companyId"?: uuid, "dryRun"?: boolean }` — 400 without the explicit mode; NOT gated by the env switch (single explicit invocation, not recurring spend) |
+| Response | `{ ok, mode, dryRun, companiesConsidered, companiesEnabled, leadsScanned, candidates, summariesWritten, skippedInsufficientContext, failed[], written[], candidatesPreview[] }` |
+| Service | `runLeadSummaryRefresh` in `OPS-Web/src/lib/api/services/lead-summary-service.ts` |
+| Per-company gate | `AdminFeatureOverrideService.isAIFeatureEnabled(companyId, "phase_c")` — identical to the sync engine |
+
+**Behavior:** For each phase_c company (discovered via `admin_feature_overrides`, or scoped by `companyId`), scans open-stage leads (`new_lead…negotiation`, not deleted/archived/merged) and their context tables — `activities`, `stage_transitions`, `site_visits`, plus `email_threads.ai_summary` as READ-ONLY input. A lead is refreshed when its newest context timestamp exceeds `ai_summary_updated_at` by more than a 5-minute epsilon (absorbs the sync engine's own stage-transition echo, which lands seconds after the summary stamp in the same pass); leads with no summary get a first one. Backfill mode restricts candidates to `ai_summary IS NULL` at the database layer. Leads with zero substantive context (no activities, no site visits, no real stage moves, no description) are counted `skippedInsufficientContext` and never sent to the model — a summary is generated the moment real activity lands. Generation reuses the shipped engine's lane end-to-end: `gpt-4o-mini` on `getSyncOpenAI()` (`OPENAI_API_KEY_SYNC`), temperature 0.1, strict `json_schema` with a server-owned singleton alias key, refusal/finish_reason/contract checks with one contract retry, and the verbatim shipped summary field specification. Writes exactly `ai_summary` + `ai_summary_updated_at` (scoped `id` + `company_id`) — never stage, `ai_stage_signals`, terminal flags, or `email_threads.ai_summary`. Per-lead failures isolate into `failed[]`; the sweep continues. Budget: 40 leads/run, stalest first (never-stamped leads lead the queue); the remainder is caught next run. Cost at Canpro volume (~40 open leads): ≈$0.0005/summary ceiling; expected $0.05–0.60/month at the hourly cadence; structural worst case (budget saturated every run) $9.60/month. `opportunities.last_activity_at` is deliberately NOT trusted (no maintaining trigger in prod); `opportunities.updated_at` is deliberately ignored (the summary write itself bumps it — reading it would self-trigger). Tests: `OPS-Web/tests/integration/lead-summary-refresh-cron.test.ts`.
+
 ### Inbox Dark-Launch (2026-06-02)
 
 The in-app `/inbox` screen is hidden behind a per-company flag while the email engine keeps running. Built on branch `feat/inbox-dark-launch-iso`; `inbox_ui` defaults OFF (public). Design + plan + verification live in `OPS-Web/docs/specs/2026-06-01-inbox-dark-launch-design.md`, `OPS-Web/docs/plans/2026-06-01-inbox-dark-launch.md`, `OPS-Web/docs/inbox-dark-launch-verification.md`.
