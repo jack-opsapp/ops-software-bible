@@ -6924,8 +6924,11 @@ instead of separate compact task rows.
 - Tapping a summary expands a full-width editor inside that task row. Task type,
   crew, and schedule are stacked fields with field-sized touch targets rather
   than compressed horizontal chips.
-- A manual `ADD TASK` action opens the same editor as an unsaved row. The row is
-  appended only after a valid task type is selected and the user confirms.
+- A manual `ADD TASK` action opens the same editor as an unsaved row. The nested
+  `Add` action commits it after a valid task type is selected. In Project Form,
+  the primary project save also commits a valid draft while its editor is
+  visible, so skipping the nested action cannot silently drop the task. Invalid
+  or collapsed drafts are never created.
 - Existing rows can be edited, opened in the advanced `TaskFormSheet`, or
   deleted. Edits replace the row in place and preserve its stable local id.
 - Project Form owns an in-memory `[LocalTask]` until the project is saved, then
