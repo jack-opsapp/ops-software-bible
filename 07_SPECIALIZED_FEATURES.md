@@ -5982,6 +5982,8 @@ Wizards with `requiredPermission` are hidden entirely if the user lacks that per
 | `WizardTaskSwipedUp` | `TaskCompletionReviewView.swift` — handleSwipe `.up` |
 | `WizardTaskReviewDismissed` | `TaskCompletionReviewView.swift` — onDisappear |
 
+**Review-session invariants (iOS):** Both overdue-task review and unscheduled/unassigned review snapshot an ordered, de-duplicated task queue when the sheet opens. Live task mutations may refresh Job Board and FAB badge counts, but they must not reorder or shrink the active card stack. In-sheet progress is tracked exactly once by task ID against that fixed total. Drag movement follows the finger without implicit animation; a committed swipe uses the 150 ms OPS interaction token and advances the stack from animation completion rather than a timer. Reduce Motion replaces the fly-away and stack transforms with a short opacity transition. Review-card photo disk reads, decode, and downsampling run away from the main UI actor. Reschedule completion, cancel, and interactive sheet dismissal share the same idempotent review-finalization path.
+
 #### 17. Payment Review (`payment_review`)
 
 **Type:** Data-condition | **Icon:** `creditcard.circle` | **Tier:** Office | **Permission:** `finances.view` | **Banner:** "You have completed projects to review — want a quick walkthrough?"
