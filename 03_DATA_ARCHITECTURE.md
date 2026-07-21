@@ -5171,4 +5171,14 @@ Migrations `20260714230000_email_attachment_persistence` and `20260714232000_gua
 
 Attribution begins only from `(company_id, email_connection_id, email_message_id)`. Inbound sender or outbound external recipients must match the activity's current lead/client/contact identity, and `match_needs_review` always fails closed. Activity reassignment increments scan/inspection generations and re-evaluates cached acceptance. Lead merge uses guarded evidence-bound RPCs. Won conversion needs no duplicate file row because projects retain `opportunity_id`.
 
+## Review Swipe Safeguard Tables (2026-07-21)
+
+### `payment_review_writeoff_receipts`
+
+Durable exactly-once receipts for Payment Review write-offs. The primary key is `(company_id, project_id, idempotency_key)`. Each row stores the canonical actor, written-off invoice count and balance, and creation timestamp. The table has forced RLS, no client policies or grants, and service-role read access only; the guarded write-off RPC owns writes and replay reads. Foreign-key indexes cover `project_id` and `actor_user_id` for lifecycle operations. Source migrations: `migrations/20260721120000_payment_review_atomic_actions.sql` and `migrations/20260721123000_payment_review_receipt_fk_indexes.sql`; live versions `20260721101658` and `20260721102425`.
+
+### `payment_reminder_generation_claims`
+
+Short-lived service-only claims keyed by `(company_id, source_id)`, where `source_id` is the canonical invoice UUID plus reminder tier. Rows carry an opaque claim token, claim time, and ten-minute expiry. The claim transaction rechecks durable approval actions before acquiring, so concurrent requests do not duplicate paid drafting or queue work. Forced RLS and revoked client grants keep this table outside the browser and iOS data surface. Source migration: `migrations/20260721122000_payment_reminder_delivery_guards.sql`; live version `20260721102146`.
+
 **End of Data Architecture Documentation**

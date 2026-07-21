@@ -2125,6 +2125,40 @@ The in-app `/inbox` screen is hidden behind a per-company flag while the email e
 
 ---
 
+## Review Swipe Mutation APIs (2026-07-21)
+
+Payment Review and Unassigned Task Review use server-authoritative mutations. A card advances only after the RPC or authenticated route confirms the requested action. The iOS callers are `OPS/Network/Supabase/Repositories/PaymentReviewRepository.swift` and `OPS/Network/Supabase/Repositories/UnscheduledReviewRepository.swift`; the implementation landed in ops-ios commit `5b918ade` and ops-web commit `eb8752ee`.
+
+### Payment Review RPCs
+
+| RPC | Caller | Contract |
+|-----|--------|----------|
+| `close_project_from_payment_review(p_project_id uuid)` | iOS through the Firebase/Supabase anon bridge | Derives the active actor and company, requires project edit plus full invoice/financial view, locks and revalidates authorization, rejects any positive unresolved invoice balance, and closes only the eligible completed project. |
+| `write_off_project_from_payment_review(p_project_id uuid, p_idempotency_key uuid)` | iOS through the Firebase/Supabase anon bridge | Atomically writes off eligible OPS-owned outstanding invoices and closes the project. Positive QuickBooks/Sage-linked balances are rejected for provider-side handling. A durable receipt keyed by company, project, and UUID makes a lost-response or concurrent same-key retry replay the committed result exactly once. |
+
+Both functions are `SECURITY DEFINER`, granted only to `anon` and `authenticated` app transport roles plus `service_role`, and perform their own canonical actor, tenant, permission, project-state, invoice-state, and post-lock revalidation. Invoice locks precede the project lock so the invoice close guard and review RPCs share one lock order. Source: `migrations/20260721120000_payment_review_atomic_actions.sql`; receipt foreign-key indexes: `migrations/20260721123000_payment_review_receipt_fk_indexes.sql`. Live Supabase versions are `20260721101658` and `20260721102425`.
+
+### POST `/api/review/payment/reminder`
+
+**Source:** `ops-web/src/app/api/review/payment/reminder/route.ts`
+
+| Field | Value |
+|-------|-------|
+| Auth | Verified Firebase operator with full `projects.edit`, `invoices.view`, `invoices.send`, and `finances.view` |
+| Request | `{ projectId: uuid }` |
+| Success | `201` when a reminder approval action is created; `200` when the same reminder is already durably queued |
+| Controlled refusal | `400` invalid project, `401` unauthenticated, `403` forbidden, `409` no reminder due, `422` feature/settings/mailbox/client-email prerequisite, `503` partial queue failure |
+
+The route queues an approval-first `send_payment_reminder` action; it never claims the client was emailed. Eligibility uses the company's timezone, locale, currency, reminder tiers, current invoice due date/status/balance, canonical project reference, company mailbox, and current client email. `payment_reminder_generation_claims` prevents duplicate paid draft generation. The final service-role-only `claim_approved_action_email_delivery(p_intent_id)` fence rechecks authorization and the exact reminder snapshot immediately before provider I/O, so a paid, voided, written-off, rescheduled, partially paid, disabled, reassigned, or otherwise stale reminder cannot send. Source: `migrations/20260721122000_payment_reminder_delivery_guards.sql`; live version `20260721102146`.
+
+Normal reminder creation invokes the configured drafting model and therefore consumes ordinary model usage. Duplicate or already-queued work is claimed before generation to avoid duplicate spend.
+
+### Unassigned Task Review RPC
+
+`mutate_task_from_unassigned_review(p_task_id uuid, p_expected_updated_at timestamptz, p_action text, p_expected_team_member_ids uuid[], p_patch jsonb, p_idempotency_key text)` is the sole authoritative swipe mutation for `assign`, `schedule`, `complete`, and `cancel`. It derives the actor/company, validates action-specific payload keys, applies exact task/calendar/status/assignment scope, compares both `updated_at` and the crew snapshot, rejects terminal/deleted/closed-project conflicts, and returns the committed task snapshot. Completion uses the canonical task-completion path so inventory consumption and automation outboxes remain exactly once; scheduling persists the explicit schedule lock in the same transaction. Source: `migrations/20260721121000_review_swipe_task_mutations.sql`; live Supabase version `20260721101710`.
+
+---
+
 ## OpenAI API Key Separation
 
 The email pipeline uses **separate OpenAI API keys** for different workloads to enable independent rate limiting, cost tracking, and key rotation:
