@@ -681,7 +681,7 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 
 ---
 
-### Catalog Journey: Manage Stock + Products
+### Catalog Journey: Manage Stock + Products (updated 2026-07-21)
 
 **Goal:** Manage variant-aware stock, author Products, draft restock orders, and emit one-click estimates from drawings.
 
@@ -690,19 +690,22 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 **STOCK Steps:**
 
 1. **Start Point:** Catalog tab → STOCK segment
-2. **Observation:** If any variants are below their effective warning threshold, a banner appears: `// N ITEMS BELOW THRESHOLD [REVIEW →]`. Tap → opens CatalogOrdersSheet (Suggested view)
-3. **Action:** Choose view mode (LIST · GRID · TABLE). TABLE shows a per-variant grid with family attribute columns (NEW per Bug 217c3d1f)
-4. **Action:** Tap FAB (+) → choose "+ add variant" or "+ add family"
+2. **Observation:** If any variants are below their effective warning threshold, a compact strip shows separate CRITICAL and LOW counts. Tap → opens CatalogOrdersSheet (Suggested view) when permitted; read-only operators pivot to the low-stock filter.
+3. **Action:** Use the labeled workbar to choose one purpose-specific view mode:
+   - **LIST — scan + adjust:** one 56pt row per variant. Global family/quantity/low-stock sorts stay global; Category sort groups the same rows by parent → child category.
+   - **GRID — find by family:** one family tile with image when available, variant count, and explicit CRITICAL/LOW counts. Single-variant families open Quick Adjust directly; multi-variant families open a compact variant picker. Pinch or the VoiceOver adjustable action changes density between 3/2/1 columns (0.8x–1.5x).
+   - **TABLE — audit one family:** a family selector drives one comparison matrix. REFERENCE, ON HAND, and VS LIMIT remain pinned; each row identifies whether its delta uses the warning or critical limit. Only the family option-value band scrolls horizontally. Accessibility text sizes switch to fully labeled stacked variant rows.
+4. **Action:** Expand the scoped Stock search or use filter chips. Category and tag menus contain only values represented in live stock; selecting a parent category includes stock in child categories.
+5. **Action:** Open the header kebab (⋮) → Add Variant or Add Family
    - Variant flow: pick family (or deep-link to create one), pick option-value combinations, set quantity, unit, SKU. Effective threshold previews based on family/category fallback
    - Family flow: name, category, default price/cost, default unit, default thresholds
-5. **Action:** Tap variant card → QuantityAdjustmentSheet → adjust quantity (quick-adjust pills, haptic feedback)
-6. **Observation:** Threshold badges colored by status; family-level tags visible on card
-7. **Action (Bulk):** Long press → "Select" → multi-select; bulk adjust quantity, bulk tag, bulk delete
+6. **Action:** Tap a LIST row, a single-variant GRID tile, a family-picker row, or a TABLE row → StockQuickAdjustSheet → adjust quantity. Long press a row → Open Full Detail.
+7. **Observation:** Status never relies on color alone. CRITICAL and LOW remain explicit text, with mobile-bright rose/tan foregrounds and brick/tan reserved for borders/dots.
 
 **PRODUCTS Steps:**
 
 8. **Action:** Switch to PRODUCTS segment
-9. **Action:** FAB → "+ quick add" → 3 fields (Name, Price, Unit) → save (~8s for a barebones Product like "PICKET RAIL · $2500 · flat")
+9. **Action:** Header kebab (⋮) → New Service or New Good
 10. **Action:** Tap a Product → ProductDetailView. Edit name/price/unit/tax/active inline. Options/modifiers/recipe sections render read-only (authoring lives on web)
 11. **Observation:** Configurable Products show option count and recipe row count next to the price summary
 
@@ -721,13 +724,14 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 **Time to Complete:** ~30s per variant, ~8s per quick-add Product, seconds for quantity adjustments
 
 **Gestures:**
-- Pinch-to-zoom on stock grid mode (0.8x-1.5x, persisted via `@AppStorage("catalogCardScale")`)
-- Long press for context menu
+- Pinch-to-zoom on stock grid mode (0.8x-1.5x, persisted via `@AppStorage("catalog.stock.cardScale")`); VoiceOver adjustable actions provide the equivalent 3/2/1-column control
+- Long press a variant row for full detail
 - Tap for quick adjustment / detail
 
 **Pain Points Addressed:**
 - Variant model handles "Corner — Black" vs "Corner — White" without forcing two separate items
-- TABLE view lets a user audit every Bracket SKU across Color × Mount Type at a glance
+- Purpose-specific LIST / GRID / TABLE modes avoid rendering the same heavy card three ways
+- TABLE keeps stock identity and health pinned while auditing every Bracket SKU across Color × Mount Type
 - Threshold cascade (variant → family → category) means setting one number on a category covers every child SKU that hasn't overridden it
 - Suggested orders surface undersupplied stock without manual auditing
 - Configurable Products + drawing→estimate adapter compress hours of estimate writing into one tap
@@ -1500,12 +1504,13 @@ in the 2026-04-27 Phase 1+2 rework)
 2. **Kebab menu (⋮)** — STOCK group (Snapshots, Categories, Tags, Units, Thresholds), ORDERS group (Suggested, Drafts, Sent), SETUP group (Defaults, Import, Export)
 3. **Threshold banner** — `// N ITEMS BELOW THRESHOLD [REVIEW →]` when applicable; tap → CatalogOrdersSheet
 4. **STOCK segment**
-   - Search bar + category/tag filter chips
-   - View mode picker: LIST · GRID · TABLE (TABLE rows=variants, columns=family attributes)
-   - Sort controls: Category, Name, Quantity, Threshold
-   - CatalogVariant cards: family name, variant label ("Black · Topmount"), quantity colored by effective-threshold status, unit, SKU, family-level tags
-   - Selection mode (long press) — bulk adjust, bulk tag, bulk delete
-   - FAB: + add variant · + add family · + import
+   - Compact labeled workbar: LIST · GRID · TABLE, expandable search, filtered/total variant count
+   - Stock-scoped category/tag/attribute/threshold filter chips; parent category selection includes descendants
+   - Sort controls: Category, Family, Quantity, Low Stock
+   - LIST: dense 56pt variant register for fast scan + Quick Adjust
+   - GRID: family-first tiles, optional family image, explicit severity counts, 3/2/1-column density
+   - TABLE: one selected family, fixed REFERENCE + ON HAND + VS LIMIT columns, horizontally scrollable option-value band; each row identifies WARN or CRIT and stacks at accessibility text sizes
+   - Kebab actions: Guided Setup · Stock Setup · Add Variant · Add Family · Import · Snapshots
 5. **PRODUCTS segment**
    - Filter chips: type · kind · has-recipe
    - Search
@@ -1513,9 +1518,9 @@ in the 2026-04-27 Phase 1+2 rework)
    - FAB: + quick add (3 fields) · + full setup (web)
 
 **Gestures:**
-- **Pinch-to-zoom** — scales GRID variant cards between 0.8x-1.5x (persisted via `@AppStorage("catalogCardScale")`)
-- **Long press** on variant card → action sheet (Adjust, Edit, Delete, Move to Order)
-- **Tap** variant card → QuantityAdjustmentSheet (or toggles selection in selection mode)
+- **Pinch-to-zoom** — scales GRID family tiles between 0.8x-1.5x (persisted via `@AppStorage("catalog.stock.cardScale")`); accessibility adjustable action changes the same density
+- **Long press** on a LIST/family-picker row → Open Full Detail
+- **Tap** a variant row → StockQuickAdjustSheet; tap a multi-variant GRID family → variant picker
 - **Tap** Product row → ProductDetailView
 
 **Related Sheets:**
