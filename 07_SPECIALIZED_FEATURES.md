@@ -3018,6 +3018,32 @@ Mixed selections route through Properties so field users do not have to choose b
 
 **Project Details 3D viewer:** House/wall edges render as roughly 8 ft tall walls above the deck plane. When the deck level is elevated above grade, the same house/wall edge also renders a lower wall-to-grade panel from ground level up to the deck elevation, so elevated decks do not visually float away from the house face.
 
+### Deck Builder Stairs & Level Heights (iOS — overhauled 2026-07-21)
+
+Embedded Deck Builder (`ops-ios/OPS/DeckBuilder/`), not the standalone Deckset editor.
+
+**Height scoping contract.** The toolbar `Height` action (`ElevationInputView.swift`) edits exactly one target and names it in its title:
+
+- Vertex selected → that corner (`DeckBuilderViewModel.setVertexHeightBreakingUniform`), clearing the uniform value that would override it (the level's `elevation` in multi-level, `overallElevation` in single-level).
+- Multi-level, no vertex → the ACTIVE level only: `setLevelElevation(at:)` (Flat) / `applyLevelSlopedElevations(at:heights:)` (Sloped). Never writes `overallElevation`, never touches other levels.
+- Single-level, no vertex → `applyUniformDeckElevation` / `applySlopedDeckElevations`.
+
+Each write is one undoable action and clears the store it overrides (uniform apply clears that context's per-vertex heights and vice versa) so the renderer's resolution ladder never reads two disagreeing stores. Inputs are feet/inches wheel dials (`DeckFeetInchesWheels.swift`, sized to `DeckMeasurementPickerTokens.wheelHeight`), pre-filled from the target's resolved height. Legacy trio `setOverallElevation` / `clearOverallElevation` / `setVertexElevation` is removed.
+
+**Render resolution ladder** (`DeckDrawingData.renderElevationFeet(for:levelIndex:)`, unchanged order, now documented as contract): explicit `level.elevation` → per-vertex average → attached stair's `totalRiseInches` → `(overallElevation ?? 2.5) + levelIndex × 2.5` stagger. An explicit level height always wins — editing a stair can no longer visually move a level that has one. The stair-rise step remains as the only sane height for legacy drawings with no recorded heights.
+
+**Stair authoring — one sheet, three rise modes** (`StairConfigView.swift`). A stair's vertical drop is entered as exactly one of:
+
+- `Treads` — count dial (1–30); rise = count × rise-per-step. Commits an edge `stairConfig` with `treadCount` override + `totalRiseInches`.
+- `Height` — feet/inches dials + AR measure (`ARHeightMeasureView`); commits an edge `stairConfig` with `totalRiseInches`.
+- `Level` — pick the level the stairs descend to (rows show each level's resolved height, `· auto` when implicit; rows at/above the active level are disabled — connections descend from an upper-level edge per § 7.1). Commits a `LevelConnection`, NOT an edge `stairConfig`; the connection's `stairConfig.totalRiseInches` stays nil because its rise derives from the two levels' resolved heights and re-syncs on every height edit (`recalculateConnections(involvingLevelAt:)` re-derives `treadCount`).
+
+One stair per edge, enforced in the view model: `setStairs` removes any `LevelConnection` on that edge; `connectLevels` removes any edge `stairConfig` and replaces any prior connection on that edge; `removeStairs(edgeId:)` clears both in one undoable action (surfaced as the sheet's `Remove Stairs` row when editing an existing stair). All sheet lookups go through level-aware accessors (`findEdge` / `activeLevel`) — the previous sheet read the top-level vertex/edge arrays, which are empty on multi-level drawings (rise collapsed to 0, inputs reset on reopen; the reported "glitchy stair sheet").
+
+`LevelConnectionSheet.swift` is deleted. The level bar's `Connect` button opens the same stair sheet with no edge preselected; the sheet then leads with an edge picker for the active level. `canConnectLevels` requires only two closed levels (the old non-nil-`elevation` gate hid Connect on most saved drawings).
+
+**`elevationDifference(upperLevelId:lowerLevelId:)`** now resolves both heights through the render ladder instead of requiring explicit `elevation` on both levels. Consequence: estimate generation (`EstimateGeneratorService`) and the catalog projection (`ComponentEmitter.emitConnectionStair`) emit connection-stair rows for drawings whose level heights were never made explicit — both already guard `diff > 0`.
+
 ### Drawing → Estimate Adapter (NEW)
 
 **Entry point**: Deck Builder canvas → toolbar `Estimate` button → `EstimatePreviewSheet` → "Create Estimate". Same single button drives both adapter-aware and legacy-only companies; the merge logic below decides which path actually fires per row. (UX decision per spec § 7 — no second button, no parallel surface.)

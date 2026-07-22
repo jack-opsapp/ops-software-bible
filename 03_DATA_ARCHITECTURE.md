@@ -3146,9 +3146,19 @@ Standalone company provisioning is defined in `ops-ios/docs/superpowers/specs/20
     "vinylCatalogItemId": "<catalog_items.id> | null"
   },
   "scaleFactor":      <Double>,
+  // Single-level uniform height (feet). On multi-level drawings this field is
+  // legacy-only: heights live on each level's `elevation`, written by the
+  // level-scoped Height tool (2026-07-21); `overallElevation` survives purely
+  // as the stagger base for old multi-level saves that predate per-level
+  // heights. See 07_SPECIALIZED_FEATURES.md § Deck Builder Stairs & Level
+  // Heights for the render resolution ladder.
   "overallElevation": <Double>,
-  "levels":           [ ... ],          // multi-level only
-  "levelConnections": [ ... ],          // multi-level only
+  "levels":           [ ... ],          // multi-level only; each carries its own `elevation`
+  // Multi-level only. A connection's stairConfig.totalRiseInches stays null —
+  // its rise derives from the two levels' resolved heights and re-syncs when
+  // either height changes. An edge carries EITHER a stairConfig OR a
+  // connection, never both (enforced by DeckBuilderViewModel).
+  "levelConnections": [ ... ],
 
   // PHASE 2 FRAMING - optional, additive, schema version 2 when present.
   // `sizing` is reserved and remains null/nil until the sizing/code engine.
