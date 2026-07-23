@@ -842,7 +842,7 @@ Singleton `@MainActor` class. Upload flow is unchanged:
 
 ### "Add to OPS" Share-Extension Upload (reliability hardening 2026-07-23)
 
-**Sources:** `ops-web/src/app/api/uploads/share-photo/route.ts`, `ops-ios/Shared/SharePhotoEndpoint.swift`, `ops-ios/OPSShareExtension/ShareBackgroundUploader.swift`, and `ops-ios/OPS/ShareExtension/SharePhotoEndpointUploader.swift`.
+**Sources:** `ops-web/src/app/api/uploads/share-photo/route.ts`, `ops-web/src/app/api/uploads/share-photo/recovery/route.ts`, `ops-web/src/lib/uploads/share-photo-permission.ts`, `ops-web/supabase/migrations/20260723193000_atomic_share_photo_filing.sql`, `ops-ios/Shared/SharePhotoEndpoint.swift`, `ops-ios/Shared/ShareUploadRecoveryStore.swift`, `ops-ios/OPSShareExtension/ShareBackgroundUploader.swift`, `ops-ios/OPS/ShareExtension/SharePhotoEndpointUploader.swift`, and `ops-ios/OPS/ShareExtension/SharePhotoRecoveryReporter.swift`.
 
 This flow is deliberately separate from `PresignedURLUploadService`. The extension and the app-side recovery drain send the same raw-file request:
 
@@ -854,18 +854,23 @@ Content-Type: image/jpeg
 {raw JPEG bytes}
 ```
 
-`projectId` and `jobId` must be UUIDs. The endpoint accepts at most 15 MiB, resolves the authenticated OPS user and company, confirms that the project belongs to that company, and re-checks `projects.edit`; the extension's cached picker permission is never trusted as server authorization.
+`projectId` and `jobId` must be UUIDs. The endpoint accepts only JPEG bodies of at most 15 MiB. It verifies the Firebase token, resolves an active OPS user strictly through the token's cryptographic user id (`users.auth_id` / `users.firebase_uid`; no email fallback), confirms that the project is active and belongs to that user's company, and evaluates the canonical project-level all/assigned boundary through `private.user_can_edit_project(project_id, user_id)`. The extension's cached project list and coarse permission snapshot are picker hints only and are never trusted as server authorization.
 
-`jobId` is the idempotency key. The server stores the bytes at the deterministic key `projects/{companyId}/{projectId}/share-{jobId}.jpg`, attaches the resulting public URL to both `projects.project_images` and `project_photos` (`source = in_progress`, `uploaded_by` = authenticated OPS user, `taken_at` = the request timestamp), creates one deduped uploader-facing `photo_uploaded` completion notification per project burst, and returns `{ success: true, url }`. Replaying the same share request addresses the same storage object and filing operation.
+`jobId` is the idempotency key. The server stores the bytes at the deterministic key `projects/{companyId}/{projectId}/share-{jobId}.jpg`, then calls the service-role-only `file_share_photo_as_system` RPC. That transaction serializes the job identity, locks and re-authorizes the active project, inserts or resolves the matching non-deleted `project_photos` row (`source = in_progress`, `uploaded_by` = authenticated OPS user, `taken_at` = the request timestamp), and appends the URL to `projects.project_images` without losing a concurrent update or duplicating an existing value. Identity conflicts fail instead of overwriting or resurrecting a soft-deleted photo.
+
+The route returns `{ success: true, url }` only after it also creates the deduped uploader-facing `photo_uploaded` completion notification for the stable 15-minute capture-time bucket. If notification creation fails after the database transaction committed, the route returns `503`; the durable iOS job remains queued. Its replay resolves the existing photo identity and retries completion without uploading the JPEG or attaching it again.
+
+`POST /api/uploads/share-photo/recovery` is the permanent-failure reporting path. It accepts bounded legacy identifiers as opaque values and hashes a non-UUID job identifier into a stable dedupe key. It links a recovery notice to a project only when that project is active, in the user's company, and currently editable by that user; a foreign-company project is rejected with `403`, while an unavailable or no-longer-editable project produces generic unlinked guidance. The notice is standard and dismissible, not persistent: title `Photo upload needs attention`; linked body `Open {project title} and share the photo again.` with action `VIEW PROJECT`; otherwise `A shared photo could not be attached. Share it again to an active project.` Permanent dedupe prevents retries from creating another notice after the first one is read or dismissed.
 
 **Cross-process durability:**
 
 1. The extension downscales every selected image, writes all JPEGs to the App Group inbox, then appends the complete job batch to the file-coordinated manifest in one mutation.
 2. If any selected image fails to stage, or the manifest cannot be written and read back completely, the extension removes the staged subset and shows failure. It reports success only after every selected JPEG and manifest row is durable.
 3. With a usable bridged token, the extension starts a best-effort background POST. The durable manifest remains the guaranteed recovery path.
-4. A running app drains immediately after the Darwin notification; otherwise it drains on launch, foreground, or restored connectivity. The app obtains a fresh Firebase token and force-refreshes it once after a `401` or `403`, then sends the identical `projectId` / `jobId` / `takenAt` request.
-5. Connectivity, authentication, throttling, and server failures remain queued without consuming the parking budget. Deterministic failures increment the job's attempt count; after 10 failures the job is parked, but its manifest row and JPEG bytes are retained.
-6. Legacy deployed jobs carrying `s3PublicUrl` decode into `uploadedURL` and use `SharePhotoFinalizer` against that exact URL. They are finalized idempotently and never re-uploaded through the deterministic endpoint.
+4. A running app drains immediately after the Darwin notification; otherwise it drains on launch, foreground, or restored connectivity. The app obtains a fresh Firebase token and force-refreshes it once after a `401` or `403`, then sends the identical `projectId` / `jobId` / `takenAt` request. It does not block the drain on a stale global `projects.edit` snapshot.
+5. Connectivity, refreshable authentication, throttling, and `5xx` failures remain queued without consuming the parking budget. A `403` after the forced token refresh is deterministic evidence that the current project-level authorization was revoked; it consumes the parking budget instead of retrying forever.
+6. After 10 deterministic failures the job is parked with its manifest row and JPEG bytes retained, then reported through `/api/uploads/share-photo/recovery`. Recovery reporting itself remains retryable and permanently deduped.
+7. Legacy deployed jobs carrying `s3PublicUrl` decode into `uploadedURL` and use `SharePhotoFinalizer` against that exact URL. They are finalized idempotently and never re-uploaded through the deterministic endpoint.
 
 ### Filename Generation
 
