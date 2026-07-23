@@ -7797,4 +7797,50 @@ Primary implementation sources: `ops-web/supabase/migrations/20260715160000_lead
 
 ---
 
+## 34. PENDING WORK — Sync Recovery Surface (iOS, 2026-07-22)
+
+Born from the 2026-07-22 outage: a site-visit bundle ("Charles") parked invisibly
+after 504-exhausted retries with no way to see, retry, or recover it. Principle:
+**no locally-created work is ever invisible or unrecoverable.** Companion
+engine-policy documentation: `06_TECHNICAL_ARCHITECTURE.md` § "Error Handling in
+Sync Engine"; RPC contracts: `04_API_AND_INTEGRATION.md` § "Guarded Sync-Recovery
+RPCs".
+
+**The screen** (`ops-ios/OPS/Views/Components/Sync/PendingWorkView.swift` + Row /
+DetailSheet / LinkPicker / Export siblings; pure renderable + `PendingWorkScreen`
+wrapper): four fixed-order sections, each rendered only when non-empty —
+`// NEEDS ATTENTION` (parked/failed; tan count; rose = parked "out of auto-retries"),
+`// SENDING` (pending/in-flight/backoff, informational), `// DRAFTS` (uncommitted
+site-visit captures, tap resumes capture), `// NOT LINKED` (orphan deck designs
+with inline LINK). Site-visit bundles absorb their members (client op + lead
+autocreate + deck ops + opportunity-linked photos) with worst-member tone; the
+inventory is built by `RecoveryInventory` (`06` § file tree). Empty state: `—` +
+`// NOTHING PENDING · ALL CHANGES SAVED`. Single accent CTA `RETRY ALL (n)` when
+attention has retryable work.
+
+**Row actions:** tap → half-sheet detail (member statuses, `SYS :: REJECTED BY
+SERVER` + "Your copy is safe on this phone. Retry now or export it." for parked,
+raw error behind DETAILS) with RETRY NOW / EXPORT / DISCARD (`DESTRUCTIVE. NO
+UNDO.` confirm; create-ops delete the local entity, update-ops cancel the op,
+autocreates remove the queue receipt). EXPORT share-sheet = summary text
+(`OPS EXPORT — <name>`) + deck PNGs via the deck builder's own Core-Graphics
+renderer (never ImageRenderer) + failed photo files — the never-unrecoverable
+escape hatch. LINK picker (LEADS / JOBS segmented) enqueues the guarded
+`linkOpportunity` op (leads) or a `project_id` update op (jobs) — offline-safe.
+
+**Entry points:** sync status pill (now tappable; badge escalates to
+`<n> NEED A LOOK` — tan, rose when anything is parked), the connection-restored
+toast (`VIEW` action), Settings › DATA › `Pending Work` (live mono count, `—` at
+zero), and Notifications sync section `VIEW ALL →`.
+
+**Copy:** every string is a `SyncStatusCopy` static (single chokepoint, 21 new
+unit-tested cases). **Proof:** 5 rendered-state snapshot PNGs in
+`ops-ios/docs/artifacts/sync-recovery-proof/`; suites
+`PendingWorkSnapshotTests` + `SyncStatusCopyPendingWorkTests` +
+`RecoveryInventoryTests`. iOS commits `602b25c9` + `70cd5d48` (screen),
+`efa5c95e`/`68224b22` (classifier + parked policy), `c8a1222a` (durable lead
+queue), `a1f3d5ef` (deck link path), `c2b064c5` (inventory).
+
+---
+
 **End of Document**
