@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: 2026-07-19
+**Last Updated**: 2026-07-23
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -4172,6 +4172,8 @@ These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AN
 - **Migration 036** added: `agent_memories` (with pgvector), `agent_knowledge_graph`, `agent_writing_profiles`.
 - **Migration 037-040** (Phase C Memory Bank): `graph_entities` table, entity FK columns on `agent_knowledge_graph` (source_entity_id, target_entity_id, link_type), `profile_type` on `agent_writing_profiles` (new unique constraint), `entity_id`/`valid_from`/`valid_to` on `agent_memories`.
 - **Email compose/auto-send migrations**: New columns on `activities` (to_emails, cc_emails, body_text, has_attachments, attachment_count), new columns on `opportunities` (stage_manually_set, ai_summary), new JSONB column on `email_connections` (auto_send_settings), new tables `email_templates`, `ai_draft_history`, `pending_auto_sends`.
+- **Migration `20260723190000_email_threads_lead_scan_pending.sql`** adds the nullable positive deferral marker `email_threads.lead_scan_pending_at` plus a partial drain index. It marks only unmatched threads whose lead scan was skipped during an AI-provider outage; `opportunity_id IS NULL` alone never means a scan is pending.
+- **Migration `20260723191000_company_mailbox_intake_owner.sql`** adds the guarded company-mailbox owner FK/index, immutable `company_mailbox_default` assignment source, one service-role atomic live create-and-disposition RPC, and the fully private `unassigned_lead_assignment_deliveries` outbox plus service-only lease RPCs. It is forward-only: existing connection owners remain null, existing opportunity source-key rows are returned unchanged, and no historical opportunity is scanned or changed.
 
 ### email_connections
 
@@ -4196,6 +4198,7 @@ CREATE TABLE email_connections (
   webhook_expires_at      TIMESTAMPTZ,
   ai_review_enabled       BOOLEAN DEFAULT false,           -- ongoing AI classification (feature-gated)
   ai_memory_enabled       BOOLEAN DEFAULT false,           -- memory accumulation (feature-gated)
+  default_intake_owner_id UUID REFERENCES users(id) ON DELETE SET NULL, -- company-mailbox default for newly created email leads
   auto_send_settings      JSONB,                            -- auto-send config: { enabled, business_hours_start, business_hours_end, timezone, delay_min_minutes, delay_max_minutes, enabled_at }
   status                  TEXT DEFAULT 'setup_incomplete',  -- 'active' | 'paused' | 'error' | 'setup_incomplete'
   created_at              TIMESTAMPTZ DEFAULT NOW(),
@@ -4232,6 +4235,44 @@ CREATE TABLE email_connections (
 ```
 
 Token columns (`access_token`, `refresh_token`) are accessed via service role only in API routes — not exposed to client via RLS column-level restrictions.
+
+`default_intake_owner_id` is valid only on `type='company'` connections. The
+database requires an active, nondeleted user in the same company with effective
+assigned-scope `pipeline.view`, `pipeline.edit`, and `inbox.send` authority.
+The nullable FK uses `ON DELETE SET NULL` and a partial non-null owner index.
+Configuration is stale-safe and service-role-only: the authenticated route
+requires company-wide integration-management and lead-assignment authority,
+while the database revalidates the actor, prior owner, mailbox, and proposed
+owner under the company assignment lock. Generic connection updates cannot
+change this field.
+
+### unassigned_lead_assignment_deliveries
+
+Durable, addressed outbox for a newly created company-mailbox lead that has no
+eligible default intake owner. The table is unique on
+`(opportunity_id, recipient_user_id)` and stores pending/processing/delivered/
+failed state, attempt limits, lease token/expiry, retry timing, notification
+identity, provider outcome, and terminal/resolution provenance. Enqueue is
+idempotent and addresses only active same-company administrators who currently
+hold company-wide `pipeline.view`, `pipeline.edit`, and `pipeline.assign`.
+
+RLS is enabled and forced with no client policy. Table privileges are revoked
+from `public`, `anon`, `authenticated`, and direct `service_role` callers; only
+the narrow service-role integration functions can claim, complete, or fail a
+delivery. Claiming reauthorizes the exact recipient, suppresses an assigned,
+terminal, inaccessible, or exhausted row, and materializes at most one
+persistent notification before exposing a push claim. A canonical non-null
+assignment event resolves every delivery and associated notification for that
+opportunity.
+
+No migration scans historical opportunities. Rows are inserted only inside the
+same transaction that creates a new live company-mailbox opportunity and either
+assigns its configured owner or records the missing/ineligible-owner prompts.
+An existing `(company_id, source_thread_key)` winner is returned unchanged and
+never becomes a retry-time assignment or prompt backfill. Historical wizard
+import retains automatic assignment only for individual mailboxes.
+
+Source: `migrations/20260723191000_company_mailbox_intake_owner.sql`.
 
 ### gmail_scan_jobs
 
@@ -4755,6 +4796,7 @@ CREATE TABLE public.email_threads (
   snoozed_until               timestamptz,
   priority_score              numeric(4,2) DEFAULT 0.0,
   ai_summary                  text,
+  lead_scan_pending_at        timestamptz,              -- positive AI-outage deferral marker; NULL means no deferred scan
 
   -- Denormalized summary (updated from latest message on each sync tick)
   subject                     text,
@@ -4784,6 +4826,7 @@ CREATE TABLE public.email_threads (
 - `idx_email_threads_company_category` — `(company_id, primary_category, last_message_at DESC) WHERE archived_at IS NULL` — drives category filter chips
 - `idx_email_threads_snoozed` — `(snoozed_until) WHERE snoozed_until IS NOT NULL` — drives `/api/cron/unsnooze`
 - `idx_email_threads_opportunity` — `(opportunity_id) WHERE opportunity_id IS NOT NULL` — back-reference from pipeline
+- `email_threads_lead_scan_pending_idx` — `(company_id, lead_scan_pending_at) WHERE lead_scan_pending_at IS NOT NULL AND opportunity_id IS NULL` — bounded oldest-first recovery after AI-provider outages
 
 The 13 primary categories and the 6 secondary labels (`URGENT`,
 `AWAITING_REPLY`, `HAS_ATTACHMENT`, `HAS_QUOTE`, `HAS_INVOICE`,

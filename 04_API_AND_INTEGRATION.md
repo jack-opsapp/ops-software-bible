@@ -2040,10 +2040,10 @@ Gmail push notifications require the Pub/Sub topic and the Gmail OAuth client to
 | Field | Value |
 |-------|-------|
 | Auth | Cron secret (`Authorization: Bearer $CRON_SECRET`) |
-| Response | `{ ok: true, synced: number, staleSweepChanges: number, results: SyncResult[] }` |
-| Service calls | `SyncEngine.runSync()`, `SyncEngine.sweepStaleLeads()` |
+| Response | `{ ok: true, synced: number, staleSweepChanges: number, pendingLeadScanSweep, results: SyncResult[] }` |
+| Service calls | `SyncEngine.runSync()`, `SyncEngine.sweepStaleLeads()`, `SyncEngine.retryPendingLeadScans()` |
 
-**Behavior:** Queries all active email connections, batch-fetches companies and filters by active subscription via `getSubscriptionInfo()` before running sync — expired/cancelled companies are silently skipped. Checks each connection against its `sync_interval_minutes` + `last_synced_at` to determine if sync is due, runs `SyncEngine.runSync()` for each. Also runs `SyncEngine.sweepStaleLeads()` to detect follow-up-needed opportunities based on correspondence age (independent of new email arrival). Manual sync (`POST /api/integrations/email/manual-sync`) also checks subscription status before proceeding. Each `SyncResult`: `{ connectionId, email, provider, activitiesCreated, newLeads, error? }`.
+**Behavior:** Queries all active email connections, batch-fetches companies and filters by active subscription via `getSubscriptionInfo()` before running sync — expired/cancelled companies are silently skipped. Checks each connection against its `sync_interval_minutes` + `last_synced_at` to determine if sync is due, runs `SyncEngine.runSync()` for each. It also runs `SyncEngine.sweepStaleLeads()` to detect follow-up-needed opportunities based on correspondence age and a bounded `SyncEngine.retryPendingLeadScans()` drain for unmatched threads whose AI classification was explicitly deferred during a provider outage. Manual sync (`POST /api/integrations/email/manual-sync`) also checks subscription status before proceeding. Each `SyncResult`: `{ connectionId, email, provider, activitiesCreated, newLeads, error? }`.
 
 ### 15. POST /api/cron/webhook-renewal
 
@@ -2064,6 +2064,82 @@ Every browser email route resolves the Firebase subject to one active canonical 
 Lead-linked reads require the intersection of canonical `pipeline.view` and `inbox.view`; sends, provider-draft mutations, and learning-authoritative actions require canonical `pipeline.edit` and `inbox.send`. Assigned scope is evaluated against the opportunity's current `assigned_to` under the guarded assignment contract. Standalone Inbox lists, thread detail, lead correspondence, drafts, sibling context, attachments, and send routes use the same opportunity + inbox helpers. An existing provider thread remains pinned to its original connection. Explicitly selecting another authorized sender starts a new provider thread linked to the same lead; it never changes or impersonates the original provider thread.
 
 Before provider I/O, the send route persists `email_send_intents` with a deterministic idempotency key, canonical actor, connection, internal/provider thread identity, opportunity, assignment snapshot, draft provenance, request fingerprint, and delivery state. After provider acceptance, database reconciliation is idempotent and may retry without invoking the provider again. Provider rejection preserves the draft and writes no sent activity. An accepted-but-not-yet-reconciled intent returns a pending/recovery result instead of risking a duplicate send.
+
+#### Replay-stable correspondence direction (2026-07-23)
+
+Provider inbox/sent labels are transport hints, not historical correspondence
+authority. After connection-scoped provider-message deduplication,
+`SyncEngine.runSync()` loads any exact existing activity before partitioning the
+batch. A valid persisted `inbound` or `outbound` direction wins on every replay;
+the current authoritative teammate roster classifies only a provider message
+with no persisted activity. The same resolved envelope is reused for
+inbox/sent partitioning, outbound learning, thread reconciliation, lifecycle
+evaluation, and activity/event projection.
+
+This prevents a teammate roster change from turning an older inbound activity
+into outbound correspondence and tripping the immutable database identity
+guard before later mail can be checkpointed. A malformed persisted direction
+still fails closed, the database guard remains unchanged, and no historical
+activity is rewritten or backfilled.
+
+#### GET / PATCH `/api/integrations/email/connection` — company intake owner
+
+Company mailbox configuration includes nullable `defaultIntakeOwnerId` only for
+an actor with `settings.integrations:all`; other descriptors redact it to
+`null`. A company-owner change is an isolated PATCH:
+
+```json
+{
+  "connectionId": "uuid",
+  "expectedDefaultIntakeOwnerId": "uuid-or-null",
+  "data": { "defaultIntakeOwnerId": "uuid-or-null" }
+}
+```
+
+The route additionally requires `pipeline.assign:all`, rejects personal
+mailboxes and mixed-field updates, and calls
+`configure_company_mailbox_intake_owner_as_system`. The service-role-only RPC
+locks the company and mailbox, reauthorizes the active actor, validates the
+same-company eligible target, and compares the expected owner. A stale
+expectation returns HTTP 409; generic `email_connections` updates do not write
+the owner field. Source:
+`ops-web/supabase/migrations/20260723191000_company_mailbox_intake_owner.sql`
+and `ops-web/src/app/api/integrations/email/connection/route.ts`.
+
+#### Atomic live company-mailbox creation and fallback delivery
+
+Live sync and exact-message recovery create a new company-mailbox lead through
+the service-role-only
+`create_company_mailbox_email_opportunity_as_system` operation. The caller
+supplies a tightly allow-listed opportunity payload, the exact connection and
+provider-thread identity, ingestion source (`email_sync` or
+`email_recovery`), and the provider-mutation recovery fence—never an assignee.
+Under one company-serialized database transaction, the operation validates the
+source key and active sync-enabled company mailbox, inserts the opportunity,
+derives the target from `email_connections.default_intake_owner_id`, and either
+records the canonical guarded `company_mailbox_default` assignment event or
+enqueues the missing/ineligible-owner prompts. A failure in any part rolls the
+new opportunity back, so retry cannot strand a created-but-undispositioned row.
+
+If the owner is valid, the canonical assignment event unlocks the existing
+assigned-mailbox draft actor and normal assignment delivery. If the owner is
+missing or no longer eligible, that same transaction leaves the lead unassigned
+and enqueues one `unassigned_lead_assignment_deliveries` row per currently
+authorized company administrator. `GET /api/cron/lead-assignment-deliveries`
+claims those rows through service-role-only lease RPCs, materializes the
+persistent `lead_assignment_required` notification, and sends an idempotent
+OneSignal push only when the recipient's `lead_assignments.push` preference is
+enabled. Push failure is retried by the delivery lease and never replays email
+ingestion.
+
+The `(company_id, source_thread_key)` key is the idempotency boundary. If it
+already exists—including on a retry—the atomic operation returns that exact
+row with `created=false` and no assignment result; it does not assign, prompt,
+or otherwise mutate the winner. Historical wizard import keeps automatic
+assignment on its existing individual-mailbox-only path; company-mailbox
+historical rows are not routed through the live atomic operation. No migration
+or bulk backfill is performed. Any later canonical manual assignment marks all
+outstanding prompt rows and their persistent notifications resolved.
 
 ### 16. POST /api/integrations/email/send
 

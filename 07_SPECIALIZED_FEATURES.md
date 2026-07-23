@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** July 22, 2026
+**Last Updated:** July 23, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -3788,7 +3788,8 @@ Advance warning stays provider-managed: OpenAI Project Limits emails owners at t
 
 ### Email-Sync AI-Provider Failure Isolation (2026-07-22)
 
-**Status:** implemented on `ops-web` branch `fix/email-ai-provider-isolation` (commits `bfe4f88`…`0ef9881`); pending merge + deploy. Migration `20260722230000_email_threads_lead_scan_pending.sql` is additive and applies at deploy time.
+**Implementation:** the additive deferral migration is
+`ops-web/supabase/migrations/20260723190000_email_threads_lead_scan_pending.sql`.
 
 **Incident it fixes (2026-07-22 mailbox stall):** an OpenAI outage / quota exhaustion during the email-sync cycle (`ops-web/src/lib/api/services/sync-engine.ts` → `SyncEngine.runSync`) was caught by the AI-block `catch (aiErr)` and rethrown as `LifecyclePersistenceError`, which the outer `catch (err)` swallowed *before* `persistSyncCheckpoint()`. The provider cursor (Gmail history id / Graph delta) never advanced, so the next cycle refetched the same messages, hit the same AI failure, and the mailbox stalled indefinitely.
 
@@ -3808,6 +3809,73 @@ Advance warning stays provider-managed: OpenAI Project Limits emails owners at t
 **Lead-summary refresh:** `refreshLeadSummariesForOpportunities` returns a `deferred[]` bucket separate from `failed[]`; provider-unavailability routes to `deferred` (cursor advances) while genuine write failures stay in `failed` (cursor holds via `LifecyclePersistenceError`).
 
 **Alert wiring + P1-1-4 observability:** the sync path fires `reportOpenAIQuotaExhausted({ keySource: "OPENAI_API_KEY_SYNC", workload: "email_sync" })` (best-effort, deduped — see *OpenAI Provider Quota Incident* above) directly, independent of the monitored-fetch side channel. On 2026-07-22 that alert never reached anyone because the recipient identity is unset in prod (`OPS_PLATFORM_ALERT_USER_ID` / `OPS_PLATFORM_ALERT_COMPANY_ID`) and the configured recipient must be an active company admin. `reportOpenAIQuotaExhausted` now emits a distinct `openai_quota_alert_unconfigured` operational log (`reason: identity_not_configured | recipient_not_admin`) so the misconfiguration is diagnosable instead of silently swallowed; no fallback recipient is introduced. **Operational requirement:** set both env vars to an active company-admin user for the credit alert to reach anyone.
+
+### Email Replay Stability + Company Mailbox Intake Ownership (2026-07-23)
+
+**Persisted direction is replay authority.** Gmail/Microsoft folder labels and
+the current OPS teammate roster can change after a message was first ingested.
+After connection-scoped provider deduplication, the sync engine therefore loads
+the exact existing activity before partitioning the batch. A valid persisted
+direction wins; only an unseen provider message is classified from the current
+authoritative teammate roster. One resolved envelope flows through
+inbox/sent processing, outbound learning, relationship reconciliation,
+lifecycle evaluation, and activity/event projection. Invalid persisted state
+fails closed, while a stable replay remains idempotent and can advance the
+mailbox cursor instead of starving later mail. The immutable correspondence
+identity guard is not relaxed and historical activities are not rewritten.
+
+**One explicit intake owner per company mailbox.**
+`email_connections.default_intake_owner_id` is a nullable company-mailbox-only
+setting. Changing it requires `settings.integrations:all` plus
+`pipeline.assign:all`, the expected prior owner, and the dedicated
+service-role-only configuration RPC. The database serializes under the company
+assignment lock and rechecks the active actor, mailbox type/company, expected
+state, and proposed same-company owner's effective assigned-scope
+`pipeline.view`, `pipeline.edit`, and `inbox.send` permissions.
+
+For a newly discovered live email lead, the service-role-only
+`create_company_mailbox_email_opportunity_as_system` operation validates and
+creates the opportunity, derives its target from that setting—callers cannot
+provide one—and applies the guarded assignment or missing-owner prompt in the
+same company-serialized transaction. The connection must still be an active,
+sync-enabled company mailbox, and the source key must belong to that provider
+and connection. The assignment uses immutable source
+`company_mailbox_default`; only the existing guarded core may write
+`opportunities.assigned_to`.
+
+An existing same-company source-key row is an immutable retry winner: the
+operation returns it with `created=false` and no assignment result. It never
+uses replay to repair, overwrite, or prompt an existing opportunity. This
+ensures a transaction failure rolls back both creation and disposition instead
+of leaving a row that a later retry would silently reinterpret.
+
+**Missing-owner delivery is durable and actionable.** If the configured owner
+is absent or no longer eligible, the same transaction keeps the new lead
+unassigned and inserts one unique delivery per active same-company
+administrator who currently has company-wide `pipeline.view`,
+`pipeline.edit`, and `pipeline.assign`. The existing one-minute assignment
+worker claims deliveries with bounded leases, revalidates the still-unassigned
+lead and exact recipient, then materializes a persistent rail notification:
+
+- Type: `lead_assignment_required`
+- Title: `Lead needs an owner`
+- Body: `Assign {lead title}`
+- Action: open the lead detail assignment control
+
+The rail notification exists independently of push preferences. OneSignal push
+uses the delivery ID as its idempotency key and is attempted only when
+`lead_assignments.push` is enabled. Retryable provider failures return to the
+lease queue without replaying mailbox ingestion. Assignment races and revoked
+recipient authority suppress stale work without revealing a replacement
+assignee; every later canonical assignment resolves all outstanding deliveries
+and their materialized notifications.
+
+This behavior is forward-only and applies only to live `email_sync` and
+`email_recovery` creation. Historical wizard import retains automatic
+assignment only for individual mailboxes; company-mailbox import rows remain
+outside the live atomic path. Nothing bulk-assigns, prompts, or rewrites
+historical company-mailbox leads. Source:
+`ops-web/supabase/migrations/20260723191000_company_mailbox_intake_owner.sql`.
 
 ### Task Reschedule → Push (cross-client, both origins)
 
@@ -7814,13 +7882,24 @@ An assigned-scope actor can reassign an active, nonterminal lead currently assig
 
 Mailbox addresses never establish OPS identity. A personal connection is authorized only by its canonical OPS `email_connections.user_id` owner, and only when `type='individual'`; a company connection's legacy connector `user_id` is never treated as authority. Lead-linked reads and sends use the actor-aware `private.user_can_view_opportunity_inbox` and `private.user_can_send_opportunity_inbox` helpers, which intersect opportunity access, mailbox ownership/type, company, inbox scope, and current assignment.
 
+New personal-mailbox leads continue through the guarded `personal_mailbox`
+system assignment source. New live company-mailbox leads use the separately
+configured `default_intake_owner_id` through the atomic create-and-disposition
+operation described in §14. Existing source-key rows are returned unchanged,
+so retry/dedupe cannot become an implicit assignment repair or historical
+backfill. Historical wizard import keeps automatic assignment
+individual-mailbox-only. When no eligible default exists for a genuinely new
+live row, the creation transaction atomically records durable
+assignment-required deliveries instead of guessing an assignee; a later manual
+assignment resolves them.
+
 ### Product behavior
 
 The production Web lead-detail surface displays the current assignee and exposes the guarded picker only when the current actor can change that row. The staged iOS implementation follows the same contract. Both clients send the assignment version and expected assignee, wait for the server response, and refresh on conflict; assignment is never optimistic or queued offline. Assigned-only users see their assigned leads in the Leads tab and do not receive a company-wide assignee filter or assignee column. Company-wide viewers can filter by Mine, Unassigned, or a specific eligible team member.
 
 Assignment changes invalidate actor/scope-keyed lead and aggregate caches and are replayable through durable realtime events. Canonical role, role-permission, user-override, user-admin, and company-admin changes enqueue one recipient-only `user_permission_change_deliveries` row per user/transaction. An open web session synchronously clears lead and email caches and closes lead-backed surfaces before refreshing its permission store. The new assignee receives one deduplicated in-app notification (and push when enabled); the former assignee receives no user-facing notification and their now-inaccessible cached lead is purged. Manual self-assignment is silent. If a conversion succeeds but the actor cannot view the resulting project, the client treats it as committed success without exposing the project identity, navigating to it, or retrying conversion.
 
-Primary implementation sources: `ops-web/supabase/migrations/20260715160000_lead_assignment_foundation.sql`, `20260715160500_lead_assignment_scoped_rls.sql`, `20260715160700_lead_assignment_child_scope.sql`, `20260715161500_lead_assignment_realtime_fanout.sql`, `20260715161600_lead_assignment_delivery_worker.sql`, `20260715180900_internal_spec_permission_guard.sql`, and `20260715181000_lead_assignment_operator_activation.sql`; `ops-web/src/lib/permissions/lead-access-policy.ts`; `ops-web/src/lib/api/services/lead-assignment-service.ts`; `ops-web/src/lib/hooks/use-lead-assignment.ts`; and the iOS lead assignment repository/detail-view integration under `ops-ios/OPS/`.
+Primary implementation sources: `ops-web/supabase/migrations/20260715160000_lead_assignment_foundation.sql`, `20260715160500_lead_assignment_scoped_rls.sql`, `20260715160700_lead_assignment_child_scope.sql`, `20260715161500_lead_assignment_realtime_fanout.sql`, `20260715161600_lead_assignment_delivery_worker.sql`, `20260715180900_internal_spec_permission_guard.sql`, `20260715181000_lead_assignment_operator_activation.sql`, and `20260723191000_company_mailbox_intake_owner.sql`; `ops-web/src/lib/permissions/lead-access-policy.ts`; `ops-web/src/lib/api/services/lead-assignment-service.ts`; `ops-web/src/lib/api/services/unassigned-lead-assignment-delivery-service.ts`; `ops-web/src/lib/hooks/use-lead-assignment.ts`; and the iOS lead assignment repository/detail-view integration under `ops-ios/OPS/`.
 
 ---
 
