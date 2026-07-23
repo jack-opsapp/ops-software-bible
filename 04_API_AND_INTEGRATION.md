@@ -1293,7 +1293,54 @@ Live apply status must be verified during rollout. Supabase MCP records its own 
 
 ---
 
+## Guarded Sync-Recovery RPCs (2026-07-22)
+
+Two prod contract changes landed with the SYNC RECOVERY initiative (migrations
+`extend_create_opportunity_source_thread_key`, `create_link_deck_design_to_opportunity_guarded`
+(+ ACL-hardening companion) — archived in `migrations/`; applied 2026-07-22).
+
+### `create_opportunity_guarded` — idempotent via `source_thread_key`
+
+`private.create_opportunity_company_serialized_internal` now allowlists and writes
+`p_opportunity.source_thread_key` (nullable text; UNIQUE per
+`(company_id, source_thread_key)`). When the key already exists — pre-insert
+readback or `unique_violation` catch — the RPC returns the EXISTING row as
+`{ok: true, conflict: true, opportunity: <row>, ...}` (same shape as success)
+instead of raising, so a retried create after a lost response reconciles to one
+lead. iOS senders: `ClientLeadAutocreate` (`client-autocreate:<client uuid>`) and
+the site-visit direct create (`SiteVisitCaptureViewModel.createLeadFromIdentityDraft`,
+same key — direct + queued paths can never duplicate). Before this change the
+allowlist rejected the key (`unsupported_opportunity_field`, 22023 → HTTP 400),
+which was root cause RC1 of the 2026-07-22 stuck-lead incident.
+
+### `link_deck_design_to_opportunity_guarded(p_design_id uuid, p_target_opportunity_id uuid) → jsonb`
+
+Sanctioned path for linking an ORPHAN deck design (opportunity_id IS NULL) to a
+lead — direct PATCH of `deck_designs.opportunity_id` is blocked by
+`trg_deck_designs_guard_opportunity_reparent`. SECURITY DEFINER; grants mirror
+`create_opportunity_guarded` (`{authenticated, postgres}`). Mints a one-row
+`private.opportunity_child_reparent_tokens` entry (NULL → target), performs the
+guarded UPDATE, deletes tokens (exception-safe). Authorization:
+`private.current_user_can_edit_deck_design(company, NULL, project_id, 'deck_builder.edit')`
+AND `private.user_can_edit_opportunity(actor, target)`; target must be same-company,
+non-archived, non-deleted. Returns `{ok, already_linked, design_id, opportunity_id}`;
+re-linking the same target → `already_linked: true` (idempotent). Cross-linking a
+design already on ANOTHER lead → 23514 (forbidden by design). iOS caller:
+`DeckDesignRepository.linkToOpportunity` via SyncOperation operationType
+`"linkOpportunity"` (payload `{"opportunity_id": <uuid>}`); a one-time
+`SyncEngine.enqueueDeckDesignLinkBackfillOnce()` sweep (UserDefaults flag
+`deckDesignLinkBackfill.v1`) heals designs orphaned by pre-fix builds, which
+stripped `opportunity_id` from every deck-design payload (RC3).
+
+---
+
 ## Error Handling & Retry Logic
+
+> **2026-07-22:** outbound-push failures are now classified (transient / permanent /
+> auth) with permanent rejections parking immediately — see
+> `06_TECHNICAL_ARCHITECTURE.md` § "Error Handling in Sync Engine" for the full
+> disposition table, the `parked` SyncOperation status, and the launch/reconnect
+> recovery sweeps.
 
 ### Error Types
 
@@ -1980,18 +2027,26 @@ Gmail push notifications require the Pub/Sub topic and the Gmail OAuth client to
 
 **Behavior:** Finds active connections with webhooks expiring within 2 days, renews each via the provider abstraction (Gmail: re-register Pub/Sub watch with 7-day expiry; M365: renew subscription with 3-day expiry), updates `webhook_subscription_id` and `webhook_expires_at`.
 
+### Email actor, assignment, and delivery contract (prepared 2026-07-16)
+
+Every browser email route resolves the Firebase subject to one active canonical OPS `public.users.id`. Request `userId` and `companyId` values are mismatch checks only; mailbox addresses never identify an OPS actor. `email_connections.company_id` and `user_id` remain legacy text columns. Only `type='individual'` may treat an exact, valid `user_id` UUID as mailbox ownership. A company connection's legacy `user_id` is connector metadata and grants no authority.
+
+Lead-linked reads require the intersection of canonical `pipeline.view` and `inbox.view`; sends, provider-draft mutations, and learning-authoritative actions require canonical `pipeline.edit` and `inbox.send`. Assigned scope is evaluated against the opportunity's current `assigned_to` under the guarded assignment contract. Standalone Inbox lists, thread detail, lead correspondence, drafts, sibling context, attachments, and send routes use the same opportunity + inbox helpers. An existing provider thread remains pinned to its original connection. Explicitly selecting another authorized sender starts a new provider thread linked to the same lead; it never changes or impersonates the original provider thread.
+
+Before provider I/O, the send route persists `email_send_intents` with a deterministic idempotency key, canonical actor, connection, internal/provider thread identity, opportunity, assignment snapshot, draft provenance, request fingerprint, and delivery state. After provider acceptance, database reconciliation is idempotent and may retry without invoking the provider again. Provider rejection preserves the draft and writes no sent activity. An accepted-but-not-yet-reconciled intent returns a pending/recovery result instead of risking a duplicate send.
+
 ### 16. POST /api/integrations/email/send
 
 **Purpose:** Sends an email via the user's connected Gmail or M365 account.
 
 | Field | Value |
 |-------|-------|
-| Auth | Service role (subscription check + rate limit 100/hour) |
-| Request body | `{ userId, companyId, connectionId, to: string[], cc?: string[], subject, body, format?: "markdown"\|"plain", opportunityId?, inReplyTo?, threadId? }` |
-| Response | `{ ok: true, messageId, threadId }` |
+| Auth | Firebase operator with `inbox.send`, or exact cron secret for internal auto-send (subscription check + rate limit 100/hour) |
+| Request body | `{ userId, companyId, connectionId, to: string[], cc?: string[], subject, body, format?: "markdown"\|"plain", opportunityId?, inReplyTo?, threadId?, draftHistoryId?, followUpDraftId? }` |
+| Response | `{ ok: true, messageId, threadId, idempotencyKey }`, or a delivery/reconciliation-pending response that is safe to retry |
 | Service calls | `EmailService.getConnection()`, provider `sendMessage()`, `OpportunityService.createActivity()`, `EmailMatchingServiceV2.match()` |
 
-**Behavior:** When `format="markdown"`, converts `**bold**`, `*italic*`, `[link](url)` to HTML via `markdownToEmailHtml()` before sending. Creates an outbound activity record with `body_text`, `to_emails`, `cc_emails`, `has_attachments`. Updates opportunity correspondence counts if `opportunityId` is provided. Links thread via `opportunity_email_threads` upsert. Applies "OPS Pipeline" label to the thread (non-fatal if label application fails). Gmail: RFC 2822 encoding with `In-Reply-To` + `References` headers for threading. M365: Graph API `/createReply` for threading, `/sendMail` for new emails.
+**Behavior:** Validates the tenant/user/connection/opportunity/draft relationships before the irreversible provider call. When `format="markdown"`, converts the authored body to HTML, strips any exact known prior signature revision, and appends the effective signature once. The signature-free authored body remains the canonical activity/learning sample. Creates an outbound activity with provider identity and draft provenance, projects correspondence idempotently, and enqueues the immutable outcome for post-delivery learning. Gmail uses RFC 2822 threading; M365 uses `/createReply` or `/sendMail`. Provider delivery is never retried merely because a later database write failed.
 
 ### 17. GET /api/integrations/email/inbox
 
@@ -1999,7 +2054,7 @@ Gmail push notifications require the Pub/Sub topic and the Gmail OAuth client to
 
 | Field | Value |
 |-------|-------|
-| Auth | Service role |
+| Auth | Firebase operator; canonical per-thread `pipeline.view ∩ inbox.view` authorization |
 | Query params | `companyId` (required), `threadId?` (single thread), `q?` (search), `maxResults?` (default 50) |
 | Response (inbox) | `{ threads: InboxThread[], nextPageToken? }` |
 | Response (thread) | `{ messages: ThreadMessage[] }` |
@@ -2013,25 +2068,38 @@ Gmail push notifications require the Pub/Sub topic and the Gmail OAuth client to
 
 | Field | Value |
 |-------|-------|
-| Auth | Service role (ungated — any user with email connected) |
-| Request body | `{ companyId, userId, connectionId, opportunityId?, threadId?, recipientEmail?, recipientName? }` |
-| Response | `{ available: boolean, draft: string (markdown), draftHistoryId: string, confidence: number, sources: string[], reason?: string }` |
+| Auth | Firebase operator; canonical lead/mailbox draft authorization |
+| Request body | `{ companyId, userId, connectionId, opportunityId?, threadId?, recipientEmail?, recipientName?, subject?, configuredSubject? }` |
+| Response | `{ available: boolean, draft: string (markdown), draftHistoryId: string, confidence: number, sources: string[], subject?, subjectSource?, reason? }` |
 | Service calls | `WritingProfileService.getProfile()`, `MemoryService.getFacts()` (if Phase C enabled), `DraftGenerator.generateDraft()` |
 
-**Behavior:** Assembles context from: writing profile + thread messages (last 20 from `activities.body_text`) + opportunity summary + memory facts (if `ai_email_memory` feature gate enabled). Model: `gpt-5.4-mini` via `OPENAI_API_KEY_DRAFTING`. Creates an `ai_draft_history` record with `status='drafted'` for tracking draft outcomes.
+**Behavior:** Assembles context from the connection-scoped newest 20 thread messages, writing profile, opportunity/client facts, and enabled memories. Replies normalize the existing thread subject to one `Re:`. New-thread precedence is explicit operator subject, configured/template subject, qualifying de-identified learned template filled only from the current lead, contextual generation, then `Your inquiry`. The subject remains editable and AI fills it only when blank. The history insert is authoritative: an error or missing ID fails draft generation instead of returning an untracked draft.
 
 ### 19. POST /api/integrations/email/draft-feedback
 
-**Purpose:** Records the outcome of an AI-generated draft (sent or discarded) and triggers writing profile learning.
+**Purpose:** Lets an authenticated operator discard an owned AI draft.
 
 | Field | Value |
 |-------|-------|
 | Auth | Service role |
-| Request body | `{ draftHistoryId, companyId, userId, outcome: "sent"\|"discarded", finalVersion? }` |
-| Response | `{ ok: true, editDistance?: number, changesDetected?: string[] }` |
-| Service calls | Direct queries on `ai_draft_history`, `WritingProfileService.learn()` |
+| Request body | `{ draftHistoryId, companyId, userId, outcome: "discarded" }` |
+| Response | `{ ok: true }` |
+| Service calls | Owned `ai_draft_history` update |
 
-**Behavior:** Computes edit distance (word-level Levenshtein) between original draft and `finalVersion`. Detects specific changes: greeting modifications, closing modifications, tone shifts. Updates the `ai_draft_history` record with outcome and edit metrics. Triggers writing profile learning if 3+ consistent changes are detected across recent drafts.
+**Behavior:** The browser cannot claim that a draft was sent. Sent outcomes are established only by the authenticated send route or immutable provider/draft reconciliation, then processed through the durable learning queue. This prevents fabricated human authority and Phase C self-training.
+
+### 19a. GET / PUT / POST /api/integrations/email/signature
+
+**Purpose:** Reads the effective signature, saves/removes the current operator's OPS signature, or imports the exact Gmail `sendAs` signature read-only.
+
+| Field | Value |
+|-------|-------|
+| Auth | Firebase operator. Individual connections require exact OPS owner UUID. Company connections require integration-admin authority or a currently sendable assigned lead. |
+| GET | `companyId`, `userId`, `connectionId` → effective/OPS/provider signature state |
+| PUT | `{ companyId, userId, connectionId, opsText }` |
+| POST | `{ companyId, userId, connectionId, action: "import_provider" }` (Gmail only) |
+
+OPS operator signature wins over mailbox OPS, which wins over the exact provider identity. Microsoft import returns unavailable because Graph has no signature API. Signature controls live in Settings → Profile so assigned Operators do not need integration-admin access. Writes cross service-only guarded RPCs that derive the actor's company and signature scope, ignore company-mailbox connector identity, lock assignment-dependent authorization, and reject cross-mailbox provider identities. Every read/save/import reconciles the persistent `email_signature_required` notification for that operator/mailbox; the prompt resolves when an effective signature exists. Gmail `not_configured` and provider-read failures are reported as failures rather than successful imports.
 
 ### 20. GET /api/integrations/email/draft-stats
 
@@ -2044,7 +2112,7 @@ Gmail push notifications require the Pub/Sub topic and the Gmail OAuth client to
 | Response | `{ totalSent: number, sentWithoutChanges: number, approvalRate: number, commonChanges: string[], suggestAutoSend: boolean }` |
 | Service calls | Direct queries on `ai_draft_history` |
 
-**Behavior:** Aggregates draft outcomes for the user. `suggestAutoSend` returns `true` when `approvalRate >= 0.95` AND `totalSent >= 20`, indicating the user trusts AI drafts enough to enable automatic sending.
+**Behavior:** Reads only durable, actor-attributed human decisions. A draft counts as correct only when the operator sends it unchanged; any edit is an error signal. Autonomous sends and provider Sent-folder rows without exact OPS provenance cannot train a profile or contribute to graduation. `suggestAutoSend` returns `true` only at `approvalRate >= 0.95` over at least 20 verified human outcomes. OPS then creates a persistent prompt to enable automatic sending; it does not enable sending automatically.
 
 ### 21. GET /api/integrations/email/auto-send/settings
 
@@ -2123,14 +2191,18 @@ The in-app `/inbox` screen is hidden behind a per-company flag while the email e
 
 **NOT gated:** automatic lead import (inbound client + opportunity creation in the sync engine, `sync-engine.ts`) runs for every connected mailbox regardless of `inbox_ui`/`phase_c` — current functionality, preserved.
 
-**Auto-draft into the mailbox** — `sync-engine.ts` `maybeAutoGenerateDraft` (phase_c-gated): on inbound client mail, after generating a voice-matched reply via `AIDraftService.generateDraft`, OPS pushes it into the user's real Gmail/Outlook Drafts folder via `provider.createDraft`/`updateDraft` (idempotent on `(connection_id, thread_id)` via `pickExistingMailboxDraft`), persisting `ai_draft_history.mailbox_draft_id`. Threaded to the original (Gmail `threadId` / M365 `conversationId`). Never auto-sends.
+**Auto-draft into the mailbox** — `sync-engine.ts` `maybeAutoGenerateDraft` (phase_c-gated): on inbound client mail, after generating a voice-matched reply via `AIDraftService.generateDraft`, OPS resolves and appends the effective signature once, then pushes it into Gmail/Outlook Drafts via `provider.createDraft`/`updateDraft`. Transactional reassignment ensures one provider draft belongs to one current `ai_draft_history` row while superseding the prior row. Threaded to the original (Gmail `threadId` / M365 `conversationId`). Never auto-sends.
 
-**Forwarded contact-form submissions → NEW thread (2026-06-03)** — a website contact-form submission forwarded into a connected mailbox (sender ∈ team forwarders, or a known form platform) lives on the *forwarder's* thread; a reply must instead start a clean new thread to the actual client. `maybeAutoGenerateDraft(email, connection, opportunityId, submitter?)` takes a fourth `submitter` arg (the parsed `contactFormSubmitter` from `extractContactFormSubmission`, already computed in `processInboundEmail`). When present it branches: `AIDraftService.generateDraft` **new-email path** (recipient = submitter, no inbound thread, grounded in the form message via `userInstruction`) → `placeNewThreadDraft` (`src/lib/api/services/mailbox-draft-push.ts`) → `provider.createNewThreadDraft(to, subject, body)` (no threadId; captures the provider-minted Gmail `message.threadId` / M365 `conversationId`). The minted thread id is persisted to `ai_draft_history.thread_id` **and** linked via `opportunity_email_threads` — so the user's eventual send creates an outbound activity on that thread and `reconcilePendingMailboxDrafts` (keyed on `thread_id`) classifies it `used → sent_from_mailbox`. Subject is a fresh `Thanks for reaching out` (ops-copywriter; never "Re:"); idempotency keys on `(connection_id, opportunity_id)`; never auto-sends (cold first contact is review-only). Brand-new contact-form leads (the sync `create_new` branch, previously un-drafted) now draft too, gated to `contactFormSubmitter`. The category gate classifies contact forms as `general` — the forwarder's junk subject ("New submission") otherwise matches `sub` → `subtrade_coordination` → `draft_on_request`, silently suppressing the draft.
+**Forwarded contact-form submissions → NEW thread (2026-06-03; subject policy hardened 2026-07-14)** — a forwarded form lives on the forwarder's thread, so OPS starts a clean provider thread to the parsed client. `placeNewThreadDraft` persists the provider-minted thread and immutable opportunity link. The subject follows the new-thread policy above and is never `Re:` merely because the forwarder used one. Cold first contact remains review-only and never auto-sends.
 
-**Learning loop re-wired through sync** — `src/lib/api/services/draft-reconciliation.ts`. Because the operator sends from their own mail client (not the OPS composer), `reconcilePendingMailboxDrafts` runs in the outbound-sync path, after the sent reply is ingested as an `activities` row. For each pending auto-draft (`status='auto_drafted'`, `mailbox_draft_id` set) it classifies the outcome via `classifyDraftOutcome` from (a) whether the draft is still in the mailbox (`provider.listDrafts`) and (b) whether an outbound reply exists after the draft's `created_at`:
-- **used** (draft gone + outbound after) → strip quoted chain/signature (`stripPriorMessageOverlap`), feed `AIDraftService.recordDraftOutcome("sent", …)` (the existing edit-distance + writing-profile learning), set `status='sent_from_mailbox'`.
-- **from_scratch** (draft still present + a different outbound) → `status='superseded'`; does NOT call `recordDraftOutcome` (the all-outbound learner at `learnFromOutboundEmail` already captured the reply as a voice sample — avoids a bogus 100%-rewrite edit signal).
+**Learning loop re-wired through sync** — `src/lib/api/services/draft-reconciliation.ts`. Because the operator may send from their native client, reconciliation runs after the sent activity is ingested. Each pending provider draft is checked by immutable `provider.getDraft(id)`; the bounded Drafts list is never treated as proof of deletion. Exact current/historical signatures and quoted content are removed before the queue receives authored/clean bodies. One provider Sent message can bind to one canonical draft history only:
+- **used** (draft gone + outbound after) → enqueue the exact draft/message pair as `operator_approved`; the durable worker applies the sent state and the operator's repeated-edit evidence exactly once, but never samples the full AI-authored body into the writing profile.
+- **from_scratch** (draft still present + a different outbound) → supersede the draft without treating the unrelated message as a 100% rewrite.
 - **discarded** (draft gone, no outbound within 14-day TTL) → `status='discarded_in_mailbox'`.
+
+Generic provider Sent mail is recorded as autonomous/no-training unless an exact OPS activity proves an authenticated operator. A provider Sent-folder row alone is not human-authority evidence.
+
+The 12-month historical profile scan is stricter: it requests `operator_authored` learning only after removing an exact connection-scoped known signature revision. A signature lookup failure or unmatched historical footer skips the learning enqueue entirely, so raw/signature-bearing history cannot enter the durable queue.
 
 **Manual drafting (the public's path)** — the Pipeline "Draft" button (`POST /api/integrations/email/draft`) now generates + pushes the draft into the mailbox in one step, works WITHOUT phase_c (uses `AIDraftService.generateDraft`, replacing the old phase_c-gated `DraftGenerator`), and persists `mailbox_draft_id` + `status='auto_drafted'` so the same reconciliation learns from manual drafts. It also detects a forwarded contact-form lead (re-parsing the latest inbound activity with `extractContactFormSubmission`) and routes it through the same `placeNewThreadDraft` new-thread path as the sync engine — fresh subject, new thread to the client, not a "Re:" on the forwarder's thread.
 

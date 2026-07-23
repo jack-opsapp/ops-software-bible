@@ -178,8 +178,10 @@ ops-ios/OPS/
 │   │       ├── PhotoAnnotationRepository.swift
 │   │       ├── NotificationRepository.swift
 │   │       └── CalendarUserEventRepository.swift  # CRUD for calendar_user_events (added 2026-03-02)
-│   ├── Sync/ (9 files — rebuilt 2026-03-08, DataActor refactor 2026-04-19)
-│   │   ├── SyncEngine.swift             # @MainActor @Observable orchestrator; dispatches through DataActor when FeatureFlags.useDataActor is on (default true 2026-04-19)
+│   ├── Sync/ (11 files — rebuilt 2026-03-08, DataActor refactor 2026-04-19, SYNC RECOVERY 2026-07-22)
+│   │   ├── SyncEngine.swift             # @MainActor @Observable orchestrator; dispatches through DataActor when FeatureFlags.useDataActor is on (default true 2026-04-19); reenqueueRecoverableOperations() launch/reconnect sweep + one-time deck-link backfill (2026-07-22)
+│   │   ├── SyncErrorClassifier.swift    # Pure failure-disposition seam (SYNC RECOVERY 2026-07-22): transient (5xx/429/408/timeouts/40001-class SQLSTATEs) vs permanent (other 4xx, 22xxx/23xxx/42xxx/P000x) vs auth (PGRST3xx/JWT/401). SyncOperationFailurePolicy = the ONE shared post-catch state transition both outbound paths call
+│   │   ├── RecoveryInventory.swift      # Pure unsynced-work model for the PENDING WORK screen: joins SyncOperations + lead-autocreate queue + LocalPhotos + site-visit drafts/artifacts + orphan deck designs into attention/sending/drafts/unlinked sections; site-visit bundles absorb members, worst-member tone
 │   │   ├── OutboundProcessor.swift      # LEGACY @MainActor path for local→server push; retained behind FeatureFlags.useDataActor for rollback
 │   │   ├── InboundProcessor.swift       # LEGACY @MainActor path for server→local pull; retained behind FeatureFlags.useDataActor for rollback
 │   │   ├── RealtimeProcessor.swift      # @MainActor Supabase Realtime WebSocket subscription (9 merged entity types + 3 notification-only leads tables: opportunities/activities/follow_ups → post .opsLeadsDidChange, no SwiftData merge); SwiftData writes dispatch to DataActor when flag on
@@ -1515,25 +1517,37 @@ func fetchProjects(companyId: String) async throws -> [SupabaseProjectDTO] {
 }
 ```
 
-### Error Handling in Sync Engine (Updated 2026-03-08)
+### Error Handling in Sync Engine (Updated 2026-07-22 — SYNC RECOVERY)
+
+Every failed outbound push is classified by `SyncErrorClassifier.disposition(for:)`
+(`OPS/Network/Sync/SyncErrorClassifier.swift`) into one of three dispositions, and
+`SyncOperationFailurePolicy.apply` — the ONE shared post-catch state transition — is
+called identically by both outbound paths (`DataActor.executeOperation`,
+`OutboundProcessor.executeOperation`) so they cannot drift:
+
+| Disposition | Trigger | SyncOperation transition |
+|---|---|---|
+| `transient` | URLError offline/timeout; HTTP 5xx/429/408; SQLSTATE 40001/40P01/55P03/57014; anything unknown | `retryCount += 1`; backoff `min(2^retryCount, 60)`s; at 20 → `status="failed"` (recoverable) |
+| `permanent` | other HTTP 4xx; SQLSTATE classes 22/23/42; P0001/P0002 | `status="parked"` immediately, no retry consumed, `sync_parked` analytics. Only user Retry/Discard moves it |
+| `auth` | PGRST3xx / JWT / 401 | `status="failed"` + `.syncAuthExpired` → re-auth (unchanged) |
+
+`status` values: `pending → inProgress → completed / failed / parked`. PK-violation
+idempotency (23505 `_pkey` on create retry → treat as completed) still runs BEFORE
+classification. The 2026-07-22 outage motivated the split: a permanent 400
+(auto-lead `source_thread_key` rejection, RC1) previously burned the same 20-retry
+budget as a transient 504, then sat invisible.
+
+**Recovery sweeps** (`SyncEngine.reenqueueRecoverableOperations()`): at launch
+(once, from `configure()`) and on genuine reconnect (`DataController` connectivity
+hook) — stale/nil-attempt `inProgress` ops → `pending` (crash recovery); `failed`
+ops → `pending` with a fresh retry budget (`retryCount=0`, `lastError` kept);
+`parked` ops untouched. Never driven by the 180s retry timer. The lead-autocreate
+queue (`ClientLeadAutocreateQueue`) applies the same disposition policy per request:
+permanent → `parkedAt` (user-only retry), transient → exponential backoff
+`min(60·2^min(attempts,4), 900)`s.
 
 ```swift
-// SyncTypes.swift — error classification
-enum SyncError: Error {
-    case network(Error)       // Retryable — OutboundProcessor applies exponential backoff
-    case conflict(String)     // Field-level merge — InboundProcessor preserves pending local fields
-    case permanent(Error)     // Non-retryable — operation marked failed, surfaced in UI
-    case authentication       // Triggers re-auth flow
-}
-
-// OutboundProcessor.swift — push error handling
-// Each SyncOperation tracks retryCount. On failure:
-//   - Retryable errors: increment retryCount, backoff = min(pow(2, retryCount), 60) seconds
-//   - Max 20 retries before marking as permanently failed
-//   - Permanent errors: mark operation as failed immediately
-//   - Failed operations surfaced in SyncStatusSection (NotificationListView)
-
-// InboundProcessor.swift — pull conflict handling
+// InboundProcessor.swift — pull conflict handling (unchanged 2026-03-08)
 // Before overwriting any field from server data:
 //   - Checks for pending SyncOperations targeting that field
 //   - If pending local change exists, server value is skipped (local wins)
