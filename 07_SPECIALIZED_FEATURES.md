@@ -3786,6 +3786,29 @@ The durable row is inserted before a bounded best-effort OneSignal push. Push da
 
 Advance warning stays provider-managed: OpenAI Project Limits emails owners at the configured 75%, 90%, and 100% budget thresholds. OPS does not hold an OpenAI Admin API key, poll billing, or send a Gmail alert. Production runtime activation completed on 2026-07-20 with service-only migration version `20260721050404`, both platform-owner environment variables, and OPS Web commit `49f580fc`; the provider-managed threshold emails still require the owner to authenticate in OpenAI Project Limits.
 
+### Email-Sync AI-Provider Failure Isolation (2026-07-22)
+
+**Status:** implemented on `ops-web` branch `fix/email-ai-provider-isolation` (commits `bfe4f88`…`0ef9881`); pending merge + deploy. Migration `20260722230000_email_threads_lead_scan_pending.sql` is additive and applies at deploy time.
+
+**Incident it fixes (2026-07-22 mailbox stall):** an OpenAI outage / quota exhaustion during the email-sync cycle (`ops-web/src/lib/api/services/sync-engine.ts` → `SyncEngine.runSync`) was caught by the AI-block `catch (aiErr)` and rethrown as `LifecyclePersistenceError`, which the outer `catch (err)` swallowed *before* `persistSyncCheckpoint()`. The provider cursor (Gmail history id / Graph delta) never advanced, so the next cycle refetched the same messages, hit the same AI failure, and the mailbox stalled indefinitely.
+
+**Contract — provider outages defer, they do not freeze the cursor:**
+
+- **Detector** `isAIProviderUnavailableError(error)` (`src/lib/api/services/openai-monitoring.ts`) walks the error plus up to 3 `.cause` links; true for `insufficient_quota`, HTTP 429 / 5xx / 401 / 403, and `APIConnectionError`/`APIConnectionTimeoutError`; false for our own `LifecyclePersistenceError` and model-answer contract/refusal errors (walk-then-decide — a genuine provider cause wrapped in a contract error still reports unavailable).
+- **Step 5 (unmatched-lead classification) and Step 6 (stage eval + summary)** each guard their AI call individually. A provider-unavailable error sets a cycle-scoped `aiProviderOutage` flag instead of throwing; the deterministic work in between (`reconcileUnlinkedOutboundEmail`, `maybeAutoAdvanceOnAccept` accept-conversion) still runs and stays fail-closed. Non-provider errors and `LifecyclePersistenceError` still propagate → the outer catch skips the checkpoint → cursor holds for idempotent replay (unchanged fail-closed semantics for real persistence failures).
+- After the AI block, if `aiProviderOutage` is set the cycle fires the operator alert once, sets `result.aiProviderDeferred = true`, and falls through to `persistSyncCheckpoint()` — **the cursor advances and the mailbox keeps moving.**
+
+**Durable deferral marker + drain sweep:**
+
+- Migration adds nullable `email_threads.lead_scan_pending_at timestamptz` + partial index `WHERE lead_scan_pending_at IS NOT NULL AND opportunity_id IS NULL` (additive, iOS-safe).
+- On a Step-5 outage, `markUnmatchedThreadsPendingLeadScan` stamps the marker on the durable thread rows (non-contact-form only — contact-form contexts have no thread row and are logged); `result.leadScansDeferred` counts them.
+- `SyncEngine.retryPendingLeadScans({ limit })` — called by the email-sync cron (`src/app/api/cron/email-sync/route.ts`) beside `sweepStaleLeads` — drains marked threads once the provider recovers: bounded oldest-first select, per-connection sync-lock claim (skips a connection a live sync is holding), replays the Step-5 classify→promote path (`promoteClassifiedUnmatchedLead`), clears the marker on resolution, and leaves markers in place on a still-down provider. Cron response JSON gains `pendingLeadScanSweep`; its errors feed the existing failed-count tally.
+- **Recovery is also passive:** the marker blocks nothing, so a deferred thread also self-heals on its next inbound reply even if the sweep never runs.
+
+**Lead-summary refresh:** `refreshLeadSummariesForOpportunities` returns a `deferred[]` bucket separate from `failed[]`; provider-unavailability routes to `deferred` (cursor advances) while genuine write failures stay in `failed` (cursor holds via `LifecyclePersistenceError`).
+
+**Alert wiring + P1-1-4 observability:** the sync path fires `reportOpenAIQuotaExhausted({ keySource: "OPENAI_API_KEY_SYNC", workload: "email_sync" })` (best-effort, deduped — see *OpenAI Provider Quota Incident* above) directly, independent of the monitored-fetch side channel. On 2026-07-22 that alert never reached anyone because the recipient identity is unset in prod (`OPS_PLATFORM_ALERT_USER_ID` / `OPS_PLATFORM_ALERT_COMPANY_ID`) and the configured recipient must be an active company admin. `reportOpenAIQuotaExhausted` now emits a distinct `openai_quota_alert_unconfigured` operational log (`reason: identity_not_configured | recipient_not_admin`) so the misconfiguration is diagnosable instead of silently swallowed; no fallback recipient is introduced. **Operational requirement:** set both env vars to an active company-admin user for the credit alert to reach anyone.
+
 ### Task Reschedule → Push (cross-client, both origins)
 
 When a task's schedule changes, assigned crew are notified on **both** clients — and the push is fired **server-side (ops-web → OneSignal REST)**, so it reaches a backgrounded/locked teammate independent of the Realtime socket (which iOS tears down ~30s after backgrounding). This is the background-delivery counterpart to the live foreground repaint (ops-ios `deafa95f`).
