@@ -3789,7 +3789,7 @@ Advance warning stays provider-managed: OpenAI Project Limits emails owners at t
 ### Email-Sync AI-Provider Failure Isolation (2026-07-22)
 
 **Implementation:** the additive deferral migration is
-`ops-web/supabase/migrations/20260723190000_email_threads_lead_scan_pending.sql`.
+`ops-web/supabase/migrations/20260723214306_email_threads_lead_scan_pending.sql`.
 
 **Incident it fixes (2026-07-22 mailbox stall):** an OpenAI outage / quota exhaustion during the email-sync cycle (`ops-web/src/lib/api/services/sync-engine.ts` → `SyncEngine.runSync`) was caught by the AI-block `catch (aiErr)` and rethrown as `LifecyclePersistenceError`, which the outer `catch (err)` swallowed *before* `persistSyncCheckpoint()`. The provider cursor (Gmail history id / Graph delta) never advanced, so the next cycle refetched the same messages, hit the same AI failure, and the mailbox stalled indefinitely.
 
@@ -3875,7 +3875,7 @@ This behavior is forward-only and applies only to live `email_sync` and
 assignment only for individual mailboxes; company-mailbox import rows remain
 outside the live atomic path. Nothing bulk-assigns, prompts, or rewrites
 historical company-mailbox leads. Source:
-`ops-web/supabase/migrations/20260723191000_company_mailbox_intake_owner.sql`.
+`ops-web/supabase/migrations/20260723214524_company_mailbox_intake_owner.sql`.
 
 ### Task Reschedule → Push (cross-client, both origins)
 
@@ -7899,7 +7899,7 @@ The production Web lead-detail surface displays the current assignee and exposes
 
 Assignment changes invalidate actor/scope-keyed lead and aggregate caches and are replayable through durable realtime events. Canonical role, role-permission, user-override, user-admin, and company-admin changes enqueue one recipient-only `user_permission_change_deliveries` row per user/transaction. An open web session synchronously clears lead and email caches and closes lead-backed surfaces before refreshing its permission store. The new assignee receives one deduplicated in-app notification (and push when enabled); the former assignee receives no user-facing notification and their now-inaccessible cached lead is purged. Manual self-assignment is silent. If a conversion succeeds but the actor cannot view the resulting project, the client treats it as committed success without exposing the project identity, navigating to it, or retrying conversion.
 
-Primary implementation sources: `ops-web/supabase/migrations/20260715160000_lead_assignment_foundation.sql`, `20260715160500_lead_assignment_scoped_rls.sql`, `20260715160700_lead_assignment_child_scope.sql`, `20260715161500_lead_assignment_realtime_fanout.sql`, `20260715161600_lead_assignment_delivery_worker.sql`, `20260715180900_internal_spec_permission_guard.sql`, `20260715181000_lead_assignment_operator_activation.sql`, and `20260723191000_company_mailbox_intake_owner.sql`; `ops-web/src/lib/permissions/lead-access-policy.ts`; `ops-web/src/lib/api/services/lead-assignment-service.ts`; `ops-web/src/lib/api/services/unassigned-lead-assignment-delivery-service.ts`; `ops-web/src/lib/hooks/use-lead-assignment.ts`; and the iOS lead assignment repository/detail-view integration under `ops-ios/OPS/`.
+Primary implementation sources: `ops-web/supabase/migrations/20260715160000_lead_assignment_foundation.sql`, `20260715160500_lead_assignment_scoped_rls.sql`, `20260715160700_lead_assignment_child_scope.sql`, `20260715161500_lead_assignment_realtime_fanout.sql`, `20260715161600_lead_assignment_delivery_worker.sql`, `20260715180900_internal_spec_permission_guard.sql`, `20260715181000_lead_assignment_operator_activation.sql`, and `20260723214524_company_mailbox_intake_owner.sql`; `ops-web/src/lib/permissions/lead-access-policy.ts`; `ops-web/src/lib/api/services/lead-assignment-service.ts`; `ops-web/src/lib/api/services/unassigned-lead-assignment-delivery-service.ts`; `ops-web/src/lib/hooks/use-lead-assignment.ts`; and the iOS lead assignment repository/detail-view integration under `ops-ios/OPS/`.
 
 ---
 

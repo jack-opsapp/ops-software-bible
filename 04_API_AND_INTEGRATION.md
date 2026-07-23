@@ -2103,7 +2103,7 @@ locks the company and mailbox, reauthorizes the active actor, validates the
 same-company eligible target, and compares the expected owner. A stale
 expectation returns HTTP 409; generic `email_connections` updates do not write
 the owner field. Source:
-`ops-web/supabase/migrations/20260723191000_company_mailbox_intake_owner.sql`
+`ops-web/supabase/migrations/20260723214524_company_mailbox_intake_owner.sql`
 and `ops-web/src/app/api/integrations/email/connection/route.ts`.
 
 #### Atomic live company-mailbox creation and fallback delivery

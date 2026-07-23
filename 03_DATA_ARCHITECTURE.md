@@ -4172,8 +4172,8 @@ These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AN
 - **Migration 036** added: `agent_memories` (with pgvector), `agent_knowledge_graph`, `agent_writing_profiles`.
 - **Migration 037-040** (Phase C Memory Bank): `graph_entities` table, entity FK columns on `agent_knowledge_graph` (source_entity_id, target_entity_id, link_type), `profile_type` on `agent_writing_profiles` (new unique constraint), `entity_id`/`valid_from`/`valid_to` on `agent_memories`.
 - **Email compose/auto-send migrations**: New columns on `activities` (to_emails, cc_emails, body_text, has_attachments, attachment_count), new columns on `opportunities` (stage_manually_set, ai_summary), new JSONB column on `email_connections` (auto_send_settings), new tables `email_templates`, `ai_draft_history`, `pending_auto_sends`.
-- **Migration `20260723190000_email_threads_lead_scan_pending.sql`** adds the nullable positive deferral marker `email_threads.lead_scan_pending_at` plus a partial drain index. It marks only unmatched threads whose lead scan was skipped during an AI-provider outage; `opportunity_id IS NULL` alone never means a scan is pending.
-- **Migration `20260723191000_company_mailbox_intake_owner.sql`** adds the guarded company-mailbox owner FK/index, immutable `company_mailbox_default` assignment source, one service-role atomic live create-and-disposition RPC, and the fully private `unassigned_lead_assignment_deliveries` outbox plus service-only lease RPCs. It is forward-only: existing connection owners remain null, existing opportunity source-key rows are returned unchanged, and no historical opportunity is scanned or changed.
+- **Migration `20260723214306_email_threads_lead_scan_pending.sql`** adds the nullable positive deferral marker `email_threads.lead_scan_pending_at` plus a partial drain index. It marks only unmatched threads whose lead scan was skipped during an AI-provider outage; `opportunity_id IS NULL` alone never means a scan is pending.
+- **Migration `20260723214524_company_mailbox_intake_owner.sql`** adds the guarded company-mailbox owner FK/index, immutable `company_mailbox_default` assignment source, one service-role atomic live create-and-disposition RPC, and the fully private `unassigned_lead_assignment_deliveries` outbox plus service-only lease RPCs. It is forward-only: existing connection owners remain null, existing opportunity source-key rows are returned unchanged, and no historical opportunity is scanned or changed.
 
 ### email_connections
 
@@ -4272,7 +4272,7 @@ An existing `(company_id, source_thread_key)` winner is returned unchanged and
 never becomes a retry-time assignment or prompt backfill. Historical wizard
 import retains automatic assignment only for individual mailboxes.
 
-Source: `migrations/20260723191000_company_mailbox_intake_owner.sql`.
+Source: `migrations/20260723214524_company_mailbox_intake_owner.sql`.
 
 ### gmail_scan_jobs
 
