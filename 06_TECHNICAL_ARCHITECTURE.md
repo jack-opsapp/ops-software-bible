@@ -188,7 +188,6 @@ ops-ios/OPS/
 │   │   ├── PhotoProcessor.swift         # @MainActor adaptive photo uploads (WiFi 3 concurrent, cellular 1) — moves to PhotoActor in Phase 3
 │   │   ├── BackgroundSyncScheduler.swift  # BGTaskScheduler wrapper (refresh 15min, processing 30min)
 │   │   ├── SyncTypes.swift              # Shared enums (SyncError, ConnectionState, SyncEntityType — 27 registered, 12 inbound-synced)
-│   │   ├── SyncStatusProvider.swift     # UI state bridge for sync indicators
 │   │   └── SupabaseSyncManager.swift    # Legacy adapter (retained for entity fetch methods not yet migrated)
 │   ├── Services/ (1 file)
 │   │   └── AppMessageService.swift
