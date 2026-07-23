@@ -4653,18 +4653,58 @@ ALTER TABLE opportunities ADD COLUMN ai_summary TEXT;
 
 These columns are used by the sync engine's correspondence-count stage rules (free tier) and AI stage evaluation (gated tier).
 
-**Chase-system columns (iOS Leads redesign, migration `leads_chase_handled_at_and_summary_stamp`, 2026-07-18):**
+**Chase-system columns (iOS Leads redesign; migrations `leads_chase_handled_at_and_summary_stamp`, 2026-07-18, and `20260723070000_add_opportunity_action_required_at.sql`, 2026-07-23):**
 
 ```sql
 ALTER TABLE public.opportunities
   ADD COLUMN IF NOT EXISTS handled_at timestamptz NULL,
   ADD COLUMN IF NOT EXISTS ai_summary_updated_at timestamptz NULL;
+
+ALTER TABLE public.opportunities
+  ADD COLUMN IF NOT EXISTS operator_action_required_at timestamptz NULL;
 ```
 
-- `handled_at`: The operator's "handled — their move now" declaration. A lead is **YOUR MOVE** only while `stage != 'new_lead' AND last_message_direction = 'in' AND (handled_at IS NULL OR last_inbound_at > handled_at)` — a newer inbound after a flip re-arms the lead automatically, no cron. iOS writes it via the card/detail HANDLED ✓ action (one PATCH that also sets `next_follow_up_at` to the comeback date: default now+3d, a sooner FUTURE follow-up is kept, past-due dates always replaced). Web writes + triage parity is a filed handoff (`ops-web docs/plans/2026-07-17-leads-chase-parity-handoff.md`).
+- `handled_at`: The operator's manual **WAITING** declaration ("handled — their move now"). iOS writes it via the card/detail HANDLED ✓ action (one PATCH that also sets `next_follow_up_at` to the comeback date: default now+3d, a sooner FUTURE follow-up is kept, past-due dates always replaced). The lead card's fact-only TEXT and EMAIL quick touches atomically advance `handled_at` while logging their outbound activity, so a successful touch immediately becomes **WAITING** even before any correspondence sync updates `last_outbound_at`.
+- `operator_action_required_at`: The operator's manual **YOUR MOVE** correction. iOS writes it from the WAITING card/detail `ADJUST` sheet. It does not rewrite `last_message_direction`, erase `handled_at`, or modify correspondence timestamps; a later real correspondence event or later HANDLED action supersedes it.
+- `private.stamp_opportunity_chase_events()` is a `BEFORE UPDATE` trigger for `handled_at` and `operator_action_required_at`. A client sends a non-null change sentinel, the trigger replaces it with millisecond-precision `statement_timestamp()`, and the client applies the authoritative returned opportunity row. Manual ownership ordering therefore uses the database clock, not a potentially skewed device clock.
+- A quick TEXT/EMAIL is one atomic database action through `public.log_opportunity_quick_touch(...)`: activity creation, ownership advancement, and the exact undo receipt either all commit or all roll back.
 - `ai_summary_updated_at`: Freshness stamp for `ai_summary`. All three web summary writers set it whenever they write `ai_summary` (import seed, sync engine, activity-driven refresh — shipped 2026-07-21); clients render the "UPDATED 2D AGO" stamp only when present. It is also the staleness anchor for the activity-driven refresh cron: rows with a summary but a NULL stamp (pre-stamp legacy seeds) are treated as stale and heal on the first enabled sweep.
-- `activities.type` gained the value `'text_message'` (no DDL — the column is unconstrained text and the web enum already defined `TextMessage`). iOS logs it from the card's do-and-stamp TEXT quick action and the unified log sheet's TEXT chip.
+- `activities.type` gained the values `'text_message'` and `'email_compose'` (no DDL — the column is unconstrained text). iOS logs `email_compose` when it launches the local Mail composer because that action has no provider mailbox, message, or thread identity. Provider-backed `'email'` remains reserved for correspondence ingested with those provider identifiers; this boundary prevents a local composer launch from masquerading as a delivered or synced email.
 - RLS note: `email_attachments` gained the additive policy `email_attachments_lead_files_select` (`attribution_status = 'attributed' AND opportunity_id IS NOT NULL AND private.current_user_can_view_opportunity(opportunity_id)`) — the pre-existing SELECT policy keys off a `company_id` JWT claim the iOS Firebase bridge does not carry, so iOS lead-file reads returned zero rows. Web service-role reads are unaffected.
+
+**Chase ownership resolution (2026-07-23):**
+
+Resolve `OVERDUE` and `DUE TODAY` first. If neither date bucket applies, `stage = 'new_lead'` remains `FRESH`. Only then do clients compare the newest ownership signal on each side:
+
+- **YOUR MOVE:** `last_inbound_at` and `operator_action_required_at`.
+- **WAITING:** `last_outbound_at` and `handled_at`.
+
+The side with the newest timestamp wins. Exact timestamp ties resolve deterministically:
+
+1. `operator_action_required_at` wins any tie, including a tie with `handled_at`; the explicit operator correction is **YOUR MOVE**.
+2. Without an operator-action correction at that timestamp, `handled_at` beats `last_inbound_at`; the explicit handled declaration is **WAITING**.
+3. A pure `last_inbound_at` / `last_outbound_at` tie uses `last_message_direction`. Direction `'in'` is **YOUR MOVE**; `'out'`, NULL, and unrecognized values default safely to **WAITING**.
+
+When none of the four timestamp signals is present, preserve the legacy direction fallback: `last_message_direction = 'in'` is **YOUR MOVE** and every other value is **WAITING**. Newer signals naturally supersede older manual corrections; no clearing mutation or cron is required.
+
+**Atomic quick-touch and undo contract (2026-07-23):**
+
+`public.log_opportunity_quick_touch(p_request_id, p_opportunity_id, p_type, p_subject)` is the authenticated, four-argument `SECURITY DEFINER` boundary for the card's TEXT and EMAIL quick actions. The client generates a UUID request ID and may safely retry that same request. In one transaction the RPC:
+
+1. authorizes an active company operator with edit access to the opportunity;
+2. advances `handled_at` to the authoritative server-stamped **THEIR MOVE** marker;
+3. inserts one outbound `text_message` or `email_compose` activity; and
+4. records the exact before/after lineage in `private.opportunity_quick_touch_undo`.
+
+The request ID is idempotent and payload-bound. An exact retry by the same actor returns the original activity and current opportunity without duplicating the touch. Reusing it for a different actor, company, opportunity, type, subject, direction, or after undo is rejected.
+
+`private.opportunity_quick_touch_undo` is a server-only durable receipt table keyed by request ID, with a unique activity ID, opportunity/company/actor lineage, the touch's `handled_at`, the exact prior `handled_at`, and `undone_at`. It intentionally has no activity foreign key: deleting the activity leaves a tombstone that makes undo replay idempotent and prevents the original log request from being replayed into a second activity. Restrictive activity UPDATE/DELETE policies protect token-backed rows from direct authenticated mutation while their receipt is active. Trusted reparent/delete triggers consume the receipt so a moved or externally removed activity can never restore chase state on the wrong lead.
+
+Both RPCs take locks in the canonical company → opportunity → user → activity → receipt order. The order is shared with lead-assignment writers and prevents concurrent retries, undo, user deactivation, and activity mutation from deadlocking or bypassing the post-lock authorization check.
+
+`public.undo_opportunity_quick_touch(p_activity_id, p_opportunity_id)` is the authenticated, two-argument `SECURITY DEFINER` reversal boundary. It locks and validates the durable receipt, rejects out-of-order undo when the opportunity's current `handled_at` no longer equals that touch's marker, removes exactly that activity, tombstones the receipt, and restores the receipt's exact prior `handled_at`. It does not synthesize a new `operator_action_required_at` and does not rewrite `last_inbound_at`, `last_outbound_at`, or an existing operator correction, so newer correspondence and manual ownership signals remain authoritative. Repeating a completed undo is idempotent and returns the current opportunity.
+
+iOS keeps the successful quick touch's UNDO toast visible until manual dismissal. Launching Messages or Mail may background OPS, but returning to the app preserves the same undo action so the operator can reverse the atomic touch after completing or cancelling the external composer.
 
 ### Note: companies.industry Column
 
