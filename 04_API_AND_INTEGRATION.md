@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: July 2, 2026
+**Last Updated**: July 23, 2026
 **iOS Reference**: `OPS/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -1992,6 +1992,26 @@ Gmail push notifications require the Pub/Sub topic and the Gmail OAuth client to
 | Service calls | `EmailService.getConnection()`, provider `sendMessage()`, `OpportunityService.createActivity()`, `EmailMatchingServiceV2.match()` |
 
 **Behavior:** When `format="markdown"`, converts `**bold**`, `*italic*`, `[link](url)` to HTML via `markdownToEmailHtml()` before sending. Creates an outbound activity record with `body_text`, `to_emails`, `cc_emails`, `has_attachments`. Updates opportunity correspondence counts if `opportunityId` is provided. Links thread via `opportunity_email_threads` upsert. Applies "OPS Pipeline" label to the thread (non-fatal if label application fails). Gmail: RFC 2822 encoding with `In-Reply-To` + `References` headers for threading. M365: Graph API `/createReply` for threading, `/sendMail` for new emails.
+
+### 16a. POST `/api/leads/:opportunityId/follow-up` (2026-07-23)
+
+**Purpose:** Sends the standardized operator-triggered lead follow-up from the iOS Due/Overdue chase control without allowing the client to author transport facts.
+
+| Field | Value |
+|-------|-------|
+| Auth | Firebase bearer token resolved to the canonical active OPS actor; requires effective lead-send access (`pipeline.edit` and `inbox.send`) for the selected opportunity/thread/mailbox |
+| Request body | `{ idempotencyKey: string }`, where the key is a UUID; this is the only supported client-authored field |
+| Success response | HTTP 200 with `{ ok: true, delivered: true, reconciliationPending: false, intentId, messageId, threadId, sentAt, opportunityId, outcomeAppliedAt, notificationId, comebackAt, opportunity? }`; `comebackAt` is nullable when newer lifecycle truth won |
+| Nonterminal response | HTTP 202 with the durable `intentId` plus `delivered`, `reconciliationPending`, and `deliveryUnknown`; this is not permission to advance local lead state |
+| Primary sources | `ops-web/src/app/api/leads/[opportunityId]/follow-up/route.ts`; `ops-web/src/lib/api/services/lead-follow-up-send-service.ts`; `ops-web/src/lib/api/services/email-send-reconciliation-service.ts`; `ops-ios/OPS/Services/LeadFollowUpService.swift` |
+
+The server derives the actor, company, opportunity, active connected mailbox, canonical linked provider thread, recipient, subject/body template, effective signature, source correspondence event, and reply headers. It does not accept a client-supplied company id, user id, mailbox id, thread id, recipient, subject, or body. The lead must be active, unconverted, in `quoted`, `follow_up`, or `negotiation`, due on or before today in the company's valid IANA timezone, have a contact email, and have one unambiguous existing provider thread linked to it. The provider thread is checked during preflight and again inside the mailbox lease immediately before provider delivery. Its newest message must still be the same OPS outbound from the pinned connection address or configured sender alias, and the lead contact must be a participant. Missing, ambiguous, stale, inbound-newest, cross-thread, cross-mailbox, or changed conversation state fails closed; the shortcut never starts a new provider thread.
+
+The reply retains the live provider conversation subject so Gmail/M365 keep it in the existing thread. Its body uses `lead_lifecycle_settings.follow_up_template_body` when configured, otherwise `Hi {{first_name}}, just checking in to see if you had any questions about the quote. No pressure — I wanted to make sure you had everything you needed.` Template placeholders are rendered server-side and the effective mailbox signature is appended once.
+
+The UUID is persisted on-device by company + actor + opportunity + chase cycle and binds to the durable `email_send_intents` record. Authentication changes, permission failures, timeouts, unavailable provider state, provider acceptance, and incomplete reconciliation retain the same UUID. A new UUID is created only after canonical handled/outbound progress proves that a later due cycle has begun. After ordinary provider-send reconciliation, the route calls the service-role-only `reconcile_operator_template_follow_up_send_as_system(intent_id)` from migration `20260723233000_operator_one_tap_lead_follow_up.sql`. That transaction marks the bound draft sent, advances only still-current lifecycle/chase state, creates one deduplicated `lead_follow_up_sent` notification, and stores the immutable outcome/optional-comeback/notification receipt on the intent. An exact replay returns that receipt before mutable lead/thread/access state is rebuilt or any second mutation can run.
+
+HTTP 200 is returned only after provider acceptance and both canonical reconciliation layers complete. HTTP 202 means delivery was accepted-but-still-reconciling or cannot yet be proven; iOS keeps the lead in its current bucket and retains the same idempotency key. A definitive provider rejection writes no sent activity and leaves the draft retryable. An opportunity-wide database fence plus the actor/company/cycle-scoped device key prevents a second provider boundary even if the thread, assignment, permission, app process, or network response changes. This endpoint therefore cannot duplicate a provider send merely because the response or a post-send database write failed.
 
 ### 17. GET /api/integrations/email/inbox
 

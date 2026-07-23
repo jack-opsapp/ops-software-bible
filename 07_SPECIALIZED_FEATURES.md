@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** July 7, 2026
+**Last Updated:** July 23, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -4154,6 +4154,24 @@ Hardens the **write contract** for every lead/opportunity lifecycle notification
 - `dedupe_key` is unchanged (`lead_lifecycle:operator_follow_up_miss:<id>`, `lead_lifecycle:destructive_candidate:<id>:<action>`); the id it carries now also lives in `action_url`.
 
 **RPC change.** The thread-classification builder writes through `create_notification_if_new` (the `ON CONFLICT DO NOTHING` dedup RPC). Migration `20260609181500_create_notification_if_new_deep_link_type.sql` drops the 9-arg signature and recreates it with a trailing `p_deep_link_type text default null` that persists the column, re-granting `execute` to `anon, authenticated, service_role`. The new arg defaults to null, so the currently-deployed 9-arg callers (stripe webhook, join-company, data-setup, inventory-deduction) keep resolving to it unchanged. **No backfill** — the ~257 pre-existing rows keep `deep_link_type = NULL` and are already covered by the iOS fallbacks; only new rows get the hardened contract.
+
+### §14.3.6 One-tap lead follow-up sent (`lead_follow_up_sent`, 2026-07-23)
+
+Created only inside the provider-confirmed, replay-safe reconciliation transaction in migration `20260723233000_operator_one_tap_lead_follow_up.sql`. An attempted, rejected, delivery-unknown, or provider-accepted-but-not-yet-reconciled send creates no success notification.
+
+| Field | Value |
+|-------|-------|
+| `type` | `lead_follow_up_sent` |
+| `title` | `Follow-up sent` |
+| `body` | `Next check-in scheduled for <opportunity title>.` when this send still owns chase state; otherwise `Delivered to <opportunity title>. Newer lead activity was kept.`; both fall back to `this lead` and are capped at 140 characters |
+| `deep_link_type` | `lead` |
+| `action_url` | `/pipeline?opportunityId=<opportunity_id>` |
+| `action_label` | `VIEW LEAD` |
+| `persistent` | `false` |
+| `dedupe_key` | `lead-follow-up-sent:<email_send_intent_id>` |
+| Recipient | The canonical actor captured on the provider-send intent |
+
+The partial unique index `notifications_lead_follow_up_sent_dedupe_idx` makes the intent-scoped dedupe permanent, including after the standard notification is read or dismissed. The notification id is also stored in `email_send_intents.follow_up_notification_id`; an exact reconciliation replay returns that receipt and cannot create another row. Web presentation is registered in `NotificationType`, `NOTIF_TYPE_META`, and the dashboard notification widget. iOS routes it through the existing `lead` deep-link contract.
 
 ### §14.4 Email infrastructure (typed React Email)
 
