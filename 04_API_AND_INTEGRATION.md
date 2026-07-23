@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: July 2, 2026
+**Last Updated**: July 23, 2026
 **iOS Reference**: `OPS/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -50,6 +50,7 @@ OPS uses **Supabase (PostgreSQL)** as the primary backend for both the iOS app a
 
 **OPS-Web** (`https://app.opsapp.co`) serves as the API gateway for operations that require server-side secrets, including:
 - Presigned URL generation for S3 image uploads (`/api/uploads/presign`)
+- Atomic, idempotent Share Extension photo filing (`/api/uploads/share-photo`)
 - OneSignal push notification routing (`/api/notifications/send`)
 - Stripe subscription management
 - OPS Decks verified zoning parcel lookup (`/api/decks/zoning/parcel`)
@@ -65,6 +66,7 @@ iOS App (SwiftData)                   OPS Web (Next.js)
     |-- supabase-swift SDK ------------->  Supabase (PostgreSQL + Auth + Realtime)
     |                                      |
     |-- HTTPS --------> app.opsapp.co ----+--- /api/uploads/presign --> AWS S3
+    |                                      +--- /api/uploads/share-photo --> AWS S3 + project filing
     |                                      +--- /api/notifications/send --> OneSignal
     |                                      +--- /api/stripe/* --> Stripe
     |                                      +--- /api/decks/zoning/parcel --> Verified zoning cache
@@ -87,7 +89,8 @@ iOS App (SwiftData)                   OPS Web (Next.js)
 2. The ID token is passed to Supabase Auth via `signInWithIdToken`
 3. Supabase creates or matches a user, returns a session JWT
 4. All subsequent Supabase requests use the session JWT automatically (anon key + RLS)
-5. Server-side API calls to OPS-Web pass the Supabase `accessToken` as `Bearer` header
+5. Most server-side API calls to OPS-Web pass the Supabase `accessToken` as the `Bearer` header.
+6. `/api/uploads/share-photo` is an intentional exception: both Share Extension paths use a Firebase ID token. OPS-Web verifies it, then resolves the OPS user through `users.auth_id` / `users.firebase_uid` before applying the company and permission boundary.
 
 ### OPS Decks Zoning Parcel Lookup
 
@@ -836,6 +839,33 @@ Singleton `@MainActor` class. Upload flow is unchanged:
 - Project images: `projects/{companyId}/{projectId}`
 - Profile images: `profiles/{companyId}`
 - Company logos: `logos/{companyId}`
+
+### "Add to OPS" Share-Extension Upload (reliability hardening 2026-07-23)
+
+**Sources:** `ops-web/src/app/api/uploads/share-photo/route.ts`, `ops-ios/Shared/SharePhotoEndpoint.swift`, `ops-ios/OPSShareExtension/ShareBackgroundUploader.swift`, and `ops-ios/OPS/ShareExtension/SharePhotoEndpointUploader.swift`.
+
+This flow is deliberately separate from `PresignedURLUploadService`. The extension and the app-side recovery drain send the same raw-file request:
+
+```http
+POST https://app.opsapp.co/api/uploads/share-photo?projectId={projectUUID}&jobId={jobUUID}&takenAt={ISO8601}
+Authorization: Bearer {firebase_id_token}
+Content-Type: image/jpeg
+
+{raw JPEG bytes}
+```
+
+`projectId` and `jobId` must be UUIDs. The endpoint accepts at most 15 MiB, resolves the authenticated OPS user and company, confirms that the project belongs to that company, and re-checks `projects.edit`; the extension's cached picker permission is never trusted as server authorization.
+
+`jobId` is the idempotency key. The server stores the bytes at the deterministic key `projects/{companyId}/{projectId}/share-{jobId}.jpg`, attaches the resulting public URL to both `projects.project_images` and `project_photos` (`source = in_progress`, `uploaded_by` = authenticated OPS user, `taken_at` = the request timestamp), creates one deduped uploader-facing `photo_uploaded` completion notification per project burst, and returns `{ success: true, url }`. Replaying the same share request addresses the same storage object and filing operation.
+
+**Cross-process durability:**
+
+1. The extension downscales every selected image, writes all JPEGs to the App Group inbox, then appends the complete job batch to the file-coordinated manifest in one mutation.
+2. If any selected image fails to stage, or the manifest cannot be written and read back completely, the extension removes the staged subset and shows failure. It reports success only after every selected JPEG and manifest row is durable.
+3. With a usable bridged token, the extension starts a best-effort background POST. The durable manifest remains the guaranteed recovery path.
+4. A running app drains immediately after the Darwin notification; otherwise it drains on launch, foreground, or restored connectivity. The app obtains a fresh Firebase token and force-refreshes it once after a `401` or `403`, then sends the identical `projectId` / `jobId` / `takenAt` request.
+5. Connectivity, authentication, throttling, and server failures remain queued without consuming the parking budget. Deterministic failures increment the job's attempt count; after 10 failures the job is parked, but its manifest row and JPEG bytes are retained.
+6. Legacy deployed jobs carrying `s3PublicUrl` decode into `uploadedURL` and use `SharePhotoFinalizer` against that exact URL. They are finalized idempotently and never re-uploaded through the deterministic endpoint.
 
 ### Filename Generation
 
