@@ -4653,7 +4653,7 @@ ALTER TABLE opportunities ADD COLUMN ai_summary TEXT;
 
 These columns are used by the sync engine's correspondence-count stage rules (free tier) and AI stage evaluation (gated tier).
 
-**Chase-system columns (iOS Leads redesign; migrations `leads_chase_handled_at_and_summary_stamp`, 2026-07-18, and `20260723070000_add_opportunity_action_required_at.sql`, 2026-07-23):**
+**Chase-system columns (iOS Leads redesign; migrations `leads_chase_handled_at_and_summary_stamp`, 2026-07-18, `20260723174912_add_opportunity_action_required_at.sql`, and `20260723175646_allow_lead_quick_touch_activity_types.sql`, 2026-07-23):**
 
 ```sql
 ALTER TABLE public.opportunities
@@ -4669,7 +4669,7 @@ ALTER TABLE public.opportunities
 - `private.stamp_opportunity_chase_events()` is a `BEFORE UPDATE` trigger for `handled_at` and `operator_action_required_at`. A client sends a non-null change sentinel, the trigger replaces it with millisecond-precision `statement_timestamp()`, and the client applies the authoritative returned opportunity row. Manual ownership ordering therefore uses the database clock, not a potentially skewed device clock.
 - A quick TEXT/EMAIL is one atomic database action through `public.log_opportunity_quick_touch(...)`: activity creation, ownership advancement, and the exact undo receipt either all commit or all roll back.
 - `ai_summary_updated_at`: Freshness stamp for `ai_summary`. All three web summary writers set it whenever they write `ai_summary` (import seed, sync engine, activity-driven refresh — shipped 2026-07-21); clients render the "UPDATED 2D AGO" stamp only when present. It is also the staleness anchor for the activity-driven refresh cron: rows with a summary but a NULL stamp (pre-stamp legacy seeds) are treated as stale and heal on the first enabled sweep.
-- `activities.type` gained the values `'text_message'` and `'email_compose'` (no DDL — the column is unconstrained text). iOS logs `email_compose` when it launches the local Mail composer because that action has no provider mailbox, message, or thread identity. Provider-backed `'email'` remains reserved for correspondence ingested with those provider identifiers; this boundary prevents a local composer launch from masquerading as a delivered or synced email.
+- `activities.type` gained the checked values `'text_message'` and `'email_compose'`. The additive constraint migration preserves every previously accepted activity type, validates the widened check before replacing the old constraint, and leaves no window for invalid new writes. iOS logs `email_compose` when it launches the local Mail composer because that action has no provider mailbox, message, or thread identity. Provider-backed `'email'` remains reserved for correspondence ingested with those provider identifiers; this boundary prevents a local composer launch from masquerading as a delivered or synced email.
 - RLS note: `email_attachments` gained the additive policy `email_attachments_lead_files_select` (`attribution_status = 'attributed' AND opportunity_id IS NOT NULL AND private.current_user_can_view_opportunity(opportunity_id)`) — the pre-existing SELECT policy keys off a `company_id` JWT claim the iOS Firebase bridge does not carry, so iOS lead-file reads returned zero rows. Web service-role reads are unaffected.
 
 **Chase ownership resolution (2026-07-23):**
