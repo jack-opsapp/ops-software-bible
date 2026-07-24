@@ -2570,6 +2570,25 @@ All mutation hooks invalidate `queryKeys.projectNotes.byProject(projectId)` on s
 - `NoteContent` component parses mention syntax and renders `@DisplayName` as styled spans
 - Mention spans styled with `bg-[#417394]/20 text-[#8BB8D4]` (steel blue accent)
 
+### iOS mention editing contract (July 2026)
+
+ProjectDetails supports mention autocomplete while editing both Activity entries and photo-viewer comments. Both edit surfaces use the same full-name / `@All Team` matching and insertion rules as their composers. Mention insertion is selection-aware: it replaces the active query at the caret without dropping suffix text, including multiline and emoji content.
+
+The editor presents friendly text while retaining identity spans over UTF-16 ranges. Picker insertion binds the exact selected teammate even when two active teammates have the same full name; ordinary edits shift intact spans and invalidate touched spans. A teammate actually named “All Team” is shown as `@All Team (person)`, while the reserved group remains `@All Team`. Persistence serializes people as `@[Display Name](<user_uuid>)` and the group as the exact `@[All Team](all-team)` sentinel. Existing web-authored markup is accepted only when its identity agrees with the note's authoritative stored IDs and the active-company roster.
+
+Saving an edit treats the rendered text and mention access as one state change:
+
+- iOS resolves the complete current mention list from the edited text; removing a name removes that user's note access.
+- The local note updates optimistically and the sync queue stores `content` plus the local `mentionedUserIdsString` field guard together.
+- A custom `updateProjectNoteMentions` operation calls `public.update_project_note_mentions`; generic update coalescing is bypassed so immutable event UUIDs and edit order cannot be discarded.
+- Offline edits for one note form an explicit dependency chain. A new note's first mention edit waits for its unresolved create; each dispatch waits for that note's newest queued mention state, while edits to another note remain independent. Deleting a note or explicitly discarding a write retires/reconciles its dependent mention work so no stale delivery or dangling dependency can survive.
+- Every edit queues a dependent `dispatchProjectNoteMentionEvent` operation because only the locked server row can compute the authoritative new-recipient delta. Its HTTP body contains only `eventType = mention_edit` and the persisted event UUID; an event with no new recipients resolves as a successful no-op.
+- The server, not the client, computes the true newly added recipient delta. Retained mentions are not notified again; removed mentions receive nothing; current active same-company membership and the final note mention list are rechecked immediately before delivery.
+- A read/resolved rail item remains the durable identity for retries, and OneSignal receives the same UUID on every accepted retry.
+- Queue persistence is mandatory. If the edit cannot be durably enqueued, the optimistic edit is reverted and the save remains visible as failed; there is no direct-RPC fallback that can bypass ordering.
+
+The direct partial-content update path is not valid for iOS note/comment edits because it leaves `mentioned_user_ids` stale.
+
 ### UI Components
 
 #### NoteCard (`src/components/ops/note-card.tsx`)
@@ -2618,8 +2637,6 @@ The following features are planned but not yet implemented:
 - **Photo caption dialog** -- Add captions to attached photos
 - **Cross-post note photos to project gallery** -- Note photos auto-appear in the project photo gallery
 - **Photo markup** -- Canvas-based annotation with freehand drawing on attached photos
-- **Notification service for @mentions** -- Alert users when they are @mentioned in a note
-- **Edit and delete notes UI** -- Full edit/delete flow (backend supports it, UI wiring pending)
 
 ---
 

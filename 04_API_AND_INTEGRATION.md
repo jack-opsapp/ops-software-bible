@@ -937,34 +937,33 @@ SyncEngine and its processors check `ConnectivityManager.shouldAttemptSync` befo
 
 ### Architecture
 
-Push notifications use a server-side routing pattern:
-1. iOS calls OPS-Web API route: `POST https://app.opsapp.co/api/notifications/send`
-2. OPS-Web forwards the request to OneSignal REST API (server-side, where the OneSignal API key is stored)
-3. OneSignal delivers the push to the target device(s)
+New notification work uses the proof-only OPS-Web dispatcher:
+
+1. The client submits a persisted event identifier to `POST https://app.opsapp.co/api/notifications/dispatch`.
+2. OPS-Web resolves the authenticated actor and company from Firebase identity.
+3. The service-role resolver loads the persisted event, reauthorizes its relationship, derives recipients/copy/navigation server-side, reapplies current active-company and notification-preference filters, and writes the notification rail.
+4. OPS-Web sends the derived push through OneSignal. Durable events reuse one UUID as both rail identity and OneSignal `idempotency_key`.
 
 The iOS app receives pushes via the `OneSignalFramework` SDK, configured in `AppDelegate`.
 
-### Request Format
+`POST /api/notifications/send` is the retired body-trusted proxy. `OneSignalService.swift` still contains legacy wrappers for older call sites, but new code must not send recipient IDs, titles, bodies, or navigation supplied by a client.
+
+### Mention-edit request
 
 ```swift
-POST /api/notifications/send
-Authorization: Bearer {supabase_access_token}
+POST /api/notifications/dispatch
+Authorization: Bearer {firebase_id_token}
 Content-Type: application/json
 
 {
-    "recipientUserIds": ["userId1", "userId2"],
-    "title": "Notification Title",
-    "body": "Notification body text",
-    "data": {
-        "type": "taskAssignment",
-        "taskId": "...",
-        "projectId": "...",
-        "screen": "taskDetails"
-    }
+    "eventType": "mention_edit",
+    "mentionEventId": "<uuid>"
 }
 ```
 
-### 6 Notification Event Types
+The resolver accepts only those two keys. It loads `project_note_mention_events`, verifies actor/company ownership, rejects proofs older than 29 days, confirms the note is still an editable human note, intersects the event's newly added recipients with the note's current mention list, and revalidates active same-company users. The derived rail key is `mention-edit:<uuid>`; push retries reuse the event UUID within OneSignal's 30-day idempotency window. Notification previews humanize canonical mention tokens back to `@Display Name` / `@All Team`, so recipient UUIDs and reserved authority targets never appear in rail or push copy.
+
+### Legacy iOS wrapper methods
 
 | Method | Type | Title | Self-Skip |
 |--------|------|-------|-----------|

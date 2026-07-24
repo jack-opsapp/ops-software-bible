@@ -1843,6 +1843,26 @@ CREATE INDEX idx_project_notes_event_kind
 
 **Read path** — `useProjectActivity` selects `id, content, content_metadata, event_kind, created_at, attachments, mentioned_user_ids, author_id` from `project_notes` ordered by `created_at DESC`, hydrates authors via a follow-up `users` join, and maps each row to a `ProjectActivityEntry` with `kind = event_kind ?? 'note'`. The legacy `activities` table is no longer the primary read source for the workspace timeline.
 
+### `project_note_mention_events` + atomic mention edits (Migration `20260724020000`)
+
+Editing a human-authored project note replaces two authoritative values together: `project_notes.content` and the complete `project_notes.mentioned_user_ids` access list. iOS calls `public.update_project_note_mentions(note_id, content, mentioned_user_ids, event_id)` rather than issuing a direct partial update.
+
+Cross-platform mention content uses canonical persisted tokens: `@[Display Name](<user_uuid>)` for a person and the reserved, exact `@[All Team](all-team)` token for the active-company group. The visible editor renders friendly `@Display Name` copy, but identity is carried separately and serialization restores the canonical token. A UUID embedded in note text is never authority by itself: it must agree with the note's stored mention list and the current active-company roster.
+
+The security-definer RPC:
+
+- locks the note so offline/retried edits serialize;
+- requires the current active same-company user to be the note author;
+- rejects deleted notes and system timeline rows (`event_kind IS NOT NULL`);
+- canonicalizes and deduplicates requested UUIDs in first-seen order, excludes the actor, and rejects inactive or cross-company recipients;
+- computes newly added recipients against the prior authoritative list;
+- updates content and mentions atomically; and
+- records an immutable event for every successful edit, including edits with no newly added recipients.
+
+`project_note_mention_events` stores the raw request for exact replay comparison, before/after snapshots, the server-computed new-recipient delta, actor/project copy snapshots, and the committed note timestamp. Clients cannot read or write the table; only service-role notification resolution can select it. A trigger rejects event updates/deletes. Reusing an event UUID with the exact request returns the stored result without mutating a newer note state; reusing it with different input is rejected.
+
+Mention-edit notification rows use the durable key `mention-edit:<event_uuid>`. The partial unique index on `(user_id, company_id, type, dedupe_key)` is intentionally independent of read/resolved state so a retry cannot create a second rail item.
+
 ### `projects.trade` (Migration `20260507140000_projects_trade`)
 
 Adds an optional trade category enum-as-text to projects so the workspace IdentityTab can scope workflow defaults (task templates, weather alert thresholds, default work hours) to the trade.
