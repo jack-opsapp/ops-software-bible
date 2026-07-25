@@ -2822,6 +2822,8 @@ This subsection records the durable *intent* behind the catalog and its onboardi
 5. Reference existing catalog entities; never duplicate stock.
 6. The catalog models what a company *sells and stocks*, not *when* work happens — recurrence/cadence belongs to scheduling; onboarding routes there rather than absorbing it.
 
+**Supplier identity boundary (OPS-Web Phase C, 2026-07-25).** The general guided-catalog prompt is supplier-neutral. It may not name a manufacturer, expose supplier reference data, or activate a deterministic supplier adapter from model-authored text. A supplier adapter resolves only from the operator's current explicit answer or an already-confirmed supplier fact. An explicit operator selection is persisted as a confirmed fact before the conversation advances; only then is that supplier's verified product/SKU/cost/compatibility reference added to generation and deterministic reconciliation. Uploaded documents remain evidence: raw upload text cannot activate an adapter until the extracted supplier fact is confirmed. This prevents company-specific reference packs (for example DekSmart vinyl) from leaking into unrelated catalog setups.
+
 ### IA — CATALOG tab
 
 ```
