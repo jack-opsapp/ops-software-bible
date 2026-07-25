@@ -3230,12 +3230,17 @@ deleted; `VinylTaskFilter` detection stays). The `VINYL` pill presents
   collect into an `n MARKED · m FAILED` banner whose RETRY reruns only the
   failed subset.
 - **Bulk ORDER wizard** (deck_builder feature + `deck_builder.view` +
-  `projects.edit`): one review page per job — `// COLOR` (catalog variant via
-  the shared `VinylCatalogSelection` helpers, free-text + `USE FIELD CONFIRM`
-  fallback), `// PO` (defaults to project title), `// CUTS` + extracted
-  `VinylCutPreview` roll visualization, collapsed `// LAYOUT` knobs (direction/
-  pattern/roll/seam/wrap session-transient; order mode + roll length persist to
-  `materialsSettings`). Degenerate jobs (no drawing / unconfirmed scale) order
+  `projects.edit`): one review page per job. Progress + project title live in
+  the navigation header; one floating action group owns BACK + CONFIRM. `// COLOR`
+  uses the shared `VinylCatalogSelection` helpers and free text; a blank color
+  confirms as `FIELD CONFIRM` without a dedicated field-confirm button. `// PO`
+  defaults to the project title. `// CUTS` includes full-roll allocations (cuts
+  on each roll, used length, leftover length, and any overlength warning) plus
+  the shared `VinylOrderLayoutWindow`. The layout window opens full screen with
+  direct pan/pinch and floating close/zoom/fit controls. Collapsed `// LAYOUT`
+  knobs cover direction/pattern/roll/seam/wrap; CONFIRM persists the complete
+  `vinylOrderSettings`, while order mode + roll length persist to
+  `materialsSettings`. Degenerate jobs (no drawing / unconfirmed scale) order
   color + PO only, honestly labeled. CONFIRM writes the color pick through to
   the design config exactly like the order sheet.
 - **Consumables + send:** `VinylConsumablesAggregator` (unit-tested) sums
@@ -3394,18 +3399,24 @@ resurrect the order state.
 
 **Full-roll ordering.** A `CUT LIST ⇄ FULL ROLLS` mode (persisted on the design as
 `materialsSettings.orderMode`) lets a crew buy whole rolls instead of an exact cut
-list. `VinylRollPacker.rollsNeeded(stripLengthsFeet:rollLengthFeet:)` — a pure
-first-fit-decreasing bin-packer — packs the plan's purchased strips
-(`plan.surfaces.flatMap(\.purchasedCuts).map { $0.lengthInches / 12 }`) into the
-fewest whole rolls of `fullRollLengthFeet` (a strip never spans two rolls; a strip
-longer than a roll is counted as `overlengthStripCount`, never dropped).
+list. `VinylRollPacker.packingPlan(stripLengthsFeet:rollLengthFeet:)` — a pure,
+deterministic first-fit-decreasing bin-packer — packs the plan's purchased strips
+(`plan.surfaces.flatMap(\.purchasedCuts).map { $0.lengthInches / 12 }`) into whole
+rolls of `fullRollLengthFeet`. Each packed roll retains its cut lengths, used
+length, and leftover length. A strip never spans two rolls; a strip longer than a
+roll is retained in `overlengthStripLengthsFeet`, never dropped.
+`rollsNeeded(stripLengthsFeet:rollLengthFeet:)` remains the aggregate compatibility
+wrapper.
 `DeckMaterialsEngine.compute` emits `rollCount` + `overlengthStripCount` on
 `DeckMaterialsList` in roll mode (both 0 in cut-list mode). The materials card and
 the Vinyl Order sheet show the order line as `N ROLLS @ L' × W"` and keep the
-itemized cut list below as the on-site cutting guide; a `CUT LONGER THAN ROLL`
-banner appears when `overlengthStripCount > 0`. The Vinyl Order sheet's SUMMARY,
-CREATE ORDER + NOTE body, and text-message body express whole rolls in roll mode
-(the catalog line-item quantity stays sq ft — the catalog unit). Roll length
+itemized cut list below as the on-site cutting guide. The standard and bulk Vinyl
+Order sheets show every roll's cuts, used length, and leftover length; a
+`CUT LONGER THAN ROLL` banner appears when `overlengthStripCount > 0`. The Vinyl
+Order sheet's SUMMARY, CREATE ORDER + NOTE body, and text-message body express
+whole rolls in roll mode (the catalog line-item quantity stays sq ft — the catalog
+unit). Both sheets use the shared full-screen, pannable/zoomable
+`VinylOrderLayoutWindow` for the cut layout. Roll length
 (default 75') is distinct from the inventory `receiveRolls` physical-roll default
 (150'); they are not merged. **Order mode is a purchasing choice, never a design
 change** — `DeckMaterialsDriftKey` is geometry-only, so switching modes on an
