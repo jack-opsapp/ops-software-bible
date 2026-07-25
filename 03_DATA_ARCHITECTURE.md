@@ -572,6 +572,17 @@ final class TaskType: Identifiable {
 elsewhere in this document but is outdated). The `dependencies` JSONB column on
 `task_types` stores an array of `TaskTypeDependency` structs (see below).
 
+**Selection versus historical resolution (iOS, 2026-07-24)**: Soft-deleted
+`TaskType` rows remain in the local SwiftData cache so inbound sync can retain
+tombstones and existing tasks can still resolve their original label and color.
+They are not valid new choices. Every task-type picker, filter, suggestion, and
+reassignment list must use `TaskTypeSelectionPolicy` (or the
+`DataController.getSelectableTaskTypes(for:)` wrapper), which requires
+`deletedAt == nil` and the active company id while preserving the caller's
+ordering. Any stored filter selection is intersected with that selectable set
+when options load, preventing a deleted type from remaining as an invisible
+active filter.
+
 #### TaskTypeDependency (JSONB schema)
 
 ```swift
