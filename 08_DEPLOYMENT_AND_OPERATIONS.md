@@ -1,7 +1,7 @@
 # 08 - Deployment and Operations
 
-**Document Version:** 1.2
-**Last Updated:** May 12, 2026
+**Document Version:** 1.3
+**Last Updated:** July 24, 2026
 **Status:** Production Reference
 
 ---
@@ -20,7 +20,8 @@
 10. [Ecosystem Apps Deployment](#ecosystem-apps-deployment)
 11. [Data Migrations](#data-migrations)
 12. [Bubble.io Backend Configuration](#bubbleio-backend-configuration)
-13. [Production Checklist](#production-checklist)
+13. [Production Database Workload Control](#production-database-workload-control-2026-07-24)
+14. [Production Checklist](#production-checklist)
 
 ---
 
@@ -2231,6 +2232,64 @@ static let firstName = "first_name"
 - trialEndDate = trialStartDate + 30 days
 - subscriptionEnd = updated on each successful payment
 - seatGraceStartDate = set on first payment failure
+
+---
+
+## Production Database Workload Control (2026-07-24)
+
+The July 24 production outage was a database resource-contention feedback loop. A Gmail history replay remained pinned behind deterministic model failures, while overlapping scheduled workers continued launching database-heavy work. Sustained RAM and swap pressure degraded disk I/O until Postgres and PostgREST became intermittently unresponsive. A restart restored connections but did not remove the initiating workload.
+
+### Durable workload guard
+
+Migration `20260724203000_cron_workload_controls.sql` (live migration version `20260725010315_cron_workload_controls`) adds the service-only `private.cron_workload_controls` table. Every heavy workload acquires:
+
+- Its own expiring lease and monotonically increasing fence.
+- The singleton `__global_heavy__` lease, preventing different heavy lanes from overlapping.
+- A persistent database-pressure circuit with bounded exponential reopening.
+- An optional durable cursor for bounded sweep continuation.
+
+The public service-role RPC surface is:
+
+- `acquire_cron_workload_lease_as_system`
+- `renew_cron_workload_lease_as_system`
+- `complete_cron_workload_lease_as_system`
+- `read_cron_workload_cursor_as_system`
+- `advance_cron_workload_cursor_as_system`
+
+`ops-web/src/lib/api/services/cron-workload-control-service.ts` owns acquisition retries, fence validation, renewal, completion, and circuit behavior. `cron-workload-error-contract.ts` contains the runtime-neutral database-pressure classifier used by shared services without pulling server-only code into browser bundles. All scheduled OPS-Web routes pass through the shared workload guard; database-heavy company fan-outs and SQL batches are bounded.
+
+### Gmail continuation contract
+
+`/api/cron/email-sync` persists an opaque `ops-email-sync:v1` continuation before derived notifications or model-backed follow-up work. The nested provider cursor is `gmail:v1` for Gmail history pagination. One invocation is limited to 10 provider pages and 25 messages. Lead-summary continuation is limited to one company, 25 opportunities, and five model calls per invocation. Deterministic model-contract or refusal failures defer derived work without pinning the provider cursor.
+
+`/api/cron/email-attachment-worker` is serialized by the `attachment-maintenance` lane. A run claims at most three attachment scans at concurrency one, then at most three inspection jobs at concurrency one. Recovery application finalization must use `public.reparent_opportunity_email_message_guarded` after the matching generation reaches a complete attachment state; never update `private.email_exact_message_recovery_applications` directly.
+
+### Protected database jobs
+
+The migration restores these pg_cron jobs through controlled wrapper functions:
+
+| Job | Schedule (UTC) |
+|---|---|
+| `fire_due_task_reminders_every_5min` | `*/5 * * * *` |
+| `spec_board_snapshot_refresh` | `1-59/10 * * * *` |
+| `crit3-identity-linkage-daily` | `14 8 * * *` |
+| `expense_envelope_sweep_daily` | `24 6 * * *` |
+| `prune_cron_history` | `24 5 * * *` |
+
+The retired `toctou_race_hold_job` is unscheduled. The authenticator role uses `statement_timeout=8s` and `lock_timeout=8s`, preventing client requests from occupying a connection indefinitely.
+
+### Release and recovery order
+
+1. Deploy guard-aware OPS-Web code first. Missing lease RPCs fail closed.
+2. Confirm the exact production Vercel deployment is `READY` with no alias error.
+3. Apply the Supabase workload-control migration.
+4. Read back the control table, RPC signatures, pg_cron commands, role timeouts, and database activity.
+5. Re-enable one mailbox only after the guard is healthy.
+6. Observe cursor progress, clear locks, queue drain, guard success, runtime errors, connection activity, and cache hit rate through multiple cycles.
+
+Manual cron calls are allowed only with the existing production `CRON_SECRET`, without printing it, and must remain sequential. A project restart is emergency recovery only. Do not combine a Postgres major-version upgrade with an active outage. The July 24 recovery moved the Pro project from Nano to Micro compute at no additional compute cost because Supabase bills those sizes equally on Pro.
+
+Production verification on July 25 at 01:25 UTC confirmed deployment `dpl_9JxDswC8Dwahm71PdqhZ7KJZUp27` at commit `50f65de5197faf61c07c876503b8cccff8a9cb1b`, all 22 queued recovery applications drained, all related scan and inspection rows complete, Gmail enabled with a shrinking opaque continuation, zero workload circuit failures, no recorded database-pressure event, and no Vercel runtime error.
 
 ---
 
