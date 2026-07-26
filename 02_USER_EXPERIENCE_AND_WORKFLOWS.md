@@ -1040,6 +1040,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 3. **DayCanvasView** (Horizontal day pager)
    - A 3-page `TabView` with pages `[selectedDate - 1 day, selectedDate, selectedDate + 1 day]`.
    - Swiping left or right advances/retreats `selectedDate` by one day; `pageIndex` snaps back to 1 via a 50ms `DispatchQueue` delay guarded by `isSnappingBack` to prevent loops.
+   - The week-view scroll viewport extends full bleed behind the overlaid global tab bar. Tab-bar clearance belongs inside each day's scroll content so the final card remains reachable without shortening the viewport.
    - Each page is a `DayPageView` containing:
      - **Day header**: day of week, date string, and task count badge
      - **"New" tasks section**: tasks whose `startDate` falls on this day, shown as `CalendarEventCard` rows with staggered entry animation
