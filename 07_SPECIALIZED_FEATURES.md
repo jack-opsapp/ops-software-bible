@@ -2824,6 +2824,8 @@ This subsection records the durable *intent* behind the catalog and its onboardi
 
 **Supplier identity boundary (OPS-Web Phase C, 2026-07-25).** The general guided-catalog prompt is supplier-neutral. It may not name a manufacturer, expose supplier reference data, or activate a deterministic supplier adapter from model-authored text. A supplier adapter resolves only from the operator's current explicit answer or an already-confirmed supplier fact. An explicit operator selection is persisted as a confirmed fact before the conversation advances; only then is that supplier's verified product/SKU/cost/compatibility reference added to generation and deterministic reconciliation. Uploaded documents remain evidence: raw upload text cannot activate an adapter until the extracted supplier fact is confirmed. This prevents company-specific reference packs (for example DekSmart vinyl) from leaking into unrelated catalog setups.
 
+**Review readiness and viewport boundary (OPS-Web Phase C, 2026-07-25).** A supplier-specific review may use verified reference data for structure, but its commercial values must come from confirmed facts tied to the operator's questions—not from model-authored action payloads. Separate customer prices, labor costs, minimum charges, and tax rates remain required inputs; if any are missing, the session stays in the interview and asks for them before producing a review. In the dashboard's fixed-height application frame, the guided setup route owns a bounded vertical scroll region so every review section and approval control remains reachable at supported viewport sizes.
+
 ### IA — CATALOG tab
 
 ```
