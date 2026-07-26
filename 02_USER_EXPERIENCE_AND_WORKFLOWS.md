@@ -746,11 +746,13 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 
 **UI Elements:**
 - **Today's Date** - Large header with current date
-- **Today's Schedule** - List of calendar events for today
+- **Today's Schedule** - Swipeable task-card carousel over the Home map
   - Task title
   - Project name
   - Time range (if specified)
   - Assigned crew avatars
+  - Compact pagination occupies a dedicated lane below the 100pt card; it never overlays the title, client, address, or task badge
+  - Pagination is informational, centers beneath the card, and shows at most five indicators with a distinct selected state
 - **Recent Projects** - Last 5 viewed/edited projects
   - Project card with title, client, status badge
 - **Quick Actions** - Floating action button (+)
