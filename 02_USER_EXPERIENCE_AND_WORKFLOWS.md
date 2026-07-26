@@ -947,6 +947,18 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 - Tap email/phone → iOS native actions
 - Tap team member → User profile (future)
 - Tap task → Task details
+- **Duplicate task (iOS, 2026-07-25):** Long-press a task row and choose
+  `Duplicate Task`. OPS immediately appends and selects a fresh active,
+  unscheduled task. The copy preserves task type/title, notes, color, crew,
+  duration, and explicit dependency overrides (including an explicit empty
+  override). It resets status, dates/times, estimate and line-item provenance,
+  paired-task lineage, schedule lock, deletion state, ID, and creation
+  timestamp. No confirmation sheet is shown. The action requires full
+  `tasks.create` permission and is unavailable through mention-only project
+  access. Source:
+  `ops-ios/OPS/Utilities/ProjectTaskDuplication.swift`,
+  `ops-ios/OPS/Views/Components/Project/ProjectDetailsViewModel.swift`, and
+  `ops-ios/OPS/Views/Components/Project/Tabs/DetailsTabView.swift`.
 - Swipe task → Change status (Field Crew only for assigned tasks)
 - Tap Add Task → Task form sheet (Admin/Office)
 - Tap Add Photos → Camera or photo library
