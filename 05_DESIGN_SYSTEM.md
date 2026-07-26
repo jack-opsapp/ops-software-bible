@@ -1446,6 +1446,19 @@ VStack(alignment: .leading, spacing: 8) {
 }
 ```
 
+#### Keyboard Dismissal (iOS)
+
+Every iOS form surface that can present the software keyboard must expose the
+canonical `DONE` keyboard action through
+`OPS/Styles/Components/StandardSheetToolbar.swift`. Apply
+`.opsKeyboardDoneToolbar()` inside each SwiftUI presentation boundary; a toolbar
+attached below the app root does not propagate into a separately presented
+sheet. The modifier uses OPS typography and color tokens and resigns the active
+first responder without dismissing, clearing, or committing the form.
+
+`ConvertToProjectSheet` owns this modifier directly so its name, address,
+decimal-value, and notes inputs all remain dismissible.
+
 #### Border Visual Hierarchy
 
 **Structural Elements** (Pills, Section Containers):
