@@ -946,7 +946,14 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 - Tap Get Directions → Navigation view
 - Tap email/phone → iOS native actions
 - Tap team member → User profile (future)
-- Tap task → Task details
+- **Tap task (iOS Project Details):** Opens the quick task sheet at its medium
+  detent with identity, status action, dates, and team first. Dragging the sheet
+  to full height reveals a dedicated `DESCRIPTION` card before the selection
+  and cancellation actions. The card renders the complete normalized
+  `project_tasks.task_notes` value without truncation; missing or
+  whitespace-only text renders as `—`. The sheet remains scrollable at both
+  detents. Source:
+  `ops-ios/OPS/Views/Components/Task/TaskDetailPopupSheet.swift`.
 - **Duplicate task (iOS, 2026-07-25):** Long-press a task row and choose
   `Duplicate Task`. OPS immediately appends and selects a fresh active,
   unscheduled task. The copy preserves task type/title, notes, color, crew,
