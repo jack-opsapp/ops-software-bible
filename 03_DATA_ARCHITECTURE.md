@@ -3391,6 +3391,25 @@ var boardMaterial: String = "composite" // composite | pvc | cedar | treated | o
 var isGate: Bool = false                // drives gate component emission
 ```
 
+### Canonical deck-surface topology (schema 10 — added 2026-07-25)
+
+`DeckSurface.boundary` is the canonical persisted region definition for each
+closed deck face. It stores one directed `outerLoop` and zero or more directed
+`holeLoops`; every loop entry is a `DeckBoundaryEdgeReference` containing the
+persisted `edgeId`, `startVertexId`, and `endVertexId`. An edge shared by two
+surfaces is referenced in opposite directions, so one seam remains one graph
+edge while both adjacent regions retain their own winding. `vertexIds` remains
+as a compatibility projection for pre-schema-10 rows.
+
+`DeckSchemaMigration` canonicalizes legacy surface membership against the edge
+graph and stamps `schemaVersion = 10`. Invalid topology is rejected rather than
+silently flattened: loops must close, references must resolve to matching edge
+endpoints, no edge may belong to more than two surfaces, and a shared edge must
+have opposite direction in its two regions. Sources:
+`Packages/DeckKit/Sources/DeckKit/Models/DeckGeometry.swift`,
+`Models/DeckSchemaMigration.swift`, and
+`Engine/DeckSurfaceTopologyEngine.swift` in `ops-decks-ios`.
+
 `DeckEdge.edgeType` is mutually exclusive with the edge-side finish model: `house_edge` carries `houseEdgeMaterial` and no `railingConfig`; `deck_edge` may carry `railingConfig` and clears `houseEdgeMaterial`. Decoders and AR import sanitize legacy payloads that contain both.
 
 Free-text strings, not enums, because companies author option values per Product (`product_option_values.value`). The assignment sheet renders a Picker over the matching axis when the company default Product exposes one bound to `$design.<key>`; otherwise free-text.
