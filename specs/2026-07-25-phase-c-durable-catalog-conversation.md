@@ -36,6 +36,18 @@ persist the normalized conversation on their next successful turn.
   be imported by the production turn service.
 - Future external supplier research must be on-demand, source-attributed,
   session-scoped, and reviewed before it can become a catalog fact.
+- Each turn retrieves only active, catalog-relevant `agent_memories` under the
+  route-resolved company ID. It does not read writing profiles, commitments,
+  client behavior, or the company knowledge graph.
+- Deterministic lexical ranking uses the current question, answer, and confirmed
+  facts. At most 12 bounded entries reach the model; there is no added embedding
+  or research model call.
+- Company knowledge is untrusted background evidence. A fact derived from it
+  remains unresolved with `source.kind=company_knowledge` until the operator
+  confirms it, and unresolved company knowledge blocks review.
+- Retrieval failures do not block the interview. Successful turns store only a
+  query hash, selected memory IDs, categories, and version as provenance; raw
+  memory content is not copied into the guided session.
 - The browser immediately renders an optimistic operator message.
 - While a turn is running, the control is inert and the activity state is
   announced accessibly.
@@ -54,6 +66,7 @@ persist the normalized conversation on their next successful turn.
 ## Implementation references
 
 - `ops-web/src/lib/catalog-setup/phase-c/conversation-history.ts`
+- `ops-web/src/lib/catalog-setup/phase-c/catalog-knowledge-context.ts`
 - `ops-web/src/lib/catalog-setup/phase-c/session-service.ts`
 - `ops-web/src/lib/catalog-setup/phase-c/turn-service.ts`
 - `ops-web/src/components/catalog/setup/guided-catalog-setup.tsx`
