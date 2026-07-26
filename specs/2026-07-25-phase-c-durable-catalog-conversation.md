@@ -27,6 +27,15 @@ persist the normalized conversation on their next successful turn.
 
 ## Runtime contract
 
+- The interview is adaptive and supplier-neutral. Production code contains no
+  company- or supplier-specific setup blueprint.
+- A supplier name is a confirmed session fact, not permission to infer that
+  supplier's catalog. Missing products, SKUs, prices, dimensions, coverage, and
+  compatibility are asked for or extracted from operator-provided evidence.
+- Supplier-shaped acceptance scenarios may exist as test fixtures, but cannot
+  be imported by the production turn service.
+- Future external supplier research must be on-demand, source-attributed,
+  session-scoped, and reviewed before it can become a catalog fact.
 - The browser immediately renders an optimistic operator message.
 - While a turn is running, the control is inert and the activity state is
   announced accessibly.
