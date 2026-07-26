@@ -1448,16 +1448,26 @@ VStack(alignment: .leading, spacing: 8) {
 
 #### Keyboard Dismissal (iOS)
 
-Every iOS form surface that can present the software keyboard must expose the
-canonical `DONE` keyboard action through
-`OPS/Styles/Components/StandardSheetToolbar.swift`. Apply
-`.opsKeyboardDoneToolbar()` inside each SwiftUI presentation boundary; a toolbar
-attached below the app root does not propagate into a separately presented
-sheet. The modifier uses OPS typography and color tokens and resigns the active
-first responder without dismissing, clearing, or committing the form.
+Every software keyboard opened by OPS iOS receives exactly one canonical
+trailing `DONE` action through the app-lifetime coordinator in
+`OPS/Styles/Components/OPSKeyboardDoneAccessory.swift`. `AppDelegate` starts
+the coordinator once at launch. It observes editing activation for
+`UITextField` and `UITextView`, which cover SwiftUI text fields, secure fields,
+search fields, text editors, and direct UIKit inputs on the supported iOS
+target.
 
-`ConvertToProjectSheet` owns this modifier directly so its name, address,
-decimal-value, and notes inputs all remain dismissible.
+The tokenized UIKit input accessory is installed at the input boundary, so it
+applies across root screens, navigation destinations, sheets, full-screen
+covers, and dedicated overlay windows. The accessory weakly retains and
+resigns its exact owning input. `DONE` therefore hides the keyboard without
+dismissing the screen, clearing data, or relying on the active window's
+responder chain.
+
+Generic local `.toolbar(placement: .keyboard)` implementations and
+presentation-scoped dismissal modifiers are forbidden because they can miss
+separate presentation boundaries or stack a duplicate action. Form-specific
+save, cancel, validation, or autosave behavior belongs on the form's normal
+focus-loss path.
 
 #### Border Visual Hierarchy
 
