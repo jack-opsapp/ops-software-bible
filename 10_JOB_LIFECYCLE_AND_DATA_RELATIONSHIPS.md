@@ -2426,7 +2426,8 @@ When emails are imported or synced, each is matched against existing clients via
 7. Client matching & sub-contact resolution (5-tier cascade)
 
 8. Apply labels
-   └── New lead/activity → apply "OPS Pipeline" label/category
+   └── New lead/activity → durably queue the exact-message
+       "OPS Pipeline" label/category write before provider access
 
 9. Create/update OPS records
    ├── New lead → create Client + Opportunity + Activity
@@ -2442,6 +2443,43 @@ When emails are imported or synced, each is matched against existing clients via
 
 12. Update lastSyncHistoryId
 ```
+
+### Cursor-safe deferred recovery (production 2026-07-27)
+
+Classification and pipeline-label recovery are exact-message work, not
+thread-wide guesses. The service-only `email_ingestion_recovery_queue` records
+the company, active mailbox connection, provider thread, provider message,
+recovery kind, and stable operation key before the sync cursor may pass that
+work. Forwarded contact forms participate even though their source-bound
+message scope deliberately does not create an opportunity-thread relationship.
+
+The email-sync cron claims only work for its current active-subscription company
+set. Each retry then acquires the physical-mailbox lease and reauthorizes the
+current active, sync-enabled connection immediately before provider access.
+Classification fetches the surrounding provider thread for context but replays
+only the queued inbound message through the canonical ingestion path. Pipeline
+labeling is idempotent per exact message and current label id, because Gmail
+does not guarantee that a label already present on earlier thread messages will
+appear on a newly arriving message.
+
+Success and failure writes are holder/lease fenced. Failures use bounded
+exponential backoff and become explicit terminal records after eight attempts;
+they are never reported as success, and an undurable intent or completion holds
+the mailbox cursor. Existing provider-message deduplication, immutable lead and
+thread ownership, manual classification overrides, authorization gates, and
+source-bound contact-form routing remain unchanged.
+
+Assignment-triggered contact-form drafting is scheduled in the ten-minute lead
+assignment delivery lane rather than behind attachment/photo maintenance. A
+retry must still prove the current assignment, assignee permissions, mailbox,
+contact-form source, writing profile, and absence of an existing OPS/provider
+draft. Operator escalations and insufficient verified writing examples are
+terminal safety holds; transient empty/refused/model-unavailable results retain
+the existing durable job and retry under its lease/backoff contract.
+
+Migration `20260727043334_email_ingestion_recovery_queue` is live before the
+compatible application commit `ee3d43db`. The normal path creates no historical
+backfill and performs no unsolicited Gmail, draft, or lead-row repair.
 
 ### Smart Pipeline Staging
 

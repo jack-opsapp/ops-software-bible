@@ -5596,6 +5596,55 @@ Inbox v2 is a **cache-first** design (Superhuman/Fyxer model): the inbox list is
 
 3. **Historical Gmail/M365 backfill** (`POST /api/inbox/backfill`, endpoint added 2026-04-20) — the missing Superhuman-style "on-connect full sync". Walks the provider's full mailbox via the new `EmailProviderInterface.listThreadIds({ pageSize, after, pageToken })` method — Gmail implementation uses `/messages?q=in:anywhere after:<epoch>` with `nextPageToken`, M365 uses `/me/messages?$select=conversationId&$orderby=receivedDateTime desc` with `@odata.nextLink`. For each thread not already cached, the endpoint pulls full content via `provider.fetchThread` and runs every message through `EmailThreadService.upsertFromEmail`. One call = one list page, processed end-to-end; clients loop until `completed: true`. Verified at 200–300 threads / ~100s per call — safe inside Vercel's 300 s limit on mailboxes up to a few thousand unseen threads. Classification is off by default; backfilled threads land as `OTHER` and get classified on the next inbound message or via explicit reclassify.
 
+### Exact-message ingestion recovery (production 2026-07-27)
+
+**Implementation:** additive service-only migration
+`ops-web/supabase/migrations/20260727043334_email_ingestion_recovery_queue.sql`,
+worker `src/lib/api/services/email-ingestion-recovery-worker.ts`, and
+`SyncEngine.retryPendingIngestionRecovery`. Production app commit:
+`ee3d43db`.
+
+The earlier thread-level classification marker remains a compatibility
+projection, but it is not recovery authority. Before the sync cursor may pass
+an inbound message whose lead classification is deferred, OPS persists a
+recovery item keyed to the exact mailbox connection and provider message. This
+includes forwarded contact-form submissions, which are intentionally
+message-scoped and may not own an `email_threads` row. A retry fetches the
+provider thread for context but processes only the queued inbound message
+through the canonical ingestion path; it never substitutes the newest message
+in the thread.
+
+The same queue records the exact provider label write before the external
+mutation. Gmail thread labels are not future-message inheritance: a later
+inbound message can arrive without the label even when earlier messages in the
+thread have it. Label recovery is therefore idempotent per
+`connection + message + current label id`, not per thread. A provider failure
+persists bounded exponential retry state instead of being logged and forgotten.
+If OPS cannot durably record the intent or the successful completion, the sync
+cursor holds.
+
+Batch claim, direct claim, reauthorization, completion, and failure are
+service-role-only and lease-fenced. Claims are limited to the cron's current
+active-subscription company set and an active, sync-enabled current connection.
+The worker rechecks the same company/connection/recovery tuple under the
+physical-mailbox sync lease immediately before provider access. Label work also
+rechecks the current configured pipeline label. Manual lead/category overrides,
+immutable thread ownership, exact provider-message activity deduplication, and
+the existing contact-form source boundary remain authoritative.
+
+Assignment-dependent contact-form drafting runs in the ten-minute
+lead-assignment delivery lane, after the assignment outboxes, with a bounded
+batch of three. A deterministic safety hold (operator escalation or
+insufficient verified writing examples) remains terminal. Empty, malformed,
+refused, or temporarily unavailable model output is retryable through the
+existing assignment-draft job lease and backoff contract; every attempt
+rechecks the current assignment, actor, connection, source scope, writing
+profile, and duplicate-draft state before a provider draft may be created.
+
+The production rollout is forward-only and creates no automatic historical
+recovery items. Historical Gmail, draft, or lead repair requires separate
+explicit authorization and must use the same exact-identity and safety gates.
+
 ### Primary categories (exactly one per thread)
 
 Twelve values, enforced by the `email_threads.primary_category` CHECK constraint (post `20260428061836_collapse_lead_client_to_customer`). The legacy `LEAD` + `CLIENT` values were collapsed into `CUSTOMER` in that migration and were dropped from the TypeScript union 2026-05-12 (commit `ce91e96c`).
