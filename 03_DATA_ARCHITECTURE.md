@@ -4799,6 +4799,60 @@ CREATE INDEX idx_corrections_company_domain
   WHERE sender_domain IS NOT NULL;
 ```
 
+### Phase C lead-disposition feedback (local implementation; not live)
+
+Migration `ops-web/supabase/migrations/20260727193418_phase_c_lead_disposition_feedback.sql`
+adds the authoritative correction contract shared by iOS and email ingestion.
+It is additive and forward-only. As of 2026-07-27 it exists in the local
+feature worktree only: it has **not** been applied to production, and no
+historical lead is reinterpreted or backfilled.
+
+`lead_disposition_feedback` is append-only correction history. Each row binds
+the company, opportunity, authenticated actor, structured reason, canonical
+outcome, active/retracted learning state, prior and applied lifecycle state,
+source mailbox/thread/message keys when unambiguous, sender/domain evidence,
+model/policy context, and apply/undo idempotency keys. Optional context is
+limited to 500 characters and is audit-only; classifier reads deliberately
+exclude it. Direct insert/update/delete is revoked. Authenticated users may
+read only feedback for opportunities they can view, while all mutations cross
+actor-authorized `SECURITY DEFINER` RPCs.
+
+`lead_classification_reviews` is the service-only durable hold for a future
+inbound message whose structured feedback prior makes the lead decision
+ambiguous. It stores exact company/connection/provider identities, bounded
+scores, structured evidence, and pending/resolved state—never message content
+or operator notes. The unique
+`(company_id, connection_id, provider_message_id)` key makes a retry converge
+on the same hold instead of creating another review.
+
+The mutation RPCs are:
+
+- `get_lead_disposition_context(opportunity_id)` — proves the actor can edit
+  the lead and returns the authoritative live Phase C gate plus policy version.
+- `apply_lead_disposition_feedback(...)` — locks the opportunity and
+  idempotency key, validates the actor/company/gate/reason, writes disposition,
+  lifecycle transition, and feedback in one transaction, and rejects terminal
+  or already-merged leads.
+- `undo_lead_disposition_feedback(...)` — restores the exact prior lifecycle
+  and disposition state and retracts the learning row in one transaction.
+  Undo is idempotent and fails closed if a later edit changed the lead.
+
+Canonical reason mapping:
+
+| Structured reason | Lifecycle outcome | Learning polarity |
+|---|---|---|
+| spam, job applicant, vendor sales, internal, platform notification, test traffic | `discarded` | negative |
+| not a fit | `lost` with `disqualified` disposition | positive genuine-inquiry evidence |
+| duplicate | no lifecycle rewrite; duplicate review | neutral |
+| other | no lifecycle rewrite; human review | neutral |
+| legacy unspecified (Phase C disabled only) | existing `discarded` behavior | neutral |
+
+Source evidence is conservative. The RPC prefers the opportunity's exact
+provider thread key. Without one, it records an email-thread identity only
+when exactly one company-scoped linked candidate exists; ambiguous historical
+links never become arbitrary learning evidence. Exact provider IDs gain exact
+prior authority only inside that recorded mailbox connection.
+
 ### Column additions (migration 071)
 
 ```sql

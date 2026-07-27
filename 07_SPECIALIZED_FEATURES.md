@@ -5645,6 +5645,56 @@ The production rollout is forward-only and creates no automatic historical
 recovery items. Historical Gmail, draft, or lead repair requires separate
 explicit authorization and must use the same exact-identity and safety gates.
 
+### Phase C lead correction loop (local implementation; not live)
+
+The local 2026-07-27 implementation connects the iOS lead-disposition action to
+future email lead-vs-not-lead classification through the database contract in
+`03_DATA_ARCHITECTURE.md`. It is not deployed and its migration is not applied
+to production.
+
+**iOS interaction.** The lead's `DISCARD` action first asks the server for the
+authoritative Phase C gate. Enabled companies see a terse structured reason
+sheet. A reason tap completes immediately—there is no second confirmation—and
+an optional 280-character context field is available behind progressive
+disclosure. The result message offers a six-second `UNDO`. Disabled companies
+keep the existing discard explainer/confirmation, but the write still uses the
+same authoritative RPC with a neutral legacy reason. Spam, applicants, vendor
+sales, internal mail, platform notifications, and test traffic discard;
+`NOT A FIT` moves the genuine inquiry to lost/disqualified; duplicate and
+`OTHER` remain held for review rather than being falsely discarded. The client
+applies the complete server receipt locally and never invents a lifecycle
+result.
+
+**Bounded ingestion prior.**
+`LeadFeedbackPriorService` loads only active, Phase C-enabled, company-scoped
+structured fields. It never selects `optional_note`, and neither the note nor
+raw feedback text enters an AI prompt. The prior is applied after
+`EmailAIClassifier` returns its structured result:
+
+- exact provider message or thread evidence can strongly reduce a repeated
+  false-positive score only when the mailbox connection also matches;
+- one sender correction may move a future candidate to review but cannot
+  suppress a plausible lead by itself;
+- domain-wide negative evidence requires at least three independent corrected
+  threads from at least two senders, and is limited to spam, vendor-sales, and
+  test-traffic reasons;
+- public, protected, company-owned, and free-mail domains receive no
+  domain-wide suppression; job-applicant and platform-notification feedback
+  never becomes a domain rule;
+- genuine but unsuitable (`not_a_fit`) evidence is positive lead evidence, so
+  OPS learns not to erase similar inquiries;
+- duplicate, neutral, conflicting, and score-boundary cases defer.
+
+An adjusted negative may auto-suppress only when it clears the normal
+not-a-lead threshold by an additional 0.20 safety margin. Otherwise the exact
+message is upserted into `lead_classification_reviews`, the Inbox thread is
+marked `require_human_review` when available, and `SyncEngine` advances without
+creating an opportunity. Retry reuses the same review identity. Manual
+category/lifecycle overrides, existing duplicate guards, provider cursor
+fences, and the ingestion engine's bias toward preserving plausible leads stay
+authoritative. The loop evaluates future ingestion only; it never rewrites an
+existing lead or scans history.
+
 ### Primary categories (exactly one per thread)
 
 Twelve values, enforced by the `email_threads.primary_category` CHECK constraint (post `20260428061836_collapse_lead_client_to_customer`). The legacy `LEAD` + `CLIENT` values were collapsed into `CUSTOMER` in that migration and were dropped from the TypeScript union 2026-05-12 (commit `ce91e96c`).
