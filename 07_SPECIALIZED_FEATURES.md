@@ -5645,12 +5645,17 @@ The production rollout is forward-only and creates no automatic historical
 recovery items. Historical Gmail, draft, or lead repair requires separate
 explicit authorization and must use the same exact-identity and safety gates.
 
-### Phase C lead correction loop (local implementation; not live)
+### Phase C lead correction loop (production backend live; iOS release pending)
 
-The local 2026-07-27 implementation connects the iOS lead-disposition action to
+The 2026-07-27 implementation connects the iOS lead-disposition action to
 future email lead-vs-not-lead classification through the database contract in
-`03_DATA_ARCHITECTURE.md`. It is not deployed and its migration is not applied
-to production.
+`03_DATA_ARCHITECTURE.md`. The production migration is recorded as
+`20260728004810_phase_c_lead_disposition_feedback`, and OPS-Web commit
+`1b90a9b9` is live on the customer Vercel deployment. iOS commit `5df8b3bb` is
+on `main`, but the installed customer app does not gain the reason sheet until
+that source is archived, uploaded, and released through App Store Connect.
+The rollout created no feedback/review rows, changed no leads, and performed no
+historical backfill.
 
 **iOS interaction.** The lead's `DISCARD` action first asks the server for the
 authoritative Phase C gate. Enabled companies see a terse structured reason

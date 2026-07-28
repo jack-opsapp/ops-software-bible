@@ -4799,13 +4799,16 @@ CREATE INDEX idx_corrections_company_domain
   WHERE sender_domain IS NOT NULL;
 ```
 
-### Phase C lead-disposition feedback (local implementation; not live)
+### Phase C lead-disposition feedback (production)
 
 Migration `ops-web/supabase/migrations/20260727193418_phase_c_lead_disposition_feedback.sql`
 adds the authoritative correction contract shared by iOS and email ingestion.
-It is additive and forward-only. As of 2026-07-27 it exists in the local
-feature worktree only: it has **not** been applied to production, and no
-historical lead is reinterpreted or backfilled.
+It is additive and forward-only. It was applied to production on 2026-07-27
+(recorded by Supabase as
+`20260728004810_phase_c_lead_disposition_feedback`). Post-apply verification
+confirmed both tables empty, RLS enabled, direct client writes revoked, and no
+new security or performance advisories. No historical lead was reinterpreted
+or backfilled.
 
 `lead_disposition_feedback` is append-only correction history. Each row binds
 the company, opportunity, authenticated actor, structured reason, canonical
