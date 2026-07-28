@@ -25,6 +25,14 @@ New sessions seed the first assistant question. Legacy active sessions without a
 transcript expose their current unresolved question as the starting message and
 persist the normalized conversation on their next successful turn.
 
+Migration
+`ops-web/supabase/migrations/20260727210000_phase_c_input_revision_fence.sql`
+adds a durable `input_ledger`, monotonic `input_revision` /
+`processed_input_revision` counters, and a pinned
+`capability_manifest_revision`. Operator messages are stored before generation;
+the generated turn may commit only when both the session version and input
+revision still match.
+
 ## Runtime contract
 
 - The interview is adaptive and supplier-neutral. Production code contains no
@@ -48,20 +56,48 @@ persist the normalized conversation on their next successful turn.
 - Retrieval failures do not block the interview. Successful turns store only a
   query hash, selected memory IDs, categories, and version as provenance; raw
   memory content is not copied into the guided session.
-- The browser immediately renders an optimistic operator message.
-- While a turn is running, the control is inert and the activity state is
-  announced accessibly.
-- A failed request retains the pending answer. Retry resubmits the same
-  structured answer at the same expected version without duplicating the
-  visible message.
-- A successful server response replaces optimistic state with the stored
-  transcript.
+- Phase C may ask about or propose only behavior marked `available` in the
+  server-owned capability manifest. The released manifest supports core catalog
+  products and static product-material quantity rules. Deck geometry,
+  layout-derived waste, roll/sheet inventory, dynamic purchasing, and
+  Deck Designer automation are unavailable and cannot be implied.
+- Question templates and the model policy are generated from the same manifest.
+  Semantic validation rejects unsupported capabilities before review, and
+  commit revalidates the pinned manifest revision before any live catalog write.
+- The browser persists and renders each operator message immediately, then
+  starts generation from that exact input revision.
+- While Phase C is working, the compact composer stays available for a quick
+  follow-up or correction. The newest queued text message can be edited or
+  removed.
+- If a newer input arrives during generation, the stale response cannot commit
+  or publish. The client automatically runs the latest queued revision.
+- A failed generation retains the persisted queued answer. Retry processes that
+  same revision without duplicating the visible message.
 - Refreshing or returning to setup resumes the stored transcript.
 - The transcript is presentation and audit state. It is not added to the model
   prompt; confirmed facts remain the canonical interview memory and avoid added
   token cost.
 - Review and commit remain separate. Conversation persistence cannot mutate the
   live catalog.
+
+## Presentation contract
+
+- The transcript is full-bleed vertically and is the only conversation scroll
+  owner. Auto-scroll targets that element directly and never repositions a page
+  or ancestor container.
+- The compact composer floats over the transcript. A measured bottom spacer
+  keeps the newest exchange clear of the composer at the fully scrolled
+  position.
+- Short conversations remain stationary. Long conversations keep the newest
+  exchange fully visible.
+- Upload remains a quiet action inside the composer. Send uses a 16px
+  paper-airplane icon with the terse `SEND` label in the 32px compact control
+  tier.
+- Start over, alternate method, and back controls are reachable chips outside
+  the composer surface.
+- Phase C activity uses an accessible five-bar ripple. Only a newly returned
+  assistant message receives the typewriter reveal; restored history renders
+  immediately. Both effects resolve immediately under reduced motion.
 
 ## Implementation references
 
