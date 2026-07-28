@@ -671,16 +671,69 @@ Phase 3 on `OPS-Web/src/app/(dashboard)/calendar/`. Spec at `docs/superpowers/sp
 
 ---
 
-### CalendarSchedulerSheet (iOS)
-**Location:** `OPS/OPS/Views/Components/Scheduling/CalendarSchedulerSheet.swift` (968 lines)
+### CalendarSchedulerSheet (iOS) — rebuilt 2026-07-27
 
-**Features:**
-- Visual calendar grid with event dots
-- Conflict detection and warnings
-- Team member filtering
-- Project task filtering
-- Date range selection with visual feedback
-- Day-detail inspector for the focused day/range, showing scheduled task context without leaving the sheet
+**Location:** `ops-ios/OPS/Views/Components/Scheduling/`
+- `CalendarSchedulerSheet.swift` — assembly, chrome, day panel, `SchedulerEventRow`
+- `SchedulerDayContext.swift` — availability engine + `SchedulerSelection` state machine (pure logic; no SwiftData, no SwiftUI)
+- `SchedulerMonthScroll.swift` — continuous month list
+- `SchedulerDayCell.swift` — day cell + `DiagonalHatch`
+- `SchedulerFooterBar.swift` — sticky CLEAR / SAVE bar
+- `SchedulerDaySheet.swift` — long-press day inspector
+- `ops-ios/OPS/Views/Calendar Tab/Components/MonthJumpPicker.swift` — jump-to-month sheet, shared with `MonthGridView`
+
+**Design intent.** The sheet answers three questions in order: what am I moving (identity line), when is it free (a month scroll where every day already carries its own availability), and what does that pick cost (a panel naming the actual jobs, clients, crew, and drive distance it collides with).
+
+**Non-negotiable rule — nothing blocks a date.** Every signal is a guide. A dependency floor dims; a conflict is named; time off is spelled out. The operator still picks the day the job needs, and SAVE always commits a valid range. There is no "confirm anyway" branch, because there is nothing to override.
+
+**Layout (fixed chrome, one scrolling region).** Nav (Cancel only) → identity row (+ `UNSCHEDULE` when dates are persisted) → range strip (START / END / DAYS) → quick-push row (tasks with existing dates) → suggestion chip (unscheduled item that has a dependency floor) → pinned month + weekday header (with JUMP TO) → **month scroll** → day panel (150pt; 120pt on 667pt-class devices) → sticky footer.
+
+**Day-cell encoding.** Mono day number top-left; today = accent number + hairline accent ring. Up to three 3pt signal bars along the bottom: white = this project, tan = crew booked, tan + 45° hatch = crew time off (the hatch is a second, non-colour cue). One dim dot = other company work that day (density only). Days before the dependency floor render at 35% opacity and stay fully tappable.
+
+**Selection model (`SchedulerSelection`).** `none → start(d) → range(min, max) → start(d)` (restart). A second tap on the same day is a one-day job; a backwards second tap auto-sorts. Persisted dates prefill as a `.range`, so SAVE is valid the moment the sheet opens.
+
+**Commit model — one write point.**
+- **SAVE** (footer, steel-blue — the screen's only accent): enabled only on a complete range; calls `onScheduleUpdate(start, end)`, then dismisses. Medium impact haptic; success notification haptic gated on `emitsSuccessFeedbackOnConfirm`.
+- **CLEAR** (footer): resets the in-sheet selection to `.none`. Never writes, never unschedules, never closes the sheet.
+- **UNSCHEDULE** (identity row; visible only when the item has persisted dates *and* `onClearDates` is wired): warning haptic → `onClearDates?()` → dismiss. The only path that removes dates.
+
+**`SchedulerDayContext` — the availability engine.** A pure value type built from: scheduled tasks ±12 months (`DataController.getScheduledTasks(in:)`), calendar user events over the same window (`DataController.getUserEvents(in:)`), the item's crew (`preselectedTeamMemberIds` ?? the item's own), project id, project coordinates, declared dependencies, and the item's own task id (self-exclusion). It builds a day→events index in **one pass** over the events; the previous per-cell re-filtering was the cause of the "scheduling freezes the app" stutter on sync republish.
+
+Exposes: `signals(for:)` (thisProject / crewBusy / crewTimeOff / otherCount / isPreFloor), `events(on:)` split into relevant vs `// ELSEWHERE`, `rangeReview(start:end:)` (rows conflicts-first, conflict count, floor violation), `interpretation(for:)`, `suggestion`, `attribution(for:)`, `distanceKM(to:)` / `distanceLabel(to:)`.
+
+- **Conflict** = the commitment double-books the item's crew. Sharing a project is normal work, not a clash.
+- **Time off** counts only when `approved` or `none`; `pending` and `denied` requests never dim a day (enforced in `getUserEvents(in:)`).
+- **Dependency floor** = the latest `TaskTypeDependency.earliestStart(predecessorStart:predecessorDuration:)` across this project's *scheduled*, non-deleted, non-cancelled prerequisite tasks. Unscheduled prerequisites produce **no floor and no dimming anywhere**. Pinned by test against `AutoScheduleManager.calculateDependencyFloor` (made internal for exactly this).
+- **Suggestion** appears only for an unscheduled item that has a floor; it steps past the weekend when `currentCompanySkipsWeekends`.
+- **Distance** = `HaversineDistance.km` between the item's project coordinate and the event's; one decimal under 10 km, whole kilometres above, omitted when either coordinate is missing.
+
+**Day interpretation (long-press sheet header).** One plain-language line, priority-ordered, at most two clauses joined by ` · `: time off (`MARCUS OFF` / `MARCUS + 2 OFF`) → crew busy (`DANA ON HARBOUR DECK` / `3 CREW ON OTHER JOBS`) → floor (`BEFORE FRAMING ENDS · AUG 22`) → same project (`RAILINGS · THIS PROJECT`) → clear (`CREW CLEAR`, or `NO JOBS` when the item has no crew and there is no availability to report).
+
+**Row grammar.** Every named row carries project + client + the crew member it ties up + drive distance. A bare task-type name is never enough — three jobs can share one. Time-off rows read `{First name} · Time off` with an `OFF` chip.
+
+**Removed in the rebuild:** `THIS PROJECT` / `MY CREW` filter chips, the `N SHOWN` counter, the legend strip, chevron month paging, in-scroll action buttons, the nav-bar Clear (which silently unscheduled), and the "CONFIRM ANYWAY" conflict branch. The grid now always encodes crew + project signals; the panel and day sheet carry the full truth.
+
+**Unchanged:** the public initializer (all 17 call sites compile untouched), `ScheduleItemType`, and the quick-push / cascade path (`handleQuickPush`, `cascadeAffectedCount`, `quickPushDates`, `CascadePreviewSheet`, the `showCascadePreview` preference).
+
+**Core API (unchanged surface):**
+```swift
+struct CalendarSchedulerSheet: View {
+    @Binding var isPresented: Bool
+    let itemType: ScheduleItemType
+    let currentStartDate: Date?
+    let currentEndDate: Date?
+    let onScheduleUpdate: (Date, Date) -> Void
+    let onClearDates: (() -> Void)?
+    let preselectedTeamMemberIds: Set<String>?
+    let emitsSuccessFeedbackOnConfirm: Bool
+
+    enum ScheduleItemType {
+        case project(Project)
+        case task(ProjectTask)
+        case draftTask(taskTypeId: String, teamMemberIds: [String], projectId: String?)
+    }
+}
+```
 
 **Schedule Entry Contracts (iOS):**
 - Task schedule writes use `DataController.updateTaskSchedule(task:startDate:endDate:)` and write `project_tasks.start_date` / `project_tasks.end_date`.
@@ -691,203 +744,7 @@ Phase 3 on `OPS-Web/src/app/(dashboard)/calendar/`. Spec at `docs/superpowers/sp
 - Month badges retain a 44pt interaction row while keeping their compact visual treatment. The month allocator reserves the `+N` row only when overflow is real, so two events remain independently visible at the default cell height and multi-day lanes stay collinear across the week.
 - Each schedule card owns exactly one context menu. Host views inject the shared actions into that owner rather than stacking a second menu, preserving both long-press actions and native drag-to-reschedule.
 
-**Core Implementation:**
-```swift
-struct CalendarSchedulerSheet: View {
-    @Binding var isPresented: Bool
-    let itemType: ScheduleItemType
-    let currentStartDate: Date?
-    let currentEndDate: Date?
-    let onScheduleUpdate: (Date, Date) -> Void
-    let onClearDates: (() -> Void)?
-
-    @State private var selectedStartDate: Date
-    @State private var selectedEndDate: Date
-    @State private var viewMode: ViewMode = .selecting
-    @State private var conflictingEvents: [ProjectTask] = []
-    @State private var showOnlyTeamEvents = true
-    @State private var showOnlyProjectTasks = true
-
-    enum ViewMode {
-        case selecting   // Picking dates
-        case reviewing   // Reviewing conflicts
-    }
-
-    enum ScheduleItemType {
-        case project(Project)
-        case task(ProjectTask)
-        case draftTask(taskTypeId: String, teamMemberIds: [String], projectId: String?)
-    }
-}
-```
-
-**Date Selection Flow:**
-```swift
-private func handleDateSelection(_ date: Date) {
-    let generator = UIImpactFeedbackGenerator(style: .light)
-    generator.impactOccurred()
-
-    if selectedStartDate == selectedEndDate {
-        // Second date selected - auto-sort
-        let firstDate = selectedStartDate
-        let secondDate = date
-
-        if secondDate < firstDate {
-            selectedStartDate = secondDate
-            selectedEndDate = firstDate
-        } else {
-            selectedStartDate = firstDate
-            selectedEndDate = secondDate
-        }
-
-        checkForConflicts()
-        viewMode = .reviewing
-    } else {
-        // Reset to single date
-        selectedStartDate = date
-        selectedEndDate = date
-        conflictingEvents = []
-        viewMode = .selecting
-    }
-}
-```
-
-**Conflict Detection:**
-```swift
-private func checkForConflicts() {
-    let tasksToCheck = (showOnlyTeamEvents || showOnlyProjectTasks)
-        ? filteredScheduledTasks
-        : allScheduledTasks
-
-    conflictingEvents = tasksToCheck.filter { scheduledTask in
-        // Don't count current item as conflict
-        let isSameItem: Bool
-        switch itemType {
-        case .task(let task):
-            isSameItem = scheduledTask.id == task.id
-        case .draftTask:
-            isSameItem = false
-        case .project:
-            isSameItem = false
-        }
-
-        // Check date overlap
-        if !isSameItem, let taskStart = scheduledTask.startDate, let taskEnd = scheduledTask.endDate {
-            let taskRange = taskStart...taskEnd
-            let selectedRange = selectedStartDate...selectedEndDate
-            return taskRange.overlaps(selectedRange)
-        }
-        return false
-    }.sorted { ($0.startDate ?? Date.distantPast) < ($1.startDate ?? Date.distantPast) }
-}
-```
-
-**Team Filtering:**
-```swift
-private func filterScheduledTasks() {
-    if showOnlyProjectTasks {
-        if let projectId = itemType.projectId {
-            filteredScheduledTasks = allScheduledTasks.filter { task in
-                task.projectId == projectId && task.id != currentTaskId
-            }
-            return
-        }
-    }
-
-    guard showOnlyTeamEvents else {
-        filteredScheduledTasks = allScheduledTasks
-        return
-    }
-
-    let currentTeamMembers: Set<String>
-    switch itemType {
-    case .project(let project):
-        currentTeamMembers = Set(project.getTeamMemberIds())
-    case .task(let task):
-        currentTeamMembers = Set(task.getTeamMemberIds())
-    case .draftTask(_, let teamMemberIds, _):
-        currentTeamMembers = Set(teamMemberIds)
-    }
-
-    filteredScheduledTasks = allScheduledTasks.filter { task in
-        let taskTeamMembers = Set(task.getTeamMemberIds())
-        return !currentTeamMembers.isDisjoint(with: taskTeamMembers)
-    }
-}
-```
-
-**Day Cell Component:**
-```swift
-private struct SchedulerDayCell: View {
-    let date: Date
-    let isInCurrentMonth: Bool
-    let events: [ProjectTask]
-    let isSelected: Bool
-    let isInRange: Bool
-    let isStartDate: Bool
-    let isEndDate: Bool
-    let hasConflicts: Bool
-    let hasTeamConflicts: Bool
-    let isToday: Bool
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            ZStack {
-                // Today background
-                if isToday {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(OPSStyle.Colors.primaryAccent)
-                }
-
-                // Selection border (animated)
-                if isStartDate && isEndDate {
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(OPSStyle.Colors.primaryText, lineWidth: 2)
-                } else if isStartDate {
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 8,
-                        bottomLeadingRadius: 8
-                    )
-                    .strokeBorder(OPSStyle.Colors.primaryText, lineWidth: 2)
-                } else if isEndDate {
-                    UnevenRoundedRectangle(
-                        bottomTrailingRadius: 8,
-                        topTrailingRadius: 8
-                    )
-                    .strokeBorder(OPSStyle.Colors.primaryText, lineWidth: 2)
-                }
-
-                // Conflict indicator
-                if hasConflicts {
-                    Circle()
-                        .fill(OPSStyle.Colors.warningStatus.opacity(0.3))
-                        .padding(4)
-                }
-
-                VStack(spacing: 2) {
-                    Text(dayNumber)
-                        .font(OPSStyle.Typography.bodyBold)
-                        .foregroundColor(textColor)
-
-                    // Event dots (max 3)
-                    if !events.isEmpty {
-                        HStack(spacing: 1) {
-                            ForEach(Array(events.prefix(3).enumerated()), id: \.offset) { _, event in
-                                Circle()
-                                    .fill(event.swiftUIColor)
-                                    .frame(width: 4, height: 4)
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(height: 44)
-        }
-        .disabled(!isInCurrentMonth)
-    }
-}
-```
+**Tests:** `ops-ios/OPSTests/Scheduling/SchedulerDayContextTests.swift` (ranged user-event fetch, dependency floor + parity with the auto-scheduler, day signals, attribution, distance, interpretation priority, suggestion, self-exclusion, single-pass day index) and `SchedulerSelectionTests.swift` (selection machine, day roles, day-cell render smoke).
 
 ### Android Conversion Notes
 

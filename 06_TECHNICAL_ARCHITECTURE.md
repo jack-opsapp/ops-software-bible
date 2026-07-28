@@ -369,8 +369,19 @@ ops-ios/OPS/
 │   │   │   └── TaskListView.swift
 │   │   ├── Task/ (1 file)
 │   │   │   └── TaskSelectorBar.swift
-│   │   ├── Scheduling/ (1 file)
-│   │   │   └── CalendarSchedulerSheet.swift
+│   │   ├── Scheduling/ (12 files — schedule sheet rebuilt 2026-07-27)
+│   │   │   ├── CalendarSchedulerSheet.swift    # Date picker: chrome, day panel, SchedulerEventRow
+│   │   │   ├── SchedulerDayContext.swift       # Availability engine + SchedulerSelection (pure logic)
+│   │   │   ├── SchedulerMonthScroll.swift      # Continuous month list
+│   │   │   ├── SchedulerDayCell.swift          # Day cell + signal bars + DiagonalHatch
+│   │   │   ├── SchedulerFooterBar.swift        # Sticky CLEAR / SAVE bar (single commit point)
+│   │   │   ├── SchedulerDaySheet.swift         # Long-press day inspector
+│   │   │   ├── CascadePreviewSheet.swift
+│   │   │   ├── DependencyPickerSheet.swift
+│   │   │   ├── PriorityQueueRow.swift
+│   │   │   ├── PriorityQueueView.swift
+│   │   │   ├── PrioritySchedulePreviewSheet.swift
+│   │   │   └── ScheduleConnectivityStrip.swift
 │   │   ├── Sync/ (2 files — updated 2026-03-08)
 │   │   │   ├── SyncStatusIndicator.swift
 │   │   │   └── SyncRingView.swift         # Rotating arc indicator shown in AppHeader during sync
