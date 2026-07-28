@@ -2088,8 +2088,9 @@ activity is rewritten or backfilled.
 
 #### Authoritative staff secondary email identity (prepared 2026-07-28)
 
-Migration `20260728161000_authoritative_staff_email_aliases` and ops-web commit
-`90f14226` are prepared but not applied or deployed. `SyncEngine` loads one
+Migration `20260728161000_authoritative_staff_email_aliases` and ops-web
+commits `90f14226` + `cd901503` are prepared but not applied or deployed.
+`SyncEngine` loads one
 company-scoped staff identity authority at the start of every normal sync,
 historical import, exact-message recovery, and sent-folder safety-net pass.
 Exact registered emails and exact active verified aliases are staff identities;
