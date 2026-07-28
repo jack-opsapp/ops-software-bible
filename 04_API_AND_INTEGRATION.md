@@ -2086,6 +2086,75 @@ guard before later mail can be checkpointed. A malformed persisted direction
 still fails closed, the database guard remains unchanged, and no historical
 activity is rewritten or backfilled.
 
+#### Authoritative staff secondary email identity (prepared 2026-07-28)
+
+Migration `20260728161000_authoritative_staff_email_aliases` and ops-web commit
+`90f14226` are prepared but not applied or deployed. `SyncEngine` loads one
+company-scoped staff identity authority at the start of every normal sync,
+historical import, exact-message recovery, and sent-folder safety-net pass.
+Exact registered emails and exact active verified aliases are staff identities;
+registered connection/profile authority is included only through those exact
+records.
+
+An unknown sender can become only a pending alias candidate when signature
+evidence exactly matches one active teammate's normalized full name and full
+roster phone. The service-role-only
+`record_staff_email_alias_candidate_as_system(...)` verifies the active
+mailbox, roster match, exact provider thread/message, and immutable
+company/user/email ownership. A same-company administrator then makes the
+audited one-time `verified` or `rejected` decision through
+`review_user_email_alias(...)`. Pending aliases always fail closed into review:
+they may quarantine the exact corroborated message on the outbound/review path
+so the staff sender cannot become a lead, but they do not enter the durable
+authoritative staff email set until verified.
+
+The classifier applies this boundary before relationship matching, contact-form
+routing, alternate-participant selection, enrichment, assignment, notification,
+or recovery. A verified secondary address is outbound/internal staff mail, and
+its exact external recipients remain eligible customer contacts. A registered
+team address in To/CC and an exact signature phone may corroborate a candidate;
+names, phone fragments, shared public email domains, and fuzzy private-domain
+matches never confer staff identity.
+
+#### Property-level address identity boundary (prepared 2026-07-28)
+
+Migration `20260728160000_property_address_identity_boundary` and ops-web
+commits `d6426b51` + `2e7acb93` are prepared but not applied or deployed.
+Every email relationship, recovery, participant, enrichment,
+duplicate/preflight, and project-conversion path now calls the same
+property-address qualifier before an address can enter an identity set. City,
+municipality, neighbourhood, region, postal locality, area label, and
+PO-box-only values normalize to no identity.
+
+Supported property evidence is a numbered street identity, a structured rural
+route/site/box identity, a lot/concession or lot/block/plan identity, or an
+explicit parcel/PID identity. Street suffixes and cardinal directions are
+canonicalized. Unit identifiers are retained in the identity key, preventing
+two suites at the same building from collapsing. Locality may remain in source
+metadata or presentation context, but it cannot establish a client,
+opportunity, merge, dedupe, relationship, assignment, notification, or project
+link.
+
+#### Guarded decisive rejection commit (prepared 2026-07-28)
+
+Migration `20260728162000_guarded_customer_decline_lifecycle` and ops-web
+commit `d24b41f7` are prepared but not applied or deployed.
+`apply_email_opportunity_declined_disposition(...)` is a service-role-only
+commercial boundary. It accepts exact company, opportunity, mailbox, provider
+message, expected assignment/stage snapshot, and a closed evidence object
+containing the reason, decisive signal, provider-message list, and evaluated
+correspondence high-water event.
+
+The RPC locks the opportunity and proves active mailbox identity, projected
+meaningful inbound customer correspondence, persisted customer sender,
+assignment stability, high-water freshness, and terminal precedence. A decisive
+rejection writes Lost plus one evidence-backed disposition atomically; financial
+reasons map to `price`, otherwise an unequivocal rejection maps to
+`customer_declined`. Won/discarded and manual terminal states are protected.
+A historical manual nonterminal repair does not permanently suppress newer
+decisive customer evidence. Exact replay is a no-op; newer/out-of-order evidence
+forces a full re-evaluation instead of accepting a stale write.
+
 #### GET / PATCH `/api/integrations/email/connection` — company intake owner
 
 Company mailbox configuration includes nullable `defaultIntakeOwnerId` only for

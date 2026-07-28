@@ -1722,19 +1722,19 @@ P3 deterministic gates:
 - **Exact known contact**: exact `clients.email`, `sub_clients.email`, or `opportunities.contact_email` can link to an existing active opportunity.
 - **Existing related contact**: an exact sub-client email relationship links to the parent client's active opportunity.
 - **Exact phone**: exact normalized phone match across opportunity/client/sub-client facts can link when the opportunity is active or the linked project is active.
-- **Same address, same active job**: exact normalized address can link when the opportunity is active (`new_lead`, `qualifying`, `quoting`, `quoted`, `follow_up`, `negotiation`) or a linked project is active (`rfq`, `estimated`, `accepted`, `in_progress`).
+- **Same property, same active job**: only an exact property-qualified address can link when the opportunity is active (`new_lead`, `qualifying`, `quoting`, `quoted`, `follow_up`, `negotiation`) or a linked project is active (`rfq`, `estimated`, `accepted`, `in_progress`). A city, municipality, neighbourhood, region, postal locality, or area label is contextual metadata only and never enters an address identity set. Property qualification requires a street number plus street identity, a supported rural-route/site/box format, a lot/concession or lot/block/plan identity, or an explicit parcel/PID identity. Unit identifiers are preserved so two units at one building do not collapse.
 - **Quoted prior-thread scope**: deterministic scope overlap can support a link only when it overlaps known prior opportunity/project text and the candidate is active. This is a strict enhancer, not a freeform guess.
 
 P3 non-linking rules:
 - Do not infer spouse, partner, property manager, or site-super relationships from first name or last name alone.
 - Do not treat platform senders such as Wix, HomeStars, or website form notification mailboxes as customer identity. Parsed submitter identity wins.
 - Do not blindly attach new work to terminal opportunities (`won`, `lost`, `discarded`, and future terminal values such as `merged`, `converted`, or `disqualified`) or archived opportunities.
-- If the same customer/address has only a completed, closed, or archived prior project and the incoming scope is distinct, create a separate opportunity.
+- If the same customer/property has only a completed, closed, or archived prior project and the incoming scope is distinct, create a separate opportunity.
 - If confidence is below the deterministic threshold, create a separate lead and preserve merge evidence through activity/thread/source fields rather than over-linking.
 
 Phase C boundary:
 - Phase C may improve extraction quality, relationship suggestions, and future household/project graph confidence.
-- Phase C must not be required for P3. With Phase C off, exact contact, exact phone, exact address, active opportunity state, and active project state still drive deterministic matching.
+- Phase C must not be required for P3. With Phase C off, exact contact, exact phone, exact property-qualified address, active opportunity state, and active project state still drive deterministic matching.
 - Phase C must not perform destructive merge, stale/archive/lost automation, or project conversion as part of P3. Those remain later lifecycle phases and operator-controlled flows.
 
 Known P3 schema gaps:
@@ -1757,6 +1757,7 @@ P4 schema contract:
 P4 deterministic classifier rules:
 - Customer inbound counts as meaningful only when the sender or parsed contact-form submitter is a real external customer/contact. Parsed submitter identity wins over platform sender identity.
 - OPS outbound counts as meaningful only when a real OPS account/connection sends to an external customer/contact.
+- Active OPS staff identity is authoritative only from an exact registered user email or an exact active `user_email_aliases.status='verified'` row. A signature that exactly matches one active teammate's full roster name and full normalized phone may create/update a pending alias candidate and force review, but it never grants staff identity by itself. A registered teammate address in To/CC is corroborating evidence only. Name similarity, phone fragments, public-domain similarity, and private-domain guesses never establish an alias. Once a verified alias resolves the sender, ingestion and recovery classify the message as outbound/internal before lead matching, while exact external recipients remain eligible customer identities.
 - Provider/platform senders, automated bounces, internal-only/system messages, duplicate provider message ids, and marketing/promotional messages are not meaningful. They are retained as proof rows with `is_meaningful=false` and a `noise_reason`.
 - Blank provider thread ids are never meaningful. Provider-backed lifecycle writes still follow the P1 provider-id guardrails before creating P4 events.
 - Platform senders such as website form notification mailboxes are never treated as the customer. They can support source/provenance only.
@@ -1812,7 +1813,8 @@ P4-22 legacy correspondence proof boundary:
 Pending-projection guard boundary (bounded 2026-07-22):
 - **Root cause (established 2026-07-22).** An unresolved duplicate-lead pair left one Gmail thread with split ownership — the `email_threads` cache row was owned by one lead while the delivered activities routed to its duplicate. The thread-parent conflict introduced with canonical-parent enforcement therefore threw from `EmailThreadService.upsertFromEmail` on every cycle; because the correspondence event insert and its counter projection were two separate PostgREST transactions, the throw landed after the event had committed with `opportunity_projection_applied = false` and before the projection ran, and the hourly replay repeated the identical failure (the dedupe path refreshes thread state before repairing projection). That stranded one pending row and froze the mailbox cursor for 20+ hours; the then-unbounded pending guard escalated the single stranded row into the platform-wide 40001 retry storm.
 - **Atomic write path — the primary fix (migration `20260722210000_atomic_correspondence_event_projection`).** `record_opportunity_correspondence_event(...)` inserts the correspondence event AND projects its opportunity counters in ONE transaction under the opportunity row lock, so `opportunity_projection_applied` is inserted true and a durable-but-unprojected row can no longer occur on any write path — sync ingestion, historical/email imports, and email-send / approved-action reconciliation all funnel through it. `opportunity_projection_applied = false` can now only describe rows written before this RPC existed. The 60-second-bounded guard below and the legacy `apply_opportunity_correspondence_event` RPC remain in place only as backstops for those pre-existing rows and for idempotent re-projection on replay. Commercial RPCs serialize against ingestion via the same opportunity lock the RPC takes, not a two-step write.
-- `private.opportunity_has_pending_meaningful_email(company_id, opportunity_id)` is the shared guard over that invariant. The three guarded commercial RPCs — `convert_opportunity_to_project` (actorless path), `commit_lead_summary_snapshot`, and `apply_email_opportunity_deferred_disposition` — call it under the opportunity lock and raise `meaningful correspondence projection pending` with SQLSTATE 40001 while it returns true, so no commercial outcome can be decided against an incomplete conversation. With the atomic write path in place no new write can strand a pending row, so in steady state this guard is a legacy backstop that returns false.
+- `private.opportunity_has_pending_meaningful_email(company_id, opportunity_id)` is the shared guard over that invariant. The four guarded commercial RPCs — `convert_opportunity_to_project` (actorless path), `commit_lead_summary_snapshot`, `apply_email_opportunity_deferred_disposition`, and `apply_email_opportunity_declined_disposition` — call it under the opportunity lock and raise `meaningful correspondence projection pending` with SQLSTATE 40001 while it returns true, so no commercial outcome can be decided against an incomplete conversation. With the atomic write path in place no new write can strand a pending row, so in steady state this guard is a legacy backstop that returns false.
+- **Decisive customer rejection (prepared 2026-07-28; migration `20260728162000_guarded_customer_decline_lifecycle`, ops-web `d24b41f7`, not yet applied or deployed).** An unambiguous inbound customer rejection now maps deterministically to Lost. Choosing another provider for financial reasons records `reason_code=price`; an unequivocal rejection without a supported reason records `customer_declined`. Temporary budget or timing deferral remains deferred and does not become Lost. `apply_email_opportunity_declined_disposition` is service-role-only and proves the active mailbox, persisted customer sender, exact provider message, meaningful projected correspondence, evaluated event high-water mark, stage snapshot, and assignment version under one opportunity lock. It protects Won/discarded and every manual terminal decision. A nonterminal manual flag may represent a historical repair, so newer decisive customer evidence may close that lead and clears the manual flag; a newer engine-owned guarded Lost disposition may be superseded only by strictly newer decisive evidence. Stale/out-of-order evidence raises a serialization error, exact replay returns `already_applied`, and stage/disposition/transition writes are atomic. The summary refresh follows the committed business state and renders no follow-up action for Lost.
 - The guard is time-bounded: only unprojected meaningful events younger than 60 seconds count as pending (migration `20260722150000_bound_meaningful_email_projection_pending_guard`). The 2026-07-22 full outage proved the unbounded form fails closed forever — one permanently stuck row made all three RPCs raise 40001 on every call, and zero-backoff worker retries (~1,800 failed transactions/sec) pinned database CPU and took the API down. Past 60 seconds a stuck row degrades into silent evidence exclusion on that one lead, surfaced by monitoring, instead of a platform-wide write freeze.
 - Worker 40001 policy: a serialization failure is retried only through `withSerializationRetry` (`ops-web/src/lib/supabase/serialization-retry.ts`) — equal-jitter exponential backoff from a 250ms base doubling to a 30s ceiling, five attempts, then a typed `SerializationRetryExhaustedError` that is recorded and parked, never re-looped. The sync engine retries the whole acceptance evaluation (never a bare RPC replay) so each attempt re-derives its evidence high-water mark; the lead-summary path retries only the snapshot commit, never model generation. One wedged opportunity cannot starve its batch: the sync accept loop evaluates every other lead first, then holds the provider cursor with one aggregated persistence error, which self-heals within a cycle because of the 60-second guard bound.
 - **Thread-parent conflicts quarantine per-thread and never block ingestion (2026-07-22).** When `upsertFromEmail` hits a canonical-parent conflict — two leads claiming one conversation — `EmailThreadService` throws a typed `EmailThreadParentConflictError` and `sync-engine`'s `persistDeterministicEmailThreadState` catches it: it logs the conflict (connection, provider thread, both lead ids), raises one persistent operator-rail alert (`system_alert`, deduped on `email-thread-parent-conflict:{connectionId}:{providerThreadId}`, deep-linking to `/pipeline`), and returns without rethrowing. The message's projection and the provider cursor proceed; the thread cache simply stops refreshing until an operator merges the duplicate leads. Every other `upsertFromEmail` call site (unmatched-inbound, exact-recovery, and the send / approved-action reconciliation services) keeps its strict throw — the quarantine is scoped to deterministic sync thread-state refresh only.
@@ -2009,12 +2011,17 @@ Phase C learns from the delta between generated drafts and the sent version. It 
 
 #### New Thread, Same Customer, Different Job
 
-Matching must account for repeat customers and households. The same client or same address does not automatically mean the same opportunity.
+Matching must account for repeat customers and households. The same client or
+same property-qualified address does not automatically mean the same
+opportunity. Locality-only values such as `Victoria`, `Langford`, `Esquimalt`,
+`Tillicum`, `Henderson`, `North Saanich`, or `Saanich Cedar Hill area` are
+regional context only and must never establish identity, deduplication, merge,
+or opportunity/project linkage.
 
 When a new thread or new contact appears, matching should consider:
 - exact known client/sub-contact/participant email
 - phone number
-- shared address/location
+- shared property-qualified address; locality remains non-identity context
 - spouse/partner/project-manager relationship
 - quoted prior thread content
 - subject/body scope similarity
@@ -2022,8 +2029,8 @@ When a new thread or new contact appears, matching should consider:
 - existing opportunity and project state
 
 Guidance:
-- If an existing opportunity at the same address is active, RFQ, estimating, quoted, follow-up, or negotiation, the new thread is likely the same job.
-- If an existing project at the same address is active/in progress, the new thread is likely project communication or same-job context.
+- If an existing opportunity at the same property-qualified address is active, RFQ, estimating, quoted, follow-up, or negotiation, the new thread is likely the same job.
+- If an existing project at the same property-qualified address is active/in progress, the new thread is likely project communication or same-job context.
 - If the prior project is completed/closed and the scope is distinct, create a new opportunity.
 - If confidence is not high, create a separate lead and provide a merge path rather than over-linking.
 

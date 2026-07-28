@@ -5326,6 +5326,64 @@ Migrations `20260714230000_email_attachment_persistence` and `20260714232000_gua
 
 Attribution begins only from `(company_id, email_connection_id, email_message_id)`. Inbound sender or outbound external recipients must match the activity's current lead/client/contact identity, and `match_needs_review` always fails closed. Activity reassignment increments scan/inspection generations and re-evaluates cached acceptance. Lead merge uses guarded evidence-bound RPCs. Won conversion needs no duplicate file row because projects retain `opportunity_id`.
 
+## Lead Intake Identity and Commercial Guards (prepared 2026-07-28)
+
+These additive migrations are mirrored in `migrations/` but are not applied to
+production until an explicitly approved release:
+
+- `20260728160000_property_address_identity_boundary.sql`
+- `20260728161000_authoritative_staff_email_aliases.sql`
+- `20260728162000_guarded_customer_decline_lifecycle.sql`
+
+### Property address qualification
+
+`private.normalize_property_address(address, include_unit)` is the single
+database qualification and normalization boundary for relationship identity,
+duplicate/preflight checks, and email-to-project conversion. The compatibility
+helpers `private.normalize_address` and
+`private.normalize_email_project_dedupe_address` delegate to it. Locality,
+municipality, neighbourhood, region, area, postal-locality, and PO-box-only
+strings return the empty non-identity value. Numbered street, supported rural,
+lot/concession or lot/block/plan, and parcel/PID formats qualify. Units remain
+part of the identity when requested.
+
+The migration rewrites function behavior only. It does not rewrite existing
+opportunity, client, project, activity, or correspondence data.
+
+### `user_email_aliases`
+
+| Column | Type | Contract |
+|---|---|---|
+| `id` | `uuid` | Primary key |
+| `company_id` | `uuid` | Required company FK; unique identity boundary with normalized email |
+| `user_id` | `uuid` | Required active same-company user FK |
+| `email` | `text` | Lowercase trimmed exact email; immutable |
+| `status` | `text` | `pending`, `verified`, or `rejected` |
+| `source` | `text` | `signature_corroborated`, `operator_verified`, `provider_attested`, or `profile_authority` |
+| `evidence` | `jsonb` | Required object containing auditable provider/roster evidence |
+| `first_seen_at`, `last_seen_at` | `timestamptz` | Candidate observation window |
+| `verified_at`, `verified_by` | nullable timestamp/user FK | Required audit authority for `verified` |
+| `created_at`, `updated_at` | `timestamptz` | Record lifecycle |
+
+`(company_id, email)` is unique. Company/user/email/created identity is
+immutable. A trigger rejects inactive/cross-company users and aliases that
+belong to another registered teammate. RLS permits same-company authenticated
+read only. Candidate writes are service-role-only; final review requires a
+same-company administrator through `review_user_email_alias`. Pending evidence
+never grants staff identity.
+
+### Guarded customer-decline write
+
+`apply_email_opportunity_declined_disposition(...)` is a service-role-only RPC,
+not a client-writable table surface. Under one opportunity row lock it verifies
+mailbox, sender, message, projected correspondence, assignment, stage, event
+high-water, and terminal precedence. It writes `opportunities`, one
+`stage_transitions` row for a new Lost transition, and one active
+`opportunity_dispositions` row atomically. Evidence stores the connection,
+provider message, decisive event, reason code, signal, and evaluated high-water
+event. Exact retry resolves the existing disposition; stale or unauthorized
+evidence makes no business-state write.
+
 ## Review Swipe Safeguard Tables (2026-07-21)
 
 ### `payment_review_writeoff_receipts`
