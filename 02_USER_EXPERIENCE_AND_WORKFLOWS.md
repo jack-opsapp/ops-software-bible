@@ -1359,6 +1359,27 @@ in the 2026-04-27 Phase 1+2 rework)
 - Tap card → push to OpportunityDetailView
 - MarkLostSheet → modal for entering loss reason
 
+> **Staleness note (2026-07-28):** this PipelineView description predates the 2026-06-30 triage-console rebuild (`LeadsTabView` — weighted pills retired, chase-queue grammar) and is retained only until that section is rewritten. The section below documents the 2026-07-28 permission branch that now fronts the whole LEADS tab.
+
+---
+
+### LEADS Tab — Permission Branch + Delegate Day Sheet (2026-07-28)
+
+**Purpose:** the LEADS tab renders a different surface per the operator's pipeline scope. Owners keep the triage console; assigned-scope delegates get a **day sheet** — their leads grouped by whose move it is, with contact/route verbs on every row and a stage-aware milestone button. Spec: `ops-ios/docs/superpowers/specs/2026-07-27-my-leads-day-sheet-design.md` (Jackson-approved).
+
+**Branch rule (`LeadsTabView.showsDaySheet`):** `leadAccessPolicy.scope(for: .view)` — `nil` → no LEADS tab (unchanged `hasLeadsAccess` gate); `.all` → triage console (unchanged); `.assigned` → day sheet. Never branches on role names. One shared shell (AppHeader, `.task` load, all refresh listeners, navigation destinations, every sheet) — only the scroll body swaps, so both surfaces share one data engine (`PipelineViewModel`) and one refresh cadence.
+
+**Day sheet anatomy** (`Views/Leads/DaySheet/`):
+- Sub-line `// N LEADS · M YOUR MOVE`; groups `// YOUR MOVE · n` (overdue + due-today + waiting-on-you buckets, most-late first) / `// NEW · n` (fresh, newest first) / `// WAITING · n` (waiting-on-them, soonest comeback first). Empty groups collapse. Pure transform: `DaySheetViewModel.groups(from:policy:now:)` over the console's `TriageBuckets` — no cadence fork, row-filtered defensively with `can(.view, assignedTo:)`.
+- Collapsed row (`DaySheetLeadRow`): 56pt thumb (newest photo → map snapshot at coords → initial tile), name, address, compact stage chip (`shortLabel`, long-press = `LeadStatusMenu`, tap = expand) + urgency token (`3D LATE` rose / `TODAY` tan / `YOUR MOVE` neutral / plain `XH AGO` / `BACK FRI`), 44pt CALL + ROUTE verbs. `ViewThatFits` ladder degrades chip detail before ever truncating.
+- Expanded card (`DaySheetLeadCard`, accordion, one open): photo strip (shared `LeadPhotosSection`, offline-queued adds) → deck tile (`DeckDesign.thumbnailURL`, tap → `DeckBuilderView`) → agent summary band → contact block (context menus COPY/CALL/TEXT/MAIL) → CALL·TEXT·EMAIL do-and-stamp (`LeadQuickTouchLogger` contracts) → milestone button → `EST $X` (finances.view only) → `FULL LEAD →` (pushes `LeadDetailView`).
+- **Milestone button** (`LeadMilestoneEngine` + `LeadMilestoneCommitter`): one stage-aware verb — NEW LEAD→`CONTACTED`→qualifying, QUALIFYING→`SITE VISITED`→quoting, QUOTING→`QUOTE SENT`→quoted, late stages→`WON` (routes to the convert flow; **no won-stamp path exists without convert scope**, so the WON verb hides for edit-only delegates — their stamped run ends at QUOTE SENT). Press = medium haptic + optimistic `move_opportunity_stage` + fact-only activity stamp (subject = verb; `.siteVisit` type for visits, outbound `.note` otherwise) + 5s inline `UNDO` (full revert: stage restored via same RPC, activity hard-deleted). While a press is pending the sheet renders from a pre-press snapshot so the card can't regroup out from under the thumb; on expiry it posts `LeadUpdatedSuccess` and the card glides to its new group (300ms).
+- **Offline** (`DaySheetCache` + `MilestoneWriteQueue`): last-good fetch persisted as `[OpportunityDTO]` JSON keyed user+company (Application Support, atomic); renders with `SYS :: OFFLINE — LAST SYNC <T>`; milestone presses queue (requestId-deduped) and drain on connectivity/timer/executor-install — the drain re-checks current stage and skips honestly if the lead moved (`conflictSkipped`). Thumbs prefetched via `PhotoDownloadManager` and served cache-first.
+- **Arrival:** the live `lead_assigned` delivery chain (assignment RPC → outbox → cron → rail row + OneSignal push) deep-links through `pendingLeadDeepLinkId`; on the day sheet the drain expands + scrolls to the row (push fallback if unloaded).
+- Motion: single OPS curve — expand 250ms, regroup 300ms, undo morph 150ms; reduce-motion falls back to 150ms crossfades (token-level). Haptics: light expand, medium press, success on WON completion (fired by the convert flow).
+
+**Test coverage:** 8 suites / 76 cases (engine map, grouping/ordering/permissions, committer press/undo/expiry/offline/executor, cache round-trip + drain, snapshot proofs for rows/cards/states). Proof pack: `ops-ios/docs/artifacts/my-leads-day-sheet/`.
+
 ---
 
 ### OpportunityDetailView
