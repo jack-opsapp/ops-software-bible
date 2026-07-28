@@ -554,6 +554,25 @@ formatCurrency(amount, currency?)     // "USD" default → "$1,234.56"
 formatTaxRate(rate)                   // 0.0875 → "8.75%"
 ```
 
+### Money Rendering Canon (cross-platform, 2026-07-28)
+
+Money renders in the **en_US locale on every device**, both platforms. Web:
+`formatCurrency` = `Intl.NumberFormat("en-US")`. iOS: **`BooksFormat`**
+(`ops-ios/OPS/Utilities/BooksFormat.swift`) is the single money formatter —
+every FormatStyle/NumberFormatter money site routes through it (unpinned
+`.currency(code: "USD")` rendered "US$14,200" on Canadian-region phones).
+
+iOS registers: `BooksFormat.currency` whole dollars (`$18,240`, scan
+surfaces) · `BooksFormat.exact(_:code:)` exact cents + per-record ISO codes
+(`$1,223.58`, `CA$50.00` — documents, expenses, company-currency balances) ·
+`BooksFormat.price` catalog whole-when-even (`$250` / `$250.50`) ·
+`BooksFormat.symbol(for:)` form-field symbols · `BooksFormat.compact`
+(`$34.8K`). Non-USD codes render en_US-prefixed (`CA$`) deterministically —
+same as web. `LineItemDisplay` composes document line-item meta through the
+same canon. Regression guard: `OPSTests/Utilities/BooksFormatTests.swift`
+(run with `-testLanguage en -testRegion CA` to simulate a Canadian device).
+Out of canon by design: StoreKit subscription prices (storefront-priced).
+
 ---
 
 ## Invoices System
