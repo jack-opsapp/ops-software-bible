@@ -1458,10 +1458,15 @@ target.
 
 The tokenized UIKit input accessory is installed at the input boundary, so it
 applies across root screens, navigation destinations, sheets, full-screen
-covers, and dedicated overlay windows. The accessory weakly retains and
-resigns its exact owning input. `DONE` therefore hides the keyboard without
-dismissing the screen, clearing data, or relying on the active window's
-responder chain.
+covers, and dedicated overlay windows. OPS-owned UIKit-backed custom editors
+must prepare the accessory when their input is created, before it becomes first
+responder; editing-activation installation is only the fallback for
+system-managed inputs. This avoids reloading the keyboard during a custom
+editor's focus transition. The accessory reports the OPS minimum touch-target
+token as its intrinsic height, weakly retains its exact owning input, and
+resigns that input. `DONE` therefore remains fully above the keyboard and hides
+it without dismissing the screen, clearing data, or relying on the active
+window's responder chain.
 
 Generic local `.toolbar(placement: .keyboard)` implementations and
 presentation-scoped dismissal modifiers are forbidden because they can miss
