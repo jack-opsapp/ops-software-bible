@@ -880,9 +880,32 @@ class AppState: ObservableObject {
     @Published var projectPendingCompletion: Project?
     @Published var showingGlobalCompletionChecklist: Bool = false
 
+    // MARK: - Map Surface Mirrors
+    // OPSMapContainer owns the map coordinator as a private @StateObject, so
+    // Home cannot observe it. The container mirrors card visibility here.
+    @Published var isShowingMapOverlay: Bool = false          // ANY overlay (hides the FAB)
+    @Published var isMapProjectSurfacePresented: Bool = false // PROJECT surfaces only
+
     // MARK: - Computed Properties
     var isInProjectMode: Bool {
         activeProjectID != nil && !isViewingDetailsOnly
+    }
+
+    /// True while ANY project surface is presented over Home — the map pin
+    /// card, the stacked-group sheet, or project details. `isInProjectMode`
+    /// cannot serve this role: it is false whenever a project is merely being
+    /// VIEWED, which is the state all of those surfaces present in. Home hides
+    /// its supporting cards on this signal (bug de9099d6).
+    var isProjectSurfacePresented: Bool {
+        isMapProjectSurfacePresented || isProjectDetailsPresented
+    }
+
+    /// Includes the arming window: `showProjectDetailsAfterResetById` sets
+    /// `isViewingDetailsOnly` + `activeProjectID` synchronously and flips
+    /// `showProjectDetails` a runloop later. Reading `showProjectDetails`
+    /// alone would let the Home cards flash back in during that gap.
+    private var isProjectDetailsPresented: Bool {
+        showProjectDetails || (isViewingDetailsOnly && activeProjectID != nil)
     }
 
     // MARK: - Actions

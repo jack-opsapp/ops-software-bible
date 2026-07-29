@@ -53,6 +53,8 @@ Maximum (Pipeline + Catalog):
 
 When the full tab set is wider than the viewport, Settings remains the trailing overflow tab. Selecting or restoring Settings automatically scrolls the tab bar far enough to keep its icon fully visible; returning to a primary tab restores the tab bar to its resting position.
 
+**Resting position (bug df49d9ef, 2026-07-29):** the lane rests at content-x **0** — the primary tabs holding their designed `gap/2` edge padding, with the divider and Settings genuinely off-screen. Both resting scrolls target `leadingEdgeID`, a sentinel on the PADDED primary group (its frame starts at content-x 0). Targeting the first tab *cell* instead rests the lane at `gap/2`, because the cell's leading edge sits that far into the content — the edge padding scrolls away and the trailing divider peeks in. `TabBarSnapshotTests` pins the settled offset at `0 ± 0.5` on initial render and after returning from Settings.
+
 **Tab Items (in insertion order):**
 
 1. **Home** (`house.fill` icon) — Always shown

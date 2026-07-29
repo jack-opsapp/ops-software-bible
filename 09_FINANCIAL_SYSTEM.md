@@ -1851,7 +1851,17 @@ The nav registry entry (`key: books`, order 6, lucide `Calculator` per the icon 
 2. Approved or converted estimate total.
 3. Sent or viewed estimate total.
 4. Draft estimate total.
-5. No amount: show the project title and task count with `—` for the dollar value.
+5. No amount: show the project title and task count with the empty-money token for the dollar value.
+
+**Empty money (bug 8c7fdb9e, 2026-07-29):**
+- The empty-money token is `BooksFormat.emptyCurrency` = `$—`, used by BOTH the hero total (`HomeBillableThisWeekCard.totalText(for:)`) and the per-row amount slot (`amountText(for:)`).
+- A bare `—` read as a dead slot rather than empty money; the currency mark keeps the column legible as dollars whether or not a job is valued. `$0` stays banned — it claims a real, recorded zero, and an unvalued job is "no amount recorded".
+- Both render JetBrains Mono with `.monospacedDigit()`; the empty state takes the `text3` tone, a valued amount takes `text` (hero) / `finRevenue` (row).
+
+**Yielding to project surfaces (bug de9099d6, 2026-07-29):**
+- The card and the NEEDS TASKS strip sit in a Home layer ABOVE the map, so a presented project surface would otherwise show them floating over it.
+- `HomeContentView.supportingCardsVisible(isInProjectMode:isProjectSurfacePresented:)` gates both; they cross-fade out on `OPSStyle.Animation.standard` whenever `AppState.isProjectSurfacePresented` is true and return when it clears.
+- Only these two yield. The map filter chips and the project carousel are the map's own controls and stay put.
 
 **Monday notification:**
 - iOS dispatches one Monday notification per user/company/week when the rollup has items and the user has `finances.view`.
