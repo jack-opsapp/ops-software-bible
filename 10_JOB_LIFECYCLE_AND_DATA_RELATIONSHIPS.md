@@ -4,7 +4,7 @@
 
 **Purpose**: Defines the complete data flow for a trade job from first contact through to a paid invoice. Documents all entity relationships, automation triggers, new entities, and required changes to existing entities. This is the master reference for how leads, pipeline, clients, estimates, projects, tasks, and invoices inter-operate.
 
-**Last Updated**: June 26, 2026
+**Last Updated**: July 23, 2026
 **Designed With**: ops-web codebase + ops-software-bible review session
 
 ---
@@ -1655,7 +1655,7 @@ The `Project.projectImages` field (comma-separated string) is deprecated. Migrat
 
 ## Email Pipeline Integration
 
-> **Platform status**: Email integration is implemented on OPS-Web with support for both Gmail and Microsoft 365. API routes under `/api/integrations/email/`, plus a provider abstraction layer, pattern detection engine, AI classification system, webhook-driven sync, and a 5-step "Import Your Pipeline" wizard. No email integration exists on iOS. The `email_connections` table (renamed from `gmail_connections`) stores per-connection provider, tokens, sync profile, webhook subscription, and AI feature flags.
+> **Platform status**: Email integration is implemented on OPS-Web with support for both Gmail and Microsoft 365. API routes under `/api/integrations/email/`, plus a provider abstraction layer, pattern detection engine, AI classification system, webhook-driven sync, and a 5-step "Import Your Pipeline" wizard. iOS does not connect or sync mailboxes and has no full inbox; its one provider-backed exception is the authenticated one-tap Due/Overdue follow-up, which delegates all mailbox/thread/template/signature work to OPS-Web. The `email_connections` table (renamed from `gmail_connections`) stores per-connection provider, tokens, sync profile, webhook subscription, and AI feature flags.
 
 ### Lead Lifecycle Target Intent
 
@@ -1752,7 +1752,7 @@ P4 schema contract:
 - `opportunity_follow_up_drafts` stores auditable lifecycle drafts. It links to company, opportunity, optional connection/thread, optional source correspondence event, origin (`operator`, `template_follow_up`, `phase_c`, `system_handoff`), sequence number, subject, original generated body, current body, final sent body, status (`drafted`, `sent`, `discarded`, `superseded`, `archived`), optional provider draft id, optional `ai_draft_history` id, editors, and lifecycle timestamps. At most one open `template_follow_up` draft exists per opportunity.
 - `opportunity_lifecycle_state` stores the opportunity's P4 stale state: last meaningful event/time/direction, unanswered follow-up count, second follow-up sent time, operator follow-up miss time, stale status, protected-until timestamp, and update time.
 - `opportunity_lifecycle_action_audit` stores guarded P4 action attempts/results once the P4-12 additive migration is applied. It records company, opportunity, action, approved action key, execution mode, status, guard reason, server-computed before/after values, decision reason/evidence, approval metadata, run id, error code/message provenance, runner, and creation time. A partial unique index prevents duplicate applied rows for the same approved company/opportunity/action/key.
-- `lead_lifecycle_settings` stores company-level cadence and template settings. Defaults are 7 days to draft a follow-up after OPS outbound, 7 days to archive after the second unanswered follow-up, 14 days to archive when no meaningful correspondence exists, 30 days to mark beyond-qualified operator no-response as lost, default template subject `Following up`, and default template body `Hey there {{first_name}}, just following up on this as I didn't see anything back from you.`
+- `lead_lifecycle_settings` stores company-level cadence and template settings. Defaults are 7 days to draft a follow-up after OPS outbound, 7 days to archive after the second unanswered follow-up, 14 days to archive when no meaningful correspondence exists, 30 days to mark beyond-qualified operator no-response as lost, default template subject `Following up`, and default template body `Hi {{first_name}}, just checking in to see if you had any questions about the quote. No pressure — I wanted to make sure you had everything you needed.`
 
 P4 deterministic classifier rules:
 - Customer inbound counts as meaningful only when the sender or parsed contact-form submitter is a real external customer/contact. Parsed submitter identity wins over platform sender identity.
@@ -1830,7 +1830,7 @@ P4-30/P4-31 production closeout:
 
 P5-1 local operator follow-up workflow:
 - On 2026-05-29, P5-1 used the populated P4 proof/state tables to create local, auditable operator workflow only. It did not send email, create Gmail/Microsoft provider drafts, archive opportunities, mark opportunities lost, reactivate opportunities, mutate clients/activities/email threads, or run guarded destructive apply.
-- `lead_lifecycle_settings` remains the source of company cadence and template defaults. If a company has eligible P5 candidates but no settings row, P5-1 may insert the default settings row idempotently before action execution. The current default follow-up cadence is 7 days after the last meaningful OPS outbound, the default follow-up subject is `Following up`, and the default template body is `Hey there {{first_name}}, just following up on this as I didn't see anything back from you.`
+- `lead_lifecycle_settings` remains the source of company cadence and template defaults. If a company has eligible P5 candidates but no settings row, P5-1 may insert the default settings row idempotently before action execution. The current default follow-up cadence is 7 days after the last meaningful OPS outbound, the default follow-up subject is `Following up`, and the default template body is `Hi {{first_name}}, just checking in to see if you had any questions about the quote. No pressure — I wanted to make sure you had everything you needed.` Migration `20260723233000_operator_one_tap_lead_follow_up.sql` upgrades only rows still equal to the prior stock body; custom company templates are preserved.
 - `create_follow_up_draft` creates a local `opportunity_follow_up_drafts` row with `origin = 'template_follow_up'`, `status = 'drafted'`, rendered subject/body, optional source event, and optional provider thread context. `provider_draft_id` stays null. The database unique contract remains one open `template_follow_up` draft per company/opportunity.
 - Template follow-up execution must not overwrite, discard, reuse, or supersede operator, Phase C, system-handoff, provider-backed, or sent drafts. Meaningful inbound may supersede only stale open `template_follow_up` drafts for the same opportunity.
 - Lifecycle state must persist before a template draft insert. `create_follow_up_draft` sets stale status `follow_up_draft_due`; `operator_follow_up_miss` sets stale status `operator_follow_up_miss` and `operator_follow_up_miss_at`. Repeat apply skips already matching lifecycle state so idempotent reruns do not churn `updated_at`.
@@ -1977,13 +1977,46 @@ Rules:
 - Won, lost, converted-to-project, and already archived opportunities are not monitored for stale-lead automation.
 - Meaningful correspondence excludes provider noise, automated bounces, marketing, internal-only chatter, duplicate sync rows, and system notifications. In normal client threads, actual client emails should generally count.
 - If OPS sent the last meaningful message and the configured threshold passes, mark the opportunity as needing follow-up and create a template follow-up draft.
-- Follow-up drafts are lifecycle automation, not Phase C. They are generated from configurable settings templates. Default copy may be: `Hey there {{first_name}}, just following up on this as I didn't see anything back from you.`
+- Follow-up drafts are lifecycle automation, not Phase C. They are generated from configurable settings templates. The standard default is: `Hi {{first_name}}, just checking in to see if you had any questions about the quote. No pressure — I wanted to make sure you had everything you needed.`
 - After two OPS follow-ups with no meaningful customer response, archive the opportunity 7 calendar days after the second follow-up.
 - If there has been no meaningful correspondence for 14 calendar days, archive the opportunity unless it has a terminal or protected state.
 - If the last meaningful email was inbound and unreplied, do not treat it as a cold customer. If it is under 30 calendar days old, surface it as an operator follow-up miss or archive only as a visibility action. If it is over 30 calendar days old and the lead had moved beyond qualified, move it to `lost` with a reason such as `operator_no_response`.
 - If a matched inbound arrives from any linked or high-confidence related contact, reset stale timers, unarchive if needed, enrich the opportunity, and re-evaluate stage.
 
 Settings should eventually expose follow-up cadence, follow-up templates, stale thresholds, and any manual keep-active or automation-pause control. If a keep-active/automation-pause control does not exist yet, it is a product gap, not a reason to invent hidden behavior.
+
+#### One-Tap Lead Follow-Up (iOS + OPS-Web, 2026-07-23)
+
+The iOS chase strip gives an editable **Due Today** or **Overdue** lead with a contact email a single `SEND FOLLOW-UP` action. This is an immediate provider send, not a composer shortcut and not an optimistic "handled" mutation. `YOUR MOVE` continues to show `HANDLED`; the normal `EMAIL` contact action continues to open the editable email composer. If server-side mailbox/thread checks show that the shortcut is unsafe or unavailable, the chase strip falls back to the ordinary handled/email paths.
+
+iOS sends only the opportunity id in the URL and one durable UUID `idempotencyKey` in the body. Storage is scoped by company + actor + opportunity + canonical chase cycle. The same key survives network/auth/permission changes, unavailable state, provider-accepted/pending reconciliation, delivery-unknown state, and app restart; a later cycle gets a new key only after canonical handled/outbound progress advances. It is cleared only after a fully reconciled receipt or definitive provider rejection/invalid request. While a send is unresolved, the strip shows `SENDING…`, `SYNCING…`, or `CHECK EMAIL` and blocks another one-tap attempt for that lead.
+
+The OPS-Web route derives every irreversible transport fact from canonical server state:
+
+- canonical actor and company from the bearer token;
+- the active, unconverted, quote-bearing (`quoted`, `follow_up`, or `negotiation`) opportunity, its company-local due day, and its contact email;
+- one unambiguous existing `opportunity_email_threads` / `email_threads` provider thread and its pinned connection;
+- the live provider thread, whose newest message must be an OPS outbound from that connection or configured sender alias;
+- the contact as an existing thread participant;
+- the company follow-up template (or the standard default), rendered placeholders, and effective mailbox signature;
+- the bound `template_follow_up` draft and source correspondence event used by the durable send intent.
+
+The shortcut never accepts a client-supplied mailbox, provider thread, recipient, subject, body, or signature, and it never starts a new provider thread. The provider conversation is re-read inside the mailbox lease immediately before delivery. A newer customer inbound, changed newest outbound, ambiguous thread, changed lead, missing mailbox/signature/recipient, or authorization mismatch fails closed. An opportunity-wide database fence prevents a different thread from opening a second unresolved template-follow-up send, and the bound draft content is frozen across the provider boundary.
+
+Lead state advances only after the provider has accepted the message and the send has reconciled canonically. Migration `20260723233000_operator_one_tap_lead_follow_up.sql` owns that atomic transition through service-role RPC `reconcile_operator_template_follow_up_send_as_system(intent_id)`: it marks the bound draft sent, increments the unanswered-follow-up count exactly once when no later meaningful event won, stamps the second-follow-up time at count 2+, clears the due/operator-miss stale state, resolves the prior operator-miss notification, updates a still-current lead to handled, and writes an intent-scoped `lead_follow_up_sent` notification. The effective comeback is provider acceptance +3 days unless the operator had already chosen a sooner future check-in on a later company-local day. If newer meaningful activity or terminal state won while reconciliation was running, delivery is still receipted but OPS preserves that newer truth and stores no comeback for this send.
+
+A fully reconciled response supplies the immutable outcome receipt plus the canonical server opportunity when available. iOS applies a supplied canonical row, or refreshes after a receipt-only replay. When the send still owns chase state it removes the lead from Due/Overdue and surfaces `FOLLOW-UP SENT · BACK <date>`; when newer truth won it confirms only `FOLLOW-UP SENT`. On an HTTP 202 accepted/pending or delivery-unknown result, iOS does not update `handled_at`, synthesize a comeback, or move the lead locally; a later canonical refresh may resolve the pending UI only when it proves an outbound message, handled state, and a future follow-up date. No undo is offered for sent email.
+
+Primary implementation sources:
+
+- `ops-web/src/app/api/leads/[opportunityId]/follow-up/route.ts`
+- `ops-web/src/lib/api/services/lead-follow-up-send-service.ts`
+- `ops-web/src/lib/api/services/email-send-reconciliation-service.ts`
+- `ops-web/supabase/migrations/20260723233000_operator_one_tap_lead_follow_up.sql`
+- `ops-ios/OPS/Services/LeadFollowUpService.swift`
+- `ops-ios/OPS/ViewModels/PipelineViewModel.swift`
+- `ops-ios/OPS/Views/Leads/Components/LeadChaseStrip.swift`
+- iOS hosts: `LeadsTabView.swift`, `PipelineStageListView.swift`, `LeadDetailView.swift`, and `Triage/LeadTriageCard.swift`
 
 #### Drafting and Learning Intent
 
@@ -2410,7 +2443,8 @@ When emails are imported or synced, each is matched against existing clients via
 7. Client matching & sub-contact resolution (5-tier cascade)
 
 8. Apply labels
-   └── New lead/activity → apply "OPS Pipeline" label/category
+   └── New lead/activity → durably queue the exact-message
+       "OPS Pipeline" label/category write before provider access
 
 9. Create/update OPS records
    ├── New lead → create Client + Opportunity + Activity
@@ -2426,6 +2460,43 @@ When emails are imported or synced, each is matched against existing clients via
 
 12. Update lastSyncHistoryId
 ```
+
+### Cursor-safe deferred recovery (production 2026-07-27)
+
+Classification and pipeline-label recovery are exact-message work, not
+thread-wide guesses. The service-only `email_ingestion_recovery_queue` records
+the company, active mailbox connection, provider thread, provider message,
+recovery kind, and stable operation key before the sync cursor may pass that
+work. Forwarded contact forms participate even though their source-bound
+message scope deliberately does not create an opportunity-thread relationship.
+
+The email-sync cron claims only work for its current active-subscription company
+set. Each retry then acquires the physical-mailbox lease and reauthorizes the
+current active, sync-enabled connection immediately before provider access.
+Classification fetches the surrounding provider thread for context but replays
+only the queued inbound message through the canonical ingestion path. Pipeline
+labeling is idempotent per exact message and current label id, because Gmail
+does not guarantee that a label already present on earlier thread messages will
+appear on a newly arriving message.
+
+Success and failure writes are holder/lease fenced. Failures use bounded
+exponential backoff and become explicit terminal records after eight attempts;
+they are never reported as success, and an undurable intent or completion holds
+the mailbox cursor. Existing provider-message deduplication, immutable lead and
+thread ownership, manual classification overrides, authorization gates, and
+source-bound contact-form routing remain unchanged.
+
+Assignment-triggered contact-form drafting is scheduled in the ten-minute lead
+assignment delivery lane rather than behind attachment/photo maintenance. A
+retry must still prove the current assignment, assignee permissions, mailbox,
+contact-form source, writing profile, and absence of an existing OPS/provider
+draft. Operator escalations and insufficient verified writing examples are
+terminal safety holds; transient empty/refused/model-unavailable results retain
+the existing durable job and retry under its lease/backoff contract.
+
+Migration `20260727043334_email_ingestion_recovery_queue` is live before the
+compatible application commit `ee3d43db`. The normal path creates no historical
+backfill and performs no unsolicited Gmail, draft, or lead-row repair.
 
 ### Smart Pipeline Staging
 
@@ -3059,7 +3130,7 @@ Built iOS files:
 
 The site-visit measure-photo action now uses the real dimensioned capture/annotation screen when `feature.measurement.dimensioned_capture` and device capability allow it. Simulator and no-AR devices still cannot validate LiDAR hardware capture; physical-device QA is required before claiming the scanner is field-proven.
 
-#### Email Pipeline Integration — Web Only (No iOS Implementation)
+#### Email Pipeline Integration — Web-Owned; iOS Follow-Up Client Added 2026-07-23
 
 Email integration API routes exist on the web backend (`OPS-Web/src/app/api/integrations/email/`):
 - `route.ts` — main email integration endpoint
@@ -3070,7 +3141,7 @@ Email integration API routes exist on the web backend (`OPS-Web/src/app/api/inte
 
 Supporting web services: `email-service.ts`, `email-sync-service.ts`, `email-matching-service.ts`, `email-classifier.ts`, `use-email-connections.ts`, `email-setup-wizard.tsx`.
 
-No email integration exists on iOS. The iOS app reads from the same `opportunities` table (which gains new correspondence tracking columns) but does not connect to or sync email accounts.
+iOS still does not connect to or sync email accounts and does not expose the web inbox. It reads the shared `opportunities` state and now calls the narrow authenticated `POST /api/leads/:opportunityId/follow-up` path from Due/Overdue lead chase controls. OPS-Web remains the sole owner of mailbox authorization, provider threading, message content/signature, delivery, and reconciliation; see **One-Tap Lead Follow-Up (iOS + OPS-Web, 2026-07-23)** above.
 
 #### In-App Email Client (Web — Built 2026-03-19)
 
