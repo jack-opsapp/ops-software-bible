@@ -300,41 +300,66 @@ Located at `src/lib/api/services/opportunity-service.ts` (wired from `2742b60` c
 
 A single shared Postgres brain backs the conversion on **both** platforms — drift becomes impossible. Two functions:
 
-**`get_conversion_preflight(p_opportunity_id uuid, p_company_id uuid DEFAULT NULL) RETURNS jsonb`** — read-only dedup detection, called before the convert UI commits. Auth: `service_role` trusts `p_company_id`, otherwise company is derived from the JWT and `pipeline.manage` is required. Returns:
+**`get_conversion_preflight(p_opportunity_id uuid, p_company_id uuid DEFAULT NULL, p_actor_user_id uuid DEFAULT NULL) RETURNS jsonb`** — read-only (`STABLE`) dedup detection, called before the convert UI commits. Auth: `service_role` must pass BOTH `p_company_id` and `p_actor_user_id` (else `access_denied`); otherwise both are derived from the JWT (`private.get_user_company_id()` / `private.get_current_user_id()`) and any non-null argument that disagrees raises `access_denied`. The actor must additionally pass `private.user_can_convert_opportunity`. **Verified against prod 2026-07-29.** Returns:
 
 ```jsonc
 {
-  "existing_linked_project": { "id": "...", "title": "..." } | null,   // this opp already converted
+  "opportunity_id": "...",
+  "assignment_version": 7,                                              // optimistic-concurrency snapshot
+  "already_converted": true,                    // opportunity carries a project pointer (ref or legacy id)
+  "project_accessible": false,                  // actor can view that linked project (REAL check here)
+  "existing_linked_project": { "id": "...", "title": "..." } | null,   // omitted when inaccessible
   "duplicate_candidates": [                                             // likely the SAME job
     { "project_id","title","address","confidence": "high"|"medium","signals": ["same_client","same_address"] }
   ],
   "other_client_projects": [ { "project_id","title","address","status" } ],
+  "creation_blocker": "address_required" | "project_review_required" | null,
   "suggested_name": "1240 W 6th Ave"                                    // derive_project_name preview (base, no #N)
 }
 ```
 
 Matching uses `private.normalize_address` (§03): same normalized address + same `client_id` ⇒ **high**; same address, different/unknown client ⇒ **medium**.
 
+**Recovery shape.** When the opportunity has a project pointer the actor CANNOT view, the function returns early with `already_converted: true`, `project_accessible: false`, a null `existing_linked_project`, and empty candidate/other arrays — the linked project's identity is deliberately withheld and sibling projects are not scanned. The only valid follow-up is an idempotent conversion call with no link target.
+
+**Candidate filter is permission-only.** Candidates pass `private.user_can_view_project` AND `private.user_can_link_opportunity_to_project` (which is view AND edit — *not* a link-state test). A candidate may therefore already belong to a DIFFERENT opportunity, which `convert_opportunity_to_project` rejects at commit (`linked project belongs to another opportunity`, SQLSTATE `23505`). iOS closes that asymmetry client-side by re-reading `projects.opportunity_id` / `opportunity_ref` before offering MATCH (`LeadConversionService.matchableCandidateProjectIds`); a drafted migration adds an `already_linked` annotation to each candidate so the client re-read can retire (`ops-web` branch `fix/conversion-rpc-accessible-migration`, **NOT applied**).
+
+**`creation_blocker` is server-authored** and set only when the opportunity has no project yet:
+- `address_required` — the lead has no normalized address AND (no client, or the client already has an active project). There is nothing to prove sameness with.
+- `project_review_required` — the lead HAS an address, zero candidates survived the permission filter, and an active same-address project nevertheless exists. The operator can neither match it nor safely create alongside it.
+
+Duplicate prevention is enforced independently at commit: a nil-link create whose address matches an active project raises `project_link_unavailable: matching_project_requires_review`.
+
 **`convert_opportunity_to_project(...) RETURNS jsonb`** — the unified write transaction (`SECURITY DEFINER`, all-or-nothing), a superset of both retired RPCs. Full signature:
 
 ```sql
+-- 13 parameters. Verified against prod 2026-07-29.
 convert_opportunity_to_project(
-  p_company_id        uuid,
-  p_opportunity_id    uuid,
-  p_actual_value      numeric  DEFAULT NULL,
-  p_expected_stage    text     DEFAULT NULL,   -- snapshot guard
-  p_decided_by        uuid     DEFAULT NULL,
-  p_notes             text     DEFAULT NULL,
-  p_title_override    text     DEFAULT NULL,    -- non-null ⇒ hand-set name (title_is_auto=false)
-  p_link_to_project_id uuid    DEFAULT NULL,    -- link an existing project instead of creating
-  p_source_path       text     DEFAULT NULL,    -- 'won_dialog' | 'approval_queue' | 'ios'
-  p_win_opportunity   boolean  DEFAULT true,
-  p_project_status    text     DEFAULT NULL,    -- null → 'accepted' if winning else 'rfq'
-  p_evidence          jsonb    DEFAULT '{}'
+  p_company_id                  uuid,
+  p_opportunity_id              uuid,
+  p_actual_value                numeric  DEFAULT NULL,
+  p_expected_stage              text     DEFAULT NULL,   -- snapshot guard
+  p_decided_by                  uuid     DEFAULT NULL,   -- the ACTOR; null ⇒ service path
+  p_notes                       text     DEFAULT NULL,
+  p_title_override              text     DEFAULT NULL,   -- non-null ⇒ hand-set name (title_is_auto=false)
+  p_link_to_project_id          uuid     DEFAULT NULL,   -- link an existing project instead of creating
+  p_source_path                 text     DEFAULT NULL,   -- 'won_dialog' | 'approval_queue' | 'ios' | 'web'
+  p_win_opportunity             boolean  DEFAULT true,
+  p_project_status              text     DEFAULT NULL,   -- null → 'accepted' if winning else 'rfq'
+  p_evidence                    jsonb    DEFAULT '{}',
+  p_expected_assignment_version bigint   DEFAULT NULL    -- optimistic concurrency on assignment
 ) RETURNS jsonb
 -- → { converted, already_converted, project_id, disposition_id, relinked_estimates,
---     materialized_tasks, attached_photos, linked_existing, won, guard_reason? }
+--     materialized_tasks, attached_photos, attached_lead_photos, relinked_decks,
+--     linked_existing, won, guard_reason?, conversion_event_id?,
+--     assigned_to, assignment_version, project_accessible }
 ```
+
+**`guard_reason` values** — `null` (proceed) · `'already_converted'` (idempotent recovery, still a success) · `'assignment_snapshot_mismatch'` (`p_expected_assignment_version` stale) · `'snapshot_mismatch'` (stage/client/address/project-pointer moved under the caller) · `'manual_stage_override'`.
+
+**`project_accessible` is NOT uniformly computed.** Exactly one return path evaluates it (`private.user_can_view_project(v_actor_user_id, v_project_id)` on the success branch, and only when the actor is non-null). Every other return hardcodes `false`. On the guard branches that is harmless — the caller throws on `guard_reason` before reading the flag. On the **idempotent already-converted branch it is a defect**: that branch returns a REAL `project_id` alongside `project_accessible: false`, which reads as an access denial the client cannot distinguish from a genuine one (iOS bug ced5b3cb — the client cleared the lead's local project link and set a persisted marker that hid MATCH PROJECT forever). iOS now treats the flag as non-authoritative whenever `already_converted` is true and a non-empty `project_id` is present, recovering the project by identity instead. A drafted server fix computes the real value on that branch (`ops-web` branch `fix/conversion-rpc-accessible-migration`, **NOT applied**).
+
+**Link-guard error suffixes** — `project_link_unavailable` is raised bare or with a reason suffix the client maps to distinct operator copy: `matching_project_requires_review` (nil-link create blocked by an active same-address project) · `address_required_for_project_match` (candidates exist but the lead has no address to prove sameness) · `matching_project_link_conflict` · `dedupe_proof_unavailable`. Also raised: `linked project belongs to another opportunity` (`23505`), `project_link_ambiguous`, `opportunity project mirrors disagree`, `invalid_assignment_snapshot`, `opportunity_client_snapshot_mismatch`.
 
 **The shim (migration `20260603020001`).** `convert_lead_to_project(p_opportunity_id, p_actual_value, p_title, p_address, p_user_id) RETURNS uuid` is rewritten as a thin wrapper that calls `convert_opportunity_to_project(p_title_override := p_title, p_source_path := 'ios', p_win_opportunity := true)` and returns `(result->>'project_id')::uuid`, preserving the original return type + error codes. **The App-Store iOS build in the field converges on the unified logic with no release.** `p_address` is accepted for signature compatibility but **ignored** — the unified RPC reads `address`/`latitude`/`longitude` from the opportunity row (the next iOS release persists an edited address to the opportunity before converting).
 
@@ -365,15 +390,20 @@ The RPC's jsonb result carries `relinked_estimates`, `materialized_tasks`, `atta
 
 #### iOS service surface
 
+`LeadConversionService` is constructed with the company id **and the SwiftData `ModelContext`** — the post-commit project fetch must land in the local store or nothing on the device can open the new project (bug 4cbf2efe).
+
 | Method | Purpose |
 |---|---|
-| `getConversionPreflight(for:)` | Server preflight (next iOS release) — replaces the old local-SwiftData `existingProject` / `clientProjectsSummary` dedup, which missed unsynced projects (new device, partial sync, another operator's just-created project). |
-| `convertOpportunityToProject(lead:actualValue:titleOverride:notes:userId:)` | Calls `convert_opportunity_to_project` directly (`p_source_path='ios'`); `titleOverride = nil` ⇒ auto-named (`title_is_auto=true`), a typed name ⇒ hand-set. |
+| `getConversionPreflight(for:)` | Server preflight — replaced the old local-SwiftData `existingProject` / `clientProjectsSummary` dedup, which missed unsynced projects (new device, partial sync, another operator's just-created project). |
+| `matchableCandidateProjectIds(for:candidates:)` | Second round-trip that re-reads `projects.opportunity_id` / `opportunity_ref` for the preflight's candidates and keeps only those unlinked or already linked to THIS lead. Exists because the preflight filters on permissions only (above). Retires when the `already_linked` annotation lands. |
+| `convertOpportunityToProject(lead:actualValue:titleOverride:notes:linkToProjectId:userId:expectedStage:expectedAssignmentVersion:)` | Calls `convert_opportunity_to_project` directly (`p_source_path='ios'`); `titleOverride = nil` ⇒ auto-named (`title_is_auto=true`), a typed name ⇒ hand-set. Persists the returned project through `ProjectCacheMerge` before returning. |
 | `estimates(for:)` / `estimateBundles(for:)` | Network fetch for the estimates list + the LABOR tasks preview. |
-| `markWonNoProject(lead:actualValue:userId:)` | **iOS-only** escape hatch — win without a project (sheet CANCEL exit). Web does **not** mirror it. |
-| `markWonWithExistingProject(lead:projectId:actualValue:userId:)` | **iOS-only** — mark won while keeping an existing linked project (the DUPLICATE-EXISTS "open project" action). Web does **not** mirror it. |
 
-The previous App-Store release's `convert_lead_to_project(... p_address ...)` call keeps working via the shim. The next iOS release adopts `get_conversion_preflight` + `convert_opportunity_to_project` directly and sets `title_is_auto`. Task Generation modal (per-task toggle pre-materialization) remains deferred — v1 materializes every LABOR line item silently.
+**Outcome contract** (`LeadConversionOutcome`) — `.project(Project)` (committed and cached locally, safe to navigate to) · `.committedWithKnownProject(projectId:)` (committed, identity known, row not hydratable right now — local link state is PRESERVED and the project sheet self-heals) · `.committedWithoutAccessibleProject` (committed, no usable identity — the only case that withholds a project id).
+
+**Local persistence seam.** `ProjectCacheMerge` (`OPS/Network/Sync/ProjectCacheMerge.swift`) is the single place an authoritative `projects` row becomes a cached SwiftData `Project`. Realtime and the conversion's post-commit fetch both funnel through it, so field-level protection (`SyncFieldGuard`) and the `ProjectVinylOrderMarker` sibling row stay consistent. Before this existed the conversion mapped the DTO with `toModel()` and returned it DETACHED — the row was never inserted, so `DataController.getProject(id:)` found nothing and the won toast's VIEW opened an empty sheet.
+
+The previous App-Store release's `convert_lead_to_project(... p_address ...)` call keeps working via the shim. Task Generation modal (per-task toggle pre-materialization) remains deferred — v1 materializes every LABOR line item silently.
 
 ---
 
