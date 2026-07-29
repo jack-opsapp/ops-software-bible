@@ -2136,6 +2136,13 @@ metadata or presentation context, but it cannot establish a client,
 opportunity, merge, dedupe, relationship, assignment, notification, or project
 link.
 
+Ops-web commit `743b9319` also applies the qualifier at contact resolution and
+the canonical enrichment persistence boundary. Locality-only form, forwarded,
+AI/import, attachment, and recovery facts therefore cannot populate a client
+or opportunity job-address field even after later asynchronous enrichment.
+Qualified street, unit, rural-property, and parcel values retain their cleaned
+display form.
+
 #### Guarded decisive rejection commit (live 2026-07-29)
 
 Migration `20260728162000_guarded_customer_decline_lifecycle` and ops-web
@@ -2170,6 +2177,18 @@ drafts, applied lifecycle actions, nonzero follow-up counters, stale/protected
 state, missing prior event history, or any state/event mismatch. The move and
 both source/target lifecycle recomputations remain one transaction. Gmail or
 Microsoft 365 is never mutated by this database recovery operation.
+
+#### Staff false-lead correction compatibility guards (live 2026-07-29)
+
+Migrations `20260729173000_fix_staff_false_lead_notification_company_cast` and
+`20260729174500_preserve_referenced_staff_false_lead_client` retain the original
+content-addressed, service-only correction contract. The first makes the
+notification tenant comparison explicit across the existing text-backed
+notification company key and UUID correction input. The second performs a
+schema-wide post-reparent client reference count: it deletes the false source
+client only at zero references and otherwise preserves the shared client. The
+immutable correction result records the deletion decision and remaining
+reference count, so exact retries return the same audited outcome.
 
 #### GET / PATCH `/api/integrations/email/connection` — company intake owner
 

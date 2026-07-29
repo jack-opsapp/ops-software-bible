@@ -5335,6 +5335,8 @@ These migrations are applied to production and mirrored in `migrations/`:
 - `20260728162000_guarded_customer_decline_lifecycle.sql`
 - `20260728163000_guarded_staff_false_lead_correction.sql`
 - `20260729170000_exact_recovery_latest_event_lifecycle.sql`
+- `20260729173000_fix_staff_false_lead_notification_company_cast.sql`
+- `20260729174500_preserve_referenced_staff_false_lead_client.sql`
 
 ### Property address qualification
 
@@ -5354,6 +5356,15 @@ forms.
 
 The migration rewrites function behavior only. It does not rewrite existing
 opportunity, client, project, activity, or correspondence data.
+
+The application uses the same property qualifier at both customer-contact
+resolution and the final client/opportunity enrichment write boundary. Parsed
+form labels such as `Location: Victoria`, forwarded-message location fields,
+AI/import facts, attachment reprocessing, and recovery replay may retain their
+locality text in source metadata or message context, but cannot populate
+`clients.address`, `opportunities.address`, or address provenance unless the
+value is a qualified civic, rural-property, or parcel identity. Qualified
+values retain their original cleaned display string, including unit detail.
 
 ### `user_email_aliases`
 
@@ -5444,10 +5455,15 @@ project mirrors, and `updated_at` must remain byte-for-byte unchanged.
 After all customer evidence is retained on the correct records, the RPC
 resolves the false notifications, marks the false generated draft discarded in
 OPS without changing the provider mailbox, records a discarded disposition and
-stage transition, soft-deletes the false opportunity, and soft-deletes its
-client only after a schema-wide `client_id`/`client_ref` reference scan proves
-zero remaining use. Provider mutations are disabled and recorded as such in
-both the assignment metadata and immutable correction receipt.
+stage transition, and soft-deletes the false opportunity. The notification
+scope comparison explicitly casts the text-backed notification tenant key to
+the RPC's UUID company identity. The source client is soft-deleted only after a
+schema-wide `client_id`/`client_ref` reference scan proves zero remaining use;
+otherwise it is preserved. The immutable result records both
+`source_client_deleted` and `source_client_reference_count`, making that
+retention decision auditable and replay-stable. Provider mutations are disabled
+and recorded as such in both the assignment metadata and immutable correction
+receipt.
 
 ### Latest-event exact recovery lifecycle fence
 
