@@ -5334,6 +5334,7 @@ production until an explicitly approved release:
 - `20260728160000_property_address_identity_boundary.sql`
 - `20260728161000_authoritative_staff_email_aliases.sql`
 - `20260728162000_guarded_customer_decline_lifecycle.sql`
+- `20260728163000_guarded_staff_false_lead_correction.sql`
 
 ### Property address qualification
 
@@ -5400,6 +5401,52 @@ evidence makes no business-state write. A retry that extracts a more specific
 reverse downgrade is ignored. Every replaced disposition records both
 `superseded_at` and `superseded_by`, preserving a complete one-way provenance
 chain.
+
+### `lead_intake_correction_runs`
+
+| Column | Type | Contract |
+|---|---|---|
+| `id` | `uuid` | Primary key |
+| `company_id` | `uuid` | Required company FK and correction tenant boundary |
+| `correction_key` | `text` | Trimmed stable correction identity; unique within the company |
+| `actor_user_id` | `uuid` | Required same-company administrator who authorized the correction |
+| `source_opportunity_id` | `uuid` | Required same-company false-lead record retained as the audit source |
+| `manifest_sha256` | `text` | Exact 64-character lowercase SHA-256 for the complete frozen manifest |
+| `entry_a_sha256`, `entry_b_sha256` | `text` | Exact content addresses for the two provider messages corrected by the run |
+| `input_spec` | `jsonb` | Complete immutable expected-row specification supplied to the guarded RPC |
+| `result` | `jsonb` | Generated customer/lead ids, moved evidence ids, assignment result, and scan generations |
+| `applied_at` | `timestamptz` | Transaction commit timestamp for the correction |
+
+`lead_intake_correction_runs` has RLS enabled and no direct write grant for any
+role. The service role may read receipts; only
+`apply_staff_authored_false_lead_correction_guarded(...)` can insert one. The
+RPC is service-role-only with an empty search path. It locks the company,
+mailbox, administrator, active staff roster identity, protected opportunity
+snapshots, exact activities/events/thread projections, attachment scan, false
+notifications, assignment audit, generated draft, and field provenance before
+writing. Any altered selector, row set, timestamp, terminal state, project
+link, assignment version, content hash, or retry payload aborts the entire
+transaction.
+
+The correction verifies or promotes only the exact alias for the exact active
+staff user; it never infers identity from a name, partial phone, shared public
+email domain, or location. It creates a new client/opportunity only from an
+external recipient plus a property-qualified address and a message-scoped
+source key, then assigns through the canonical system assignment RPC. Exact
+staff-authored events become `outbound` / `ops`, their activities, canonical
+thread links, inbox cache rows, and customer ownership move together under the
+existing child-reparent capabilities, and attachment attribution is requeued
+with a required generation increment. A protected existing Won/project target
+may receive older correspondence, but its stage, manual flag, assignment,
+project mirrors, and `updated_at` must remain byte-for-byte unchanged.
+
+After all customer evidence is retained on the correct records, the RPC
+resolves the false notifications, marks the false generated draft discarded in
+OPS without changing the provider mailbox, records a discarded disposition and
+stage transition, soft-deletes the false opportunity, and soft-deletes its
+client only after a schema-wide `client_id`/`client_ref` reference scan proves
+zero remaining use. Provider mutations are disabled and recorded as such in
+both the assignment metadata and immutable correction receipt.
 
 ## Review Swipe Safeguard Tables (2026-07-21)
 
