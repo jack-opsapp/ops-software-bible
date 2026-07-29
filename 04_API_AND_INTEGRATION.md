@@ -2163,6 +2163,13 @@ A historical manual nonterminal repair does not permanently suppress newer
 decisive customer evidence. Exact replay is a no-op; newer/out-of-order evidence
 forces a full re-evaluation instead of accepting a stale write.
 
+Lead summaries use the same deterministic commercial outcome. An unequivocal
+customer decline clears both current-fact and commercial next actions and marks
+the previously pending operator request as superseded, so model validation
+rejects summaries that repeat an already-answered question. A temporary
+budget/timing deferral retains its legitimate comeback action, and Won leads
+retain schedule/deposit actions; only a true decline closes the prior ask.
+
 #### Exact-message latest-event lifecycle recovery (live 2026-07-29)
 
 Migration `20260729170000_exact_recovery_latest_event_lifecycle` and ops-web
