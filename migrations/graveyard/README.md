@@ -18,10 +18,16 @@ delete operation for edge functions — the tombstone IS the kill.
 - `terminate-employee` verified the caller was an admin of the **posted** `companyId` but
   never checked that the target user belonged to that company — an admin of company A could
   strip users in any tenant.
-- Zero callers at kill time: grepped `ops-ios/`, `ops-web/` (incl. `supabase/functions/`),
-  `ops-site/` for `delete-user` / `terminate-employee` — no hits. Both flows have been
-  superseded (user deletion via the web account-deletion route; termination via web team
-  management).
+- Zero callers at kill time. Grepped `ops-ios/`, `ops-web/` (incl. `supabase/functions/`) and
+  `ops-site/` locally, plus `try-ops` and `ops-learn` — which are GitHub-only and not checked
+  out locally — by downloading each repo tarball via the GitHub API and grepping the extracted
+  sources. No hits in any of the five. (GitHub's *code search* returns 0 for these private
+  repos even for strings that demonstrably exist, so its empty result is not evidence and was
+  not relied on; the tarball grep is. Control: `functions/v1` does hit in `ops-learn`
+  — `src/app/api/checkout/route.ts:27`, `stripe-create-checkout-session` — proving both that
+  the grep works and that ops-learn calls edge functions, just never these two.)
+  Both flows have been superseded: user deletion via the web account-deletion route,
+  termination via web team management.
 
 **Archived sources (deployed v9 of both, retrieved via management API 2026-07-29):**
 
