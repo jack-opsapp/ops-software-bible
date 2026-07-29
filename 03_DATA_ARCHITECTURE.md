@@ -5343,9 +5343,13 @@ duplicate/preflight checks, and email-to-project conversion. The compatibility
 helpers `private.normalize_address` and
 `private.normalize_email_project_dedupe_address` delegate to it. Locality,
 municipality, neighbourhood, region, area, postal-locality, and PO-box-only
-strings return the empty non-identity value. Numbered street, supported rural,
-lot/concession or lot/block/plan, and parcel/PID formats qualify. Units remain
-part of the identity when requested.
+strings return the empty non-identity value. An ordinary civic identity requires
+a bounded civic number, street name, and recognized street-type suffix; a
+number followed only by a locality or suffix-less label does not qualify.
+Supported highway/range-road, rural-route/site/box, lot/concession or
+lot/block/plan, and parcel/PID formats also qualify. Units remain part of the
+identity when requested, including case-insensitive `Unit`, `Suite`, and `Apt`
+forms.
 
 The migration rewrites function behavior only. It does not rewrite existing
 opportunity, client, project, activity, or correspondence data.
@@ -5359,18 +5363,26 @@ opportunity, client, project, activity, or correspondence data.
 | `user_id` | `uuid` | Required active same-company user FK |
 | `email` | `text` | Lowercase trimmed exact email; immutable |
 | `status` | `text` | `pending`, `verified`, or `rejected` |
-| `source` | `text` | `signature_corroborated`, `operator_verified`, `provider_attested`, or `profile_authority` |
+| `source` | `text` | `signature_corroborated` while pending/rejected; `operator_verified` after explicit verification |
 | `evidence` | `jsonb` | Required object containing auditable provider/roster evidence |
 | `first_seen_at`, `last_seen_at` | `timestamptz` | Candidate observation window |
-| `verified_at`, `verified_by` | nullable timestamp/user FK | Required audit authority for `verified` |
+| `reviewed_at`, `reviewed_by` | nullable timestamp/same-company user FK | Required for every final administrator decision |
+| `verified_at`, `verified_by` | nullable timestamp/same-company user FK | Equal to the review audit only for `verified`; always null for `pending`/`rejected` |
 | `created_at`, `updated_at` | `timestamptz` | Record lifecycle |
 
 `(company_id, email)` is unique. Company/user/email/created identity is
-immutable. A trigger rejects inactive/cross-company users and aliases that
-belong to another registered teammate. RLS permits same-company authenticated
-read only. Candidate writes are service-role-only; final review requires a
-same-company administrator through `review_user_email_alias`. Pending evidence
-never grants staff identity.
+immutable, and a final review decision/audit cannot be rewritten. Composite
+foreign keys enforce same-company ownership, reviewer, and verifier identity. A
+trigger rejects inactive users and aliases that belong to another registered
+teammate. Alias evidence is readable only by same-company administrators or
+service processing. The service role has no direct table-write grant:
+signature-corroborated candidates can be recorded only through
+`record_staff_email_alias_candidate_as_system`, and final review can occur only
+through `review_user_email_alias` by a same-company administrator. Rejected
+reviews never populate verification authority. Pending evidence never grants
+verified staff identity, but the exact pending mailbox remains quarantined as
+outbound/review on later messages so it cannot become a lead while awaiting a
+decision.
 
 ### Guarded customer-decline write
 
@@ -5382,7 +5394,12 @@ high-water, and terminal precedence. It writes `opportunities`, one
 `opportunity_dispositions` row atomically. Evidence stores the connection,
 provider message, decisive event, reason code, signal, and evaluated high-water
 event. Exact retry resolves the existing disposition; stale or unauthorized
-evidence makes no business-state write.
+evidence makes no business-state write. A retry that extracts a more specific
+`price` reason from the same decisive rejection may replace an active generic
+`customer_declined` disposition without adding another stage transition. The
+reverse downgrade is ignored. Every replaced disposition records both
+`superseded_at` and `superseded_by`, preserving a complete one-way provenance
+chain.
 
 ## Review Swipe Safeguard Tables (2026-07-21)
 
