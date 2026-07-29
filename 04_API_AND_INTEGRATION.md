@@ -2086,10 +2086,10 @@ guard before later mail can be checkpointed. A malformed persisted direction
 still fails closed, the database guard remains unchanged, and no historical
 activity is rewritten or backfilled.
 
-#### Authoritative staff secondary email identity (prepared 2026-07-28)
+#### Authoritative staff secondary email identity (live 2026-07-29)
 
 Migration `20260728161000_authoritative_staff_email_aliases` and ops-web
-commits `90f14226` + `cd901503` are prepared but not applied or deployed.
+commits `90f14226` + `cd901503` are deployed.
 `SyncEngine` loads one
 company-scoped staff identity authority at the start of every normal sync,
 historical import, exact-message recovery, and sent-folder safety-net pass.
@@ -2117,10 +2117,10 @@ team address in To/CC and an exact signature phone may corroborate a candidate;
 names, phone fragments, shared public email domains, and fuzzy private-domain
 matches never confer staff identity.
 
-#### Property-level address identity boundary (prepared 2026-07-28)
+#### Property-level address identity boundary (live 2026-07-29)
 
 Migration `20260728160000_property_address_identity_boundary` and ops-web
-commits `d6426b51` + `2e7acb93` are prepared but not applied or deployed.
+commits `d6426b51` + `2e7acb93` are deployed.
 Every email relationship, recovery, participant, enrichment,
 duplicate/preflight, and project-conversion path now calls the same
 property-address qualifier before an address can enter an identity set. City,
@@ -2136,10 +2136,10 @@ metadata or presentation context, but it cannot establish a client,
 opportunity, merge, dedupe, relationship, assignment, notification, or project
 link.
 
-#### Guarded decisive rejection commit (prepared 2026-07-28)
+#### Guarded decisive rejection commit (live 2026-07-29)
 
 Migration `20260728162000_guarded_customer_decline_lifecycle` and ops-web
-commit `d24b41f7` are prepared but not applied or deployed.
+commit `d24b41f7` are deployed.
 `apply_email_opportunity_declined_disposition(...)` is a service-role-only
 commercial boundary. It accepts exact company, opportunity, mailbox, provider
 message, expected assignment/stage snapshot, and a closed evidence object
@@ -2155,6 +2155,21 @@ reasons map to `price`, otherwise an unequivocal rejection maps to
 A historical manual nonterminal repair does not permanently suppress newer
 decisive customer evidence. Exact replay is a no-op; newer/out-of-order evidence
 forces a full re-evaluation instead of accepting a stale write.
+
+#### Exact-message latest-event lifecycle recovery (live 2026-07-29)
+
+Migration `20260729170000_exact_recovery_latest_event_lifecycle` and ops-web
+commit `8c0e428e` extend the existing guarded recovery path without weakening its
+fail-closed boundary. A misplaced message may be the source lead's current
+lifecycle high-water. Recovery is allowed only when the lifecycle state is
+passive and exactly matches that message, an earlier meaningful projected event
+exists, and every historical `leads_waiting` notification is resolved.
+
+The guard still rejects unresolved lifecycle notifications, generated follow-up
+drafts, applied lifecycle actions, nonzero follow-up counters, stale/protected
+state, missing prior event history, or any state/event mismatch. The move and
+both source/target lifecycle recomputations remain one transaction. Gmail or
+Microsoft 365 is never mutated by this database recovery operation.
 
 #### GET / PATCH `/api/integrations/email/connection` — company intake owner
 

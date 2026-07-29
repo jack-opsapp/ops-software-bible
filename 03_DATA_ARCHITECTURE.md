@@ -5326,15 +5326,15 @@ Migrations `20260714230000_email_attachment_persistence` and `20260714232000_gua
 
 Attribution begins only from `(company_id, email_connection_id, email_message_id)`. Inbound sender or outbound external recipients must match the activity's current lead/client/contact identity, and `match_needs_review` always fails closed. Activity reassignment increments scan/inspection generations and re-evaluates cached acceptance. Lead merge uses guarded evidence-bound RPCs. Won conversion needs no duplicate file row because projects retain `opportunity_id`.
 
-## Lead Intake Identity and Commercial Guards (prepared 2026-07-28)
+## Lead Intake Identity and Commercial Guards (live 2026-07-29)
 
-These additive migrations are mirrored in `migrations/` but are not applied to
-production until an explicitly approved release:
+These migrations are applied to production and mirrored in `migrations/`:
 
 - `20260728160000_property_address_identity_boundary.sql`
 - `20260728161000_authoritative_staff_email_aliases.sql`
 - `20260728162000_guarded_customer_decline_lifecycle.sql`
 - `20260728163000_guarded_staff_false_lead_correction.sql`
+- `20260729170000_exact_recovery_latest_event_lifecycle.sql`
 
 ### Property address qualification
 
@@ -5433,7 +5433,8 @@ staff user; it never infers identity from a name, partial phone, shared public
 email domain, or location. It creates a new client/opportunity only from an
 external recipient plus a property-qualified address and a message-scoped
 source key, then assigns through the canonical system assignment RPC. Exact
-staff-authored events become `outbound` / `ops`, their activities, canonical
+retry returns the immutable correction receipt and performs no second write.
+Staff-authored events become `outbound` / `ops`, their activities, canonical
 thread links, inbox cache rows, and customer ownership move together under the
 existing child-reparent capabilities, and attachment attribution is requeued
 with a required generation increment. A protected existing Won/project target
@@ -5447,6 +5448,23 @@ stage transition, soft-deletes the false opportunity, and soft-deletes its
 client only after a schema-wide `client_id`/`client_ref` reference scan proves
 zero remaining use. Provider mutations are disabled and recorded as such in
 both the assignment metadata and immutable correction receipt.
+
+### Latest-event exact recovery lifecycle fence
+
+`private.assert_exact_message_lifecycle_recomputable(...)` permits an
+exact-message recovery to move the current lifecycle high-water only when the
+source lifecycle is passive, the durable state points exactly at the message
+being moved, an earlier projected meaningful event remains to become the new
+high-water, and no unresolved `leads_waiting` notification exists. Drafts,
+applied lifecycle actions, follow-up counters, stale/protected state, active
+notifications, missing prior history, or a state/event mismatch continue to
+raise `exact_recovery_lifecycle_not_reconstructible` before any repair write.
+
+The pre-existing historical-event path remains unchanged: moving a non-latest
+event is allowed only when a later meaningful event already owns the
+high-water and the event-scoped notification history is inert. The recovery
+transaction then recomputes source and target lifecycle projections before it
+returns, including when attachment attribution continues asynchronously.
 
 ## Review Swipe Safeguard Tables (2026-07-21)
 
