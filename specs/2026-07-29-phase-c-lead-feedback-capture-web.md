@@ -31,6 +31,14 @@ Durable hold for future messages a feedback prior moves into the uncertainty ban
 
 Reason → outcome map (server-owned): `spam / job_applicant / vendor_sales / internal / platform_notification / test_traffic` → `discarded` (negative); `not_a_fit` → `lost` + disposition `disqualified` (positive — protects future genuine inquiries); `duplicate` → `duplicate_review` (neutral, **no lifecycle change**); `other` → `review_deferred` (neutral, **no lifecycle change**); `legacy_unspecified` → `discarded` (neutral, accepted only while Phase C is disabled for the company).
 
+### Undo defect — found 2026-07-30, fix authored, NOT yet applied
+
+`undo_lead_disposition_feedback` raised `feedback_undo_conflict` (errcode 40001) on **every** call, making Undo unusable on both the discard and archive paths.
+
+Cause: the apply RPCs write `opportunities.updated_at = v_now` (`clock_timestamp()`) and record that same value into `applied_opportunity_updated_at` as the optimistic-concurrency snapshot. `opportunities` carries a BEFORE UPDATE trigger, `trg_opp_timestamp` → `public.update_timestamp()`, whose body is `NEW.updated_at = now()` — the **transaction** timestamp. The trigger overwrites the RPC's value, landing the row ~3ms behind the recorded snapshot, so undo's guard `v_opportunity.updated_at is distinct from v_feedback.applied_opportunity_updated_at` is always true. Measured on prod: recorded `16:29:23.822686+00` vs stored `16:29:23.819340+00` (−3.346ms); second row −3.502ms.
+
+Fix: `ops-web/supabase/migrations/20260730000000_fix_lead_feedback_undo_conflict.sql` replaces both apply RPCs so they read the stored `updated_at` (and `archived_at`) back with `RETURNING` instead of predicting it. Undo's guard is deliberately unchanged. No backfill needed — the table held only verification rows when the defect was found, so no customer row carries a stale snapshot. **Status: authored and committed on `feat/lead-discard-feedback`, awaiting operator approval to apply to prod.** Until applied, web Undo surfaces the guard honestly as "Undo blocked — this lead changed after the discard".
+
 ### Migration drift (flagged)
 Both defining migrations exist on prod but NOT in `ops-web` `main`'s `supabase/migrations/`: `20260727193418_phase_c_lead_disposition_feedback.sql` lives only on branch `feat/phase-c-lead-feedback`; `20260728120000_lead_archive_feedback.sql` only on branch `fix/lead-archive-feedback-migration`. Landing those files on `main` is an open housekeeping item — match by NAME against the prod ledger when reconciling.
 
