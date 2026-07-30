@@ -369,11 +369,12 @@ ops-ios/OPS/
 │   │   │   └── TaskListView.swift
 │   │   ├── Task/ (1 file)
 │   │   │   └── TaskSelectorBar.swift
-│   │   ├── Scheduling/ (12 files — schedule sheet rebuilt 2026-07-27)
+│   │   ├── Scheduling/ (13 files — sheet rebuilt 2026-07-27, refined 2026-07-29)
 │   │   │   ├── CalendarSchedulerSheet.swift    # Date picker: chrome, day panel, SchedulerEventRow
 │   │   │   ├── SchedulerDayContext.swift       # Availability engine + SchedulerSelection (pure logic)
-│   │   │   ├── SchedulerMonthScroll.swift      # Continuous month list
-│   │   │   ├── SchedulerDayCell.swift          # Day cell + signal bars + DiagonalHatch
+│   │   │   ├── ComparableJobLength.swift       # Duration from same-type jobs on similar-area decks
+│   │   │   ├── SchedulerMonthScroll.swift      # Continuous month list; owns span-outline closure
+│   │   │   ├── SchedulerDayCell.swift          # Day cell + signal bars + SchedulerSpanCurve + SpanEdgeStroke + DiagonalHatch
 │   │   │   ├── SchedulerFooterBar.swift        # Sticky CLEAR / SAVE bar (single commit point)
 │   │   │   ├── SchedulerDaySheet.swift         # Long-press day inspector
 │   │   │   ├── CascadePreviewSheet.swift
