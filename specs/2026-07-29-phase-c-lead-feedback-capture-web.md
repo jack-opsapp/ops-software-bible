@@ -59,4 +59,16 @@ Single choke point: `requestStageChange` in `src/app/(dashboard)/pipeline/_compo
 - **Won/Lost sources:** plain legacy stage move (the contract excludes terminal leads).
 - All commit/undo flows use `mutateAsync` + explicit cache invalidation (survive unmount); idempotency keys are `crypto.randomUUID()`; double-undo (toast + Cmd+Z) is safe because the undo RPC replays idempotently.
 
-**iOS status:** the approved one-tap reason sheet (flow-focused list) is specced in the feat-branch design doc but not yet shipped; iOS discard still writes no feedback. **Archive capture** (web + iOS) is a separate open item on the archive RPC pair.
+**iOS status:** the approved one-tap reason sheet (flow-focused list) is specced in the feat-branch design doc but not yet shipped; iOS discard still writes no feedback.
+
+## 6. Archive is NOT a capture surface (corrected 2026-07-30)
+
+**Archive is an automatic lifecycle mechanic, not an operator decision.** A lead that goes cold is archived by the system, so there is no moment to ask anyone why — a reason-capture UI on the archive path would be asking a question the system has already answered.
+
+`src/lib/email/opportunity-lifecycle-evaluator.ts` computes the reason itself, choosing between `archive_after_two_unanswered_followups` (two tracked OPS follow-ups unanswered past `secondFollowUpArchiveAfterDays`, default 7), `archive_no_meaningful_correspondence` (`noCorrespondenceArchiveDays`, default 14), and `archive_operator_no_response`. `autoArchiveEnabled` defaults to true. `opportunity-lifecycle-action-service.ts` executes the decision and stamps `archived_at`, driven by the lead-lifecycle cron.
+
+This means the `apply_lead_archive_feedback` / `undo_lead_archive_feedback` RPC pair rests on a mistaken premise. Its own migration comment describes "an owner parks a real job ('not now', 'next season') and expects to find it again", and its vocabulary (`not_now`, `seasonal`, `waiting_on_client`) is manual-parking language. That is not how archive actually works, so **do not build an archive reason picker on the strength of those RPCs existing.** They are deployed but unused, and the undo-timestamp fix in §Undo defect covers them only so the two paths stay consistent.
+
+Two genuinely open items, both smaller than "archive capture":
+1. The automatic archive writes no `lead_disposition_feedback` row, so its (already-known) reason never becomes evidence. Low value by design — a cold REAL lead is neutral polarity and teaches the classifier nothing about lead-ness — so this is a deliberate non-goal unless a use case appears.
+2. The **manual** Archive action that still exists in the pipeline UI (card action menu, detail panel, focused drag-to-archive → `handleArchive` in `pipeline/page.tsx`) writes a bare `archived_at` via `OpportunityService.archiveOpportunity` — no actor, no reason, no audit row, undo only client-side. That is the real gap bug `e0c8084f` was pointing at, and it is an audit/provenance gap, not a learning-capture one.
