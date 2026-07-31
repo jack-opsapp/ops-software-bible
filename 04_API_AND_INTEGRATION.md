@@ -1833,7 +1833,7 @@ Each `ImportLead` has: `id, threadId, clientName, clientEmail, clientPhone?, sta
 | Response | `{ ok: true, source, connectionsProcessed, results: SyncResult[] }` |
 | Service calls | `SyncEngine.runSync()` |
 
-**Behavior:** If `connectionId` is provided, syncs that single connection. If `companyId`, syncs all active connections for that company. Each `SyncResult` contains `{ connectionId, activitiesCreated, newLeads }`. Sync-created opportunity titles use the shared email title helper. Inbound leads prefer parsed contact-form submitters and inbound sender identity before linked client display names; sent-folder safety-net leads use the external recipient identity and never the operator sender. Subjects remain activity/thread context.
+**Behavior:** If `connectionId` is provided, syncs that single connection. If `companyId`, syncs all active connections for that company. Each `SyncResult` contains `{ connectionId, activitiesCreated, newLeads }`. Sync-created opportunity titles and canonical contact names use the shared mailbox-name authority boundary. Parsed contact-form and operator-confirmed names are authoritative; a full name after an explicit same-sender authored sign-off outranks a provisional header; mailbox handles/local-parts never become canonical identity or title text. Sent-folder safety-net leads evaluate the external recipient and never the operator sender. Stronger same-email name evidence can promote the canonical opportunity/client name and its OPS-generated title through provenance-checked enrichment; human titles remain protected. Subjects remain activity/thread context.
 
 ### 6. POST /api/integrations/email/draft
 
