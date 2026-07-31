@@ -6894,7 +6894,19 @@ wasted calls when the operator is on another tab.
 | `CRON_SECRET` | Cron auth (Bearer token) |
 | `PMF_OPERATOR_USER_ID` | Actor on auto-pause + recipient of rail notification |
 | `PMF_NOTIFICATION_EMAIL` | Actor email on auto-pause audit row |
-| `PMF_OPERATOR_COMPANY_ID` | `notifications.company_id` (NOT NULL) |
+| `PMF_OPERATOR_COMPANY_ID` | Canonical UUID for `notifications.company_id`; trimmed and validated by `src/lib/pmf/recipients.ts` before use |
+
+**Operator tenant-key integrity (2026-07-31):** every PMF rail-alert path uses
+`getOptionalPmfOperatorIdentity()` (or `getPmfRecipients()`), which trims
+deployment-secret whitespace and rejects a non-UUID company id before a
+notification write. This closes the source of a 2026-07-18 `email_anomaly`
+row whose company id copied a deployment-secret trailing newline verbatim.
+Migration `20260731202250_notification_company_id_integrity.sql` adds the
+`notifications_company_id_canonical` check as `NOT VALID`: all new and updated
+rows must use a canonical UUID with no surrounding whitespace or control
+characters, while the one historical row is preserved pending an explicitly
+authorized data repair. The constraint therefore must not be validated until
+that row is normalized.
 
 **Migrations:**
 
@@ -6904,6 +6916,7 @@ wasted calls when the operator is on another tab.
 | `OPS-Web/supabase/migrations/105_email_anomaly_log.sql` | Anomaly log table + FK back from pause audit log |
 | `OPS-Web/supabase/migrations/106_email_event_metrics_rpc.sql` | RPC pair |
 | `OPS-Web/supabase/migrations/107_email_events_timestamp_event_idx.sql` | Composite covering index |
+| `ops-web/supabase/migrations/20260731202250_notification_company_id_integrity.sql` | Prevents new malformed notification tenant keys without rewriting the historical row |
 
 **Key files:**
 
@@ -6912,6 +6925,7 @@ wasted calls when the operator is on another tab.
 | `OPS-Web/src/lib/email/anomaly-thresholds.ts` | Pure evaluator + constants |
 | `OPS-Web/src/lib/email/pause.ts` | Extended `pause()` with severity + anomalyLogId, returns `pauseAuditId` |
 | `OPS-Web/src/app/api/cron/email/anomaly-check/route.ts` | The 5-min cron |
+| `ops-web/src/lib/pmf/recipients.ts` | Normalized and validated PMF operator identity boundary |
 | `OPS-Web/src/app/api/admin/email/monitor/metrics/route.ts` | Live metrics |
 | `OPS-Web/src/app/api/admin/email/monitor/stream/route.ts` | Recent events |
 | `OPS-Web/src/app/api/admin/email/monitor/domains/route.ts` | Top bounce domains |
