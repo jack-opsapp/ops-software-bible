@@ -2049,6 +2049,20 @@ Gmail push notifications require the Pub/Sub topic and the Gmail OAuth client to
 
 **Behavior:** Queries all active email connections, batch-fetches companies and filters by active subscription via `getSubscriptionInfo()` before running sync — expired/cancelled companies are silently skipped. Checks each connection against its `sync_interval_minutes` + `last_synced_at` to determine if sync is due, runs `SyncEngine.runSync()` for each. It also runs `SyncEngine.sweepStaleLeads()` to detect follow-up-needed opportunities based on correspondence age and a bounded `SyncEngine.retryPendingLeadScans()` drain for unmatched threads whose AI classification was explicitly deferred during a provider outage. Manual sync (`POST /api/integrations/email/manual-sync`) also checks subscription status before proceeding. Each `SyncResult`: `{ connectionId, email, provider, activitiesCreated, newLeads, error? }`.
 
+### 14a. GET /api/cron/email-ingest-heartbeat
+
+**Purpose:** Detects provider-connection failures and stalled OPS ingestion without using inbox quietness as an outage signal.
+
+| Field | Value |
+|-------|-------|
+| Auth | Cron secret (`Authorization: Bearer $CRON_SECRET`) |
+| Response | `{ ok, checked, failed, alerted, deliveryFailures? }` |
+| Failure reasons | `webhook_expired`, `webhook_setup_failed`, `sync_stale` |
+
+`webhook_expired` and `webhook_setup_failed` are provider-connection incidents. Their email and persistent rail alert may direct an authorized integrations manager to the exact reconnect flow.
+
+`sync_stale` is different: the connection may still be `status='active'`, `sync_enabled=true`, and hold valid access/refresh tokens while the OPS worker fails before advancing `last_synced_at`. Its alert must say the inbox is still connected, report delayed OPS processing and automatic retry, and link only to inbox status. It must never call the mailbox disconnected or prescribe OAuth reconnection. Operational health is established from `last_synced_at`, current sync locks/leases, heartbeat history, recovery queue state, recent downstream thread/draft records, and sync runtime errors—not from the connection status field alone. The connection-scoped persistent incident resolves only after the exact mailbox becomes healthy.
+
 ### 15. POST /api/cron/webhook-renewal
 
 **Purpose:** Renews expiring Gmail Pub/Sub watches and M365 subscriptions. Runs daily via Vercel Cron.
