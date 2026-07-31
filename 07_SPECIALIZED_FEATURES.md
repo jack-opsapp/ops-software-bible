@@ -1117,6 +1117,34 @@ CREATE TRIGGER update_project_photos_timestamp
 `created_at`, `updated_at`, `is_client_visible` (bool). RLS is company-wide read
 (`company_isolation`), so every teammate can read all rows.
 
+**Client write permissions (2026-07-29, SYSTEMS REPAIR W1-4 — bug `1154fe67`).**
+Until this date `anon`/`authenticated` held only `INSERT` and `SELECT` on the
+table, so **every** iOS UPDATE failed `42501` in silence: both soft-delete paths
+(`ViewModels/ProjectNotesViewModel.swift:592-597`,
+`Network/ImageSyncManager.swift:850-867`) and the client-visibility toggle
+(`ImageSyncManager.setPhotoClientVisibility`, :388-399). The evidence was that
+0 of 826 rows had ever been client-visible, and photos "deleted" on a phone
+reappeared on the next pull. Clients now hold a **column-scoped** grant —
+`GRANT UPDATE (deleted_at, is_client_visible, caption)` — so no other column is
+writable from the app, and a `BEFORE UPDATE` guard
+(`trg_project_photos_00_write_guard`) enforces the operator-decided policy:
+caption and client-visibility changes are allowed **company-wide** (any crew
+member may publish any company photo to the client portal), while a `deleted_at`
+change requires `lower(uploaded_by) = lower(private.resolve_uid()::text)` —
+own photos only — unless the requester passes
+`private.current_user_has_permission('projects.edit','all')`, which is the
+admin path. `uploaded_by` is `text` and legacy iOS rows stored UPPERCASE UUIDs,
+hence the `lower()` on both sides. Hard `DELETE` remains denied by the
+RESTRICTIVE `project table photos delete denied` policy; tenancy remains on
+`company_isolation`. The legacy RESTRICTIVE policy
+`project table photos update requires project edit` was **dropped** in the same
+migration: it required `private.current_user_can_edit_project()`, which real
+crew members fail (they resolve to a NULL `projects.edit` scope), so leaving it
+would have nullified the decided company-wide visibility toggle. The matching
+iOS change — scoping the delete affordance to own photos for non-admins — ships
+with the next app build (task W2-3); until then iOS may still offer delete on
+another user's photo and the server will correctly reject it.
+
 ### Capture UI — one standardized camera (iOS)
 
 **`CameraBatchView` is the single photo-capture surface** across every flow
@@ -2964,6 +2992,15 @@ One stair per edge, enforced in the view model: `setStairs` removes any `LevelCo
 
 **2D stair labels — treads + rail run (added 2026-07-21).** Every 2D stair label prints the tread count and the RAIL run: the stair triangle's hypotenuse (`StairConfig.stringerLength` = √(rise² + horizontal run²)) — the length a stair railing follows, which is what a railing order is measured by. Single source `DeckStairRailInfo` (`DeckStairRenderPlanner.swift`): `DeckDrawingData.stairRailInfo(for edge:)` resolves rise as stored `totalRiseInches` else the owning context's render height (`stairTotalRiseInches(for:)` — same fallback as the 3D scene); `stairRailInfo(for connection:)` derives rise from the levels' resolved difference so the label tracks height edits; both derive `treadCount` when unset and return nil when there is no positive rise. Surfaces: builder canvas (`DeckCanvasView`) labels edge stairs and connection stairs `"N treads · X rail"` (the connection label's hardcoded `?? 5` tread fallback is gone — a degenerate no-drop connection draws its footprint but makes no tread/rail claims); the read-only 2D viewer (`DeckTab2DView`) renders WIDTH/RUN/RAIL chips via `DeckStairRenderPlanner.plan(..., totalRiseInches:)` (nil rise omits the RAIL chip), and level connections now render full stair geometry + chips there instead of the previous 16pt dashed dot. Rail-chip positions join `framePoints` so zoom-to-fit never crops them.
 
+**Stair facing + position (fixed 2026-07-21).** A stair faces AWAY from the deck surface that owns its edge. Two defects made this wrong on most real drawings:
+
+1. *Wrong polygon.* Every renderer passed the level/drawing ring (`orderedPositions`), which bails to an unordered vertex dump the moment any vertex lacks exactly two connections — two separate shapes, an interior detail line, a T-junction, an unclosed outline. The inside/outside test then returned an essentially random side. Replaced by `DeckDrawingData.stairFacePolygon(forEdgeId:)` / `stairFaceVertexIds(forEdgeId:)` (`DeckStairRenderPlanner.swift`), which resolves the single detected face owning the edge (`DetectedSurface.hasSide`). Zero owning faces (open outline) or two (interior divider between surfaces) → returns empty/nil, and callers fall back to their historic perpendicular rather than trusting a bad polygon. Wired through every stair surface: builder canvas (edge + connection), `DeckTab2DView` (edge + connection), `DeckRenderer` share/export (face mapped through the same `transform`), and `DeckSceneBuilder` 3D (face vertex ids mapped through `vertexPositionsInMetersById` via the `stairFaceVertexIds` closure) so PLAN, 2D, share, and 3D can never disagree.
+2. *Fragile math.* `PolygonMath.outwardPerpendicular` probed a point 1 canvas unit off the edge midpoint and asked `pointInPolygon` — unstable on short edges and boundary epsilons. Now resolved from polygon WINDING (signed area + whether the edge runs with or against the traversal), exact for convex and concave simple polygons alike; centroid fallback only when the edge isn't one of the polygon's own sides (transformed/clipped input).
+
+Connection stairs on the builder canvas previously used a raw CCW perpendicular that ignored the deck entirely (half of them pointed back across the deck they descend from) and ignored `flipDirection`; both now match edge stairs.
+
+**Stair position along the edge.** `StairConfigView` exposes ALIGNMENT (left/center/right) + a clamped NUDGE stepper whenever the stair is narrower than its edge. Two bugs had hidden it in practice: `edgeLengthInches` read only the typed `dimension` (nil on the undimensioned edges stairs are usually attached to — now falls back to drawn geometry ÷ `effectiveScaleFactor`), and new stairs defaulted to the FULL edge width, leaving zero slack to slide. New stairs now default to 48" (`StairDefaults.width`, the code-typical residential run and first width preset), capped at the edge length. Nudge is clamped to the available slack (center splits it both ways) so a stair can never be pushed off its own edge, and alignment/offset now persist for connection stairs too — the planner already honored them.
+
 ### Drawing → Estimate Adapter (NEW)
 
 **Entry point**: Deck Builder canvas → toolbar `Estimate` button → `EstimatePreviewSheet` → "Create Estimate". Same single button drives both adapter-aware and legacy-only companies; the merge logic below decides which path actually fires per row. (UX decision per spec § 7 — no second button, no parallel surface.)
@@ -4034,6 +4071,21 @@ Lead and opportunity notifications route through `OpenLeadDetails`. iOS resolves
    - `OPS/OPS/AppDelegate.swift` (push handler) — only if you also fire pushes for it
 3. Document the type + deep_link in the table above.
 
+**`lead_follow_up_sent` (one-tap lead follow-up):**
+
+| Field | Value |
+|-------|-------|
+| `type` | `lead_follow_up_sent` |
+| `deep_link_type` | `lead` |
+| `title` | `Follow-up sent` |
+| `action_label` | `VIEW LEAD` |
+| `action_url` | `/pipeline?opportunityId=<opportunity_id>` |
+| `persistent` | `false` |
+| `dedupe_key` | `lead-follow-up-sent:<email_send_intent_id>` |
+| Recipient | The canonical operator who initiated the provider-confirmed send. |
+
+The notification is inserted in the same database transaction as the template-draft, lifecycle, comeback, and durable send-intent receipt. Provider rejection produces no notification.
+
 **`catalog_mapping_needed` (Phase 6 estimate-to-job catalog flow):**
 
 | Field | Value |
@@ -4047,6 +4099,40 @@ Lead and opportunity notifications route through `OpenLeadDetails`. iOS resolves
 | Recipients | `public.users_with_permission(company_id, 'catalog.manage', 'all')` |
 
 This notification is non-blocking. Estimate acceptance can continue with warning payloads, but every unresolved mapping gap gets a keyed persistent row. When Catalog Setup or product mapping save closes the gap, the server recomputes mapping existence and resolves only matching `dedupe_key` rows by setting `resolved_at`, `resolved_by`, `resolution_reason`, and `is_read = true`.
+
+**`lead_assigned` (lead-assignment delivery — live in prod since 2026-07-17; iOS registered 2026-07-28):**
+
+| Field | Value |
+|-------|-------|
+| `type` | `lead_assigned` |
+| `deep_link_type` | `lead` |
+| `title` | `Lead assigned` |
+| `body` | `<lead title> is now assigned to you.` |
+| `action_label` | `OPEN LEAD` |
+| `action_url` | `/pipeline?opportunityId=<opportunity_id>` |
+| `persistent` | `false` |
+| `dedupe_key` | `lead-assignment-delivery:<delivery_id>` (unique even after dismissal) |
+| Recipient | The new assignee (`opportunities.assigned_to`), materialized inside `claim_opportunity_assignment_deliveries` (outbox → per-minute cron worker). Self-assignment is silent. |
+
+Push rides the same claim: OneSignal `include_aliases.external_id = [users.id]`, data `{leadId, screen: "leadDetails", type: "lead_assigned"}`, gated on `notification_preferences.push_enabled` + `channel_preferences->'lead_assignments'->'push'` (both default true; the rail row exists regardless). iOS icon: `person.badge.plus` / accent (`NotificationListView.notificationIcon`); routing registered in `LeadNotificationRouteParser.leadRoutingValues` **and** the `routeByType` lead case in both `AppDelegate.swift` and `NotificationManager.swift`. **Copy alignment APPLIED to prod 2026-07-28** (operator-approved) as `20260728210000_lead_assignment_copy_alignment`: the RAIL title/body now read the OPS voice — `NEW LEAD — <NAME>` / `<address> · <job line>` (no-address fallback = the prior sentence). The OneSignal PUSH strings are hardcoded in `lead-assignment-delivery-service.ts` and still carry the pre-spec wording until that TypeScript ships — push and rail copy intentionally diverge in the interim (see the migration header).
+
+**`lead_assignment_required` (unassigned company-mailbox intake — live in prod; iOS registered 2026-07-28):**
+
+| Field | Value |
+|-------|-------|
+| `type` | `lead_assignment_required` |
+| `deep_link_type` | `lead` |
+| `title` | `Lead needs an owner` |
+| `body` | `Assign <lead title>` |
+| `action_label` | `Assign lead` |
+| `action_url` | `/pipeline?opportunityId=<opportunity_id>` |
+| `persistent` | `true` |
+| `dedupe_key` | `unassigned-lead-assignment-delivery:<delivery_id>` |
+| Recipients | Owners resolved by the unassigned-lead delivery worker (`20260723214524_company_mailbox_intake_owner.sql`). |
+
+iOS icon: `person.crop.circle.badge.exclamationmark` / warning; same lead routing registration as `lead_assigned`.
+
+**`lead_stage_advanced` (LIVE in prod since 2026-07-28, operator-approved):** owner-visibility rail row fired by trigger `trg_stage_transitions_notify_delegate_milestone` (`private.notify_delegate_milestone_advance`, migration `20260728210100_milestone_owner_visibility`) when an assigned-scope delegate advances a lead through one of the three day-sheet milestone pairs (`new_lead→qualifying`, `qualifying→quoting`, `quoting→quoted`); title `<VERB> — <NAME>`, body `<address> · <job line>` (falls back to `BY <ACTOR NAME>`), dedupe `milestone:<stage_transition id>`, fan-out via `users_with_permission(company, 'pipeline.view', 'all')` minus the actor; machine-written transitions (`transitioned_by IS NULL`) and owner actors stay silent; notification failure warns and never rolls back the milestone. Apply-day rollback smoke proved one row materializes for a real delegate transition (`CONTACTED — <NAME>` observed) with zero persisted residue. REGISTRATION GAP (cosmetic): the type is not yet in web `notification-meta.ts` or the iOS `notificationIcon(for:)` map — rows render with default icons; deep link already resolves via `deep_link_type = 'lead'`. Register both in the next client ship.
 
 ### §14.3.2 Forecast Dip Notification (2026-05-11)
 
