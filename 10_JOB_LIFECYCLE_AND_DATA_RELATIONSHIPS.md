@@ -4,7 +4,7 @@
 
 **Purpose**: Defines the complete data flow for a trade job from first contact through to a paid invoice. Documents all entity relationships, automation triggers, new entities, and required changes to existing entities. This is the master reference for how leads, pipeline, clients, estimates, projects, tasks, and invoices inter-operate.
 
-**Last Updated**: July 23, 2026
+**Last Updated**: July 29, 2026
 **Designed With**: ops-web codebase + ops-software-bible review session
 
 ---
@@ -1655,7 +1655,7 @@ The `Project.projectImages` field (comma-separated string) is deprecated. Migrat
 
 ## Email Pipeline Integration
 
-> **Platform status**: Email integration is implemented on OPS-Web with support for both Gmail and Microsoft 365. API routes under `/api/integrations/email/`, plus a provider abstraction layer, pattern detection engine, AI classification system, webhook-driven sync, and a 5-step "Import Your Pipeline" wizard. iOS does not connect or sync mailboxes and has no full inbox; its one provider-backed exception is the authenticated one-tap Due/Overdue follow-up, which delegates all mailbox/thread/template/signature work to OPS-Web. The `email_connections` table (renamed from `gmail_connections`) stores per-connection provider, tokens, sync profile, webhook subscription, and AI feature flags.
+> **Platform status**: Email integration is implemented on OPS-Web with support for both Gmail and Microsoft 365. API routes under `/api/integrations/email/`, plus a provider abstraction layer, pattern detection engine, AI classification system, webhook-driven sync, and a 5-step "Import Your Pipeline" wizard. iOS does not connect or sync mailboxes and has no full inbox; its one provider-backed exception is the authenticated hold-to-review Due/Overdue follow-up, which delegates all mailbox/thread/template/signature work to OPS-Web. The `email_connections` table (renamed from `gmail_connections`) stores per-connection provider, tokens, sync profile, webhook subscription, and AI feature flags.
 
 ### Lead Lifecycle Target Intent
 
@@ -1985,11 +1985,13 @@ Rules:
 
 Settings should eventually expose follow-up cadence, follow-up templates, stale thresholds, and any manual keep-active or automation-pause control. If a keep-active/automation-pause control does not exist yet, it is a product gap, not a reason to invent hidden behavior.
 
-#### One-Tap Lead Follow-Up (iOS + OPS-Web, 2026-07-23)
+#### Deliberate, Cycle-Aware Lead Follow-Up (iOS + OPS-Web, 2026-07-23; hardened 2026-07-29)
 
-The iOS chase strip gives an editable **Due Today** or **Overdue** lead with a contact email a single `SEND FOLLOW-UP` action. This is an immediate provider send, not a composer shortcut and not an optimistic "handled" mutation. `YOUR MOVE` continues to show `HANDLED`; the normal `EMAIL` contact action continues to open the editable email composer. If server-side mailbox/thread checks show that the shortcut is unsafe or unavailable, the chase strip falls back to the ordinary handled/email paths.
+The iOS chase strip gives an eligible **Due Today** or **Overdue** lead a bounded `HOLD TO REVIEW` control. The first hold opens a provider-fresh review sheet with recipient, sender, subject/body, and `Settings → Comms → Lifecycle`; delivery still requires an explicit `SEND FOLLOW-UP`. `Skip review next time` is scoped to the company + operator, after which the strip says `HOLD TO SEND`. VoiceOver uses its standard explicit double-tap action. The hold recognizes simultaneously with the card's horizontal stage gesture and cancels on movement, so a nested control never steals or ambiguously competes with stage advance/regress.
 
-iOS sends only the opportunity id in the URL and one durable UUID `idempotencyKey` in the body. Storage is scoped by company + actor + opportunity + canonical chase cycle. The same key survives network/auth/permission changes, unavailable state, provider-accepted/pending reconciliation, delivery-unknown state, and app restart; a later cycle gets a new key only after canonical handled/outbound progress advances. It is cleared only after a fully reconciled receipt or definitive provider rejection/invalid request. While a send is unresolved, the strip shows `SENDING…`, `SYNCING…`, or `CHECK EMAIL` and blocks another one-tap attempt for that lead.
+This remains a provider send, not a composer shortcut and not an optimistic "handled" mutation. `YOUR MOVE` continues to show `HANDLED`; the normal `EMAIL` contact action continues to open the editable email composer. If server-side mailbox/thread checks show that the shortcut is unsafe or unavailable, the chase strip falls back to the ordinary handled/email paths.
+
+iOS first uses authenticated GET on the same route for the read-only preview; no draft, intent, provider mutation, or lifecycle write occurs. The preview resolves any deliberate edit on the exact still-bound stock draft and includes the effective mailbox signature, so its body is the actual rendered message. GET also returns an opaque SHA-256 `previewFingerprint` over the exact server-derived mailbox/thread/reply source/recipient/sender/subject/rendered body. An explicit review send returns that fingerprint alongside the durable UUID `idempotencyKey`; POST recomputes it after the fresh preflight, then checks the final bound draft again, and refuses before provider delivery when reviewed facts changed. A skip-review hold omits the fingerprint but keeps every authorization, provider, and cycle gate. Storage is scoped by company + actor + opportunity + canonical chase cycle. The same key survives network/auth/permission changes, unavailable state, provider-accepted/pending reconciliation, delivery-unknown state, and app restart; a later cycle gets a new key only after canonical handled/outbound progress advances. It is cleared only after a fully reconciled receipt or definitive provider rejection/invalid request. While preview/send is unresolved, the strip shows `REVIEWING…`, `SENDING…`, `SYNCING…`, or `CHECK EMAIL` and blocks another attempt for that lead.
 
 The OPS-Web route derives every irreversible transport fact from canonical server state:
 
@@ -2001,7 +2003,9 @@ The OPS-Web route derives every irreversible transport fact from canonical serve
 - the company follow-up template (or the standard default), rendered placeholders, and effective mailbox signature;
 - the bound `template_follow_up` draft and source correspondence event used by the durable send intent.
 
-The shortcut never accepts a client-supplied mailbox, provider thread, recipient, subject, body, or signature, and it never starts a new provider thread. The provider conversation is re-read inside the mailbox lease immediately before delivery. A newer customer inbound, changed newest outbound, ambiguous thread, changed lead, missing mailbox/signature/recipient, or authorization mismatch fails closed. An opportunity-wide database fence prevents a different thread from opening a second unresolved template-follow-up send, and the bound draft content is frozen across the provider boundary.
+Eligibility is cycle-aware on both iOS and the server. `next_follow_up_at` must be due, must not predate `stage_entered_at`, and both canonical `last_outbound_at` and the provider source outbound must predate the due boundary. A manual outbound at or after the boundary therefore satisfies that cycle and removes the action before a duplicate stock follow-up can be offered or executed.
+
+The shortcut never accepts a client-supplied mailbox, provider thread, recipient, subject, body, or signature, and it never starts a new provider thread. GET and POST both read the live provider conversation; POST reads it again inside the mailbox lease immediately before delivery. A newer customer inbound, changed newest outbound, cycle-satisfied outbound, ambiguous thread, changed lead, missing mailbox/signature/recipient, or authorization mismatch fails closed. An opportunity-wide database fence prevents a different thread from opening a second unresolved template-follow-up send, and the bound draft content is frozen across the provider boundary. Migration `20260729230000_pipeline_follow_up_reliability.sql` adds the final database trigger check immediately before prepared→sending.
 
 Lead state advances only after the provider has accepted the message and the send has reconciled canonically. Migration `20260723233000_operator_one_tap_lead_follow_up.sql` owns that atomic transition through service-role RPC `reconcile_operator_template_follow_up_send_as_system(intent_id)`: it marks the bound draft sent, increments the unanswered-follow-up count exactly once when no later meaningful event won, stamps the second-follow-up time at count 2+, clears the due/operator-miss stale state, resolves the prior operator-miss notification, updates a still-current lead to handled, and writes an intent-scoped `lead_follow_up_sent` notification. The effective comeback is provider acceptance +3 days unless the operator had already chosen a sooner future check-in on a later company-local day. If newer meaningful activity or terminal state won while reconciliation was running, delivery is still receipted but OPS preserves that newer truth and stores no comeback for this send.
 
@@ -2009,15 +2013,20 @@ Provider-originated manual outbound mail uses the same chase-state truth through
 
 A fully reconciled response supplies the immutable outcome receipt plus the canonical server opportunity when available. iOS applies a supplied canonical row, or refreshes after a receipt-only replay. When the send still owns chase state it removes the lead from Due/Overdue and surfaces `FOLLOW-UP SENT · BACK <date>`; when newer truth won it confirms only `FOLLOW-UP SENT`. On an HTTP 202 accepted/pending or delivery-unknown result, iOS does not update `handled_at`, synthesize a comeback, or move the lead locally; a later canonical refresh may resolve the pending UI only when it proves an outbound message, handled state, and a future follow-up date. No undo is offered for sent email.
 
+Separately, a deterministically linked manual provider outbound now reconciles the current chase cycle through service-only `reconcile_manual_outbound_follow_up_cycle_as_system(company_id, opportunity_id, event_id)`. Only the newest meaningful, projected, non-noise OPS outbound from exact `sync_activity` correspondence can run. One immutable event receipt makes it idempotent; the transaction stamps handled/timeline truth, satisfies the old cycle only when the outbound occurred at or after its due boundary, advances the next check-in by `lead_lifecycle_settings.follow_up_after_days` (default 7) while preserving an explicitly sooner future check-in, recalculates stale/unanswered state, supersedes only an open stock template draft, and resolves its operator-miss notification. Internal, ambiguous, orphaned, duplicate, or unprojected mail cannot mutate a lead. The Phase-C opportunity summary refreshes after the canonical meaningful event when that feature is enabled.
+
 Primary implementation sources:
 
 - `ops-web/src/app/api/leads/[opportunityId]/follow-up/route.ts`
 - `ops-web/src/lib/api/services/lead-follow-up-send-service.ts`
 - `ops-web/src/lib/api/services/email-send-reconciliation-service.ts`
+- `ops-web/src/lib/api/services/manual-outbound-follow-up-cycle-service.ts`
+- `ops-web/supabase/migrations/20260729230000_pipeline_follow_up_reliability.sql`
 - `ops-web/supabase/migrations/20260723233000_operator_one_tap_lead_follow_up.sql`
 - `ops-ios/OPS/Services/LeadFollowUpService.swift`
 - `ops-ios/OPS/ViewModels/PipelineViewModel.swift`
 - `ops-ios/OPS/Views/Leads/Components/LeadChaseStrip.swift`
+- `ops-ios/OPS/Views/Leads/Sheets/LeadFollowUpReviewSheet.swift`
 - iOS hosts: `LeadsTabView.swift`, `PipelineStageListView.swift`, `LeadDetailView.swift`, and `Triage/LeadTriageCard.swift`
 
 #### Drafting and Learning Intent

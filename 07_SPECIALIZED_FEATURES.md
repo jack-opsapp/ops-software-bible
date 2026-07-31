@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** July 23, 2026
+**Last Updated:** July 29, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -5743,6 +5743,40 @@ profile, and duplicate-draft state before a provider draft may be created.
 The production rollout is forward-only and creates no automatic historical
 recovery items. Historical Gmail, draft, or lead repair requires separate
 explicit authorization and must use the same exact-identity and safety gates.
+
+**Commercial-outcome isolation (prepared 2026-07-29).** A deterministic
+automatic-project safety refusal no longer freezes unrelated mailbox messages.
+When canonical commercial-outcome evaluation throws the typed project-address
+proof hold, sync persists an exact `commercial_outcome` recovery item containing
+the company, mailbox connection, provider message/thread, projected
+correspondence event, and opportunity identities, then continues the batch.
+The held item is not reclassified, converted, accepted, or cursor-skipped: it
+retains the same safety state and is retried only through service-role,
+lease-fenced reauthorization of that exact tuple. Provider/model failures that
+are not the typed deterministic hold continue to abort the cycle before cursor
+advancement.
+
+The recovery worker reruns the canonical commercial-outcome evaluator, so
+authorization, manual overrides, duplicate prevention, prompt-injection
+defenses, classification deferral, commercial acceptance rules, and
+project-address proof remain authoritative. A successful retry may refresh the
+opportunity summary only when the company's Phase-C gate is enabled. Migration
+`20260729230000_pipeline_follow_up_reliability.sql` is additive and does not
+create historical recovery rows; any live recovery or backfill remains a
+separately approved operation.
+
+**Manual outbound cycle reconciliation (prepared 2026-07-29).** A provider
+Sent-folder message may advance lead chase state only after sync has
+deterministically linked and projected it as the newest meaningful OPS
+`sync_activity` outbound. The service-only receipt transaction idempotently
+logs the satisfied cycle, updates canonical handled/outbound/timeline state,
+advances the next check-in by company lifecycle cadence, recalculates stale and
+unanswered-follow-up state, supersedes only the relevant open stock template
+draft, resolves its operator-miss notification, and leaves an immutable event
+receipt. The normal meaningful-event path then refreshes the Phase-C
+opportunity summary when enabled. Internal-only, ambiguous, orphaned,
+duplicate, noisy, unprojected, or older messages fail closed without lead
+mutation.
 
 ### Phase C lead correction loop (production backend live; iOS release pending)
 

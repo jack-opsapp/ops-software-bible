@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: 2026-07-23
+**Last Updated**: 2026-07-29
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -4690,6 +4690,14 @@ Prepared by migrations `20260713205000_email_outbound_learning_queue` and `20260
 Prepared by migration `20260713210000_phase_c_learning_signatures`. Stores sanitized HTML, canonical plain text, SHA-256 content hash, source, exact provider identity, active revision, operator/mailbox scope, and actor/fetch/confirmation timestamps for one company + connection.
 
 Resolution order is: active OPS signature for the current operator, active mailbox-wide OPS signature, active provider signature whose identity exactly equals the connected mailbox, then none. Guarded service-only replace/deactivate RPCs derive the active OPS actor and company, lock assignment-dependent company-mailbox authorization, force OPS rows to the actor scope, and force provider rows to the exact mailbox identity. The pre-assignment `replace_email_signature` primitive and direct service-role table mutation are revoked from application callers. Old revisions remain available for exact suffix stripping after provider draft round trips. Gmail source rows come from read-only `sendAs` inspection. Microsoft Graph exposes no mailbox signature, so Microsoft users save/paste an OPS signature. RLS is enabled.
+
+### Mailbox recovery + manual outbound cycle receipts (prepared 2026-07-29)
+
+Migration `20260729230000_pipeline_follow_up_reliability.sql` extends the service-only `email_ingestion_recovery_queue` without weakening any conversion guard. Recovery rows may now use `recovery_kind = 'commercial_outcome'` and carry the exact `opportunity_id` in addition to company, connection, provider message, and provider thread identity. The enqueue RPC proves that the projected meaningful correspondence event, canonical thread, provider message/thread, connection, and opportunity are one canonical tuple before it accepts the item.
+
+Only a typed automatic-project safety hold is eligible for this quarantine path. The original project-address proof, duplicate prevention, active-state, authorization, manual-override, prompt-injection, and commercial classification gates remain unchanged. The blocked item keeps its own deferred state and exact retry authority, while unrelated messages may become durable and the mailbox cursor may progress. A worker retry reauthorizes the same tuple, reruns canonical commercial-outcome evaluation, and refreshes the Phase-C opportunity summary only when Phase C is enabled. Unclassified provider/model failures still hold cursor advancement.
+
+The same migration adds `opportunity_manual_outbound_cycle_receipts`, with RLS enabled and no client policy. Its service-role RPC `reconcile_manual_outbound_follow_up_cycle_as_system(company_id, opportunity_id, event_id)` accepts only a newest, meaningful, projected, non-noise OPS outbound from `sync_activity` whose exact activity/mailbox/thread/message/correspondence linkage still agrees. The transaction locks the lead and lifecycle state, writes one immutable event receipt, stamps handled/timeline truth, advances `next_follow_up_at` by `lead_lifecycle_settings.follow_up_after_days` (default 7) while preserving an explicitly sooner future check-in, satisfies the prior cycle only when `event.occurred_at >= prior next_follow_up_at`, recalculates unanswered/stale chase state, supersedes only an open `template_follow_up` draft, and resolves the matching operator-miss notification. Internal-only, ambiguous, orphaned, duplicate, unprojected, or older outbound mail cannot obtain a receipt or mutate a lead.
 
 ### `email_send_intents` one-tap follow-up outcome receipt (2026-07-23)
 
