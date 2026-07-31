@@ -1,0 +1,34 @@
+-- SYSTEMS REPAIR (found during the W1-6 deletion/export rehearsal, 2026-07-29).
+-- Applied to prod ijeekuhbatykdomumfjx as 20260730220727.
+--
+-- Defect: two columns carried a DEFAULT that their own CHECK constraint rejects, so ANY
+-- insert omitting the column failed with 23514 "violates check constraint". Found the hard
+-- way — building the rehearsal fixture hit both in succession.
+--
+--   projects.status       DEFAULT 'RFQ'     CHECK rfq|estimated|accepted|in_progress|completed|closed|archived
+--   project_tasks.status  DEFAULT 'Booked'  CHECK active|completed|cancelled
+--
+-- 'RFQ' is a pure case mismatch (see 20260222203359_lowercase_all_check_constraints — the
+-- constraint was lowercased, the default was not). 'Booked' is absent from the vocabulary
+-- altogether: 20260225014506_migrate_task_status_to_active moved task statuses to
+-- active/completed/cancelled without updating the column default.
+--
+-- Harmless in production to date only because every shipping client sends an explicit status;
+-- it is a latent trap for any new insert path, and the resulting 23514 does not obviously
+-- point at the default as the cause.
+--
+-- Replacement values are evidence-based, not guessed: live data contains only CHECK-allowed
+-- values (project_tasks: active 166 / completed 270 / cancelled 14; projects: rfq 17 among
+-- the lowercase set), and ops-ios/OPS/DataModels/ProjectTask.swift:14 declares `active` as
+-- the first/new-task case.
+--
+-- Defaults only — no existing row is touched, no rename, no type change — so shipped iOS
+-- builds are unaffected and the additive-only cross-release constraint holds.
+--
+-- Verified after apply: inserting a project and a task with no status succeeds and yields
+-- 'rfq' / 'active' (probe run inside a transaction and rolled back). A full sweep of every
+-- literal column default against its table's CHECK constraints now returns zero real
+-- offenders across all 322 tables.
+
+ALTER TABLE public.projects       ALTER COLUMN status SET DEFAULT 'rfq';
+ALTER TABLE public.project_tasks  ALTER COLUMN status SET DEFAULT 'active';
