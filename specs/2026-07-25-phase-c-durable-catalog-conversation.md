@@ -61,11 +61,19 @@ revision still match.
   products and static product-material quantity rules. Deck geometry,
   layout-derived waste, roll/sheet inventory, dynamic purchasing, and
   Deck Designer automation are unavailable and cannot be implied.
+- Review readiness is server-owned. Phase C never asks the operator whether the
+  setup is ready: it returns a review blueprint when all required confirmed
+  facts exist, otherwise it asks one concrete question backed by an available
+  capability.
 - Question templates and the model policy are generated from the same manifest.
   Semantic validation rejects unsupported capabilities before review, and
   commit revalidates the pinned manifest revision before any live catalog write.
 - The browser persists and renders each operator message immediately, then
   starts generation from that exact input revision.
+- An assistant question is logically identified by question ID plus prompt, not
+  by the session version embedded in its durable message ID. Version changes
+  cannot insert a second copy after the operator's answer; legacy synthetic
+  duplicates are removed while the original question and answer order remain.
 - While Phase C is working, the compact composer stays available for a quick
   follow-up or correction. The newest queued text message can be edited or
   removed.
@@ -74,6 +82,13 @@ revision still match.
 - A failed generation retains the persisted queued answer. Retry processes that
   same revision without duplicating the visible message.
 - Refreshing or returning to setup resumes the stored transcript.
+- An active interview stranded on the former review-readiness prompt after an
+  unsupported roll/sheet-inventory answer is repaired on resume. The repair
+  preserves the operator message and valid confirmed catalog facts, removes
+  only unsupported derived inventory/purchasing facts and the invalid prompt,
+  records a `system_repair` source, then asks whether handling stays
+  staff-managed or uses released fixed material quantities. It never mutates
+  the live catalog.
 - The transcript is presentation and audit state. It is not added to the model
   prompt; confirmed facts remain the canonical interview memory and avoid added
   token cost.
