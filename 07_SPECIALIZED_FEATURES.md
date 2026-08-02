@@ -3784,6 +3784,18 @@ outside the live atomic path. Nothing bulk-assigns, prompts, or rewrites
 historical company-mailbox leads. Source:
 `ops-web/supabase/migrations/20260723214524_company_mailbox_intake_owner.sql`.
 
+**Archived lead reactivation extension (prepared 2026-07-31, not applied).** A
+new exact-thread meaningful customer inbound may reactivate only an archived
+active-stage, nonterminal, unconverted/project-unlinked opportunity. The event,
+archive clear, and assignment disposition share one transaction. An eligible
+existing assignee is preserved; otherwise the engine uses the eligible mailbox
+intake owner. With no eligible owner, it creates administrator deliveries for
+the opportunity's exact current `assignment_version`. Delivery uniqueness and
+claim/completion fences include that version, so a later reassignment makes an
+older prompt stale. This path performs no historical scan, one-off assignment,
+or project creation. Source:
+`ops-web/supabase/migrations/20260731210000_event_driven_archived_lead_reactivation.sql`.
+
 ### Task Reschedule → Push (cross-client, both origins)
 
 When a task's schedule changes, assigned crew are notified on **both** clients — and the push is fired **server-side (ops-web → OneSignal REST)**, so it reaches a backgrounded/locked teammate independent of the Realtime socket (which iOS tears down ~30s after backgrounding). This is the background-delivery counterpart to the live foreground repaint (ops-ios `deafa95f`).
@@ -5740,6 +5752,20 @@ existing assignment-draft job lease and backoff contract; every attempt
 rechecks the current assignment, actor, connection, source scope, writing
 profile, and duplicate-draft state before a provider draft may be created.
 
+**Prepared RPC identifier repair (2026-08-01):** PostgreSQL limits identifiers
+to 63 bytes. The original provider-create reservation and uncertain-outcome
+reconciliation RPC declarations are 67 and 74 bytes, so the live catalog
+contains only truncated names and PostgREST cannot resolve the application
+calls. Prepared migration
+`20260801003000_fix_contact_form_draft_rpc_identifiers.sql` adds the stable
+service-only entry points
+`begin_assignment_contact_draft_provider_create_as_system` and
+`mark_assignment_contact_draft_reconciliation_as_system`. They preserve the
+existing lease, assignment, exact draft, and reconciliation gates by delegating
+to the verified catalog implementations. Application RPC identifiers are
+contract-tested to remain at most 63 UTF-8 bytes. The migration performs no
+queue replay, provider mutation, lead assignment, or historical repair.
+
 The production rollout is forward-only and creates no automatic historical
 recovery items. Historical Gmail, draft, or lead repair requires separate
 explicit authorization and must use the same exact-identity and safety gates.
@@ -5910,6 +5936,22 @@ Below the rails, a horizontal strip of **category filter chips** (ALL + 12 categ
 | `auto_follow_up` | CUSTOMER — auto-nudge after configurable quiet days |
 
 **Global AUTO_SEND gate:** The router caps any category-level `auto_send` / `auto_follow_up` to `auto_draft` behavior until the global Phase C autonomy level in `AutonomyMilestoneService` reaches AUTO_SEND (level 4). This prevents any email from being sent before the overall writing profile is proven.
+
+**Terminal mailbox snapshot gate (prepared 2026-07-31, not deployed).** The
+router fails closed before policy/model work and again immediately before every
+provider draft, scheduled send, archive, or follow-up mutation. An active sync,
+structured Gmail continuation, recovery page token, or pending derived summary
+returns `noop_sync_incomplete`, clears `category_classified_at`, and leaves the
+thread for terminal retry. This prevents the first message in a catch-up batch
+from authorizing a draft before later messages are durable.
+
+Provider-draft reconciliation uses the draft history's exact
+`source_message_id`, not draft creation time alone. If any other persisted
+activity on the exact mailbox thread occurs at or after that source boundary,
+the draft is stale: the worker idempotently deletes the provider draft, marks
+the history `superseded`, and skips learning. Greeting identity is bound to the
+actual latest inbound source sender; another thread participant cannot supply
+the salutation.
 
 #### Human-authority learning, subjects, and signatures (production 2026-07-17)
 

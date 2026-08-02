@@ -1671,6 +1671,54 @@ Core principles:
 - **Phase C is optional**: the core lifecycle must remain correct with Phase C off. Phase C improves extraction, matching, drafting, and learning when enabled, but is not required for basic lifecycle correctness.
 - **Drafts are auditable**: every draft stores its origin, generated text, final sent text, linked opportunity/thread/message context, edit history, and final disposition.
 
+#### Lead intake terminality and reactivation contract (prepared 2026-07-31)
+
+This contract is implemented on an isolated OPS-Web branch and is not deployed
+or applied to production as of 2026-07-31.
+
+- **Terminal sync authority:** `last_synced_at` means the provider snapshot and
+  all bounded derived lead-summary work are complete. A structured Gmail
+  cursor, expired-history recovery page token, pending provider message,
+  pending lead summary, or active sync is nonterminal. A nonterminal cycle
+  publishes only an owner-fenced `history_id` checkpoint; it cannot advance
+  `last_synced_at`. The scheduler bypasses the ordinary per-connection interval
+  until the continuation terminates.
+- **Manual contract:** manual sync returns HTTP 200 `complete`, HTTP 202
+  `continuing`, or retryable non-2xx `partial`/`failed`. A resolved
+  `SyncEngine.runSync` result containing errors is not success.
+- **Exact event relationship:** ingestion writes
+  `high_confidence_related_contact` only after re-reading the immutable exact
+  `(opportunity_id, connection_id, provider_thread_id)` owner. Name similarity
+  and locality never grant relationship authority.
+- **Transactional archived-lead reactivation:** a new meaningful customer
+  inbound whose occurrence is after `archived_at` reactivates an archived,
+  active-stage, nondeleted, unmerged, unconverted/project-unlinked opportunity
+  in the correspondence insert transaction. It preserves an eligible assignee;
+  otherwise it assigns the eligible mailbox intake owner or creates an
+  assignment-version-fenced administrator delivery. If no authorized
+  recipient exists, the event transaction fails closed. Lost, discarded, won,
+  deleted, merged, converted, and project-linked truth is never reopened.
+- **Event-by-event evaluation:** an exact related inbound remains the
+  reactivation evidence even when a later outbound is the newest meaningful
+  event in the same catch-up. Lifecycle execution uses the decision's exact
+  event id rather than substituting the batch high-water event.
+- **Archive-stage invariant:** active-stage automation returns
+  `archived_opportunity` while `archived_at` is nonnull. Reactivation must clear
+  that field before stage evaluation can run.
+- **Terminal-context drafting:** Phase C performs no autonomous draft, send,
+  archive, or follow-up work while the connection is actively syncing or has a
+  nonterminal cursor/recovery page. The thread remains dirty for the terminal
+  retry. Draft greeting identity comes from the exact latest inbound source
+  sender, not another participant or a similar contact name.
+- **Stale draft reconciliation:** `ai_draft_history.source_message_id` is the
+  immutable reply boundary. Any later persisted inbound or outbound on the
+  exact thread makes that provider draft stale; the normal mailbox worker
+  deletes it idempotently, marks its history `superseded`, and applies no
+  sent/edit learning.
+- **No conversion inference:** reactivation and drafting cannot create a
+  project. Project creation still requires decisive commercial acceptance plus
+  property-level address proof.
+
 #### P1 Provider ID Guardrails
 
 As of Lead Lifecycle P1, provider-backed email lifecycle writes must reject blank provider identifiers before creating any new activity, `email_threads` cache row, `opportunity_email_threads` link, or correspondence-count update.
@@ -2011,6 +2059,13 @@ Lead state advances only after the provider has accepted the message and the sen
 
 Provider-originated manual outbound mail uses the same chase-state truth through service-only RPC `reconcile_manual_outbound_follow_up_cycle_as_system(company_id, opportunity_id, correspondence_event_id)`. The RPC accepts only one canonical, meaningful, projected OPS outbound event bound to its exact activity, mailbox, provider thread, and opportunity. `opportunity_manual_outbound_cycle_receipts` makes replay idempotent before any counter or due-date change. Its insert targets the verified unique constraint `opportunity_manual_outbound_cycle_r_correspondence_event_id_key` explicitly; a bare `ON CONFLICT (correspondence_event_id)` is forbidden because the RPC returns an identically named output field and PL/pgSQL resolves that target ambiguously at runtime. Migration `20260730220000_fix_manual_outbound_follow_up_conflict_target.sql` replaces only that target and preserves the service-role gate, company fence, row locks, event/activity bindings, lifecycle precedence, receipt contract, and grants.
 
+The same function also returns an output field named `opportunity_id`. Its
+later lifecycle-state upsert therefore must use `ON CONFLICT ON CONSTRAINT
+opportunity_lifecycle_state_pkey`, never `ON CONFLICT (opportunity_id)`.
+Production hotfix `20260731183127_fix_manual_outbound_follow_up_lifecycle_conflict_target`
+made that exact replacement on 2026-07-31 and preserved service-role-only
+execute; the matching repository migration records deployment parity.
+
 A fully reconciled response supplies the immutable outcome receipt plus the canonical server opportunity when available. iOS applies a supplied canonical row, or refreshes after a receipt-only replay. When the send still owns chase state it removes the lead from Due/Overdue and surfaces `FOLLOW-UP SENT · BACK <date>`; when newer truth won it confirms only `FOLLOW-UP SENT`. On an HTTP 202 accepted/pending or delivery-unknown result, iOS does not update `handled_at`, synthesize a comeback, or move the lead locally; a later canonical refresh may resolve the pending UI only when it proves an outbound message, handled state, and a future follow-up date. No undo is offered for sent email.
 
 Separately, a deterministically linked manual provider outbound now reconciles the current chase cycle through service-only `reconcile_manual_outbound_follow_up_cycle_as_system(company_id, opportunity_id, event_id)`. Only the newest meaningful, projected, non-noise OPS outbound from exact `sync_activity` correspondence can run. One immutable event receipt makes it idempotent; the transaction stamps handled/timeline truth, satisfies the old cycle only when the outbound occurred at or after its due boundary, advances the next check-in by `lead_lifecycle_settings.follow_up_after_days` (default 7) while preserving an explicitly sooner future check-in, recalculates stale/unanswered state, supersedes only an open stock template draft, and resolves its operator-miss notification. Internal, ambiguous, orphaned, duplicate, or unprojected mail cannot mutate a lead. The Phase-C opportunity summary refreshes after the canonical meaningful event when that feature is enabled.
@@ -2138,12 +2193,30 @@ Source: web `feat/lead-lifecycle-auto-disposition` → ops-web `main` (PR #84, s
 A single company can connect both providers (e.g., owner uses Gmail, office manager uses M365). Each connection is a separate `email_connections` row with its own sync profile, webhook subscription, and sync token. The target connection identity is normalized email unique by `(company_id, provider, email)`, so the same address may exist once per provider without sharing tokens, cursors, webhook state, or settings. Expand migration `2030` adds that identity alongside the live provider-agnostic index and normalizes old/new callbacks; post-deploy contract migration `2050` removes the old index. Client matching and duplicate detection operate across all connections for a company.
 
 Provider identity and cursor rules:
+- A cursor is a high-water mark only when every provider page, discovered
+  message, recovery page, and bounded derived summary is durable. The
+  owner-fenced nonterminal checkpoint updates `history_id` without touching
+  `last_synced_at`; terminal completion updates both. Classification and Phase
+  C retry workers also fail closed while `sync_in_progress_at` is nonnull, so
+  the old terminal cursor cannot authorize work during assembly of the next
+  snapshot.
 - Gmail history expiry takes an overlap from the last successful sync (or connection creation on first setup) and stores a durable recovery triple on `email_connections`: anchor, `messages.list` page token, and fresh target history ID. Each fully persisted page advances the stored continuation, so a gap larger than one function invocation resumes instead of restarting forever. The fresh history ID becomes the normal cursor only after every recovery page and message is durable. Disconnect preserves both provider identity and the prior normal cursor; any incomplete recovery also remains resumable and fails closed rather than skipping the gap.
 - Microsoft 365 stores one mail-folder delta plus one message delta/continuation per discovered live folder in a versioned `m365:v2` cursor. A durable pending-folder queue covers Inbox, Sent, Archive, and rule/custom folders under one 50-page cycle budget. The returned cursor becomes durable only after its messages are durable; legacy Inbox/Sent or raw cursors replay a complete folder inventory. Unsent drafts are excluded.
 - Every Microsoft Graph message/subscription request asks for `IdType="ImmutableId"`, so moving a message between folders does not change the dedupe identity. Folder/message `@removed` tombstones advance only their proven streams and are not normalized as correspondence. Full-thread reads follow `@odata.nextLink` and fail explicitly if the safety bound is exceeded.
 - A sync lease stores both a timestamp and random owner token. Long cycles renew the lease; renewal/release match the owner so a stale worker cannot clear a successor's lock.
 - Disconnect is a soft tombstone (`status='disconnected'`, sync disabled, OAuth/webhook secrets cleared) rather than a hard delete. The stable connection row and history cursor remain as provider identity/audit proof; reconnect reuses only that same-provider row.
 - Cron sync returns non-2xx when any connection or semantic sweep reports failure. Staleness heartbeat rows are alert-delivery receipts, not positive ingestion receipts: an alert is deduped/logged only when notification or email delivery actually succeeds. If all configured channels fail, the route returns non-2xx and writes no false success receipt so the next run may retry. This still does not prove message completeness; provider-vs-OPS parity requires an independent 48-72 hour anti-join/repair monitor.
+- Manual sync uses the same result truth: 200 means terminal completion, 202
+  means a durable continuation remains, and an errors array produces retryable
+  non-2xx partial/failed state.
+- Every application-visible PostgREST RPC identifier must be at most 63 UTF-8
+  bytes. PostgreSQL silently truncates longer declarations, which makes an
+  untruncated client call permanently unresolvable even when the function body
+  exists. Prepared migration
+  `20260801003000_fix_contact_form_draft_rpc_identifiers.sql` gives contact-form
+  provider-create reservation and uncertain-outcome reconciliation stable
+  short service-only names; it delegates to the existing guarded bodies and
+  does not replay queue rows or touch provider state.
 
 ### OAuth Flow
 

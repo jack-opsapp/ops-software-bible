@@ -4231,6 +4231,8 @@ These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AN
 - **Migration `20260723214306_email_threads_lead_scan_pending.sql`** adds the nullable positive deferral marker `email_threads.lead_scan_pending_at` plus a partial drain index. It marks only unmatched threads whose lead scan was skipped during an AI-provider outage; `opportunity_id IS NULL` alone never means a scan is pending.
 - **Migration `20260723214524_company_mailbox_intake_owner.sql`** adds the guarded company-mailbox owner FK/index, immutable `company_mailbox_default` assignment source, one service-role atomic live create-and-disposition RPC, and the fully private `unassigned_lead_assignment_deliveries` outbox plus service-only lease RPCs. It is forward-only: existing connection owners remain null, existing opportunity source-key rows are returned unchanged, and no historical opportunity is scanned or changed.
 - **Migrations `20260723224713_guarded_orphan_outbound_email_activity_adoption.sql` and `20260723225112_shorten_guarded_orphan_outbound_email_activity_rpc.sql`** add one service-role-only adapter for an exact outbound email activity that was inserted before its provider thread acquired a canonical opportunity owner, then give it the PostgreSQL-safe canonical name `adopt_orphan_outbound_email_activity_guarded_as_system`. Callers must use only that canonical identifier; the initial longer identifier exceeded PostgreSQL's 63-byte limit and was server-truncated. The RPC binds the repair to the current physical mailbox lease, active connection mirror, immutable `(connection_id, provider_thread_id)` owner, exact provider message and activity payload, and active target opportunity. It token-gates the single `NULL → canonical opportunity` child update and records canonical outbound correspondence in the same transaction; any ownership, lease, payload, or event conflict rolls the adoption back. It does not change stage, assignment, project state, or provider state, and it runs only during ordinary forward sync rather than as a historical backfill.
+- **Migration `20260731183127_fix_manual_outbound_follow_up_lifecycle_conflict_target.sql`** is the repository record of the production hotfix applied on 2026-07-31. `reconcile_manual_outbound_follow_up_cycle_as_system` now targets `opportunity_lifecycle_state_pkey` by constraint name; `ON CONFLICT (opportunity_id)` is invalid in this `RETURNS TABLE` function because its output also exposes `opportunity_id`. Execute remains service-role-only.
+- **Prepared migrations `20260731203000_email_sync_terminal_checkpoint.sql`, `20260731210000_event_driven_archived_lead_reactivation.sql`, and `20260801003000_fix_contact_form_draft_rpc_identifiers.sql` are not applied as of 2026-08-01.** The first adds an owner-fenced nonterminal cursor checkpoint that cannot advance `last_synced_at`. The second adds exact-thread inbound reactivation, mailbox-owner/assignment-review disposition, assignment-version-fenced deliveries, and an archived-stage transition guard. The third exposes PostgreSQL-safe service-only names for the contact-form provider-create reservation and uncertain-outcome reconciliation RPCs; their original 67- and 74-byte declarations exist in the catalog only under server-truncated names and therefore cannot be resolved by PostgREST using the application strings. None of these migrations backfills or assigns historical leads.
 
 ### email_connections
 
@@ -4293,6 +4295,16 @@ CREATE TABLE email_connections (
 
 Token columns (`access_token`, `refresh_token`) are accessed via service role only in API routes — not exposed to client via RLS column-level restrictions.
 
+**Current cursor and health authority (2026-07-31 prepared contract).** The live
+column names used by the sync engine are `history_id`, `last_synced_at`,
+`history_recovery_anchor`, `history_recovery_page_token`,
+`history_recovery_target_token`, `sync_in_progress_at`, and `sync_lock_owner`.
+A structured Gmail cursor, a recovery page token, pending derived lead
+summaries, or an active sync means the mailbox snapshot is nonterminal.
+`persist_email_connection_sync_checkpoint_as_system` may publish the
+owner-fenced `history_id` continuation but deliberately cannot update
+`last_synced_at`; only the existing terminal completion function may do both.
+
 `default_intake_owner_id` is valid only on `type='company'` connections. The
 database requires an active, nondeleted user in the same company with effective
 assigned-scope `pipeline.view`, `pipeline.edit`, and `inbox.send` authority.
@@ -4307,7 +4319,8 @@ change this field.
 
 Durable, addressed outbox for a newly created company-mailbox lead that has no
 eligible default intake owner. The table is unique on
-`(opportunity_id, recipient_user_id)` and stores pending/processing/delivered/
+`(opportunity_id, recipient_user_id, assignment_version)` once the prepared
+2026-07-31 reactivation migration is applied, and stores pending/processing/delivered/
 failed state, attempt limits, lease token/expiry, retry timing, notification
 identity, provider outcome, and terminal/resolution provenance. Enqueue is
 idempotent and addresses only active same-company administrators who currently
@@ -4321,6 +4334,12 @@ terminal, inaccessible, or exhausted row, and materializes at most one
 persistent notification before exposing a push claim. A canonical non-null
 assignment event resolves every delivery and associated notification for that
 opportunity.
+
+The widened key lets the same durable mechanism represent a later archived-lead
+reactivation without reviving an obsolete prompt. Claim and completion compare
+the delivery's exact assignment version with the current opportunity version;
+any reassignment makes the older delivery stale. The historical three-argument
+enqueue helper remains version-zero-only for genuinely new leads.
 
 No migration scans historical opportunities. Rows are inserted only inside the
 same transaction that creates a new live company-mailbox opportunity and either
