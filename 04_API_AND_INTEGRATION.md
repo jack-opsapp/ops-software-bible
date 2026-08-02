@@ -1327,13 +1327,13 @@ Live apply status must be verified during rollout. Supabase MCP records its own 
 
 ---
 
-## Site-visit cloud sync contract (prepared 2026-08-01)
+## Site-visit cloud sync contract (production database live 2026-08-02)
 
-**Release status:** implemented on local iOS/web feature branches; migration `20260731235533_site_visit_cloud_sync.sql` is mirrored in this Bible but has not been applied to production. The production-generated `database.types.ts` therefore intentionally remains unchanged until an approved database target receives the migration.
+**Release status:** migrations `20260731235533_site_visit_cloud_sync.sql`, `20260802093608_site_visit_completion_rpc_security_boundary.sql`, and `20260802102853_site_visit_fk_indexes.sql` are applied in production and mirrored in this Bible. Production-generated web database types include the new tables and RPC. The iOS implementation remains outside customer distribution pending its signed device/App Store gate.
 
 ### `public.complete_site_visit_guarded(p_site_visit_id uuid, p_completion jsonb) → jsonb`
 
-One transaction owns completion and its timeline effect. The RPC validates an allowlisted, bounded completion object (`notes`, `measurements`, `photos`, `internal_notes`), locks the visit, authorizes through the existing Firebase-aware site-visit edit helper, requires exact caller-company equality, rejects deleted/cancelled visits, refreshes legacy notes/measurements/photos from normalized children, moves status monotonically to `completed`, and preserves the first `completed_at`.
+One transaction owns completion and its timeline effect. The public Data API function is SECURITY INVOKER and delegates to a pinned SECURITY DEFINER implementation in `private`, which is not exposed through the Data API. The private function validates an allowlisted, bounded completion object (`notes`, `measurements`, `photos`, `internal_notes`), locks the visit, authorizes through the existing Firebase-aware site-visit edit helper, requires exact caller-company equality, rejects deleted/cancelled visits, refreshes legacy notes/measurements/photos from normalized children, moves status monotonically to `completed`, and preserves the first `completed_at`.
 
 If the visit has an opportunity, client, or project parent, the transaction inserts or updates its single `activities(type='site_visit', site_visit_id=visit.id)` row and writes the resulting id to `site_visits.activity_id`. Partial unique index `activities_site_visit_completion_uidx` and `ON CONFLICT (site_visit_id) WHERE type='site_visit'` make retry after an interrupted response idempotent. Return shape: `{ "visit": <site_visits row>, "activity_id": <uuid|null> }`. Execute is granted only to `anon, authenticated`; the function has a pinned search path. Callers: `OPS/Network/Supabase/Repositories/SiteVisitRepository.swift` and `ops-web/src/lib/api/services/site-visit-service.ts`.
 

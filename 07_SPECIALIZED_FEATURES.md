@@ -7452,7 +7452,7 @@ One-way mirror from OPS schedule rows to a dedicated `OPS` calendar in the user'
 
 ### Excluded
 
-- `SiteVisit` — still excluded from the EventKit mirror. Durable DTO/repository/outbound/inbound/Realtime wiring is prepared on the 2026-08-01 site-visit sync branch, but `CalendarMirrorService` does not yet materialize visit rows into EventKit events. This is an explicit calendar-surface boundary, not evidence that site visits are phone-only. The sync migration is not production-live as of this note.
+- `SiteVisit` — still excluded from the EventKit mirror. Durable DTO/repository/outbound/inbound/Realtime wiring exists and its database/web contract is production-live as of 2026-08-02, but `CalendarMirrorService` does not materialize visit rows into EventKit events. This is an explicit calendar-surface boundary, not evidence that site visits are phone-only. The updated iOS client is not customer-distributed until its signed device/App Store gate completes.
 - Direct Google Calendar / Outlook OAuth sync — provider credentials, token storage, consent copy, and per-provider write semantics belong to the backend integrations layer. iOS uses EventKit; Apple, Google, and Outlook accounts are supported when they are configured in the device Calendar app and exposed as writable EventKit sources.
 - Two-way sync — researched and rejected for the iOS EventKit mirror; the spec at `ops-ios/docs/superpowers/specs/2026-05-10-iphone-calendar-mirror-design.md` documents the rejected design space.
 

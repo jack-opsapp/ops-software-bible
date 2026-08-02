@@ -1148,7 +1148,7 @@ Activity: Sent Estimate #042 to John Smith        ● 2 hours ago
 
 A scheduled or ad-hoc visit to a job site for scope assessment, client meeting, or project check-in. Can exist before a project (on an Opportunity) or after (on a Project).
 
-> **Durable sync status (prepared 2026-08-01):** Lead detail, New Lead, and the FAB open `OPS/Views/SiteVisits/SiteVisitCaptureView.swift`; the FAB can start without a lead. Parent, identity draft, evidence artifacts, and per-visit checklist snapshots now have an atomic phone outbox, normalized Supabase contract, inbound delta/Realtime reconciliation, cross-device resume, guarded completion, and protected logout recovery. These changes are on local feature branches only: migration `20260731235533_site_visit_cloud_sync.sql` is not production-live and no App Store build contains this release yet.
+> **Durable sync status (production database/web contract live 2026-08-02):** Lead detail, New Lead, and the FAB open `OPS/Views/SiteVisits/SiteVisitCaptureView.swift`; the FAB can start without a lead. Parent, identity draft, evidence artifacts, and per-visit checklist snapshots have an atomic phone outbox, normalized Supabase contract, inbound delta/Realtime reconciliation, cross-device resume, guarded completion, and protected logout recovery. The normalized schema and invoker-safe completion boundary are live in production; the updated iOS client is committed and simulator-verified but is not customer-distributed until its signed device/App Store gate completes.
 
 ```typescript
 type SiteVisitStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled'
@@ -2858,16 +2858,16 @@ PATCH /obj/project/:id           (add opportunityId field)
 PATCH /obj/calendarevent/:id     (add eventType, opportunityId, siteVisitId fields)
 ```
 
-### Supabase Tables — status (site-visit rows verified 2026-08-01)
+### Supabase Tables — status (site-visit contract verified 2026-08-02)
 
 The list below was originally written as "tables needed." A live audit on 2026-05-10 found `project_photos` already exists in production — schema and use documented below. Other tables in this list may also be stale; a full audit is a separate follow-up.
 
 ```sql
 -- activity_comments               (status TBD)
 -- site_visits                     EXISTS IN PROD (company_id is text)
--- site_visit_artifacts            PREPARED, NOT APPLIED (migration 20260731235533_site_visit_cloud_sync.sql)
--- site_visit_checklist_answers    PREPARED, NOT APPLIED (same migration)
--- site_visit_identity_drafts      PREPARED, NOT APPLIED (same migration)
+-- site_visit_artifacts            EXISTS IN PROD (company_id text; Realtime; RLS)
+-- site_visit_checklist_answers    EXISTS IN PROD (company_id text; Realtime; RLS)
+-- site_visit_identity_drafts      EXISTS IN PROD (company_id text; Realtime; RLS)
 -- project_photos                  EXISTS IN PROD — see schema below
 -- email_connections               (renamed from gmail_connections, status TBD)
 -- opportunity_email_threads       (status TBD)
