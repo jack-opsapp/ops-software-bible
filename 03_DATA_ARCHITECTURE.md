@@ -1076,7 +1076,7 @@ class Activity: Identifiable {
     // call_source     TEXT                         — around-call provenance from iOS (post_call_prompt | fab | app_shortcut); nullable (feature 154cb8a3)
     // caller_number   TEXT                         — normalized digits of the call's number, for dedup; nullable
     // call_started_at TIMESTAMPTZ                  — best-effort call start captured around-call by iOS; nullable
-    // site_visit_id   UUID FK site_visits          — parent for a completed-site-visit activity; nullable (not in the SwiftData model, sent via CreateActivityDTO)
+    // site_visit_id   UUID FK site_visits          — parent for a completed-site-visit activity; nullable. Written by legacy CreateActivityDTO and decoded on iOS since SwiftData V21; the prepared durable-sync path writes it only through complete_site_visit_guarded.
 
     // Project Workspace Modal column (Supabase only — added 2026-05-06)
     // attachment_ids  UUID[] DEFAULT ARRAY[]::UUID[] — references to project_photos.id for activity entries with photo attachments.
@@ -1090,9 +1090,9 @@ class Activity: Identifiable {
 
 **Parent invariant (unified-activity widening, OPSSchemaV14)**: every activity has EXACTLY ONE parent — `opportunity_id` (lead, FK), `client_id` (client, no FK), or `project_id` (job, Supabase `TEXT`, no FK). The iOS write path is `ActivityRepository.logActivity(target: ActivityTarget, …)`, where `ActivityTarget` (`.opportunity | .client | .project | .unbound`) makes the single-parent rule unrepresentable-otherwise and drives which column `CreateActivityDTO` sets (the nil parents are omitted from the encoded JSON so PostgREST never receives `opportunity_id: null`). `company_id` (NOT NULL, RLS gate) and `created_by` (Supabase `users.id`, never the Firebase UID) are always stamped. The three legacy iOS loggers (Log Activity / Log a Call / lead-detail LOG) are consolidated into one `UnifiedLogActivitySheet` + `UnifiedLogActivityViewModel` that routes every write through this single path — correspondence types only (`call/email/meeting/note`), with direction/outcome/duration gated per type. Today only the lead timeline renders activities; client- and job-scoped rows persist for the deferred client/job timeline surfaces.
 
-**iOS payload (CreateActivityDTO)** sends: the single parent (`opportunity_id` | `client_id` | `project_id`), `company_id`, `type`, `subject`, `content`, `direction` (call/email only), `outcome` (when non-empty), `duration_minutes` (call/meeting only and >0), `call_source`/`caller_number`/`call_started_at` (call only), `site_visit_id` (site-visit auto-post only), `created_by`. Other columns rely on Postgres defaults (`is_read`, `match_needs_review`, `has_attachments`, `attachment_count`, `sent_by_agent`, `created_at`).
+**iOS payload (CreateActivityDTO)** sends: the single parent (`opportunity_id` | `client_id` | `project_id`), `company_id`, `type`, `subject`, `content`, `direction` (call/email only), `outcome` (when non-empty), `duration_minutes` (call/meeting only and >0), `call_source`/`caller_number`/`call_started_at` (call only), legacy `site_visit_id`, and `created_by`. Other columns rely on Postgres defaults (`is_read`, `match_needs_review`, `has_attachments`, `attachment_count`, `sent_by_agent`, `created_at`). New site-visit completion does not send this DTO separately; the guarded server transaction owns the activity.
 
-**Site-visit → timeline auto-post (app-side).** iOS `SiteVisit` is LOCAL-ONLY (never synced to Supabase — zero `from("site_visits")` calls), so a DB trigger on `site_visits` can never fire; the completed-visit timeline entry is an app-side `activities` insert. On `SiteVisitCaptureViewModel.completeVisit()` the app best-effort posts one `type='site_visit'` activity (`subject=nil` → `trg_activities_default_subject` backfills "Site visit"; `body` = notes + answered-checklist roll-up; `site_visit_id` = the visit id) parented to the bound opportunity (falls back to the client, skips when fully unbound). It is idempotent: the local-only `SiteVisit.loggedActivityId` (added in `OPSSchemaV15`, nullable, never synced) is stamped on success so a re-completion or offline retry cannot double-post. Distinct from the site-visit **packet** written to `project_notes` (`event_kind='site_visit'`) for the project-workspace Activity tab — see § project_notes unified timeline.
+**Site-visit → timeline completion (guarded server transaction; prepared 2026-08-01).** The durable sync release replaces the former best-effort app-side activity insert. iOS and web call `public.complete_site_visit_guarded(site_visit_id, completion)`, which locks and authorizes the parent, refreshes the normalized-child compatibility projection, advances the visit monotonically to `completed`, and inserts or updates exactly one `type='site_visit'` activity under the partial unique index on `activities.site_visit_id`. The RPC also stamps `site_visits.activity_id`; retrying after a lost response returns the same completed visit/activity rather than creating a duplicate. Source: `migrations/20260731235533_site_visit_cloud_sync.sql`; callers: `OPS/Network/Supabase/Repositories/SiteVisitRepository.swift` and `ops-web/src/lib/api/services/site-visit-service.ts`. This contract is prepared locally but is not production-live until that migration is explicitly applied.
 
 **Around-call provenance (feature 154cb8a3, migration `add_call_provenance_to_activities`).** Three nullable, additive columns — `call_source`, `caller_number`, `call_started_at` — let iOS record where a `call` activity came from when captured via the around-call lead-capture flow. `call_source` ∈ `post_call_prompt | fab | app_shortcut`; `caller_number` is the normalized digit form of the dialed/received number (NANP country code stripped); `call_started_at` is the best-effort call start. NO check constraints / NO defaults / NO NOT NULL — the additive-only rule keeps iOS↔Supabase sync intact across App Store releases. Web and older rows carry nil. See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Around-call lead capture.
 
@@ -1481,42 +1481,30 @@ Nullable text column on `products`, CHECK `bundle_pricing_mode IS NULL OR bundle
 
 ---
 
-### 22. SiteVisit (Supabase-Backed)
+### 22. SiteVisit cloud packet (prepared 2026-08-01)
 
 **File**: `DataModels/Supabase/SiteVisit.swift`
-**Purpose**: Scope assessment visit.
+**Purpose**: Durable, cross-device scope assessment rooted in the existing Supabase `site_visits` parent.
 
-**Properties**:
+**Release status:** the iOS/web implementation and migration are committed only on local feature branches as of 2026-08-01. The three normalized child tables, guarded completion RPC, Realtime publication changes, and generated database types are **not production-live**. Production still has the existing `site_visits` parent and legacy projections until an operator-approved migration/deploy/app release completes the rollout.
 
-```swift
-@Model
-class SiteVisit: Identifiable {
-    @Attribute(.unique) var id: String
-    var opportunityId: String?
-    var companyId: String
-    var status: SiteVisitStatus
-    var scheduledAt: Date?
-    var completedAt: Date?
-    var notes: String?
-    var address: String?
-    var assignedTo: String?
-    var createdAt: Date
-}
-```
+**Parent contract (`public.site_visits`, existing live table):** `id uuid`; `company_id text`; `opportunity_id uuid?`; legacy `project_id text?` plus canonical `project_ref uuid?`; legacy `client_id text?` plus canonical `client_ref uuid?`; `status site_visit_status` (`scheduled | in_progress | completed | cancelled`); `scheduled_at timestamptz`; `duration_minutes integer`; `assignee_ids text[]?`; completion/notes/measurements/photos/activity/calendar fields; `created_by text`; audit timestamps; `deleted_at timestamptz?`. The iOS `SiteVisit` SwiftData model now round-trips this row through `SiteVisitDTOs.swift`, `SiteVisitRepository.swift`, outbound operations, delta pull, and Realtime.
 
-**iOS site-visit capture packet (added 2026-06-26; identity draft added 2026-06-27):** `OPS/OPS/Views/SiteVisits/SiteVisitCaptureView.swift` opens from lead detail, the FAB direct site-visit action, or the new-lead flow and creates/reuses an active `SiteVisit` before a project exists. `opportunityId` is optional so capture can start before the operator has selected or created the lead. The visit stores the schedule/status shell; individual field artifacts live in `SiteVisitCaptureArtifact` until the operator reviews the packet and creates the project. Site visits can now carry a `SiteVisitType` template and per-visit `SiteVisitChecklistAnswer` snapshots so a company can run a generic visit, CanPro deck estimate, repair inspection, or custom checklist without changing the base `SiteVisit` table.
+`OPS/Views/SiteVisits/SiteVisitCaptureView.swift` opens from lead detail, New Lead, or the FAB and creates/reuses an active visit before a project exists. `opportunityId` remains optional so capture is never blocked by client/lead administration. Every local mutation and its `SyncOperation` are committed in one SwiftData transaction by `SiteVisitPersistenceCoordinator`; the queue is a phone-local transport mechanism, not company data. Ordering is parent → child rows → media → `complete_site_visit_guarded`, expressed with durable `dependsOnId` links so a restart cannot complete a visit before its packet exists.
 
-### 22A. SiteVisitIdentityDraft (Local-First)
+Inbound delta and Realtime subscribe to the parent plus all three children. `SiteVisitServerMerge` preserves dirty local fields, applies authoritative terminal status, and makes an in-progress visit resumable from a second authorized device. `SiteVisitOrphanRecovery` reconstructs a missing legacy parent only from exact same-company, valid, non-conflicting evidence; foreign, malformed, or ambiguous groups are encrypted and quarantined instead of uploaded or deleted.
+
+### 22A. SiteVisitIdentityDraft (cloud-backed snapshot)
 
 **File**: `OPS/DataModels/SiteVisits/SiteVisitIdentityDraft.swift`
-**Purpose**: Local-first client/lead identity packet for an active site visit.
+**Purpose**: Locally autosaved and durably synced client/lead identity packet for an active visit.
 
-`SiteVisitIdentityDraft` is keyed by `siteVisitId` and stores the onsite identity fields that may be collected before, during, or after capture: `opportunityId`, `clientId`, `subClientId`, search text, client name, contact name, preferred email, additional emails, phone, address, and client notes. The draft autosaves locally as the operator types or dictates and can bind to an existing `Opportunity`, bind to an existing `Client`, or create a `Client` + `Opportunity` when connection is available. Additional emails become `SubClient` records tied to the client. Project creation from the site visit stays gated on a linked opportunity, but photos, notes, measurements, checklist answers, and deck designs are not blocked while the visit is still unlinked.
+`public.site_visit_identity_drafts` is one active row per visit (`site_visit_id uuid` FK `site_visits.id ON DELETE CASCADE`, partial unique active index). It stores `company_id text`, optional UUID opportunity/client/sub-client links, client/contact/email/phone/address/notes fields, `additional_emails text[]`, `created_by text`, `last_committed_at`, timestamps, and `deleted_at`. The parent guard rejects company or opportunity drift. The draft autosaves locally while the operator types, then syncs through the same parent-first outbox. Project creation remains gated on a linked opportunity; field capture does not.
 
-### 22B. SiteVisitCaptureArtifact (Local-First)
+### 22B. SiteVisitCaptureArtifact (cloud-backed evidence)
 
 **File**: `OPS/DataModels/SiteVisits/SiteVisitCaptureArtifact.swift`
-**Purpose**: Pre-project site-visit evidence packet for rapid field capture.
+**Purpose**: Pre-project evidence packet that survives app termination, logout recovery, and device changes.
 
 **Properties**:
 
@@ -1549,26 +1537,38 @@ final class SiteVisitCaptureArtifact: Identifiable {
 }
 ```
 
-Project handoff is local-first **and durably synced** (conversion-stranding fix 2026-07-13, Carol Dancer case — pre-fix, every handoff mutation was `needsSync`-only with no durable operation behind it, so photos and deck links never left the capturing phone):
+Prepared table `public.site_visit_artifacts`: `id uuid`; `site_visit_id uuid` FK parent with cascade; `company_id text`; `opportunity_id uuid?`; enumerated `kind` and `source`; title/body; original/rendered/thumbnail URLs; `dimensions jsonb`; `deck_design_id uuid?`; review flag; capture/creation/update/delete timestamps; `created_by text`. Active indexes cover company/visit and opportunity, and the parent guard enforces exact company and opportunity identity.
 
-- **Photos.** Reviewed photo artifacts become `ProjectPhoto(source: "site_visit")` rows with **lowercased ids**, and each non-dimensioned artifact's `local://` file is simultaneously enqueued into `ImageSyncManager`'s restart-surviving pending-upload queue via `enqueueExistingLocalImage` (the queue used to be fed only by the manager's own `saveImageLocally`; `ProjectPhoto` is read-only to the sync engine, so the row alone could never sync). On drain the manager inserts the `project_photos` row itself, carrying the local row's own id/source/caption/taken_at — **never `site_visit_id`**: iOS `SiteVisit` ids are local-only (UPPERCASE, no server `site_visits` row), so the FK would reject the insert. It then heals the local row **in place** (`local://` → S3 url, `needsSync = false`); the gallery dedupes by URL, so the in-place swap is what prevents double tiles.
-- **Stranded-photo recovery sweep.** `ImageSyncManager.reconcileStrandedProjectPhotos()` runs at the top of every `syncPendingImages` pass (startup, reconnect, retry timer) and enqueues any `ProjectPhoto` with a `local://` url + `needsSync == true` whose bytes exist in `ImageFileManager`. This sweep is the **only** recovery path for projects converted before the fix — the photo bytes exist solely on the capturing phone; no server-side backfill is possible. Rows claimed by a pending `PhotoAnnotation` are skipped (see next bullet).
-- **Dimensioned photos.** These save through `SiteVisitDimensionedCaptureStore` before a project exists; conversion restores them as `ProjectPhoto` + `PhotoAnnotation` with `DimensionsData`. They are deliberately **excluded from the image-upload queue**: the annotation pending sweep (`DimensionedPhotoSyncManager.syncPendingDimensions`) uploads the HEIC + rendered deliverable, inserts the `project_photos` row itself, and on success heals the matching local `ProjectPhoto` row (`healHandoffPhotoRows`) — routing them through both pipelines would double-upload and double-tile.
+**Media contract.** `SiteVisitMediaSyncManager` requests a presign only after the parent is server-visible. `POST /api/uploads/presign` accepts `targetType=site_visit`, canonical visit/artifact ids, `variant=original|rendered|thumbnail`, an approved image MIME type, and a bounded size. The server re-authorizes the active parent under the caller's company and derives the object key; the phone cannot choose a folder. Key shape: `site-visits/{company_uuid}/{site_visit_uuid}/{artifact_uuid}/{variant}.{ext}`. The artifact row receives the remote URL only after upload succeeds. Account deletion separately erases the exact `site-visits/{company_uuid}/` prefix without adding a server receipt/outbox table.
+
+Project handoff is local-first **and durably synced**:
+
+- **Photos.** If the artifact already has a remote visit URL, `SiteVisitProjectHandoff` reuses that object and creates one lowercased `ProjectPhoto(source: "site_visit", siteVisitId: visit.id)`; it never copies the bytes. If the artifact remains local, the existing restart-surviving image/dimension pipeline uploads it once and heals the local row in place. The partial unique index `(company_id, project_id, site_visit_id, url) WHERE deleted_at IS NULL AND site_visit_id IS NOT NULL` makes conversion retry idempotent across devices.
+- **Dimensioned photos.** Original/rendered variants already stored for the visit are reused while `PhotoAnnotation`/`DimensionsData` provenance is preserved. A local-only dimensioned photo remains owned by the annotation pipeline so it cannot double-upload through the generic image queue.
 - **Deck link.** Reviewed deck-design artifacts set `DeckDesign.projectId` **and record a durable `deckDesign` update SyncOperation** `{project_id, updated_at}` (bare `markForSync()` was a flag no sweep ever drained). The deck-builder UPDATE payload now carries `project_id` whenever the local design has one — omitted when nil, so a device holding a stale-nil copy can never unlink an attachment made elsewhere. `SyncEngine.enqueueStrandedDeckDesignLinks()` runs in every `pushPending` and re-records the link op for decks stranded by the pre-fix handoff (`needsSync`, linked, no op, no recent op lifecycle).
 - **Staging-store loss.** The in-memory `SiteVisitProjectHandoffStore` is now a fast path only: when it is empty at conversion (app killed between review and convert), `SiteVisitProjectHandoff.derivePayload` rebuilds the payload from persisted `SiteVisit` / `SiteVisitCaptureArtifact` / `SiteVisitChecklistAnswer` rows by opportunity id, with two-way visit discovery (visit rows bound to the opportunity, plus visits whose artifacts carry the binding — covering pre-bind captures and unlink-drifted visit rows).
 
-Deck design capture is gated by the `deck_builder` feature and create/edit permissions; it is not a general site-visit feature. Known residual gap: a lead converted on **web** never runs the iOS handoff, so a visit captured on iOS for that lead stays phone-local until the lead is converted on the device (the recovery sweep only heals rows the handoff created).
+Deck design capture is gated by the `deck_builder` feature and create/edit permissions; it is not a general site-visit feature.
 
-### 22C. SiteVisitType + SiteVisitChecklistAnswer (Local-First)
+### 22C. SiteVisitType + SiteVisitChecklistAnswer
 
 **File**: `OPS/DataModels/SiteVisits/SiteVisitType.swift`
 **Purpose**: Company-scoped visit templates and per-visit checklist answer snapshots layered on top of the base capture packet.
 
-`SiteVisitType` stores a slug, display name, default flag, and encoded field definitions (`checkbox`, `yes_no_na`, `short_text`, `long_text`, `measurement`, `photo`, `photo_markup`, `deck_design`). Built-in templates seed locally for Generic Site Visit, Deck Estimate, and Repair Inspection; deck-design fields only appear when the `deck_builder` feature is enabled. Companies can add custom visit types/fields later without changing the base capture artifact model.
+`SiteVisitType` remains a phone-local template definition: slug, display name, default flag, and encoded fields (`checkbox`, `yes_no_na`, `short_text`, `long_text`, `measurement`, `photo`, `photo_markup`, `deck_design`). Templates are not synchronized because the durable record is the per-visit field snapshot; a later template edit cannot rewrite historical field labels or requirements.
 
-`SiteVisitChecklistAnswer` snapshots the selected type's fields onto the active visit. Answers store `siteVisitId`, `opportunityId`, `siteVisitTypeId`, the field label/kind/required state, and encoded answer value. Reassigning a visit moves active checklist answers to the new opportunity with the rest of the packet. Required checklist answers gate project creation from the review sheet, and answered checklist lines are included in the staged `SiteVisitProjectPayload` so project creation writes them into the consolidated `ProjectNote`.
+`public.site_visit_checklist_answers` is the cloud record: `id uuid`; `site_visit_id uuid` FK parent with cascade; `company_id text`; `opportunity_id uuid?`; optional local template id; field id/label/kind/required/help/sort snapshot; bounded `answer_value jsonb`; `created_by text`; timestamps; `deleted_at`. One active answer exists per `(site_visit_id, field_id)`. Reassigning the parent propagates its opportunity binding to every child.
 
 Capture UX is field-first: note draft text autosaves into one live note/transcript artifact as the operator types or finishes dictation, clearing the text soft-deletes that draft artifact, and there is no separate Save Note command. Photo artifacts expose `previewAssetURL` (`renderedAssetURL ?? thumbnailURL ?? localAssetURL`) so capture-packet rows can show thumbnails and open a zoomable preview before markup. Checklist fields can auto-link matching captured evidence: photo fields use active photo/dimensioned-photo artifacts, measurement fields use measurement artifact text, and deck-design fields use the active deck-design artifact. The lead/client panel is part of the same capture console, not a pre-step: inline search suggests local active leads and clients, manual fields autosave into `SiteVisitIdentityDraft`, completed fields get completion treatment, and the operator can create/link the lead from the same panel before project handoff. Reassigning a visit moves the open `SiteVisit` plus all active `SiteVisitCaptureArtifact.opportunityId` and `SiteVisitChecklistAnswer.opportunityId` values to another active lead before project creation.
+
+### 22D. Recovery, tenancy, export, and erasure
+
+- **Truthful save.** `SAVE VISIT` and the `// VISIT SAVED` toast mean the parent, children, media operations, and completion command are durably committed on the phone. Pending Work continues to show the visit as waiting/sending until the server acknowledges; the local toast is not a claim that Supabase has received it.
+- **Logout.** Voluntary logout performs a bounded flush and warns if visit work remains. Forced/token-driven logout encrypts only unsent/quarantined visit bundles and their referenced media with AES-GCM under a dedicated ThisDeviceOnly Keychain key before the shared SwiftData store is wiped. Archives are exact `(user_id, company_id)` scoped; another account cannot list, restore, or discard them. Explicit discard and device-account deletion erase the matching vault data. This phone-local transport/recovery machinery is not part of the server company-data manifest.
+- **Pending Work.** Quarantined packets render as protected, non-retryable entries. They can be exported or explicitly discarded; generic Retry/Retry All cannot send unsafe tenant evidence.
+- **Server tenancy.** Child `company_id` is intentionally `text`, matching legacy `site_visits` and `project_photos`; related opportunity/client/deck ids remain UUID. RLS combines exact company isolation with parent view/edit authorization, while service role retains hard-delete for account closure. Never cast the entire legacy path to UUID by assumption.
+- **Customer data lifecycle.** `site_visits`, `site_visit_artifacts`, `site_visit_checklist_answers`, and `site_visit_identity_drafts` are company-scoped on `company_id text`, soft-deleted, exported, and ordered children-before-parent in `src/lib/data/company-data-manifest.ts`. `activities` remains company-scoped UUID + hard-delete; `project_photos` remains company-scoped text + soft-delete/export. The migration adds no receipt/event/outbox table. Storage erasure deletes the exact company visit prefix separately.
+- **Physical verification requirement.** Simulator tests prove ordering, serialization, merge, logout, and idempotency. Release still requires an authenticated physical-phone offline capture/force-quit/reconnect test, a second-device resume test, live readback proving one activity, export proof, and transactional company-purge rehearsal after the migration is applied.
 
 ---
 
@@ -3744,7 +3744,7 @@ Properties: `icon` (SF Symbol), `isSystemGenerated`.
 - **LineItemType**: `labor` ("LABOR"), `material` ("MATERIAL"), `other` ("OTHER")
 - **FollowUpType**: `call`, `email`, `meeting`, `quoteFollowUp`, `invoiceFollowUp`, `custom`
 - **FollowUpStatus**: `pending`, `completed`, `skipped`
-- **SiteVisitStatus**: `scheduled`, `completed`, `cancelled`
+- **SiteVisitStatus**: `scheduled`, `inProgress` (`in_progress`), `completed`, `cancelled`
 - **ExpenseStatus**: `draft`, `submitted`, `approved`, `rejected`, `reimbursed`
 - **ExpensePaymentMethod**: `cash`, `personalCard` ("personal_card"), `companyCard` ("company_card")
 - **ReviewFrequency**: `perJob` ("per_job"), `weekly`, `biweekly`, `monthly`, `quarterly`
