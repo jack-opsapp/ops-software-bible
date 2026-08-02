@@ -2578,6 +2578,19 @@ draft. Operator escalations and insufficient verified writing examples are
 terminal safety holds; transient empty/refused/model-unavailable results retain
 the existing durable job and retry under its lease/backoff contract.
 
+Physical-mailbox lease contention is also transient. A `mailbox busy` result
+means another OPS path currently owns the shared provider-mailbox safety lease;
+it is not evidence that Gmail or Microsoft rejected a draft. Prepared migration
+`20260802163538_keep_contact_form_mailbox_busy_retryable.sql` changes the
+service-only failure contract so the exact pre-provider contention result stays
+`retrying` after the ordinary eight-attempt ceiling, with a five-minute
+cooldown. Provider-create uncertainty remains reconciliation-first and a stale
+assignment remains terminal. The migration also returns only exact
+contention-failed rows with null provider-create markers to the guarded queue;
+all assignment, authorization, reply, terminal-state, autonomy, and prior-draft
+checks run again before provider access. OPS-Web commit `92344a64`; prepared but
+not applied as of 2026-08-02.
+
 Migration `20260727043334_email_ingestion_recovery_queue` is live before the
 compatible application commit `ee3d43db`. The normal path creates no historical
 backfill and performs no unsolicited Gmail, draft, or lead-row repair.

@@ -5766,9 +5766,33 @@ to the verified catalog implementations. Application RPC identifiers are
 contract-tested to remain at most 63 UTF-8 bytes. The migration performs no
 queue replay, provider mutation, lead assignment, or historical repair.
 
+**Prepared mailbox-contention recovery (2026-08-02):** `mailbox busy` is an
+OPS physical-mailbox lease collision, not a Gmail or Microsoft delivery
+failure. The collision occurs before provider construction and before the
+durable provider-create reservation, so migration
+`20260802163538_keep_contact_form_mailbox_busy_retryable.sql` keeps the exact
+`EMAIL_ASSIGNMENT_CONTACT_FORM_DRAFT_MAILBOX_BUSY` result retryable beyond the
+ordinary eight-attempt ceiling. It releases only the queue-row lease and uses a
+five-minute cooldown; the ten-minute delivery lane then naturally retries after
+the mailbox lease can expire. A provider-create attempt that may have begun
+still goes to reconciliation before this branch, and a stale assignment still
+terminates as stale. The failure RPC and its execution grant remain
+service-role-only.
+
+The same migration narrowly repairs every previously failed queue row with the
+exact mailbox-busy error only when both provider-create markers are null. It
+does not name a lead, reset draft history, or contact the provider. The ordinary
+claim and worker path must re-prove the current assignment, assignee authority,
+active mailbox, contact-form source, CUSTOMER auto-draft autonomy, thread reply
+state, terminal lead state, and absence of prior placement before any provider
+draft work. Prepared OPS-Web commit: `92344a64`. The migration is not applied
+and the queue repair is not live as of 2026-08-02.
+
 The production rollout is forward-only and creates no automatic historical
-recovery items. Historical Gmail, draft, or lead repair requires separate
-explicit authorization and must use the same exact-identity and safety gates.
+recovery items. The mailbox-contention repair above is a narrow queue-state
+exception and still performs no direct Gmail, Microsoft, draft-history, or lead
+mutation. Any broader historical repair requires separate explicit
+authorization and must use the same exact-identity and safety gates.
 
 **Commercial-outcome isolation (prepared 2026-07-29).** A deterministic
 automatic-project safety refusal no longer freezes unrelated mailbox messages.
