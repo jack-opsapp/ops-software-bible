@@ -2582,14 +2582,21 @@ Physical-mailbox lease contention is also transient. A `mailbox busy` result
 means another OPS path currently owns the shared provider-mailbox safety lease;
 it is not evidence that Gmail or Microsoft rejected a draft. Prepared migration
 `20260802163538_keep_contact_form_mailbox_busy_retryable.sql` changes the
-service-only failure contract so the exact pre-provider contention result stays
-`retrying` after the ordinary eight-attempt ceiling, with a five-minute
-cooldown. Provider-create uncertainty remains reconciliation-first and a stale
-assignment remains terminal. The migration also returns only exact
-contention-failed rows with null provider-create markers to the guarded queue;
-all assignment, authorization, reply, terminal-state, autonomy, and prior-draft
-checks run again before provider access. OPS-Web commit `92344a64`; prepared but
-not applied as of 2026-08-02.
+service-only claim contract to check the canonical physical-mailbox lease before
+the bounded batch is selected. A due row is marked waiting once and omitted
+while the lease remains active, so it neither consumes worker capacity nor
+increments attempts, regenerates model content, or polls the provider. It
+resumes automatically after the lease is absent; a post-claim acquisition race
+returns to the same wait while preserving its first wait timestamp.
+
+Provider-create uncertainty remains reconciliation-first and a stale assignment
+remains terminal. A continuous one-hour wait opens one persistent, deduped
+operator notification with no customer identity and resolves it automatically
+when the wait lifecycle ends. Exact historical contention failures with null
+provider-create markers enter the same guarded wait; assignment, authorization,
+reply, terminal-state, autonomy, and prior-draft checks all run again before
+provider access. OPS-Web commits `92344a64` and `865bab6e`; prepared but not
+applied as of 2026-08-02.
 
 Migration `20260727043334_email_ingestion_recovery_queue` is live before the
 compatible application commit `ee3d43db`. The normal path creates no historical

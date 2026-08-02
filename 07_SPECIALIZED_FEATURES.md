@@ -5770,14 +5770,25 @@ queue replay, provider mutation, lead assignment, or historical repair.
 OPS physical-mailbox lease collision, not a Gmail or Microsoft delivery
 failure. The collision occurs before provider construction and before the
 durable provider-create reservation, so migration
-`20260802163538_keep_contact_form_mailbox_busy_retryable.sql` keeps the exact
-`EMAIL_ASSIGNMENT_CONTACT_FORM_DRAFT_MAILBOX_BUSY` result retryable beyond the
-ordinary eight-attempt ceiling. It releases only the queue-row lease and uses a
-five-minute cooldown; the ten-minute delivery lane then naturally retries after
-the mailbox lease can expire. A provider-create attempt that may have begun
-still goes to reconciliation before this branch, and a stale assignment still
-terminates as stale. The failure RPC and its execution grant remain
-service-role-only.
+`20260802163538_keep_contact_form_mailbox_busy_retryable.sql` records one
+durable `mailbox_busy_since` wait without creating another queue status. Before
+the bounded batch of three is selected, the service-only claim RPC resolves the
+connection to the same private physical-mailbox digest and rolling-deploy
+mirror as the acquisition RPC. Due work is marked waiting once and excluded
+while that lease is active. It therefore does not consume a worker slot,
+increment attempts, generate a model draft, or contact the provider on each
+ten-minute cron. Once the lease is absent, the normal claim path resumes it.
+
+A lock-acquisition race after claim still records the exact
+`EMAIL_ASSIGNMENT_CONTACT_FORM_DRAFT_MAILBOX_BUSY` result, preserves the first
+continuous-wait timestamp, and returns the row to condition-aware waiting. A
+provider-create attempt that may have begun remains reconciliation-first, and a
+stale assignment remains terminal. After one continuous hour with the physical
+mailbox still occupied, OPS opens one persistent, queue-scoped notification for
+the assigned operator: `Draft waiting for mailbox`. The notification contains
+no customer or lead identity, links to Pipeline, cannot duplicate when read,
+and resolves automatically when the job completes, skips, becomes stale,
+enters ordinary failure, or requires reconciliation.
 
 The same migration narrowly repairs every previously failed queue row with the
 exact mailbox-busy error only when both provider-create markers are null. It
@@ -5786,7 +5797,8 @@ claim and worker path must re-prove the current assignment, assignee authority,
 active mailbox, contact-form source, CUSTOMER auto-draft autonomy, thread reply
 state, terminal lead state, and absence of prior placement before any provider
 draft work. Prepared OPS-Web commit: `92344a64`. The migration is not applied
-and the queue repair is not live as of 2026-08-02.
+and the queue repair is not live as of 2026-08-02. Condition-aware refinement:
+OPS-Web commit `865bab6e`.
 
 The production rollout is forward-only and creates no automatic historical
 recovery items. The mailbox-contention repair above is a narrow queue-state
