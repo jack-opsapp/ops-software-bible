@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** July 23, 2026
+**Last Updated:** August 2, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -7728,6 +7728,28 @@ The cross-session `LocalPhoto.status = "failed"` path remains unchanged — Phot
 | Cross-session (between app launches) | `LocalPhoto.uploadRetryCount` | 20 attempts → `permanently_failed` | None (waits for next app launch + good connectivity) | Never directly. The in-session loop within each attempt fires its own auto-bugs as needed. |
 
 The two caps are independent on purpose. A photo with 4 transient failures across 4 days of bad signal isn't permanently broken — it's just waiting for the truck to drive somewhere with bars. Don't conflate.
+
+### iOS — user-submitted durable outbox (2026-08-02)
+
+User-submitted reports use a local-first acceptance boundary. Source: `OPS/Services/BugReport/BugReportSubmissionService.swift`, `OPS/Services/BugReport/BugReportOfflineQueue.swift`, `OPS/Views/BugReport/BugReportSheet.swift`, and `OPS/ContentView.swift` (`ops-ios` commit `a2d664c2`, bug `956823c9`).
+
+**Acceptance contract:**
+
+1. `BugReportSubmissionService.submitReport` captures the report fields, console logs, breadcrumbs, network log, state snapshot, and optional screenshot before delivery begins.
+2. `BugReportOfflineQueue` writes the complete report envelope to `Documents/BugReportQueue/queue.json` with an atomic file replacement. An optional JPEG is written beside it under the same report UUID.
+3. The sheet acknowledges only a successful local write. It shows `Report saved`, then closes after the existing 1.2-second confirmation state; it never waits for Supabase or screenshot upload.
+4. Queue-directory, JSON, screenshot-encoding, or screenshot-write failures surface to the sheet and leave it open. A report is never acknowledged after a partial local write.
+5. The outbox remains capped at 10 reports. A full queue returns an actionable error instead of discarding the new report.
+
+**Delivery contract:**
+
+- The outbox UUID is also sent as `bug_reports.id`. Delivery uses `upsert(... onConflict: "id", returning: .minimal, ignoreDuplicates: true)`, so a lost response or later retry cannot create a second row or overwrite a report already accepted by the server.
+- Failed row delivery, screenshot upload, or local removal retains the envelope and optional JPEG. A missing or corrupt referenced JPEG also retains the envelope; it is not silently downgraded to a report without evidence.
+- The envelope and JPEG are removed only after the server delivery path returns success. Every retry uses the same UUID.
+- Queue payload diagnostics are optional when decoded so queue files written by earlier app versions remain readable; absent legacy diagnostics are delivered as empty JSON collections.
+- Drains are main-actor serialized and coalesced. Triggers are immediate after an online acceptance, post-authenticated app entry, foreground activation, and connectivity restoration.
+
+This change is source-only and adds no schema or migration. A local iOS commit does not imply App Store release or customer-runtime verification.
 
 ### Out of scope (Phase 1)
 
