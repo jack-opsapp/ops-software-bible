@@ -4,8 +4,8 @@
 
 **Purpose**: Definitive reference for how OPS company subscriptions are created, kept current, gated, and reconciled. Covers the Stripe → Supabase → iOS data path, every column on `companies` that drives gating, every writer and reader, and the cron jobs that protect against drift.
 
-**Last Updated**: 2026-04-14
-**Source Reference**: `ops-web/src/app/api/stripe/`, `ops-web/src/app/api/webhooks/stripe/`, `ops-web/src/app/api/cron/`, `ops-web/src/lib/subscription.ts`, `ops-web/supabase/migrations/EXECUTED/004_core_entities.sql`, `opsapp-ios/OPS/DataModels/Company.swift`, `opsapp-ios/OPS/Network/Supabase/DTOs/CoreEntityDTOs.swift`
+**Last Updated**: 2026-08-04
+**Source Reference**: `ops-web/src/app/api/stripe/`, `ops-web/src/app/api/decks/`, `ops-web/src/app/api/webhooks/stripe/`, `ops-web/src/app/api/cron/`, `ops-web/src/lib/decks/billing/stripe-deckset.ts`, `ops-web/src/lib/subscription.ts`, `ops-ios/OPS/DataModels/Company.swift`, `ops-ios/OPS/Network/Supabase/DTOs/CoreEntityDTOs.swift`, `ops-decks-ios/OPSDecks/DecksSubscriptionMirrorService.swift`
 
 ---
 
@@ -38,6 +38,51 @@ Two write paths land Stripe data into Supabase:
 Two reconciliation paths catch drift from missed webhooks:
 1. **Daily cron**: `/api/cron/reconcile-stripe-subscriptions` (02:00 UTC)
 2. **Manual backfill**: `scripts/backfill-subscription-dates.ts --apply`
+
+### OPS Decks Standalone Exception
+
+OPS Decks standalone billing is not an OPS company subscription. Stripe Checkout is canonical for Deckset Pro, with Apple Pay surfaced by Stripe Checkout when the Stripe payment method/domain setup supports it. Supabase mirrors Stripe state only for app gating, support visibility, and cross-device consistency.
+
+OPS Decks standalone authentication follows the main OPS iOS model: Firebase Auth owns identity, and Firebase ID tokens are passed to Supabase/PostgREST and deck-specific API routes. OPS Decks must not use Supabase Auth sessions as its primary mobile auth stack.
+
+The mirror table is `deck_subscriptions`:
+
+| Column | Purpose |
+|---|---|
+| `company_id` | Owning deck-only company. |
+| `entitlement` | Deckset entitlement key. P0 is `deck_pro`. |
+| `status` | Deckset entitlement status. `active`, `trialing`, and `in_grace` unlock Pro; `expired`, `cancelled`, and `revoked` do not. |
+| `product_id` | Deckset product key such as `deck_pro_monthly` or `deck_pro_annual`. |
+| `store` / `provider` | Billing channel. Stripe-backed rows use `stripe`. |
+| `customer_id` / `stripe_customer_id` | Stripe customer id for support and reconciliation. |
+| `stripe_subscription_id` | Stripe subscription id; unique when present. |
+| `stripe_price_id` | Stripe price id that maps to the Deckset monthly or annual SKU. |
+| `stripe_checkout_session_id` | Last checkout session that produced or refreshed the mirror row. |
+| `current_period_end` / `expires_at` | Stripe current period end, mirrored for app gating. |
+| `last_event_at` | Last processed Stripe webhook timestamp. |
+
+RLS allows company-scoped reads for the owning company. Writes are server-only through Stripe Checkout/webhook code paths. Deckset may use `companies.stripe_customer_id` as the shared Stripe customer pointer, but it must not write Deckset entitlement state into `companies.subscription_status`, `trial_end_date`, `subscription_end`, `subscription_plan`, `subscription_period`, or `subscription_ids_json`.
+
+Company-of-one provisioning for OPS Decks creates or links a `users` row and one deck-only `companies` row. The endpoint may return `subscription_plan = 'decks'` or an explicit deck-origin field so the full OPS app can route the operator to an upgrade surface. Full contract: `ops-ios/docs/superpowers/specs/2026-06-25-ops-decks-phase-1-backend-contract.md`.
+
+#### As-built — web backend (2026-07-03)
+
+The web side of the Stripe path is implemented and hardened. Source: `ops-web/src/app/api/decks/`, `ops-web/src/lib/decks/billing/stripe-deckset.ts`, `ops-web/src/app/api/webhooks/stripe/route.ts`.
+
+**Endpoints**
+- `POST /api/decks/provision-company` — idempotent company-of-one keyed on the verified Firebase subject. Existing user with a company returns it untouched; otherwise it creates the `users` row and delegates company creation to the `provision_deck_company` RPC (service-role only), which wraps the hardened `create_company_for_owner` path and stamps the deck origin. Always links `users.firebase_uid` (fill-only, never clobbered) so the mirror's RLS resolves. Returns `company_id`/`user_id` lowercased and `subscription_plan: "decks"`. Migration `20260703211000_deck_provisioning.sql`.
+- `POST /api/decks/checkout` — creates the Stripe Checkout subscription session (Monthly/Annual). Company scope is compared case-insensitively against the provisioned lowercase `company_id`.
+- `GET /decks/checkout/result?status=success|cancelled` — standalone, auth-free Stripe return surface (`ops-web/src/app/decks/`). Success tells the operator Pro unlocks on the app's next foreground refresh; cancel confirms nothing was charged.
+
+**Deck-origin marker.** `companies.source_app` (`'ops'` default, `'ops_decks'` for Deckset-provisioned companies) is the concrete deck-origin field; set by `provision_deck_company` only on companies it creates. Migration `20260703211000_deck_provisioning.sql`.
+
+**RLS reality.** The Deckset app queries PostgREST with a Firebase ID token that carries no `role` claim, so it executes as the `anon` role. The `deck_subscriptions` read policy is therefore `TO public` with `USING (company_id = private.get_user_company_id())` and `anon` holds a `SELECT` grant — mirroring the working `deck_designs` pattern. Without this, entitlement reads 42501 and paid Pro never unlocks. Writes stay service-role only. Migration `20260703210000_deck_subscriptions_anon_read.sql`. (General rule: the app executes as `anon`, so RLS policies must target `public`/anon, not `authenticated`.)
+
+**Webhook isolation guarantees** (enforced in `route.ts`, so Deckset billing can never affect OPS company state):
+- `invoice.payment_failed` flips a company to `grace` **only** when the failed invoice bills the OPS base plan (tracked base-plan subscription id, or a configured base-plan price on first failure). Deckset, priority-support add-on, and one-off invoice failures never touch `companies.subscription_status`.
+- The `deck_subscriptions` mirror write goes through the `mirror_deck_subscription(jsonb)` RPC — a single atomic conditional upsert (`ON CONFLICT (company_id) DO UPDATE ... WHERE last_event_at <= incoming`, under the conflict's row lock). A delayed out-of-order `subscription.updated` (older `event.created`) is skipped in SQL, so it cannot resurrect a cancelled Pro even under concurrent same-company deliveries. Migration `20260703212000_deck_subscription_mirror_rpc.sql`.
+- Deckset checkout on a comp-granted company (the durable-grant signature: `status=active` + `plan=business` + far-future `subscription_end` + NULL `stripe_customer_id`) creates a **dedicated** Stripe customer stored only on `deck_subscriptions.stripe_customer_id`; `companies.stripe_customer_id` stays NULL so the grant survives (a NULL `stripe_customer_id` alongside the far-future `subscription_end` is the durable comp-grant signature — see § 09 financial notes on comp grants).
+- Deckset events (subscription / checkout / invoice; charge refunds/disputes traced via the invoice payment, fail-open) are excluded from the PMF `billing_events` ledger, so deck revenue never inflates OPS MRR or trips `billing_events_first_paid`.
 
 ---
 
