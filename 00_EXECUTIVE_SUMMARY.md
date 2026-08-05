@@ -273,7 +273,7 @@ Survey of target audience revealed critical missing features driving roadmap:
 4. **Recurring Schedules:** Auto-populate weekly/bi-weekly jobs for cleaning businesses
 5. **Materials/Inventory Tracking:** Per-job inventory management
 6. **Multi-Crew Time-Specific Scheduling:** Not just dates, but specific start times per crew
-7. **Accounting Sync:** Full QuickBooks/Sage two-way sync (connection layer built, sync logic pending)
+7. **Accounting Sync:** QuickBooks import, webhook apply, and full-CRUD queue are built behind explicit environment/write gates; Sage remains OAuth + expense-sync oriented
 
 ### Long-Term Vision
 OPS will become a **full-stack end-to-end solution** for service-based businesses, competing directly with Jobber ($300+/month) at $90-190/month price point. Survey shows Jobber has strong adoption in target market, validating demand for comprehensive job management software. OPS will win on:
