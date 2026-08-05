@@ -4720,6 +4720,10 @@ CREATE TABLE ai_draft_history (
 - `changes_made`: Structured diff — `{ greeting?: {from, to}, closing?: {from, to}, tone?: string }`.
 - When `sent_without_changes` reaches 95% over 20+ drafts, auto-send is suggested to the user.
 
+### email_send_intents follow-up outcome receipt
+
+Migration `20260723233000_operator_one_tap_lead_follow_up.sql` extends the durable send-intent ledger with `follow_up_outcome_applied_at`, nullable `follow_up_comeback_at`, and `follow_up_notification_id`. A provider-confirmed template follow-up writes all three as one immutable reconciliation receipt: the applied timestamp proves the local outcome ran, the notification foreign key proves the operator-visible result exists, and a null comeback means newer opportunity-wide correspondence or lead state won the race and was preserved. Replays return this stored receipt; they do not increment lifecycle counters, reschedule the lead, create another notification, or call the provider again.
+
 ### email_outbound_learning_queue + edit evidence
 
 Prepared by migrations `20260713205000_email_outbound_learning_queue` and `20260713210000_phase_c_learning_signatures`. The queue is the durable owner of sent-draft bookkeeping, writing-profile learning, and correction-memory application. Provider message identity is immutable and connection-scoped. Prepared outcomes are receipted before apply, leased for retry, and deduplicated across provider replay.

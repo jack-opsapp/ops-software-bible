@@ -4,8 +4,8 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: July 23, 2026
-**iOS Reference**: `OPS/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
+**Last Updated**: August 4, 2026
+**iOS Reference**: `ops-ios/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
 ---
@@ -2068,6 +2068,14 @@ Every browser email route resolves the Firebase subject to one active canonical 
 Lead-linked reads require the intersection of canonical `pipeline.view` and `inbox.view`; sends, provider-draft mutations, and learning-authoritative actions require canonical `pipeline.edit` and `inbox.send`. Assigned scope is evaluated against the opportunity's current `assigned_to` under the guarded assignment contract. Standalone Inbox lists, thread detail, lead correspondence, drafts, sibling context, attachments, and send routes use the same opportunity + inbox helpers. An existing provider thread remains pinned to its original connection. Explicitly selecting another authorized sender starts a new provider thread linked to the same lead; it never changes or impersonates the original provider thread.
 
 Before provider I/O, the send route persists `email_send_intents` with a deterministic idempotency key, canonical actor, connection, internal/provider thread identity, opportunity, assignment snapshot, draft provenance, request fingerprint, and delivery state. After provider acceptance, database reconciliation is idempotent and may retry without invoking the provider again. Provider rejection preserves the draft and writes no sent activity. An accepted-but-not-yet-reconciled intent returns a pending/recovery result instead of risking a duplicate send.
+
+#### POST `/api/leads/[opportunityId]/follow-up` — one-tap lead follow-up (implemented 2026-07-23)
+
+The authenticated operator sends only a UUID `idempotencyKey`; the server derives the recipient, mailbox, signature, template body, current provider subject, reply target, source event, and linked opportunity. The action is available only for due, active `quoted`, `follow_up`, or `negotiation` leads with a single authorized mailbox and a provider-backed conversation whose newest meaningful message is OPS outbound.
+
+Immediately before the irreversible provider claim, OPS revalidates every provider thread linked to the opportunity under the same mailbox lease. Any missing or multiply resolved thread, second mailbox, customer response, or equal/newer message on any linked conversation blocks the send. The database claim trigger independently fences equal/newer meaningful inbound or OPS outbound events across the whole opportunity, not only the selected provider thread.
+
+Provider rejection and pre-provider authorization failures return `delivered: false` with `definitiveNoDelivery: true`. Provider acceptance is reconciled atomically through `reconcile_operator_template_follow_up_send_as_system`: the template draft becomes sent, lifecycle counters advance only if this send remains current, a current lead receives the effective comeback, and one `lead_follow_up_sent` notification is receipted on the intent. A durable equal/newer correspondence event preserves the newer truth and yields a null `comebackAt`. The success response is built from a freshly re-read reconciled intent, so retries return the stored provider and lifecycle receipt without another send.
 
 #### Replay-stable correspondence direction (2026-07-23)
 
