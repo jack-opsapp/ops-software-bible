@@ -1,0 +1,26 @@
+-- Applied to prod 2026-08-05 via MCP (name: fix_email_signature_hash_check_null_character).
+-- INCIDENT: private.enforce_email_signature_tenant_integrity recomputed the
+-- canonical content hash with `chr(0)`, which PostgreSQL refuses outright
+-- ("null character not permitted"). The trigger therefore threw on EVERY
+-- email_signatures INSERT/UPDATE since it shipped — saving a signature was
+-- impossible for all tenants (the table stayed empty; provider imports died
+-- silently in the non-fatal fallback path). Surfaced 2026-08-05 by the
+-- founder's CONFIRM IDENTITY attempts during the sender-identity rollout.
+-- FIX: reproduce the app's exact hash bytes (sha256(utf8(html) || 0x00 ||
+-- utf8(text))) via bytea concatenation — NUL is legal in bytea, only text
+-- values reject it. Equivalence proven against the app algorithm:
+-- sha256('a' || 0x00 || 'b') = 59b271ae1bbcb1d31d41929817f4b16fb439eb4f31520b5ad1d5ce98920a7138
+-- from both sides; end-to-end INSERT proven in a rolled-back transaction.
+-- Only the hash expression changed; every guard in the trigger is untouched.
+-- See 07_SPECIALIZED_FEATURES.md § Sender Identity & Outreach Settings.
+--
+-- v_expected_content_hash := encode(
+--   extensions.digest(
+--     convert_to(coalesce(new.content_html, ''), 'UTF8')
+--       || '\x00'::bytea
+--       || convert_to(coalesce(new.content_text, ''), 'UTF8'),
+--     'sha256'
+--   ),
+--   'hex'
+-- );
+-- (Full CREATE OR REPLACE in the MCP migration ledger under this name.)
