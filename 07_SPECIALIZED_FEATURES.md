@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** August 2, 2026
+**Last Updated:** August 4, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -3845,6 +3845,18 @@ outside the live atomic path. Nothing bulk-assigns, prompts, or rewrites
 historical company-mailbox leads. Source:
 `ops-web/supabase/migrations/20260723214524_company_mailbox_intake_owner.sql`.
 
+**Archived lead reactivation extension (prepared 2026-07-31, not applied).** A
+new exact-thread meaningful customer inbound may reactivate only an archived
+active-stage, nonterminal, unconverted/project-unlinked opportunity. The event,
+archive clear, and assignment disposition share one transaction. An eligible
+existing assignee is preserved; otherwise the engine uses the eligible mailbox
+intake owner. With no eligible owner, it creates administrator deliveries for
+the opportunity's exact current `assignment_version`. Delivery uniqueness and
+claim/completion fences include that version, so a later reassignment makes an
+older prompt stale. This path performs no historical scan, one-off assignment,
+or project creation. Source:
+`ops-web/supabase/migrations/20260731210000_event_driven_archived_lead_reactivation.sql`.
+
 ### Task Reschedule → Push (cross-client, both origins)
 
 When a task's schedule changes, assigned crew are notified on **both** clients — and the push is fired **server-side (ops-web → OneSignal REST)**, so it reaches a backgrounded/locked teammate independent of the Realtime socket (which iOS tears down ~30s after backgrounding). This is the background-delivery counterpart to the live foreground repaint (ops-ios `deafa95f`).
@@ -4347,6 +4359,24 @@ Hardens the **write contract** for every lead/opportunity lifecycle notification
 - `dedupe_key` is unchanged (`lead_lifecycle:operator_follow_up_miss:<id>`, `lead_lifecycle:destructive_candidate:<id>:<action>`); the id it carries now also lives in `action_url`.
 
 **RPC change.** The thread-classification builder writes through `create_notification_if_new` (the `ON CONFLICT DO NOTHING` dedup RPC). Migration `20260609181500_create_notification_if_new_deep_link_type.sql` drops the 9-arg signature and recreates it with a trailing `p_deep_link_type text default null` that persists the column, re-granting `execute` to `anon, authenticated, service_role`. The new arg defaults to null, so the currently-deployed 9-arg callers (stripe webhook, join-company, data-setup, inventory-deduction) keep resolving to it unchanged. **No backfill** — the ~257 pre-existing rows keep `deep_link_type = NULL` and are already covered by the iOS fallbacks; only new rows get the hardened contract.
+
+### §14.3.6 One-tap lead follow-up sent (`lead_follow_up_sent`, 2026-07-23)
+
+Created only inside the provider-confirmed, replay-safe reconciliation transaction in migration `20260723233000_operator_one_tap_lead_follow_up.sql`. An attempted, rejected, delivery-unknown, or provider-accepted-but-not-yet-reconciled send creates no success notification.
+
+| Field | Value |
+|-------|-------|
+| `type` | `lead_follow_up_sent` |
+| `title` | `Follow-up sent` |
+| `body` | `Next check-in scheduled for <opportunity title>.` when this send still owns chase state; otherwise `Delivered to <opportunity title>. Newer lead activity was kept.`; both fall back to `this lead` and are capped at 140 characters |
+| `deep_link_type` | `lead` |
+| `action_url` | `/pipeline?opportunityId=<opportunity_id>` |
+| `action_label` | `VIEW LEAD` |
+| `persistent` | `false` |
+| `dedupe_key` | `lead-follow-up-sent:<email_send_intent_id>` |
+| Recipient | The canonical actor captured on the provider-send intent |
+
+The partial unique index `notifications_lead_follow_up_sent_dedupe_idx` makes the intent-scoped dedupe permanent, including after the standard notification is read or dismissed. The notification id is also stored in `email_send_intents.follow_up_notification_id`; an exact reconciliation replay returns that receipt and cannot create another row. Web presentation is registered in `NotificationType`, `NOTIF_TYPE_META`, and the dashboard notification widget. iOS routes it through the existing `lead` deep-link contract.
 
 ### §14.4 Email infrastructure (typed React Email)
 
@@ -5787,6 +5817,194 @@ Every provider mutation is represented by a durable `email_provider_mutation_att
 
 Sync health notifications are lifecycle records, not cron noise: one persistent incident opens while ingestion is unhealthy, repeated checks update that incident, and a verified recovery resolves it. The heartbeat cannot create duplicate open alerts for the same connection and condition.
 
+### Exact-message ingestion recovery (production 2026-07-27)
+
+**Implementation:** additive service-only migration
+`ops-web/supabase/migrations/20260727043334_email_ingestion_recovery_queue.sql`,
+worker `src/lib/api/services/email-ingestion-recovery-worker.ts`, and
+`SyncEngine.retryPendingIngestionRecovery`. Production app commit:
+`ee3d43db`.
+
+The earlier thread-level classification marker remains a compatibility
+projection, but it is not recovery authority. Before the sync cursor may pass
+an inbound message whose lead classification is deferred, OPS persists a
+recovery item keyed to the exact mailbox connection and provider message. This
+includes forwarded contact-form submissions, which are intentionally
+message-scoped and may not own an `email_threads` row. A retry fetches the
+provider thread for context but processes only the queued inbound message
+through the canonical ingestion path; it never substitutes the newest message
+in the thread.
+
+The same queue records the exact provider label write before the external
+mutation. Gmail thread labels are not future-message inheritance: a later
+inbound message can arrive without the label even when earlier messages in the
+thread have it. Label recovery is therefore idempotent per
+`connection + message + current label id`, not per thread. A provider failure
+persists bounded exponential retry state instead of being logged and forgotten.
+If OPS cannot durably record the intent or the successful completion, the sync
+cursor holds.
+
+Batch claim, direct claim, reauthorization, completion, and failure are
+service-role-only and lease-fenced. Claims are limited to the cron's current
+active-subscription company set and an active, sync-enabled current connection.
+The worker rechecks the same company/connection/recovery tuple under the
+physical-mailbox sync lease immediately before provider access. Label work also
+rechecks the current configured pipeline label. Manual lead/category overrides,
+immutable thread ownership, exact provider-message activity deduplication, and
+the existing contact-form source boundary remain authoritative.
+
+Assignment-dependent contact-form drafting runs in the ten-minute
+lead-assignment delivery lane, after the assignment outboxes, with a bounded
+batch of three. A deterministic safety hold (operator escalation or
+insufficient verified writing examples) remains terminal. Empty, malformed,
+refused, or temporarily unavailable model output is retryable through the
+existing assignment-draft job lease and backoff contract; every attempt
+rechecks the current assignment, actor, connection, source scope, writing
+profile, and duplicate-draft state before a provider draft may be created.
+
+**Prepared RPC identifier repair (2026-08-01):** PostgreSQL limits identifiers
+to 63 bytes. The original provider-create reservation and uncertain-outcome
+reconciliation RPC declarations are 67 and 74 bytes, so the live catalog
+contains only truncated names and PostgREST cannot resolve the application
+calls. Prepared migration
+`20260801003000_fix_contact_form_draft_rpc_identifiers.sql` adds the stable
+service-only entry points
+`begin_assignment_contact_draft_provider_create_as_system` and
+`mark_assignment_contact_draft_reconciliation_as_system`. They preserve the
+existing lease, assignment, exact draft, and reconciliation gates by delegating
+to the verified catalog implementations. Application RPC identifiers are
+contract-tested to remain at most 63 UTF-8 bytes. The migration performs no
+queue replay, provider mutation, lead assignment, or historical repair.
+
+**Prepared mailbox-contention recovery (2026-08-02):** `mailbox busy` is an
+OPS physical-mailbox lease collision, not a Gmail or Microsoft delivery
+failure. The collision occurs before provider construction and before the
+durable provider-create reservation, so migration
+`20260802163538_keep_contact_form_mailbox_busy_retryable.sql` records one
+durable `mailbox_busy_since` wait without creating another queue status. Before
+the bounded batch of three is selected, the service-only claim RPC resolves the
+connection to the same private physical-mailbox digest and rolling-deploy
+mirror as the acquisition RPC. Due work is marked waiting once and excluded
+while that lease is active. It therefore does not consume a worker slot,
+increment attempts, generate a model draft, or contact the provider on each
+ten-minute cron. Once the lease is absent, the normal claim path resumes it.
+
+A lock-acquisition race after claim still records the exact
+`EMAIL_ASSIGNMENT_CONTACT_FORM_DRAFT_MAILBOX_BUSY` result, preserves the first
+continuous-wait timestamp, and returns the row to condition-aware waiting. A
+provider-create attempt that may have begun remains reconciliation-first, and a
+stale assignment remains terminal. After one continuous hour with the physical
+mailbox still occupied, OPS opens one persistent, queue-scoped notification for
+the assigned operator: `Draft waiting for mailbox`. The notification contains
+no customer or lead identity, links to Pipeline, cannot duplicate when read,
+and resolves automatically when the job completes, skips, becomes stale,
+enters ordinary failure, or requires reconciliation.
+
+The same migration narrowly repairs every previously failed queue row with the
+exact mailbox-busy error only when both provider-create markers are null. It
+does not name a lead, reset draft history, or contact the provider. The ordinary
+claim and worker path must re-prove the current assignment, assignee authority,
+active mailbox, contact-form source, CUSTOMER auto-draft autonomy, thread reply
+state, terminal lead state, and absence of prior placement before any provider
+draft work. Prepared OPS-Web commit: `92344a64`. The migration is not applied
+and the queue repair is not live as of 2026-08-02. Condition-aware refinement:
+OPS-Web commit `865bab6e`.
+
+The production rollout is forward-only and creates no automatic historical
+recovery items. The mailbox-contention repair above is a narrow queue-state
+exception and still performs no direct Gmail, Microsoft, draft-history, or lead
+mutation. Any broader historical repair requires separate explicit
+authorization and must use the same exact-identity and safety gates.
+
+**Commercial-outcome isolation (prepared 2026-07-29).** A deterministic
+automatic-project safety refusal no longer freezes unrelated mailbox messages.
+When canonical commercial-outcome evaluation throws the typed project-address
+proof hold, sync persists an exact `commercial_outcome` recovery item containing
+the company, mailbox connection, provider message/thread, projected
+correspondence event, and opportunity identities, then continues the batch.
+The held item is not reclassified, converted, accepted, or cursor-skipped: it
+retains the same safety state and is retried only through service-role,
+lease-fenced reauthorization of that exact tuple. Provider/model failures that
+are not the typed deterministic hold continue to abort the cycle before cursor
+advancement.
+
+The recovery worker reruns the canonical commercial-outcome evaluator, so
+authorization, manual overrides, duplicate prevention, prompt-injection
+defenses, classification deferral, commercial acceptance rules, and
+project-address proof remain authoritative. A successful retry may refresh the
+opportunity summary only when the company's Phase-C gate is enabled. Migration
+`20260729230000_pipeline_follow_up_reliability.sql` is additive and does not
+create historical recovery rows; any live recovery or backfill remains a
+separately approved operation.
+
+**Manual outbound cycle reconciliation (prepared 2026-07-29).** A provider
+Sent-folder message may advance lead chase state only after sync has
+deterministically linked and projected it as the newest meaningful OPS
+`sync_activity` outbound. The service-only receipt transaction idempotently
+logs the satisfied cycle, updates canonical handled/outbound/timeline state,
+advances the next check-in by company lifecycle cadence, recalculates stale and
+unanswered-follow-up state, supersedes only the relevant open stock template
+draft, resolves its operator-miss notification, and leaves an immutable event
+receipt. The normal meaningful-event path then refreshes the Phase-C
+opportunity summary when enabled. Internal-only, ambiguous, orphaned,
+duplicate, noisy, unprojected, or older messages fail closed without lead
+mutation.
+
+### Phase C lead correction loop (production backend live; iOS release pending)
+
+The 2026-07-27 implementation connects the iOS lead-disposition action to
+future email lead-vs-not-lead classification through the database contract in
+`03_DATA_ARCHITECTURE.md`. The production migration is recorded as
+`20260728004810_phase_c_lead_disposition_feedback`, and OPS-Web commit
+`1b90a9b9` is live on the customer Vercel deployment. iOS commit `5df8b3bb` is
+on `main`, but the installed customer app does not gain the reason sheet until
+that source is archived, uploaded, and released through App Store Connect.
+The rollout created no feedback/review rows, changed no leads, and performed no
+historical backfill.
+
+**iOS interaction.** The lead's `DISCARD` action first asks the server for the
+authoritative Phase C gate. Enabled companies see a terse structured reason
+sheet. A reason tap completes immediately—there is no second confirmation—and
+an optional 280-character context field is available behind progressive
+disclosure. The result message offers a six-second `UNDO`. Disabled companies
+keep the existing discard explainer/confirmation, but the write still uses the
+same authoritative RPC with a neutral legacy reason. Spam, applicants, vendor
+sales, internal mail, platform notifications, and test traffic discard;
+`NOT A FIT` moves the genuine inquiry to lost/disqualified; duplicate and
+`OTHER` remain held for review rather than being falsely discarded. The client
+applies the complete server receipt locally and never invents a lifecycle
+result.
+
+**Bounded ingestion prior.**
+`LeadFeedbackPriorService` loads only active, Phase C-enabled, company-scoped
+structured fields. It never selects `optional_note`, and neither the note nor
+raw feedback text enters an AI prompt. The prior is applied after
+`EmailAIClassifier` returns its structured result:
+
+- exact provider message or thread evidence can strongly reduce a repeated
+  false-positive score only when the mailbox connection also matches;
+- one sender correction may move a future candidate to review but cannot
+  suppress a plausible lead by itself;
+- domain-wide negative evidence requires at least three independent corrected
+  threads from at least two senders, and is limited to spam, vendor-sales, and
+  test-traffic reasons;
+- public, protected, company-owned, and free-mail domains receive no
+  domain-wide suppression; job-applicant and platform-notification feedback
+  never becomes a domain rule;
+- genuine but unsuitable (`not_a_fit`) evidence is positive lead evidence, so
+  OPS learns not to erase similar inquiries;
+- duplicate, neutral, conflicting, and score-boundary cases defer.
+
+An adjusted negative may auto-suppress only when it clears the normal
+not-a-lead threshold by an additional 0.20 safety margin. Otherwise the exact
+message is upserted into `lead_classification_reviews`, the Inbox thread is
+marked `require_human_review` when available, and `SyncEngine` advances without
+creating an opportunity. Retry reuses the same review identity. Manual
+category/lifecycle overrides, existing duplicate guards, provider cursor
+fences, and the ingestion engine's bias toward preserving plausible leads stay
+authoritative. The loop evaluates future ingestion only; it never rewrites an
+existing lead or scans history.
+
 ### Primary categories (exactly one per thread)
 
 Twelve values, enforced by the `email_threads.primary_category` CHECK constraint (post `20260428061836_collapse_lead_client_to_customer`). The legacy `LEAD` + `CLIENT` values were collapsed into `CUSTOMER` in that migration and were dropped from the TypeScript union 2026-05-12 (commit `ce91e96c`).
@@ -5864,6 +6082,22 @@ Below the rails, a horizontal strip of **category filter chips** (ALL + 12 categ
 | `auto_follow_up` | CUSTOMER — auto-nudge after configurable quiet days |
 
 **Global AUTO_SEND gate:** The router caps any category-level `auto_send` / `auto_follow_up` to `auto_draft` behavior until the global Phase C autonomy level in `AutonomyMilestoneService` reaches AUTO_SEND (level 4). This prevents any email from being sent before the overall writing profile is proven.
+
+**Terminal mailbox snapshot gate (prepared 2026-07-31, not deployed).** The
+router fails closed before policy/model work and again immediately before every
+provider draft, scheduled send, archive, or follow-up mutation. An active sync,
+structured Gmail continuation, recovery page token, or pending derived summary
+returns `noop_sync_incomplete`, clears `category_classified_at`, and leaves the
+thread for terminal retry. This prevents the first message in a catch-up batch
+from authorizing a draft before later messages are durable.
+
+Provider-draft reconciliation uses the draft history's exact
+`source_message_id`, not draft creation time alone. If any other persisted
+activity on the exact mailbox thread occurs at or after that source boundary,
+the draft is stale: the worker idempotently deletes the provider draft, marks
+the history `superseded`, and skips learning. Greeting identity is bound to the
+actual latest inbound source sender; another thread participant cannot supply
+the salutation.
 
 #### Human-authority learning, subjects, and signatures (production 2026-07-17)
 

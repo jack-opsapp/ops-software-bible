@@ -4272,6 +4272,9 @@ These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AN
 - **Migration `20260723214306_email_threads_lead_scan_pending.sql`** adds the nullable positive deferral marker `email_threads.lead_scan_pending_at` plus a partial drain index. It marks only unmatched threads whose lead scan was skipped during an AI-provider outage; `opportunity_id IS NULL` alone never means a scan is pending.
 - **Migration `20260723214524_company_mailbox_intake_owner.sql`** adds the guarded company-mailbox owner FK/index, immutable `company_mailbox_default` assignment source, one service-role atomic live create-and-disposition RPC, and the fully private `unassigned_lead_assignment_deliveries` outbox plus service-only lease RPCs. It is forward-only: existing connection owners remain null, existing opportunity source-key rows are returned unchanged, and no historical opportunity is scanned or changed.
 - **Migrations `20260723224713_guarded_orphan_outbound_email_activity_adoption.sql` and `20260723225112_shorten_guarded_orphan_outbound_email_activity_rpc.sql`** add one service-role-only adapter for an exact outbound email activity that was inserted before its provider thread acquired a canonical opportunity owner, then give it the PostgreSQL-safe canonical name `adopt_orphan_outbound_email_activity_guarded_as_system`. Callers must use only that canonical identifier; the initial longer identifier exceeded PostgreSQL's 63-byte limit and was server-truncated. The RPC binds the repair to the current physical mailbox lease, active connection mirror, immutable `(connection_id, provider_thread_id)` owner, exact provider message and activity payload, and active target opportunity. It token-gates the single `NULL → canonical opportunity` child update and records canonical outbound correspondence in the same transaction; any ownership, lease, payload, or event conflict rolls the adoption back. It does not change stage, assignment, project state, or provider state, and it runs only during ordinary forward sync rather than as a historical backfill.
+- **Migration `20260731183127_fix_manual_outbound_follow_up_lifecycle_conflict_target.sql`** is the repository record of the production hotfix applied on 2026-07-31. `reconcile_manual_outbound_follow_up_cycle_as_system` now targets `opportunity_lifecycle_state_pkey` by constraint name; `ON CONFLICT (opportunity_id)` is invalid in this `RETURNS TABLE` function because its output also exposes `opportunity_id`. Execute remains service-role-only.
+- **Prepared migrations `20260731203000_email_sync_terminal_checkpoint.sql`, `20260731210000_event_driven_archived_lead_reactivation.sql`, and `20260801003000_fix_contact_form_draft_rpc_identifiers.sql` are not applied as of 2026-08-01.** The first adds an owner-fenced nonterminal cursor checkpoint that cannot advance `last_synced_at`. The second adds exact-thread inbound reactivation, mailbox-owner/assignment-review disposition, assignment-version-fenced deliveries, and an archived-stage transition guard. The third exposes PostgreSQL-safe service-only names for the contact-form provider-create reservation and uncertain-outcome reconciliation RPCs; their original 67- and 74-byte declarations exist in the catalog only under server-truncated names and therefore cannot be resolved by PostgREST using the application strings. None of these migrations backfills or assigns historical leads.
+- **Prepared migration `20260802163538_keep_contact_form_mailbox_busy_retryable.sql` is not applied as of 2026-08-02.** It adds nullable `email_assignment_contact_form_draft_queue.mailbox_busy_since`, a partial operational index, a private canonical physical-mailbox lease predicate, a service-only mailbox-aware claim replacement, and one persistent notification lifecycle after an hour of continuous contention. Due rows are marked once and excluded before the bounded worker limit while the lease is active, preventing attempt churn, repeat model work, provider polling, and healthy-mailbox starvation. A post-claim acquisition race returns to the same wait; provider-create uncertainty and stale assignment retain stricter outcomes. The generalized repair returns only exact `failed` contention rows with both provider-create markers null to the guarded queue. It changes no provider, draft-history, opportunity, or assignment record directly; the normal worker gates run again before provider access. OPS-Web commits: `92344a64`, `865bab6e`.
 
 ### email_connections
 
@@ -4334,6 +4337,16 @@ CREATE TABLE email_connections (
 
 Token columns (`access_token`, `refresh_token`) are accessed via service role only in API routes — not exposed to client via RLS column-level restrictions.
 
+**Current cursor and health authority (2026-07-31 prepared contract).** The live
+column names used by the sync engine are `history_id`, `last_synced_at`,
+`history_recovery_anchor`, `history_recovery_page_token`,
+`history_recovery_target_token`, `sync_in_progress_at`, and `sync_lock_owner`.
+A structured Gmail cursor, a recovery page token, pending derived lead
+summaries, or an active sync means the mailbox snapshot is nonterminal.
+`persist_email_connection_sync_checkpoint_as_system` may publish the
+owner-fenced `history_id` continuation but deliberately cannot update
+`last_synced_at`; only the existing terminal completion function may do both.
+
 `default_intake_owner_id` is valid only on `type='company'` connections. The
 database requires an active, nondeleted user in the same company with effective
 assigned-scope `pipeline.view`, `pipeline.edit`, and `inbox.send` authority.
@@ -4348,7 +4361,8 @@ change this field.
 
 Durable, addressed outbox for a newly created company-mailbox lead that has no
 eligible default intake owner. The table is unique on
-`(opportunity_id, recipient_user_id)` and stores pending/processing/delivered/
+`(opportunity_id, recipient_user_id, assignment_version)` once the prepared
+2026-07-31 reactivation migration is applied, and stores pending/processing/delivered/
 failed state, attempt limits, lease token/expiry, retry timing, notification
 identity, provider outcome, and terminal/resolution provenance. Enqueue is
 idempotent and addresses only active same-company administrators who currently
@@ -4362,6 +4376,12 @@ terminal, inaccessible, or exhausted row, and materializes at most one
 persistent notification before exposing a push claim. A canonical non-null
 assignment event resolves every delivery and associated notification for that
 opportunity.
+
+The widened key lets the same durable mechanism represent a later archived-lead
+reactivation without reviving an obsolete prompt. Claim and completion compare
+the delivery's exact assignment version with the current opportunity version;
+any reassignment makes the older delivery stale. The historical three-argument
+enqueue helper remains version-zero-only for genuinely new leads.
 
 No migration scans historical opportunities. Rows are inserted only inside the
 same transaction that creates a new live company-mailbox opportunity and either
@@ -4736,6 +4756,39 @@ Prepared by migration `20260713210000_phase_c_learning_signatures`. Stores sanit
 
 Resolution order is: active OPS signature for the current operator, active mailbox-wide OPS signature, active provider signature whose identity exactly equals the connected mailbox, then none. Guarded service-only replace/deactivate RPCs derive the active OPS actor and company, lock assignment-dependent company-mailbox authorization, force OPS rows to the actor scope, and force provider rows to the exact mailbox identity. The pre-assignment `replace_email_signature` primitive and direct service-role table mutation are revoked from application callers. Old revisions remain available for exact suffix stripping after provider draft round trips. Gmail source rows come from read-only `sendAs` inspection. Microsoft Graph exposes no mailbox signature, so Microsoft users save/paste an OPS signature. RLS is enabled.
 
+### Mailbox recovery + manual outbound cycle receipts (prepared 2026-07-29)
+
+Migration `20260729230000_pipeline_follow_up_reliability.sql` extends the service-only `email_ingestion_recovery_queue` without weakening any conversion guard. Recovery rows may now use `recovery_kind = 'commercial_outcome'` and carry the exact `opportunity_id` in addition to company, connection, provider message, and provider thread identity. The enqueue RPC proves that the projected meaningful correspondence event, canonical thread, provider message/thread, connection, and opportunity are one canonical tuple before it accepts the item.
+
+Only a typed automatic-project safety hold is eligible for this quarantine path. The original project-address proof, duplicate prevention, active-state, authorization, manual-override, prompt-injection, and commercial classification gates remain unchanged. The blocked item keeps its own deferred state and exact retry authority, while unrelated messages may become durable and the mailbox cursor may progress. A worker retry reauthorizes the same tuple, reruns canonical commercial-outcome evaluation, and refreshes the Phase-C opportunity summary only when Phase C is enabled. Unclassified provider/model failures still hold cursor advancement.
+
+The same migration adds `opportunity_manual_outbound_cycle_receipts`, with RLS enabled and no client policy. Its service-role RPC `reconcile_manual_outbound_follow_up_cycle_as_system(company_id, opportunity_id, event_id)` accepts only a newest, meaningful, projected, non-noise OPS outbound from `sync_activity` whose exact activity/mailbox/thread/message/correspondence linkage still agrees. The transaction locks the lead and lifecycle state, writes one immutable event receipt, stamps handled/timeline truth, advances `next_follow_up_at` by `lead_lifecycle_settings.follow_up_after_days` (default 7) while preserving an explicitly sooner future check-in, satisfies the prior cycle only when `event.occurred_at >= prior next_follow_up_at`, recalculates unanswered/stale chase state, supersedes only an open `template_follow_up` draft, and resolves the matching operator-miss notification. Internal-only, ambiguous, orphaned, duplicate, unprojected, or older outbound mail cannot obtain a receipt or mutate a lead.
+
+### `email_send_intents` one-tap follow-up outcome receipt (2026-07-23)
+
+Migration `20260723233000_operator_one_tap_lead_follow_up.sql` extends the durable provider-send intent with three nullable receipt fields:
+
+```sql
+follow_up_outcome_applied_at timestamptz
+follow_up_comeback_at        timestamptz
+follow_up_notification_id    uuid references notifications(id) on delete restrict
+```
+
+`email_send_intents_follow_up_outcome_receipt_check` requires all receipt fields to be empty before apply. A completed receipt requires `follow_up_outcome_applied_at`, `follow_up_notification_id`, and `follow_up_draft_id`; `follow_up_comeback_at` is deliberately nullable when a newer inbound, terminal transition, or operator action already owns the lead's chase state. The receipt is written in the same transaction as the lifecycle transition. A replay returns these stored values before any draft, counter, opportunity, or notification mutation can run again.
+
+The same migration changes the `lead_lifecycle_settings.follow_up_template_body` default to the 2026-07-23 standard copy and updates only rows whose body exactly equals the prior stock default. Any company-customized template remains untouched.
+
+The service-role-only `public.reconcile_operator_template_follow_up_send_as_system(p_intent_id uuid)` accepts only a provider-accepted/reconciling/reconciled intent whose `template_follow_up` draft, company, opportunity, connection, provider thread, recipient, and accepted provider identity still agree. In one locked company → opportunity → intent → draft → lifecycle transaction it:
+
+1. marks the draft `sent`, persists `final_sent_body`, and stamps provider acceptance time;
+2. increments `opportunity_lifecycle_state.unanswered_follow_up_count` exactly once when this send is still the latest meaningful lifecycle event, stamps `second_follow_up_sent_at` at count 2+, and clears follow-up-due/operator-miss stale state;
+3. resolves the prior `leads_waiting` operator-miss notification only when this send is still the latest meaningful lifecycle fact;
+4. if no later meaningful event, operator action, or terminal/project transition won the race, stamps `opportunities.handled_at` from provider acceptance and sets `next_follow_up_at` to acceptance +3 days while preserving only an explicitly chosen sooner comeback on a later company-local calendar day; otherwise it records a null comeback receipt and leaves newer chase truth untouched;
+5. creates one standard `lead_follow_up_sent` notification and stores its id on the intent; and
+6. writes the immutable receipt and returns it.
+
+The migration also extends the existing `private.guard_system_handoff_email_send_delivery()` prepared→sending trigger for `template_follow_up`. Before provider I/O it rechecks the company-local due day, quote-bearing stage, operator/no-switch authority, frozen draft subject/body, pinned provider thread/source outbound/recipient, and absence of newer correspondence. An opportunity-wide fence blocks every other unresolved template follow-up even after the canonical thread changes. A second live-provider read runs inside the mailbox lease immediately before the provider call; a changed newest message is a definitive pre-delivery rejection. Template drafts are mutation-frozen after the provider boundary until rejection or the exact reconciliation-to-sent transition. The older `system_handoff` authorization branch remains intact.
+
 ### pending_auto_sends
 
 Auto-send queue for AI-generated email drafts held for randomized delay before sending. Business hours enforced (default 8am-6pm in user's timezone). Processed by cron job `/api/cron/auto-send` every 5 minutes.
@@ -4807,7 +4860,7 @@ ALTER TABLE public.opportunities
   ADD COLUMN IF NOT EXISTS operator_action_required_at timestamptz NULL;
 ```
 
-- `handled_at`: The operator's manual **WAITING** declaration ("handled — their move now"). iOS writes it via the card/detail HANDLED ✓ action (one PATCH that also sets `next_follow_up_at` to the comeback date: default now+3d, a sooner FUTURE follow-up is kept, past-due dates always replaced). The lead card's fact-only TEXT and EMAIL quick touches atomically advance `handled_at` while logging their outbound activity, so a successful touch immediately becomes **WAITING** even before any correspondence sync updates `last_outbound_at`.
+- `handled_at`: The operator's **WAITING** declaration ("handled — their move now"). iOS writes it via the card/detail HANDLED ✓ action (one PATCH that also sets `next_follow_up_at` to the comeback date: default now+3d, a sooner FUTURE follow-up is kept, past-due dates always replaced). The lead card's fact-only TEXT and EMAIL quick touches atomically advance `handled_at` while logging their outbound activity, so a successful touch immediately becomes **WAITING** even before any correspondence sync updates `last_outbound_at`. The one-tap provider follow-up is the provider-backed path: its service-only reconciliation RPC stamps `handled_at` only after provider acceptance and preserves any later operator/terminal state.
 - `operator_action_required_at`: The operator's manual **YOUR MOVE** correction. iOS writes it from the WAITING card/detail `ADJUST` sheet. It does not rewrite `last_message_direction`, erase `handled_at`, or modify correspondence timestamps; a later real correspondence event or later HANDLED action supersedes it.
 - `private.stamp_opportunity_chase_events()` is a `BEFORE UPDATE` trigger for `handled_at` and `operator_action_required_at`. A client sends a non-null change sentinel, the trigger replaces it with millisecond-precision `statement_timestamp()`, and the client applies the authoritative returned opportunity row. Manual ownership ordering therefore uses the database clock, not a potentially skewed device clock.
 - A quick TEXT/EMAIL is one atomic database action through `public.log_opportunity_quick_touch(...)`: activity creation, ownership advancement, and the exact undo receipt either all commit or all roll back.
@@ -4848,7 +4901,6 @@ Both RPCs take locks in the canonical company → opportunity → user → activ
 `public.undo_opportunity_quick_touch(p_activity_id, p_opportunity_id)` is the authenticated, two-argument `SECURITY DEFINER` reversal boundary. It locks and validates the durable receipt, rejects out-of-order undo when the opportunity's current `handled_at` no longer equals that touch's marker, removes exactly that activity, tombstones the receipt, and restores the receipt's exact prior `handled_at`. It does not synthesize a new `operator_action_required_at` and does not rewrite `last_inbound_at`, `last_outbound_at`, or an existing operator correction, so newer correspondence and manual ownership signals remain authoritative. Repeating a completed undo is idempotent and returns the current opportunity.
 
 iOS keeps the successful quick touch's UNDO toast visible until manual dismissal. Launching Messages or Mail may background OPS, but returning to the app preserves the same undo action so the operator can reverse the atomic touch after completing or cancelling the external composer.
-
 ### Note: companies.industry Column
 
 The `companies` table has an `industries` column (TEXT array, from migration 004) but does **not** have an `industry` (singular) column. The email pipeline code does `.select("name, industry")` on companies, but PostgREST returns `null` for the nonexistent column. The code falls back to `"trades"` via `(company?.industry as string) || "trades"`. No migration was created to add this column. If per-company industry classification is needed in the future, either use the existing `industries` array or add an `industry TEXT` column via a new migration.
@@ -4964,6 +5016,63 @@ CREATE INDEX idx_corrections_company_domain
   ON email_thread_category_corrections(company_id, sender_domain)
   WHERE sender_domain IS NOT NULL;
 ```
+
+### Phase C lead-disposition feedback (production)
+
+Migration `ops-web/supabase/migrations/20260727193418_phase_c_lead_disposition_feedback.sql`
+adds the authoritative correction contract shared by iOS and email ingestion.
+It is additive and forward-only. It was applied to production on 2026-07-27
+(recorded by Supabase as
+`20260728004810_phase_c_lead_disposition_feedback`). Post-apply verification
+confirmed both tables empty, RLS enabled, direct client writes revoked, and no
+new security or performance advisories. No historical lead was reinterpreted
+or backfilled.
+
+`lead_disposition_feedback` is append-only correction history. Each row binds
+the company, opportunity, authenticated actor, structured reason, canonical
+outcome, active/retracted learning state, prior and applied lifecycle state,
+source mailbox/thread/message keys when unambiguous, sender/domain evidence,
+model/policy context, and apply/undo idempotency keys. Optional context is
+limited to 500 characters and is audit-only; classifier reads deliberately
+exclude it. Direct insert/update/delete is revoked. Authenticated users may
+read only feedback for opportunities they can view, while all mutations cross
+actor-authorized `SECURITY DEFINER` RPCs.
+
+`lead_classification_reviews` is the service-only durable hold for a future
+inbound message whose structured feedback prior makes the lead decision
+ambiguous. It stores exact company/connection/provider identities, bounded
+scores, structured evidence, and pending/resolved state—never message content
+or operator notes. The unique
+`(company_id, connection_id, provider_message_id)` key makes a retry converge
+on the same hold instead of creating another review.
+
+The mutation RPCs are:
+
+- `get_lead_disposition_context(opportunity_id)` — proves the actor can edit
+  the lead and returns the authoritative live Phase C gate plus policy version.
+- `apply_lead_disposition_feedback(...)` — locks the opportunity and
+  idempotency key, validates the actor/company/gate/reason, writes disposition,
+  lifecycle transition, and feedback in one transaction, and rejects terminal
+  or already-merged leads.
+- `undo_lead_disposition_feedback(...)` — restores the exact prior lifecycle
+  and disposition state and retracts the learning row in one transaction.
+  Undo is idempotent and fails closed if a later edit changed the lead.
+
+Canonical reason mapping:
+
+| Structured reason | Lifecycle outcome | Learning polarity |
+|---|---|---|
+| spam, job applicant, vendor sales, internal, platform notification, test traffic | `discarded` | negative |
+| not a fit | `lost` with `disqualified` disposition | positive genuine-inquiry evidence |
+| duplicate | no lifecycle rewrite; duplicate review | neutral |
+| other | no lifecycle rewrite; human review | neutral |
+| legacy unspecified (Phase C disabled only) | existing `discarded` behavior | neutral |
+
+Source evidence is conservative. The RPC prefers the opportunity's exact
+provider thread key. Without one, it records an email-thread identity only
+when exactly one company-scoped linked candidate exists; ambiguous historical
+links never become arbitrary learning evidence. Exact provider IDs gain exact
+prior authority only inside that recorded mailbox connection.
 
 ### Column additions (migration 071)
 
@@ -5370,6 +5479,162 @@ Migrations `20260714230000_email_attachment_persistence` and `20260714232000_gua
 `email_attachment_scans` is one durable exact-message job per activity. `email_attachment_inspection_jobs` is one independently leased acceptance/vision job per canonical attachment. Both queues use generation fencing, `FOR UPDATE SKIP LOCKED`, bounded leases, exponential retry, and terminal `failed` state. The activity-insert trigger queues every email, including provider false negatives for inline content. The private `email-attachments` Storage bucket has no browser object policy; API routes stream authorized bytes through OPS.
 
 Attribution begins only from `(company_id, email_connection_id, email_message_id)`. Inbound sender or outbound external recipients must match the activity's current lead/client/contact identity, and `match_needs_review` always fails closed. Activity reassignment increments scan/inspection generations and re-evaluates cached acceptance. Lead merge uses guarded evidence-bound RPCs. Won conversion needs no duplicate file row because projects retain `opportunity_id`.
+
+## Lead Intake Identity and Commercial Guards (live 2026-07-29)
+
+These migrations are applied to production and mirrored in `migrations/`:
+
+- `20260728160000_property_address_identity_boundary.sql`
+- `20260728161000_authoritative_staff_email_aliases.sql`
+- `20260728162000_guarded_customer_decline_lifecycle.sql`
+- `20260728163000_guarded_staff_false_lead_correction.sql`
+- `20260729170000_exact_recovery_latest_event_lifecycle.sql`
+- `20260729173000_fix_staff_false_lead_notification_company_cast.sql`
+- `20260729174500_preserve_referenced_staff_false_lead_client.sql`
+
+### Property address qualification
+
+`private.normalize_property_address(address, include_unit)` is the single
+database qualification and normalization boundary for relationship identity,
+duplicate/preflight checks, and email-to-project conversion. The compatibility
+helpers `private.normalize_address` and
+`private.normalize_email_project_dedupe_address` delegate to it. Locality,
+municipality, neighbourhood, region, area, postal-locality, and PO-box-only
+strings return the empty non-identity value. An ordinary civic identity requires
+a bounded civic number, street name, and recognized street-type suffix; a
+number followed only by a locality or suffix-less label does not qualify.
+Supported highway/range-road, rural-route/site/box, lot/concession or
+lot/block/plan, and parcel/PID formats also qualify. Units remain part of the
+identity when requested, including case-insensitive `Unit`, `Suite`, and `Apt`
+forms.
+
+The migration rewrites function behavior only. It does not rewrite existing
+opportunity, client, project, activity, or correspondence data.
+
+The application uses the same property qualifier at both customer-contact
+resolution and the final client/opportunity enrichment write boundary. Parsed
+form labels such as `Location: Victoria`, forwarded-message location fields,
+AI/import facts, attachment reprocessing, and recovery replay may retain their
+locality text in source metadata or message context, but cannot populate
+`clients.address`, `opportunities.address`, or address provenance unless the
+value is a qualified civic, rural-property, or parcel identity. Qualified
+values retain their original cleaned display string, including unit detail.
+
+### `user_email_aliases`
+
+| Column | Type | Contract |
+|---|---|---|
+| `id` | `uuid` | Primary key |
+| `company_id` | `uuid` | Required company FK; unique identity boundary with normalized email |
+| `user_id` | `uuid` | Required active same-company user FK |
+| `email` | `text` | Lowercase trimmed exact email; immutable |
+| `status` | `text` | `pending`, `verified`, or `rejected` |
+| `source` | `text` | `signature_corroborated` while pending/rejected; `operator_verified` after explicit verification |
+| `evidence` | `jsonb` | Required object containing auditable provider/roster evidence |
+| `first_seen_at`, `last_seen_at` | `timestamptz` | Candidate observation window |
+| `reviewed_at`, `reviewed_by` | nullable timestamp/same-company user FK | Required for every final administrator decision |
+| `verified_at`, `verified_by` | nullable timestamp/same-company user FK | Equal to the review audit only for `verified`; always null for `pending`/`rejected` |
+| `created_at`, `updated_at` | `timestamptz` | Record lifecycle |
+
+`(company_id, email)` is unique. Company/user/email/created identity is
+immutable, and a final review decision/audit cannot be rewritten. Composite
+foreign keys enforce same-company ownership, reviewer, and verifier identity. A
+trigger rejects inactive users and aliases that belong to another registered
+teammate. Alias evidence is readable only by same-company administrators or
+service processing. The service role has no direct table-write grant:
+signature-corroborated candidates can be recorded only through
+`record_staff_email_alias_candidate_as_system`, and final review can occur only
+through `review_user_email_alias` by a same-company administrator. Rejected
+reviews never populate verification authority. Pending evidence never grants
+verified staff identity, but the exact pending mailbox remains quarantined as
+outbound/review on later messages so it cannot become a lead while awaiting a
+decision.
+
+### Guarded customer-decline write
+
+`apply_email_opportunity_declined_disposition(...)` is a service-role-only RPC,
+not a client-writable table surface. Under one opportunity row lock it verifies
+mailbox, sender, message, projected correspondence, assignment, stage, event
+high-water, and terminal precedence. It writes `opportunities`, one
+`stage_transitions` row for a new Lost transition, and one active
+`opportunity_dispositions` row atomically. Evidence stores the connection,
+provider message, decisive event, reason code, signal, and evaluated high-water
+event. Exact retry resolves the existing disposition; stale or unauthorized
+evidence makes no business-state write. A retry that extracts a more specific
+`price` reason from the same decisive rejection may replace an active generic
+`customer_declined` disposition without adding another stage transition. The
+reverse downgrade is ignored. Every replaced disposition records both
+`superseded_at` and `superseded_by`, preserving a complete one-way provenance
+chain.
+
+### `lead_intake_correction_runs`
+
+| Column | Type | Contract |
+|---|---|---|
+| `id` | `uuid` | Primary key |
+| `company_id` | `uuid` | Required company FK and correction tenant boundary |
+| `correction_key` | `text` | Trimmed stable correction identity; unique within the company |
+| `actor_user_id` | `uuid` | Required same-company administrator who authorized the correction |
+| `source_opportunity_id` | `uuid` | Required same-company false-lead record retained as the audit source |
+| `manifest_sha256` | `text` | Exact 64-character lowercase SHA-256 for the complete frozen manifest |
+| `entry_a_sha256`, `entry_b_sha256` | `text` | Exact content addresses for the two provider messages corrected by the run |
+| `input_spec` | `jsonb` | Complete immutable expected-row specification supplied to the guarded RPC |
+| `result` | `jsonb` | Generated customer/lead ids, moved evidence ids, assignment result, and scan generations |
+| `applied_at` | `timestamptz` | Transaction commit timestamp for the correction |
+
+`lead_intake_correction_runs` has RLS enabled and no direct write grant for any
+role. The service role may read receipts; only
+`apply_staff_authored_false_lead_correction_guarded(...)` can insert one. The
+RPC is service-role-only with an empty search path. It locks the company,
+mailbox, administrator, active staff roster identity, protected opportunity
+snapshots, exact activities/events/thread projections, attachment scan, false
+notifications, assignment audit, generated draft, and field provenance before
+writing. Any altered selector, row set, timestamp, terminal state, project
+link, assignment version, content hash, or retry payload aborts the entire
+transaction.
+
+The correction verifies or promotes only the exact alias for the exact active
+staff user; it never infers identity from a name, partial phone, shared public
+email domain, or location. It creates a new client/opportunity only from an
+external recipient plus a property-qualified address and a message-scoped
+source key, then assigns through the canonical system assignment RPC. Exact
+retry returns the immutable correction receipt and performs no second write.
+Staff-authored events become `outbound` / `ops`, their activities, canonical
+thread links, inbox cache rows, and customer ownership move together under the
+existing child-reparent capabilities, and attachment attribution is requeued
+with a required generation increment. A protected existing Won/project target
+may receive older correspondence, but its stage, manual flag, assignment,
+project mirrors, and `updated_at` must remain byte-for-byte unchanged.
+
+After all customer evidence is retained on the correct records, the RPC
+resolves the false notifications, marks the false generated draft discarded in
+OPS without changing the provider mailbox, records a discarded disposition and
+stage transition, and soft-deletes the false opportunity. The notification
+scope comparison explicitly casts the text-backed notification tenant key to
+the RPC's UUID company identity. The source client is soft-deleted only after a
+schema-wide `client_id`/`client_ref` reference scan proves zero remaining use;
+otherwise it is preserved. The immutable result records both
+`source_client_deleted` and `source_client_reference_count`, making that
+retention decision auditable and replay-stable. Provider mutations are disabled
+and recorded as such in both the assignment metadata and immutable correction
+receipt.
+
+### Latest-event exact recovery lifecycle fence
+
+`private.assert_exact_message_lifecycle_recomputable(...)` permits an
+exact-message recovery to move the current lifecycle high-water only when the
+source lifecycle is passive, the durable state points exactly at the message
+being moved, an earlier projected meaningful event remains to become the new
+high-water, and no unresolved `leads_waiting` notification exists. Drafts,
+applied lifecycle actions, follow-up counters, stale/protected state, active
+notifications, missing prior history, or a state/event mismatch continue to
+raise `exact_recovery_lifecycle_not_reconstructible` before any repair write.
+
+The pre-existing historical-event path remains unchanged: moving a non-latest
+event is allowed only when a later meaningful event already owns the
+high-water and the event-scoped notification history is inert. The recovery
+transaction then recomputes source and target lifecycle projections before it
+returns, including when attachment attribution continues asynchronously.
 
 ## Review Swipe Safeguard Tables (2026-07-21)
 
