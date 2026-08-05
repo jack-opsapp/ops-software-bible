@@ -3857,6 +3857,26 @@ older prompt stale. This path performs no historical scan, one-off assignment,
 or project creation. Source:
 `ops-web/supabase/migrations/20260731210000_event_driven_archived_lead_reactivation.sql`.
 
+### Sender Identity & Outreach Settings (2026-08-05)
+
+Root cause + fix for the 2026-08-02 impersonation incident (contact-form outreach drafts signed as the forwarding teammate). Code: `ops-web` branch `feat/inbox-sender-identity` (engine commits `424cb145`…`5193bae7`, surface `a604fcbd`…`d648b043`).
+
+**Operator identity is prompt-pinned.** `buildDraftSystemPrompt` (`src/lib/api/services/conversation-state/draft-system-prompt.ts`) receives `operator` (first/last name + company, loaded from `users`/`companies`, never inferred from email content) and `signatureWillBeAppended`. The model is barred from adopting any identity found in message text; with a signature appended it writes a closing phrase only (no name/contact block), otherwise closing + first name only.
+
+**Forwarder wrappers are stripped from prompt input.** `stripForwardWrapper` (`conversation-state/forward-wrapper.ts`) removes the forwarding teammate's device-signature block (sign-off line → "Sent from my iPhone/iPad/Android") ahead of Apple Mail / Gmail-web forward markers, preserving any genuine note the forwarder typed and everything from the marker onward. Applied to `assigned_contact_form_review` prompt input.
+
+**First replies answer the inquiry.** `ASSIGNED_CONTACT_FORM_REVIEW_INSTRUCTION` (`conversation-state/source-bound-autonomous-routing.ts`) replaced the acknowledge-only purpose; drafts must address the customer's stated project/details/dates and may not invent specifics.
+
+**Voice blend floor.** `WritingProfileService` type-specific profiles need `emails_analyzed >= 50` (`TYPE_PROFILE_STANDALONE_MIN`) to stand alone; below that they blend into the general profile at `n/50` weight (previously a 10-email snapshot took full weight and shadowed a 1,973-email general profile).
+
+**Identity gate on new-lead outreach.** The contact-form draft worker holds generation AND resumed placement until `EmailSignatureService.hasConfirmedIdentity()` — an active operator- or mailbox-scope `email_signatures` row with `confirmed_at` set (provider scope never satisfies). Held jobs retry non-terminally (`awaiting_identity_confirmation`); a deduped persistent rail notification `email_identity_confirmation_required` (dedupe key `email-identity-confirmation:{connectionId}:{userId}`, action `/settings?section=profile&connection={id}`, rail label IDENTITY) prompts confirmation and resolves on any confirming save. In-thread replies are not gated.
+
+**Signature authoring = structured builder.** Settings → Profile card (`email-signature-settings.tsx`): fields (name/title/company/phone/website) + optional company-logo (`companies.logo_url`) with two arrangements — `logo-left` (business-card: logo cell, hairline divider, text; default) and `stacked` — rendered by `renderSignatureTemplate` (`src/lib/email/signature-template.ts`, inline-style table HTML that round-trips `sanitizeEmailSignatureHtml` unchanged; `describeSignatureTemplate` is the prefill inverse). Saving = confirming (`confirmed_at = now()`, source operator). Gmail import stays; **confirming an import PROMOTES its content into the operator-scope row** — the provider row is only the import record. Post-connect, an identity confirmation step (`sender-identity-connect-step.tsx`) fronts the same card for the mailbox holding outreach (OAuth callback signal keys on `status=connected`; the legacy `tab=` check was dead — fixed `75c20115`).
+
+**Outreach subject.** `email_connections.outreach_subject` (migration `20260803015347_add_email_connections_outreach_subject`, nullable text) feeds `configuredSubject` for new-thread lead outreach; null falls back to the built-in default. Subject priority remains operator > configured > learned > generated. Recorded provenance unchanged (`ai_draft_history.subject_source`).
+
+**Identity settings API.** `GET/actions /api/integrations/email/signature` — structured save `{fields, includeLogo, layout}`, `confirm_imported` (promotion), outreach-subject get/put, `confirmedAt` read the way the gate reads it (newest confirmed OPS row, operator scope first). Connections listing exposes `identityConfirmed` per mailbox.
+
 ### Task Reschedule → Push (cross-client, both origins)
 
 When a task's schedule changes, assigned crew are notified on **both** clients — and the push is fired **server-side (ops-web → OneSignal REST)**, so it reaches a backgrounded/locked teammate independent of the Realtime socket (which iOS tears down ~30s after backgrounding). This is the background-delivery counterpart to the live foreground repaint (ops-ios `deafa95f`).
