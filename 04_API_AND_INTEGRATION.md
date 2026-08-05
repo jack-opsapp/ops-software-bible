@@ -1057,6 +1057,28 @@ These events are automatically sent to Google Ads:
 4. `complete_onboarding` - Onboarding completion
 5. `task_completed` - Productivity signal
 
+### Google Ads Reporting Integration (admin analytics)
+
+**Status: LIVE as of 2026-08-05.** The developer token received Google Basic API access approval on 2026-08-05; prior to that every sync failed with `DEVELOPER_TOKEN_NOT_APPROVED` and all warehouse tables sat empty. Verified live the same day via a direct v23 REST call (HTTP 200, account `5448339076` "OPS LTD", CAD).
+
+The reporting direction (Google Ads → OPS) is entirely separate from the conversion events above (OPS → Google Ads).
+
+**Client** — `ops-web/src/lib/analytics/google-ads-client.ts`:
+- REST (not gRPC), Google Ads API `v23`, paginated `googleAds:search`
+- Auth: the Firebase admin **service account** (`firebase-adminsdk-fbsvc@ops-ios-app.iam.gserviceaccount.com`) with the `adwords` OAuth scope — the SA is added as a user on the Google Ads account, so there is no refresh-token flow to expire
+- Env: `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CUSTOMER_ID` (5448339076), plus the Firebase admin credentials (already set in Vercel prod; token approval did not change the token string)
+
+**Consumers:**
+| Surface | Source | Notes |
+|---------|--------|-------|
+| `/admin/google-ads` page | Live API, 5-min `unstable_cache` | KPIs, campaigns, keywords, search terms, daily spend, conversion breakdown (30-day default) |
+| `ads_daily_account/campaign/search_term` tables | `/api/cron/ads-sync` daily 08:04 UTC | Warehouse history; `ads_daily_keyword` exists but is not populated by design (keywords render live) |
+| 2-year history backfill | `IMPORT HISTORY` button on the page → `/api/admin/google-ads/backfill` → self-chaining 30-day chunk workers (CRON_SECRET auth) | Idempotent upserts; progress in `ads_sync_status` |
+| Weekly AI briefing | `/api/cron/ads-briefing` Mondays 12:34 UTC | Writes to briefings surface at `/admin/google-ads/briefings` |
+| `ad_spend_log` (PMF CAC/payback) | `/api/cron/pmf/google-ads-sync` daily 10:24 UTC | One account-level row per day, zero-row on no-spend days |
+
+**Sync state** lives in `ads_sync_status` (`daily-sync` + `backfill` rows). Cost: Google Ads API Basic access is free (15k operations/day quota; OPS usage is single-digit calls per day).
+
 ---
 
 ## Stripe Subscription Integration
