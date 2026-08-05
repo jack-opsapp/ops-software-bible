@@ -1148,7 +1148,7 @@ Activity: Sent Estimate #042 to John Smith        ● 2 hours ago
 
 A scheduled or ad-hoc visit to a job site for scope assessment, client meeting, or project check-in. Can exist before a project (on an Opportunity) or after (on a Project).
 
-> **Durable sync status (production database/web contract live 2026-08-02):** Lead detail, New Lead, and the FAB open `OPS/Views/SiteVisits/SiteVisitCaptureView.swift`; the FAB can start without a lead. Parent, identity draft, evidence artifacts, and per-visit checklist snapshots have an atomic phone outbox, normalized Supabase contract, inbound delta/Realtime reconciliation, cross-device resume, guarded completion, and protected logout recovery. The normalized schema and invoker-safe completion boundary are live in production; the updated iOS client is committed and simulator-verified but is not customer-distributed until its signed device/App Store gate completes.
+> **Durable sync status (production database/web contract live 2026-08-02):** Lead detail, New Lead, and the FAB open `ops-ios/OPS/Views/SiteVisits/SiteVisitCaptureView.swift`; the FAB can start without a lead. Parent, identity draft, evidence artifacts, and per-visit checklist snapshots have an atomic phone outbox, normalized Supabase contract, inbound delta/Realtime reconciliation, cross-device resume, guarded completion, and protected logout recovery. The normalized schema and invoker-safe completion boundary are live in production; the updated iOS client is committed and simulator-verified but is not customer-distributed until its signed device/App Store gate completes.
 
 ```typescript
 type SiteVisitStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled'
@@ -3240,9 +3240,9 @@ Invoices are fully implemented on iOS with the following views in `OPS/OPS/Views
 | `InvoiceCard.swift` | Summary card for invoice lists |
 | `PaymentRecordSheet.swift` | Record a payment against an invoice |
 
-#### SiteVisit — iOS capture and durable sync (built locally through 2026-08-01)
+#### SiteVisit — iOS capture and durable sync (database live 2026-08-02; iOS distribution pending)
 
-The `SiteVisit` data model exists at `OPS/DataModels/Supabase/SiteVisit.swift`; `opportunityId` is optional so the FAB can start capture before a lead is selected. Lead detail, New Lead, and the FAB open a full-screen capture console from `OPS/Views/SiteVisits/`. The durable sync additions below are committed on the local feature branch but require the unapplied server migration and a future iOS release before they are customer-live.
+The `SiteVisit` data model exists at `ops-ios/OPS/DataModels/Supabase/SiteVisit.swift`; `opportunityId` is optional so the FAB can start capture before a lead is selected. Lead detail, New Lead, and the FAB open a full-screen capture console from `ops-ios/OPS/Views/SiteVisits/`. The normalized database contract and guarded completion path are live in production. The updated iOS client is committed and simulator-verified but is not customer-distributed until its signed physical-device/App Store release gate completes.
 
 Built iOS files:
 
