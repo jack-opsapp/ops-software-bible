@@ -1067,6 +1067,8 @@ These events are automatically sent to Google Ads:
 
 **History imported 2026-08-05 21:13 UTC (730/730 days):** `ads_daily_account` 197 rows, `ads_daily_campaign` 467 rows, `ads_daily_search_term` 5,274 rows. Activity spans 2025-02-20 → 2026-03-09 (no spend after 2026-03-09): $4,777.80 CAD, 8,495 clicks, 355 conversions (account and campaign totals cross-check exactly).
 
+**Page ranges (2026-08-05, commit `a24a5630` deployed as `160f85f0`):** `/admin/google-ads` offers 7D/30D/90D/12M/ALL (ALL spans from the first warehouse-activity day). One shared assembly (`src/lib/admin/google-ads-page-data.ts`) serves the server-rendered page AND `/api/admin/google-ads` (`?preset=`, legacy `?days=` accepted): warehouse-first for summary/campaigns/search-terms/daily-spend, always-live explicit-date queries for keywords + conversion actions (not warehoused), fully-live fallback for unsynced windows. Empty windows render `[all campaigns paused — last activity <date>]` from `getHistoryBounds()`. `DateRangeControl` emits its `preset` in `DateRangeParams` (optional field). Tests: `tests/unit/admin/google-ads-page-data.test.ts`.
+
 The reporting direction (Google Ads → OPS) is entirely separate from the conversion events above (OPS → Google Ads).
 
 **Client** — `ops-web/src/lib/analytics/google-ads-client.ts`:
