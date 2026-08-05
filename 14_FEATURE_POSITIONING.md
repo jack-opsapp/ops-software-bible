@@ -4,8 +4,8 @@
 
 **Purpose**: Single source of truth for how OPS talks about each of its features in marketing, onboarding, and product surfaces. Every other chapter in this bible describes what features *do* (engineering-shaped). This chapter describes how features are *positioned* (marketing-shaped). When a content agent writes an email, an ad, a landing page section, an app store description, or an in-app empty state that mentions a feature by name, the approved positioning lines below are the canonical phrasing to pull from or build on.
 
-**Last Updated**: 2026-05-27
-**Source Reference**: `01_PRODUCT_REQUIREMENTS.md`, `04_API_AND_INTEGRATION.md`, `07_SPECIALIZED_FEATURES.md`, `09_FINANCIAL_SYSTEM.md`, `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md`, `11_CLIENT_PORTAL.md`, `ops-software-bible/app-store-listing.txt`, `ops-site/src/i18n/dictionaries/en/home.json`, `ops-site/src/i18n/dictionaries/en/platform.json`, `OPS-Web/src/lib/email/react/templates/`
+**Last Updated**: 2026-08-04
+**Source Reference**: `01_PRODUCT_REQUIREMENTS.md`, `04_API_AND_INTEGRATION.md`, `07_SPECIALIZED_FEATURES.md`, `09_FINANCIAL_SYSTEM.md`, `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md`, `11_CLIENT_PORTAL.md`, `app-store-listing.txt`, `ops-site/src/i18n/dictionaries/en/home.json`, `ops-site/src/i18n/dictionaries/en/platform.json`, `ops-web/src/lib/email/react/templates/`
 
 **Out of scope**: Whole-product positioning (the "what is OPS" elevator pitch lives in `00_EXECUTIVE_SUMMARY.md`). Infrastructure systems that aren't user-facing differentiators (notification rail, email transport, sync engine, permissions plumbing). Pricing positioning (lives in `12_SUBSCRIPTION_MANAGEMENT.md` and `ops-site/src/app/plans/`).
 
@@ -394,20 +394,20 @@ This is the only sanctioned AI claim for marketing surfaces until the AI-drafts 
 
 ## Feature: Site Visits
 
-**Source of truth for behavior**: `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § New Entities → SiteVisit. `SiteVisit` entity carries `scheduledAt`, `status`, `notes`, `photos[]`, `completedAt`. Auto-creates an Activity row on completion. Site-visit photos auto-attach to the project when the originating lead converts to a project — `project_photos` row inserted with `source='site_visit'` and `siteVisitId` back-link (implemented 2026-05-20).
+**Source of truth for behavior**: `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § New Entities → SiteVisit and `03_DATA_ARCHITECTURE.md` § SiteVisit. `SiteVisit` carries the visit shell (`scheduledAt`, `status`, `notes`, `completedAt`) and can start without a linked lead; iOS site visits use a local `SiteVisitIdentityDraft` for onsite client/lead capture plus a local `SiteVisitCaptureArtifact` packet for rapid photos, markup, dictated/typed notes, manual measurements, dimensioned-photo capture, selected/custom checklist answers, and gated CanPro deck-design references. Reviewed packet contents attach to the project when the lead is linked and converted — `project_photos` rows use `source='site_visit'` and `siteVisitId`, dimensioned photos restore `PhotoAnnotation` rows with `DimensionsData`, notes/measurements/checklist answers consolidate into a project note, and selected deck designs attach to the created project.
 
 **Persona / who feels it**: Owner-operator who does their own quoting walks. The moment they win the job and realize they don't have to re-photograph the site for the crew.
 
 **Pain before OPS**: Operator walks the site to scope a quote. Takes photos and notes on their personal phone. Two weeks later the client signs. The operator now has to re-share photos with the crew, re-explain what they saw, and remember measurements that were scribbled in a notebook somewhere.
 
-**Relief after OPS**: Operator books the site visit in OPS. Walks the site, takes photos and notes in the app. Lead is in `qualifying`. Client signs. Pipeline auto-advances to `won`. The site-visit photos materialize on the new project automatically — the crew sees them on day one.
+**Relief after OPS**: Operator opens Site Visit from the FAB or an existing lead. Walks the site, captures client details when they come up, picks the right visit type, captures photos, markup, notes, measurements, checklist answers, and any CanPro deck design in the app. The reviewed site-visit packet creates the project from the captured information — the crew sees it on day one.
 
-**Differentiator vs competitors**: Site visit photos carry through to the project on win — zero re-entry. Most trades software treats site visits (when it has them at all) as a stand-alone appointment type with photos that live on the appointment, not the project. OPS makes the site visit the *beginning* of the project: the same data, photos, and notes flow forward without manual copy.
+**Differentiator vs competitors**: Site visit client details, photos, notes, measurements, markup, visit-specific checklist answers, and CanPro deck-design work carry through to the project — zero re-entry. Most trades software treats site visits (when it has them at all) as a stand-alone appointment type with photos that live on the appointment, not the project. OPS makes the site visit the *beginning* of the project: the same contact data, photos, notes, checklist answers, and design evidence flow forward without manual copy.
 
 **Approved positioning lines** (verbatim, OPS voice):
 - **Headline (5–7 words)**: `WALK THE SITE. NOTHING GETS LOST`
-- **Subhead (1 sentence)**: Schedule a site visit, take photos and notes on-site, win the job — and every photo carries through to the project automatically.
-- **Expanded (2–3 sentences)**: Most software treats the site visit as a separate thing. OPS treats it as the start of the project. Book it, walk it, document it on your phone. When the client says yes, the photos you took during scoping show up on the project the crew sees on day one. You don't take them again.
+- **Subhead (1 sentence)**: Start a site visit, take photos and notes on-site, link the lead, and turn the captured packet into the project.
+- **Expanded (2–3 sentences)**: Most software treats the site visit as a separate thing. OPS treats it as the start of the project. Walk it, document it on your phone, and collect client details when the timing is right. When the project is created, the photos, notes, measurements, and design work from scoping are already there.
 
 **Don't say**:
 - "Site survey" (formal; trades say "walk the site")
