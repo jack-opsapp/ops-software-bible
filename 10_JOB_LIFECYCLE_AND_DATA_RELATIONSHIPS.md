@@ -1687,17 +1687,27 @@ Core principles:
 
 #### Lead intake terminality and reactivation contract (prepared 2026-07-31)
 
-The owner-fenced nonterminal checkpoint is live. The 2026-08-05 provider-health
-split is merged only into local OPS-Web `main` at `7a74e1cd`; its migration is
-unapplied and the code is not deployed. Other prepared reactivation pieces in
-this subsection retain their explicitly dated rollout status.
+The owner-fenced nonterminal checkpoint is live. Production migration record
+`20260805190312_email_provider_snapshot_health`, from repository source
+`20260805151056_email_provider_snapshot_health.sql`, makes the 2026-08-05
+provider-health split live in the database. OPS-Web commit
+`146f6d69c4d52d985bc516c0453db6590f92cf97` was promoted as deployment
+`dpl_6gxJ4P8dv7ohpXpi1wbbdPuyR7FY`; runtime proof drained the derived queue from
+seven IDs to zero and advanced both health timestamps. The current customer
+domain was subsequently superseded by deployment
+`dpl_2pmEULv4sbwCwjB4HbPd8XY9ofgh` at
+`d34427922cafda3fb17769a044941a6b6218ac64`, which does not contain the repair.
+The schema remains live, but a durable web release requires integrating
+`146f6d69` onto current `origin/main`, rerunning the release gates, and
+pushing/deploying main. Other prepared reactivation pieces in this subsection
+retain their explicitly dated rollout status.
 
 - **Terminal sync authority:** `last_synced_at` means the provider snapshot and
   all bounded derived lead-summary work are complete. A structured Gmail
   cursor, M365 folder/message page remainder, expired-history recovery page,
   pending lead summary, or active sync is end-to-end nonterminal. A
   nonterminal cycle publishes only an owner-fenced `history_id` checkpoint; it
-  cannot advance `last_synced_at`. Prepared `provider_snapshot_at` may advance
+  cannot advance `last_synced_at`. Live `provider_snapshot_at` may advance
   from the database clock when the provider cursor alone is terminal, so
   heartbeat health no longer depends on downstream model completion. Nullable
   rollout rows fall back to `last_synced_at`. The scheduler still bypasses the
@@ -2223,7 +2233,7 @@ Provider identity and cursor rules:
 - `last_synced_at` is the end-to-end high-water mark only when every provider
   page, discovered message, recovery page, and bounded derived summary is
   durable. The owner-fenced nonterminal checkpoint updates `history_id`
-  without touching it; terminal completion advances it. Prepared
+  without touching it; terminal completion advances it. Live
   `provider_snapshot_at` is the narrower provider-health high-water mark and
   may advance only when the decoded Gmail/M365 provider cursor is terminal,
   even if derived summary IDs remain. Classification and Phase C retry workers
