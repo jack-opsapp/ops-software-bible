@@ -1059,7 +1059,7 @@ These events are automatically sent to Google Ads:
 
 ### Google Ads Reporting Integration (admin analytics)
 
-**Status: LIVE as of 2026-08-05.** The developer token received Google Basic API access approval on 2026-08-05; prior to that every sync failed with `DEVELOPER_TOKEN_NOT_APPROVED` and all warehouse tables sat empty. Verified live the same day via a direct v23 REST call (HTTP 200, account `5448339076` "OPS LTD", CAD).
+**Status (2026-08-05): token approved; client fix awaiting deploy.** The developer token received Google Basic API access approval on 2026-08-05; prior to that every sync failed with `DEVELOPER_TOKEN_NOT_APPROVED` and all warehouse tables sat empty. Verified live the same day via a direct v23 REST call (HTTP 200, account `5448339076` "OPS LTD", CAD). The first real call then surfaced a latent bug: the client sent `pageSize: 10000`, which the API rejects with `PAGE_SIZE_NOT_SUPPORTED` (400) — invisible for months because the token gate (403) fired first. Fixed by removing the field (pages are fixed at 10k rows; `nextPageToken` pagination unchanged) in commit `d3442792` on `fix/google-ads-page-size`; everything below goes live once that deploys.
 
 The reporting direction (Google Ads → OPS) is entirely separate from the conversion events above (OPS → Google Ads).
 
