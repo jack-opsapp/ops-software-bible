@@ -4274,7 +4274,9 @@ These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AN
 - **Migration `20260723214524_company_mailbox_intake_owner.sql`** adds the guarded company-mailbox owner FK/index, immutable `company_mailbox_default` assignment source, one service-role atomic live create-and-disposition RPC, and the fully private `unassigned_lead_assignment_deliveries` outbox plus service-only lease RPCs. It is forward-only: existing connection owners remain null, existing opportunity source-key rows are returned unchanged, and no historical opportunity is scanned or changed.
 - **Migrations `20260723224713_guarded_orphan_outbound_email_activity_adoption.sql` and `20260723225112_shorten_guarded_orphan_outbound_email_activity_rpc.sql`** add one service-role-only adapter for an exact outbound email activity that was inserted before its provider thread acquired a canonical opportunity owner, then give it the PostgreSQL-safe canonical name `adopt_orphan_outbound_email_activity_guarded_as_system`. Callers must use only that canonical identifier; the initial longer identifier exceeded PostgreSQL's 63-byte limit and was server-truncated. The RPC binds the repair to the current physical mailbox lease, active connection mirror, immutable `(connection_id, provider_thread_id)` owner, exact provider message and activity payload, and active target opportunity. It token-gates the single `NULL → canonical opportunity` child update and records canonical outbound correspondence in the same transaction; any ownership, lease, payload, or event conflict rolls the adoption back. It does not change stage, assignment, project state, or provider state, and it runs only during ordinary forward sync rather than as a historical backfill.
 - **Migration `20260731183127_fix_manual_outbound_follow_up_lifecycle_conflict_target.sql`** is the repository record of the production hotfix applied on 2026-07-31. `reconcile_manual_outbound_follow_up_cycle_as_system` now targets `opportunity_lifecycle_state_pkey` by constraint name; `ON CONFLICT (opportunity_id)` is invalid in this `RETURNS TABLE` function because its output also exposes `opportunity_id`. Execute remains service-role-only.
-- **Prepared migrations `20260731203000_email_sync_terminal_checkpoint.sql`, `20260731210000_event_driven_archived_lead_reactivation.sql`, and `20260801003000_fix_contact_form_draft_rpc_identifiers.sql` are not applied as of 2026-08-01.** The first adds an owner-fenced nonterminal cursor checkpoint that cannot advance `last_synced_at`. The second adds exact-thread inbound reactivation, mailbox-owner/assignment-review disposition, assignment-version-fenced deliveries, and an archived-stage transition guard. The third exposes PostgreSQL-safe service-only names for the contact-form provider-create reservation and uncertain-outcome reconciliation RPCs; their original 67- and 74-byte declarations exist in the catalog only under server-truncated names and therefore cannot be resolved by PostgREST using the application strings. None of these migrations backfills or assigns historical leads.
+- **Migration `20260731203000_email_sync_terminal_checkpoint.sql` is live as of the 2026-08-05 schema readback.** It adds the service-role-only, owner-fenced nonterminal cursor checkpoint that may publish `history_id` but cannot advance `last_synced_at`.
+- **Prepared migrations `20260731210000_event_driven_archived_lead_reactivation.sql` and `20260801003000_fix_contact_form_draft_rpc_identifiers.sql` were not applied as of 2026-08-01.** The first adds exact-thread inbound reactivation, mailbox-owner/assignment-review disposition, assignment-version-fenced deliveries, and an archived-stage transition guard. The second exposes PostgreSQL-safe service-only names for the contact-form provider-create reservation and uncertain-outcome reconciliation RPCs; their original 67- and 74-byte declarations exist in the catalog only under server-truncated names and therefore cannot be resolved by PostgREST using the application strings. Neither migration backfills or assigns historical leads.
+- **Prepared migration `20260805151056_email_provider_snapshot_health.sql` is source-only and unapplied as of 2026-08-05.** It adds nullable `email_connections.provider_snapshot_at`, extends the checkpoint RPC with trailing optional `p_provider_snapshot_complete`, and makes terminal completion advance provider health from the database clock. The original positional fourth argument remains `p_clear_recovery`, so applying the migration before deploying OPS-Web is backward compatible with the old server. The matching source repair is local-main OPS-Web commit `7a74e1cd`; no production schema or deployment change was made by the nightly worker.
 - **Prepared migration `20260802163538_keep_contact_form_mailbox_busy_retryable.sql` is not applied as of 2026-08-02.** It adds nullable `email_assignment_contact_form_draft_queue.mailbox_busy_since`, a partial operational index, a private canonical physical-mailbox lease predicate, a service-only mailbox-aware claim replacement, and one persistent notification lifecycle after an hour of continuous contention. Due rows are marked once and excluded before the bounded worker limit while the lease is active, preventing attempt churn, repeat model work, provider polling, and healthy-mailbox starvation. A post-claim acquisition race returns to the same wait; provider-create uncertainty and stale assignment retain stricter outcomes. The generalized repair returns only exact `failed` contention rows with both provider-create markers null to the guarded queue. It changes no provider, draft-history, opportunity, or assignment record directly; the normal worker gates run again before provider access. OPS-Web commits: `92344a64`, `865bab6e`.
 
 ### email_connections
@@ -4338,15 +4340,28 @@ CREATE TABLE email_connections (
 
 Token columns (`access_token`, `refresh_token`) are accessed via service role only in API routes — not exposed to client via RLS column-level restrictions.
 
-**Current cursor and health authority (2026-07-31 prepared contract).** The live
+**Current cursor and health authority (2026-08-05 source contract).** The live
 column names used by the sync engine are `history_id`, `last_synced_at`,
 `history_recovery_anchor`, `history_recovery_page_token`,
 `history_recovery_target_token`, `sync_in_progress_at`, and `sync_lock_owner`.
-A structured Gmail cursor, a recovery page token, pending derived lead
-summaries, or an active sync means the mailbox snapshot is nonterminal.
+A structured Gmail provider remainder, an M365 folder/message page remainder,
+a recovery page token, pending derived lead summaries, or an active sync means
+the end-to-end mailbox snapshot is nonterminal. The live
 `persist_email_connection_sync_checkpoint_as_system` may publish the
 owner-fenced `history_id` continuation but deliberately cannot update
-`last_synced_at`; only the existing terminal completion function may do both.
+`last_synced_at`; only terminal completion advances that end-to-end timestamp.
+
+Prepared migration `20260805151056_email_provider_snapshot_health.sql` adds a
+second, provider-only health timestamp: nullable `provider_snapshot_at`.
+Checkpoint publication advances it from the database clock only when the
+decoded provider cursor is terminal, independently of a remaining derived
+lead-summary queue. Gmail structured cursors remain provider-pending. M365 v2
+is provider-terminal only when the folder cursor is a Graph `$deltatoken` and
+`pendingFolderIds` is empty; folder `$skiptoken`, pending-folder, legacy v1,
+and raw URL cursors fail closed as pending. Heartbeat classification uses
+`provider_snapshot_at` with `last_synced_at` as the nullable rollout fallback.
+The migration must be applied and read back before the matching OPS-Web commit
+is deployed.
 
 `default_intake_owner_id` is valid only on `type='company'` connections. The
 database requires an active, nondeleted user in the same company with effective

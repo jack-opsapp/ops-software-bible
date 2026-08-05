@@ -1687,16 +1687,21 @@ Core principles:
 
 #### Lead intake terminality and reactivation contract (prepared 2026-07-31)
 
-This contract is implemented on an isolated OPS-Web branch and is not deployed
-or applied to production as of 2026-07-31.
+The owner-fenced nonterminal checkpoint is live. The 2026-08-05 provider-health
+split is merged only into local OPS-Web `main` at `7a74e1cd`; its migration is
+unapplied and the code is not deployed. Other prepared reactivation pieces in
+this subsection retain their explicitly dated rollout status.
 
 - **Terminal sync authority:** `last_synced_at` means the provider snapshot and
   all bounded derived lead-summary work are complete. A structured Gmail
-  cursor, expired-history recovery page token, pending provider message,
-  pending lead summary, or active sync is nonterminal. A nonterminal cycle
-  publishes only an owner-fenced `history_id` checkpoint; it cannot advance
-  `last_synced_at`. The scheduler bypasses the ordinary per-connection interval
-  until the continuation terminates.
+  cursor, M365 folder/message page remainder, expired-history recovery page,
+  pending lead summary, or active sync is end-to-end nonterminal. A
+  nonterminal cycle publishes only an owner-fenced `history_id` checkpoint; it
+  cannot advance `last_synced_at`. Prepared `provider_snapshot_at` may advance
+  from the database clock when the provider cursor alone is terminal, so
+  heartbeat health no longer depends on downstream model completion. Nullable
+  rollout rows fall back to `last_synced_at`. The scheduler still bypasses the
+  ordinary per-connection interval until the full continuation terminates.
 - **Manual contract:** manual sync returns HTTP 200 `complete`, HTTP 202
   `continuing`, or retryable non-2xx `partial`/`failed`. A resolved
   `SyncEngine.runSync` result containing errors is not success.
@@ -2215,13 +2220,15 @@ Source: web `feat/lead-lifecycle-auto-disposition` → ops-web `main` (PR #84, s
 A single company can connect both providers (e.g., owner uses Gmail, office manager uses M365). Each connection is a separate `email_connections` row with its own sync profile, webhook subscription, and sync token. The target connection identity is normalized email unique by `(company_id, provider, email)`, so the same address may exist once per provider without sharing tokens, cursors, webhook state, or settings. Expand migration `2030` adds that identity alongside the live provider-agnostic index and normalizes old/new callbacks; post-deploy contract migration `2050` removes the old index. Client matching and duplicate detection operate across all connections for a company.
 
 Provider identity and cursor rules:
-- A cursor is a high-water mark only when every provider page, discovered
-  message, recovery page, and bounded derived summary is durable. The
-  owner-fenced nonterminal checkpoint updates `history_id` without touching
-  `last_synced_at`; terminal completion updates both. Classification and Phase
-  C retry workers also fail closed while `sync_in_progress_at` is nonnull, so
-  the old terminal cursor cannot authorize work during assembly of the next
-  snapshot.
+- `last_synced_at` is the end-to-end high-water mark only when every provider
+  page, discovered message, recovery page, and bounded derived summary is
+  durable. The owner-fenced nonterminal checkpoint updates `history_id`
+  without touching it; terminal completion advances it. Prepared
+  `provider_snapshot_at` is the narrower provider-health high-water mark and
+  may advance only when the decoded Gmail/M365 provider cursor is terminal,
+  even if derived summary IDs remain. Classification and Phase C retry workers
+  also fail closed while `sync_in_progress_at` is nonnull, so an older terminal
+  cursor cannot authorize work during assembly of the next snapshot.
 - Gmail history expiry takes an overlap from the last successful sync (or connection creation on first setup) and stores a durable recovery triple on `email_connections`: anchor, `messages.list` page token, and fresh target history ID. Each fully persisted page advances the stored continuation, so a gap larger than one function invocation resumes instead of restarting forever. The fresh history ID becomes the normal cursor only after every recovery page and message is durable. Disconnect preserves both provider identity and the prior normal cursor; any incomplete recovery also remains resumable and fails closed rather than skipping the gap.
 - Microsoft 365 stores one mail-folder delta plus one message delta/continuation per discovered live folder in a versioned `m365:v2` cursor. A durable pending-folder queue covers Inbox, Sent, Archive, and rule/custom folders under one 50-page cycle budget. The returned cursor becomes durable only after its messages are durable; legacy Inbox/Sent or raw cursors replay a complete folder inventory. Unsent drafts are excluded.
 - Every Microsoft Graph message/subscription request asks for `IdType="ImmutableId"`, so moving a message between folders does not change the dedupe identity. Folder/message `@removed` tombstones advance only their proven streams and are not normalized as correspondence. Full-thread reads follow `@odata.nextLink` and fail explicitly if the safety bound is exceeded.
