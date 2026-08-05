@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: 2026-07-23
+**Last Updated**: 2026-08-04
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -2394,6 +2394,43 @@ The live follow-up `migrations/20260720005500_fix_expense_batch_recalculation_al
 **Sentinel evidence (all against prod, in rolled-back transactions)** — `request.jwt.claims` simulation across Canpro + Maverick (admin + member each), a pure ops-admin, and raw anon confirmed every scoping predicate; end-to-end `SET ROLE anon` proved qa_bugs row visibility = {operator 234, member 0, anon 0} and the hardened `get_inbox_density_per_client` = {own-company 241, cross-company 0, raw anon 0}.
 
 **Applied 2026-07-03 (operator-approved):** M1–M4 + a follow-up (M6) are **live on prod** (advisor delta 167 → 149; smoke check: a live Canpro admin still sees 332 projects / 407 photos / 395 clients / 437 opportunities). M6 revokes anon/authenticated grants on the `asc_conversion_daily` **security_invoker view** — a 9th App Store object surfaced during post-apply verification; M4 had already closed its read path (base-table revoke), M6 removes the vestigial grant. The seven other anon-granted `security_invoker` views (`inventory_*`, `project_table_rows`) are intentional company-scoped product views and were left in place. M5 (function-body hardening) was **corrected before apply**: `remove_seated_employee`'s only caller is the iOS account-self-deletion cleanup (target already soft-deleted), not admin removal, so its guard was retargeted from "admin of the company" to "target is an already-soft-deleted member" (blocks evicting active members; permits the cleanup). M5 remains **pending operator go**.
+
+### SYSTEMS REPAIR Wave 1 — server-side repairs (2026-07-29)
+
+Wave 1 of the SYSTEMS REPAIR plan (`specs/2026-07-29-systems-repair-plan.md`), which
+executes the fixes found by the 2026-07 SYSTEMS AUDIT (settings / sync / database /
+photos). Every item here is **server-side only** — no app release was required, so all
+shipped iOS builds picked the changes up immediately. Applied directly to prod
+`ijeekuhbatykdomumfjx` under the operator's wave approval.
+
+| Migration / action | Change |
+|---|---|
+| `add_estimates_notes_for_ios_ar_decks` | `ALTER TABLE estimates ADD COLUMN notes text` (nullable, additive). iOS `CreateEstimateDTO` has always carried a `notes` key with no backing column, so every AR-measured deck estimate died on PGRST204 (`DeckBuilder/DeckBuilderViewModel.swift:4169-4177` always sends `arAccuracyNote`). Manual decks survived only because a nil value is omitted from the payload. See `09_FINANCIAL_SYSTEM.md` § EstimateDTOs.swift. |
+| `fix_feature_requests_insert_policy_anon_bridge` | Dropped the legacy `auth.role() = 'authenticated'` INSERT policy (dead under the Firebase bridge, which executes as **anon**) and replaced it with `TO anon, authenticated WITH CHECK (company_id = private.get_user_company_id()::text)`, mirroring `bug_reports`. Because the iOS payloads (`Views/Settings/Components/ReportIssueView.swift:166-177` "Report Issue", `Views/Settings/WhatsNewView.swift:254-264` feature voting) send no `user_id`/`company_id` at all, a `BEFORE INSERT` trigger `trg_feature_requests_00_stamp_identity` stamps both from the resolved bridge identity (`private.resolve_uid()`, `private.get_user_company_id()`); RLS `WITH CHECK` evaluates the post-trigger row, so tenancy passes exactly when the requester resolves to a real user with a company. `COALESCE` means service-role callers (the `submit-feature-request` edge function) keep their explicit values. Both iOS feedback flows had produced **zero** rows since launch. |
+| `project_photos_update_grants_and_write_guard` | Column-scoped `GRANT UPDATE (deleted_at, is_client_visible, caption)` to `anon, authenticated` + `BEFORE UPDATE` guard `trg_project_photos_00_write_guard`. Full contract and rationale in `07_SPECIALIZED_FEATURES.md` § Synced `project_photos` gallery store. Bug `1154fe67`. |
+| Edge-function tombstones (no migration — `deploy_edge_function`) | `delete-user` and `terminate-employee` replaced with `410 Gone` bodies that log the caller, and flipped to `verify_jwt = true`. Bug `ba6a5b79`. |
+
+**Edge-function kill detail.** `delete-user` accepted **any** valid Supabase-auth session and
+would soft-delete the named user *and* delete their Supabase Auth account — no admin check,
+no company check. `terminate-employee` verified the caller was an admin of the **posted**
+`companyId` but never checked that the *target* belonged to that company, so an admin of one
+tenant could strip users in any other. Both ran `verify_jwt = false` with CORS `*`. They were
+killed rather than hardened because a fresh grep of `ops-ios`, `ops-web` (including
+`supabase/functions/`) and `ops-site` found **zero** invocations — the flows are served today
+by the web account-deletion route and web team management. The Supabase management API has no
+delete operation for edge functions, so a tombstone is the kill; the last deployed sources are
+archived with provenance under `migrations/graveyard/`. Verified live: unauthenticated POST →
+`401` (jwt verification now on), POST with a valid anon JWT → `410`.
+
+**Policy-drop note.** The RESTRICTIVE `project table photos update requires project edit`
+policy was dropped as part of the photo-grant work. It gated updates on
+`private.current_user_can_edit_project()`, which every non-admin crew member fails — verified
+against prod, where non-admin users resolve to a NULL `projects.edit` scope — so keeping it
+would have made the newly-granted, deliberately company-wide visibility toggle unreachable for
+exactly the people meant to use it. Tenancy is still enforced by the PERMISSIVE
+`company_isolation` policy (an `ALL` policy with only a `USING` clause applies that expression
+as its `WITH CHECK` too, so cross-company updates are rejected on both sides), and the
+RESTRICTIVE hard-`DELETE` denial is untouched.
 
 ### Web Implementation Reference
 
