@@ -1148,7 +1148,7 @@ Activity: Sent Estimate #042 to John Smith        ● 2 hours ago
 
 A scheduled or ad-hoc visit to a job site for scope assessment, client meeting, or project check-in. Can exist before a project (on an Opportunity) or after (on a Project).
 
-> **iOS status (updated 2026-06-27)**: Lead detail, New Lead, and the FAB Site Visit action now open a dedicated site-visit capture console (`OPS/OPS/Views/SiteVisits/SiteVisitCaptureView.swift`). The FAB path can start without a linked lead. The console creates or reuses an active `SiteVisit`, autosaves a `SiteVisitIdentityDraft` for client/lead details, captures a local-first packet of photos, dictated/typed notes, manual measurements, real dimensioned-photo captures, feature-gated deck-design references, and selected/custom checklist answers, then stages the reviewed packet for project creation after a lead is linked.
+> **Durable sync status (production database/web contract live 2026-08-02):** Lead detail, New Lead, and the FAB open `OPS/Views/SiteVisits/SiteVisitCaptureView.swift`; the FAB can start without a lead. Parent, identity draft, evidence artifacts, and per-visit checklist snapshots have an atomic phone outbox, normalized Supabase contract, inbound delta/Realtime reconciliation, cross-device resume, guarded completion, and protected logout recovery. The normalized schema and invoker-safe completion boundary are live in production; the updated iOS client is committed and simulator-verified but is not customer-distributed until its signed device/App Store gate completes.
 
 ```typescript
 type SiteVisitStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled'
@@ -1204,8 +1204,9 @@ START SITE VISIT FROM FAB
 
 ON-SITE (staff opens visit on mobile/web)
   → SiteVisit.status → in_progress
-  → SiteVisitIdentityDraft autosaves client/contact/address/search fields locally
-  → Selected SiteVisitType fields snapshot into SiteVisitChecklistAnswer rows
+  → Parent + SyncOperation commit together on the phone
+  → SiteVisitIdentityDraft autosaves client/contact/address fields and queues behind the parent
+  → Selected phone-local SiteVisitType fields snapshot into cloud-backed SiteVisitChecklistAnswer rows
   → If the attached lead, client, or address is wrong:
       Operator expands the lead/client panel
       Corrects address/contact/client fields inline
@@ -1223,10 +1224,15 @@ ON-SITE (staff opens visit on mobile/web)
   → Checklist fields autosave as the operator answers them
   → Photo, measurement, and deck-design checklist fields can use the matching captured evidence already in the packet
   → Operator can add ad-hoc checklist questions during the visit
+  → Original/rendered/thumbnail media upload to a server-derived visit object key
+  → Another authorized device can pull and resume the in-progress packet
 
 MARK COMPLETE
-  → SiteVisit.status → completed, completedAt = now
-  → Activity auto-created on Opportunity timeline:
+  → Phone atomically queues any final edits/media and one guarded completion command
+  → // VISIT SAVED confirms durable phone custody; Pending Work remains visible until server ACK
+  → public.complete_site_visit_guarded locks/authorizes the parent
+  → SiteVisit.status → completed, completedAt = first completion time
+  → Exactly one Activity is inserted/reused on the related timeline:
       type: site_visit
       subject: "Site visit completed"
       content: siteVisit.notes (preview)
@@ -1237,7 +1243,9 @@ MARK COMPLETE
 
 JOB WON (opportunity converts to project)
   → For each reviewed photo artifact:
-      ProjectPhoto created (source: 'site_visit', siteVisitId: siteVisit.id)
+      Existing remote visit object reused by ProjectPhoto
+      source = 'site_visit', siteVisitId = siteVisit.id
+      active (company, project, visit, URL) uniqueness prevents retry duplicates
   → Reviewed notes/transcripts/measurements become a project note
   → Answered checklist lines become part of the same project note
   → Reviewed deck-design artifact attaches the standalone DeckDesign to the project
@@ -1245,13 +1253,15 @@ JOB WON (opportunity converts to project)
 ```
 
 **SiteVisitService methods:**
-- `createSiteVisit(data)` — creates visit + calendar event + activity
+- `createSiteVisit(data)` — creates the visit; scheduling activity/calendar behavior remains owned by the calling surface
 - `startSiteVisit(id)` — status → in_progress
-- `completeSiteVisit(id, data)` — status → completed, creates completion activity
+- `completeSiteVisit(id, data)` — calls `complete_site_visit_guarded`; completes and creates/reuses one activity atomically
 - `cancelSiteVisit(id)` — status → cancelled
-- `uploadSiteVisitPhoto(id, file)` — uploads to S3, appends URL to photos[]
+- `POST /api/uploads/presign` with `targetType=site_visit` — authorizes the active visit and derives `site-visits/{company}/{visit}/{artifact}/{variant}.{ext}`
 - `fetchSiteVisitsForOpportunity(opportunityId)` — all visits for a lead
 - `fetchSiteVisitsForProject(projectId)` — all visits for a project
+
+**Failure/recovery rules:** the phone drains parent → children → media → completion and safely retries every step. A missing legacy parent is reconstructed only from exact same-company, valid, non-conflicting child evidence. Unsafe evidence is encrypted and shown as protected Pending Work with no generic Retry. Voluntary logout waits briefly for a real server ACK and asks before discard; forced logout encrypts unsent packets/media for the exact user+company before wiping shared SwiftData. Another signed-in account cannot see or delete that vault.
 
 ---
 
@@ -1404,18 +1414,21 @@ For each lineItem WHERE lineItem.type = 'LABOR':
 
 ### Automation D: Site Visit Completed → Opportunity Stage Advance
 
-**Trigger:** `SiteVisit.status → completed`
+**Trigger:** guarded site-visit completion transaction
 
 **Flow:**
-1. Auto-create Activity on Opportunity timeline (type: `site_visit`)
+1. `complete_site_visit_guarded` completes the visit and inserts/reuses one Activity (`type: site_visit`) in the same transaction
 2. Prompt: "Ready to build an estimate?" (dismissible)
 3. If Yes → open Estimate creation form pre-linked to this opportunity → `opportunity.stage → quoting`
 
 **iOS review sheet (bug 56c37df2 follow-on, site-visit report).** The review
 sheet has two exits, and completing a visit must **never** auto-convert the
 lead to WON:
-- **SAVE VISIT** (primary) — completes the visit, posts the timeline activity,
-  and moves the bound lead to the operator-selected stage. The default comes
+- **SAVE VISIT** (primary) — commits the complete packet and completion command
+  durably on the phone, then drains it to the guarded server transaction. The
+  `// VISIT SAVED` toast confirms local custody; Pending Work remains visible
+  until the server ACK. The completion transaction posts the timeline activity exactly once
+  and the phone moves the bound lead to the operator-selected stage. The default comes
   from `SiteVisitStageDefault.defaultStage(current:)`: a `new_lead` advances to
   `qualifying`; a lead already in flight holds (never regresses); a terminal
   lead is never touched. The operator can pick any non-terminal stage from the
@@ -1434,15 +1447,16 @@ lead to WON:
 **Flow:**
 ```
 For each SiteVisit WHERE siteVisit.opportunityId = opportunity.id:
-  For each photo URL in siteVisit.photos:
-    Create ProjectPhoto {
+  For each reviewed active photo artifact:
+    Reuse its existing remote object URL in ProjectPhoto {
       projectId: opportunity.projectId,
       url: photo,
       source: 'site_visit',
       siteVisitId: siteVisit.id,
       uploadedBy: siteVisit.createdBy,
-      takenAt: null
+      takenAt: artifact.capturedAt
     }
+  Retry resolves the same active row by (company, project, visit, URL)
 ```
 
 ---
@@ -2852,13 +2866,16 @@ PATCH /obj/project/:id           (add opportunityId field)
 PATCH /obj/calendarevent/:id     (add eventType, opportunityId, siteVisitId fields)
 ```
 
-### Supabase Tables — status (corrected 2026-05-10)
+### Supabase Tables — status (site-visit contract verified 2026-08-02)
 
 The list below was originally written as "tables needed." A live audit on 2026-05-10 found `project_photos` already exists in production — schema and use documented below. Other tables in this list may also be stale; a full audit is a separate follow-up.
 
 ```sql
 -- activity_comments               (status TBD)
--- site_visits                     (status TBD)
+-- site_visits                     EXISTS IN PROD (company_id is text)
+-- site_visit_artifacts            EXISTS IN PROD (company_id text; Realtime; RLS)
+-- site_visit_checklist_answers    EXISTS IN PROD (company_id text; Realtime; RLS)
+-- site_visit_identity_drafts      EXISTS IN PROD (company_id text; Realtime; RLS)
 -- project_photos                  EXISTS IN PROD — see schema below
 -- email_connections               (renamed from gmail_connections, status TBD)
 -- opportunity_email_threads       (status TBD)
@@ -3040,9 +3057,9 @@ Invoices are fully implemented on iOS with the following views in `OPS/OPS/Views
 | `InvoiceCard.swift` | Summary card for invoice lists |
 | `PaymentRecordSheet.swift` | Record a payment against an invoice |
 
-#### SiteVisit — iOS Capture Packet (Built 2026-06-26, identity panel updated 2026-06-27, conversion durability fix 2026-07-13)
+#### SiteVisit — iOS capture and durable sync (built locally through 2026-08-01)
 
-The `SiteVisit` data model exists at `OPS/OPS/DataModels/Supabase/SiteVisit.swift`; `opportunityId` is optional so the FAB can start capture before a lead is selected. Lead detail, New Lead, and the FAB now open a full-screen site-visit capture console from `OPS/OPS/Views/SiteVisits/`.
+The `SiteVisit` data model exists at `OPS/DataModels/Supabase/SiteVisit.swift`; `opportunityId` is optional so the FAB can start capture before a lead is selected. Lead detail, New Lead, and the FAB open a full-screen capture console from `OPS/Views/SiteVisits/`. The durable sync additions below are committed on the local feature branch but require the unapplied server migration and a future iOS release before they are customer-live.
 
 Built iOS files:
 
@@ -3056,6 +3073,14 @@ Built iOS files:
 | `SiteVisitProjectHandoffStore.swift` | In-memory fast path staging the reviewed packet between the review sheet and the conversion sheet; when it is empty at conversion (app kill in between), the sheet falls back to `SiteVisitProjectHandoff.derivePayload` |
 | `SiteVisitCaptureArtifact.swift` | SwiftData model for the local pre-project packet and reviewed project payload |
 | `SiteVisitType.swift` | SwiftData models for company-scoped visit templates, custom fields, and per-visit checklist answer snapshots |
+| `Network/Supabase/DTOs/SiteVisitDTOs.swift` | Strict UUID/status/wire conversion for parent and normalized child tables plus completion response |
+| `Network/Supabase/Repositories/SiteVisitRepository.swift` | Company-scoped CRUD, bundle fetch, sparse parent updates, and guarded completion RPC |
+| `Services/SiteVisitPersistenceCoordinator.swift` | One local transaction for state + parent-first durable operation chain |
+| `Network/Sync/SiteVisitOutboundSync.swift` | Typed operation dispatcher and server ACK reconciliation |
+| `Network/Sync/SiteVisitMediaSyncManager.swift` | Restart-safe original/rendered/thumbnail upload through the visit-authorized presign contract |
+| `Network/Sync/SiteVisitServerMerge.swift` | Dirty-field-preserving inbound merge and authoritative terminal-state reconciliation |
+| `Network/Sync/SiteVisitOrphanRecovery.swift` | Same-company legacy parent reconstruction; foreign/malformed/ambiguous quarantine |
+| `Network/Sync/SiteVisitRecoveryVault.swift` | AES-GCM, exact-account, phone-local custody across forced logout |
 
 The site-visit measure-photo action now uses the real dimensioned capture/annotation screen when `feature.measurement.dimensioned_capture` and device capability allow it. Simulator and no-AR devices still cannot validate LiDAR hardware capture; physical-device QA is required before claiming the scanner is field-proven.
 

@@ -1327,6 +1327,32 @@ Live apply status must be verified during rollout. Supabase MCP records its own 
 
 ---
 
+## Site-visit cloud sync contract (production database live 2026-08-02)
+
+**Release status:** migrations `20260731235533_site_visit_cloud_sync.sql`, `20260802093608_site_visit_completion_rpc_security_boundary.sql`, and `20260802102853_site_visit_fk_indexes.sql` are applied in production and mirrored in this Bible. Production-generated web database types include the new tables and RPC. The iOS implementation remains outside customer distribution pending its signed device/App Store gate.
+
+### `public.complete_site_visit_guarded(p_site_visit_id uuid, p_completion jsonb) → jsonb`
+
+One transaction owns completion and its timeline effect. The public Data API function is SECURITY INVOKER and delegates to a pinned SECURITY DEFINER implementation in `private`, which is not exposed through the Data API. The private function validates an allowlisted, bounded completion object (`notes`, `measurements`, `photos`, `internal_notes`), locks the visit, authorizes through the existing Firebase-aware site-visit edit helper, requires exact caller-company equality, rejects deleted/cancelled visits, refreshes legacy notes/measurements/photos from normalized children, moves status monotonically to `completed`, and preserves the first `completed_at`.
+
+If the visit has an opportunity, client, or project parent, the transaction inserts or updates its single `activities(type='site_visit', site_visit_id=visit.id)` row and writes the resulting id to `site_visits.activity_id`. Partial unique index `activities_site_visit_completion_uidx` and `ON CONFLICT (site_visit_id) WHERE type='site_visit'` make retry after an interrupted response idempotent. Return shape: `{ "visit": <site_visits row>, "activity_id": <uuid|null> }`. Execute is granted only to `anon, authenticated`; the function has a pinned search path. Callers: `OPS/Network/Supabase/Repositories/SiteVisitRepository.swift` and `ops-web/src/lib/api/services/site-visit-service.ts`.
+
+### `POST /api/uploads/presign` — `targetType=site_visit`
+
+Site-visit media uses the existing authenticated presign endpoint with a closed target contract:
+
+- request: canonical lowercase `siteVisitId` and `artifactId`, `variant` in `original | rendered | thumbnail`, approved image MIME type, and `fileSize` from 1 byte through the endpoint maximum;
+- the request cannot supply `folder`; the server resolves the Firebase bridge identity, rate-limits the actor, requires a canonical UUID company id, and reads the active visit through the user's scoped Supabase client with exact `(id, company_id)` equality;
+- unauthorized lookup failures are non-revealing (`403` authorization failure or `404` unavailable); the phone never receives another tenant's path;
+- derived key: `site-visits/{company_uuid}/{site_visit_uuid}/{artifact_uuid}/{variant}.{ext}`;
+- backend: the existing S3 or Supabase-storage presign implementation; the artifact row is updated only after upload success.
+
+Account deletion invokes `eraseSiteVisitPrefix(companyId)` after the transactional database purge. It paginates and deletes only `site-visits/{company_uuid}/`, rejects out-of-prefix results and partial deletes, and is idempotent on an empty prefix. There is deliberately no server-side upload receipt, delivery, event, queue, or outbox table.
+
+### Mobile transport and reconciliation
+
+`SiteVisitPersistenceCoordinator` commits local model mutations and their `SyncOperation` rows atomically. Dependencies enforce parent → artifacts/checklist/identity → media → completion. `SiteVisitOutboundSync` maps each operation to `SiteVisitRepository`; `InboundProcessor` and `RealtimeProcessor` fetch/subscribe to all four tables; `SiteVisitServerMerge` preserves unsent dirty fields while accepting authoritative server state. The local queue is retry machinery only and is encrypted into `SiteVisitRecoveryVault` during forced logout; it is not a Supabase company-data table.
+
 ## Guarded Sync-Recovery RPCs (2026-07-22)
 
 Two prod contract changes landed with the SYNC RECOVERY initiative (migrations
