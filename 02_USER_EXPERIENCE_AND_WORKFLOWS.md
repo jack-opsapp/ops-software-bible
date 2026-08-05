@@ -1325,43 +1325,32 @@ in the 2026-04-27 Phase 1+2 rework)
 
 ---
 
-### PipelineView (Pipeline Segment)
+### LEADS Tab — Triage Console (2026-08-05 redesign)
 
-**Purpose:** CRM pipeline view showing sales opportunities filtered by stage.
+**Purpose:** the owner's chase surface (`.all` view scope; the day-sheet branch for `.assigned` delegates is documented in the next section). Opens on "what needs me," carries browse and manipulation controls inline, and demotes business aggregates to a one-line glance. Spec: `ops-ios/docs/superpowers/specs/2026-08-05-leads-console-redesign-design.md`; plan: `ops-ios/docs/plans/2026-08-05-leads-console-redesign.md`. Supersedes both the 2026-05-19 PipelineView description and the 2026-06-30 summary-tile layout.
 
-**Source:** `Views/Pipeline/PipelineView.swift`
+**Source files:** `Views/Leads/LeadsTabView.swift` (composition), `Views/Leads/Components/LeadsQueueBand.swift` (sticky band), `LeadsSearchBar.swift`, `LeadsControlChips.swift`, `Views/Leads/Triage/LeadsSummary.swift` (command band), `LeadTriageCard.swift`, `Views/Leads/PipelineStageListView.swift` (stage browser), `Utilities/LeadsQueryEngine.swift` (pure list logic; 63 unit tests in `OPSTests/Utilities/LeadsQueryEngineTests.swift`).
 
-**UI Elements:**
+**Command band (state-aware, `LeadsQueryEngine.bandState`):**
+- *Working* (`needActionCount > 0`): `N NEED ACTION` hero (Mohave-Light 34; rose while overdue > 0, else tan) + toned breakdown (`2 OVERDUE · 1 DUE TODAY · 1 YOUR MOVE`) + metrics line + stage bar.
+- *Quiet* (0 due, open leads exist): single line `// ALL QUIET — NO FOLLOW-UPS DUE` + metrics + stage bar. No numeral hero.
+- *Empty pipeline*: metrics only; the queue's `LeadsCaughtUp` block owns the message.
+- Metrics line (replaced the three bordered KPI tiles): `PIPELINE $X · OPEN N · WON <MMM> $Y` — JetBrains Mono 11, WON segment rendered only when > 0.
+- Stage bar: 8pt distribution of open stages; whole row (bar + `BY STAGE ▸`) is one 44pt button pushing the stage browser at its largest stage. The old `LeadsByStageRow` tile strip is deleted.
 
-1. **Search Bar** — search deals by contact name / description
-2. **Metrics Strip** — three pills showing:
-   - DEALS (count of active deals)
-   - WEIGHTED (weighted pipeline value based on stage probability)
-   - TOTAL (total pipeline value)
-3. **Stage Filter Strip** (PipelineStageStrip) — horizontal scrollable filter by pipeline stage
-4. **Opportunity Cards** — list of OpportunityCard entries
+**Sticky band (pins under the header):** search field + `URGENCY ▾` sort chip + `CREW ▾` crew chip on one row, above the unchanged `TacticalChipRow` bucket chips (ALL / OVERDUE / DUE TODAY / YOUR MOVE / FRESH / WAITING with raw counts).
+- **Search** (`LeadsSearchBar`): persistent, per-keystroke, in-memory. Matches folded case/diacritics across contact name, title, description, address, email, source, last-6 id; tokens AND; a ≥3-digit token also digit-matches phone. Population while searching = all open leads + unconverted wins (terminal lost/discarded live only in the stage browser).
+- **Search suspends browse filters:** bucket chip + crew filter stop constraining and dim to 40% / lose hit-testing; sort stays live; results render flat under `// MATCHES ─── N`; zero hits → `0` + `// NO MATCHES` + `[ CLEAR SEARCH ]`. Clearing restores prior chip/crew state.
+- **Sort:** URGENCY (default; grouped queue) / NEWEST (`createdAt` desc, flat) / VALUE (`estimatedValue` desc, unpriced last, ties newest). Session-state only — remount resets to URGENCY.
+- **Crew filter:** ALL CREW / MINE / UNASSIGNED / per-member. ANDs into buckets when not searching. Roster = active company users (`deletedAt == nil`, `isActive != false`) ∪ lead-referenced assignees resolvable to a `User` row; ids fold to lowercase (uppercase-UUID gotcha). **Gate:** all assignment chrome (crew chip + card assignee tokens) renders only when roster > 1 — a solo operator never sees it.
 
-**Pipeline Stages (PipelineStage enum):**
-- NEW LEAD (10% probability, stale after 3 days)
-- QUALIFYING (20%, stale after 7 days)
-- QUOTING (40%, stale after 5 days)
-- QUOTED (60%, stale after 7 days)
-- FOLLOW-UP (50%, stale after 3 days)
-- NEGOTIATION (75%, stale after 2 days)
-- WON (100%, terminal)
-- LOST (0%, terminal)
+**Card assignee token** (`LeadTriageCard.assigneeLabel`, defaulted nil): meta-row trailing cluster `JASON W · REFERRAL` — first name + last initial uppercased, `UNASSIGNED` (muted) for nil/blank, `UNKNOWN` for unresolvable ids. Day-sheet rows don't pass it; console and stage browser do.
 
-**Swipe Gestures on Opportunity Cards:**
-- Swipe right → Advance to next stage
-- Swipe left → Mark as Lost (opens MarkLostSheet for reason)
+**Stage browser** (`PipelineStageListView`): pushed from the stage bar (or deep code paths that previously fed `footerStage`). In-place scrolling stage tabs (`LABEL · n`, white 2pt underline, never accent) across all six open stages **plus WON and LOST** — first browse path for terminal leads on iOS. Entry stage = `LeadsQueryEngine.entryStage` (max open count, ties → pipeline order). Won/Lost sort by close date desc.
 
-**Empty State:** "NO LEADS YET" with prompt to use + button.
+**Unchanged by the redesign:** TriageBucket engine + bucketize rules, chase strip / HANDLED / follow-up send, swipe-to-stage grammar, won-convert nudge, pull-to-refresh + realtime + foreground refresh listeners, deep links, all sheets, and the entire day-sheet branch.
 
-**Navigation:**
-- Tap card → push to OpportunityDetailView
-- MarkLostSheet → modal for entering loss reason
-
-> **Staleness note (2026-07-28):** this PipelineView description predates the 2026-06-30 triage-console rebuild (`LeadsTabView` — weighted pills retired, chase-queue grammar) and is retained only until that section is rewritten. The section below documents the 2026-07-28 permission branch that now fronts the whole LEADS tab.
+**Proof pack:** `ops-ios/docs/artifacts/leads-console-redesign/` (six PNGs: working band, quiet band, search matches, no matches, newest sort with assignee tokens, stage browser WON tab).
 
 ---
 
