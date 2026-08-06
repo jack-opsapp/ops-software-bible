@@ -3901,6 +3901,13 @@ Two guards carry the safety of the sweep. **Ownership:** a draft id outlives the
 
 *Read-only inventory* — `scripts/phase-c-orphan-mailbox-draft-inventory.ts` (no writes, `--no-probe` for evidence without provider reads) sizes the backlog and writes `docs/artifacts/phase-c-orphan-mailbox-draft-inventory.json`. Baseline, Canpro connection `5dd46f2b`, 2026-08-06: 111 terminal rows carrying a draft id, 38 distinct objects, 23 still live at Gmail — **6 orphans admissible for deletion** (4 `sent_from_mailbox` with queue receipts from 2026-08-05, 2 `superseded` misfilings from 07-27 and 08-01), 15 live-but-inadmissible left in place, 67 already gone.
 
+*Executed (shipped PR #114, merge `ed4a2167`, prod deploy 2026-08-06 16:45Z).* First sweep fired 16:57–16:58Z and settled 80 rows / 35 objects across two syncs (the 25-object bound draining as designed). Re-run of the inventory: **0 admissible orphans remain**, 16 objects still live and correctly untouched. Eight objects left the mailbox, and the attribution is worth keeping:
+
+- **7 by the sweep** — the 6 baseline targets plus `r-993828201931920564`. That one was NOT an `orphan_delete` at baseline: its owning row was still `auto_drafted`, so the object appeared under an older `superseded` sibling as inadmissible. The queue closed the owner to `sent_from_mailbox` with a receipt in the interim, and the sweep judged by that newest row rather than the stale sibling — the ownership rule doing exactly its job.
+- **1 by the sync-time path** — `r8892747633542071788`, drafted 16:32Z and sent 16:58Z, deleted in the same cycle it was recognized (unstamped, so provably not the sweep).
+
+Nothing outside those eight was touched: 12 history rows changed live→gone, reconciling exactly to the objects deleted.
+
 **Mailbox draft placement: the quarantine chain (2026-08-06 outage, fixed).** In-thread `phase_c` reply drafts stopped reaching Gmail entirely from 2026-08-01 until 2026-08-06 — generated fine (`status='drafted'`), never placed (`mailbox_draft_id` NULL, the router's `draft_placement_pending`). Worth recording because one SQL naming collision produced a silent, self-perpetuating, mailbox-wide outage.
 
 `private.notify_email_provider_mutation_reconciliation` declares a plpgsql variable `user_row public.users%rowtype`, and its `company` branch aliased the table with that same name (`from public.users user_row`), so `user_row.id` raised 42702 *ambiguous column* on every execution. The `individual` branch was correct (`active_user`), so only company-type connections were hit. Fixed by migration `20260806162622_fix_ambiguous_user_row_in_provider_mutation_reconciliation_notify` (alias → `recipient`; every other statement byte-identical).
