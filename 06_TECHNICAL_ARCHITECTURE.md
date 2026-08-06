@@ -181,7 +181,7 @@ ops-ios/OPS/
 │   ├── Sync/ (11 files — rebuilt 2026-03-08, DataActor refactor 2026-04-19, SYNC RECOVERY 2026-07-22)
 │   │   ├── SyncEngine.swift             # @MainActor @Observable orchestrator; dispatches through DataActor when FeatureFlags.useDataActor is on (default true 2026-04-19); reenqueueRecoverableOperations() launch/reconnect sweep + one-time deck-link backfill (2026-07-22)
 │   │   ├── SyncErrorClassifier.swift    # Pure failure-disposition seam (SYNC RECOVERY 2026-07-22): transient (5xx/429/408/timeouts/40001-class SQLSTATEs) vs permanent (other 4xx, 22xxx/23xxx/42xxx/P000x) vs auth (PGRST3xx/JWT/401). SyncOperationFailurePolicy = the ONE shared post-catch state transition both outbound paths call
-│   │   ├── RecoveryInventory.swift      # Pure unsynced-work model for the PENDING WORK screen: joins SyncOperations + lead-autocreate queue + LocalPhotos + site-visit drafts/artifacts + orphan deck designs into attention/sending/drafts/unlinked sections; site-visit bundles absorb members, worst-member tone
+│   │   ├── RecoveryInventory.swift      # Pure PENDING WORK model: indefinite retention, STALE · 30D review state, capability-safe discard, and attention/sending/drafts/unlinked joins across SyncOperations + lead autocreate + LocalPhotos + site-visit packets + orphan decks
 │   │   ├── OutboundProcessor.swift      # LEGACY @MainActor path for local→server push; retained behind FeatureFlags.useDataActor for rollback
 │   │   ├── InboundProcessor.swift       # LEGACY @MainActor path for server→local pull; retained behind FeatureFlags.useDataActor for rollback
 │   │   ├── RealtimeProcessor.swift      # @MainActor Supabase Realtime WebSocket subscription (9 merged entity types + 3 notification-only leads tables: opportunities/activities/follow_ups → post .opsLeadsDidChange, no SwiftData merge); SwiftData writes dispatch to DataActor when flag on
@@ -1562,7 +1562,7 @@ called identically by both outbound paths (`DataActor.executeOperation`,
 | Disposition | Trigger | SyncOperation transition |
 |---|---|---|
 | `transient` | URLError offline/timeout; HTTP 5xx/429/408; SQLSTATE 40001/40P01/55P03/57014; anything unknown | `retryCount += 1`; backoff `min(2^retryCount, 60)`s; at 20 → `status="failed"` (recoverable) |
-| `permanent` | other HTTP 4xx; SQLSTATE classes 22/23/42; P0001/P0002 | `status="parked"` immediately, no retry consumed, `sync_parked` analytics. Only user Retry/Discard moves it |
+| `permanent` | other HTTP 4xx; SQLSTATE classes 22/23/42; P0001/P0002 | `status="parked"` immediately, no retry consumed, `sync_parked` analytics. Only an explicit user recovery action moves it; Discard is exposed only when that work unit's policy can prove it safe |
 | `auth` | PGRST3xx / JWT / 401 | `status="failed"` + `.syncAuthExpired` → re-auth (unchanged) |
 
 `status` values: `pending → inProgress → completed / failed / parked`. PK-violation
@@ -1570,6 +1570,13 @@ idempotency (23505 `_pkey` on create retry → treat as completed) still runs BE
 classification. The 2026-07-22 outage motivated the split: a permanent 400
 (auto-lead `source_thread_key` rejection, RC1) previously burned the same 20-retry
 budget as a transient 504, then sat invisible.
+
+Site-visit failures retain their structured origin through this pipeline.
+`SiteVisitRepositoryError.server(code:message:detail:hint:)` preserves the four
+PostgREST fields and composes them through `LocalizedError`, so the stored
+`SyncOperation.lastError` and Pending Work details show the real rejection. The
+classifier reads the same typed error to choose retry disposition; display
+fidelity and retry policy are separate responsibilities.
 
 **Recovery sweeps** (`SyncEngine.reenqueueRecoverableOperations()`): at launch
 (once, from `configure()`) and on genuine reconnect (`DataController` connectivity
@@ -2025,6 +2032,19 @@ try? modelContext.save()
     filter: #Predicate<Project> { $0.deletedAt == nil }
 ) var projects: [Project]
 ```
+
+`Project`, `Client`, and `ProjectTask` tombstones are recoverable through
+Settings → Trash. Restore is ledger-first recovery, not a local flag flip:
+`DataController.restoreTrash` clears the ordered entity tombstones and
+`SyncEngine.stageOperationsForTransaction` stages the matching parent-first
+`update` operations with exact `{ "deleted_at": null }` payloads inside the same
+`ModelContext` transaction. The transaction verifies count, unique fresh
+operation ids, entity/order/routing, pending state, changed fields, and null
+payload before commit. Zero/partial/malformed staging, encoding/context failure,
+or a later entity failure rolls back both the model mutations and all inserted
+outbox rows. Sync notification, toast, and push may occur only after that shared
+transaction commits. Sources: `ops-ios/OPS/Utilities/DataController.swift` and
+`ops-ios/OPS/Network/Sync/SyncEngine.swift` (code commit `39afa7c4`).
 
 ### 8. Null-Safe Relationship Access
 

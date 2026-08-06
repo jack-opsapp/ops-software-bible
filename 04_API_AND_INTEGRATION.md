@@ -1427,6 +1427,24 @@ Account deletion invokes `eraseSiteVisitPrefix(companyId)` after the transaction
 
 `SiteVisitPersistenceCoordinator` commits local model mutations and their `SyncOperation` rows atomically. Dependencies enforce parent → artifacts/checklist/identity → media → completion. `SiteVisitOutboundSync` maps each operation to `SiteVisitRepository`; `InboundProcessor` and `RealtimeProcessor` fetch/subscribe to all four tables; `SiteVisitServerMerge` preserves unsent dirty fields while accepting authoritative server state. The local queue is retry machinery only and is encrypted into `SiteVisitRecoveryVault` during forced logout; it is not a Supabase company-data table.
 
+Checklist answers reconcile by active logical identity
+`(site_visit_id, field_id)`, not UUID alone. When Supabase returns the same
+logical answer under a canonical UUID different from the phone's provisional
+UUID, the merge migrates the one local active answer and every unresolved queue
+operation/routing envelope to the canonical identity atomically. The complete
+incoming bundle is validated before mutation. Duplicate active logical rows,
+canonical-ID queue collisions, unknown operation lifecycles/types, or malformed
+tenant/visit/entity routing fail closed into recovery instead of choosing a row
+or overwriting local evidence. Source:
+`ops-ios/OPS/Network/Sync/SiteVisitServerMerge.swift` (code commit `a6a49da7`).
+
+`SiteVisitRepositoryError.server` preserves the PostgREST `code`, `message`,
+`detail`, and `hint` and exposes all four through `LocalizedError`. The sync
+classifier still reads the typed code/message to decide transient, permanent,
+or auth disposition, while Pending Work retains the same full operator-facing
+failure text rather than collapsing it to a generic transport message.
+Source: `ops-ios/OPS/Network/Supabase/Repositories/SiteVisitRepository.swift`.
+
 ### Reusable checklist templates (production backend/web live 2026-08-06)
 
 Migration `20260806103000_site_visit_checklist_templates.sql` adds `public.site_visit_types` for reusable company checklists. Its field JSON is bounded to 1–100 unique, nonblank definitions, requires at least one shown field, allowlists the eight supported field kinds, and caps the encoded document at 128 KiB. Partial unique indexes enforce one active row per company/slug and at most one active default. All members of the exact company can read; insert/update requires `settings.company`; authenticated/anonymous app roles cannot hard-delete. Service role retains hard-delete for eventual account closure. The table publishes full-row Realtime changes.

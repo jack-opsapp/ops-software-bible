@@ -330,6 +330,30 @@ Matching uses `private.normalize_address` (§03): same normalized address + same
 
 Duplicate prevention is enforced independently at commit: a nil-link create whose address matches an active project raises `project_link_unavailable: matching_project_requires_review`.
 
+#### iOS linked-client address hydration (2026-08-06)
+
+The conversion sheet's opening and every preflight retry use one ordered
+sequence: resolve the linked client, make the address visible, then run the
+authoritative server preflight. Client resolution checks the tenant-matching
+SwiftData row first and falls back to `ClientRepository.fetchOne` scoped to the
+opportunity's company when the row is not on the device. Address prefill applies
+the opportunity's own nonblank address/coordinates first and the resolved
+client's address/coordinates second; preflight must never run against an empty
+form while a linked client address is still being fetched.
+
+If the server nevertheless returns `creation_blocker = 'address_required'` for
+a nonblank address borrowed from the client, a one-shot gate persists that
+address to the opportunity and immediately re-runs preflight. This is the only
+automatic write in hydration; it runs at most once per sheet opening, and a
+failure leaves both the borrowed address and the server blocker visible for the
+existing manual CHECK ADDRESS retry. Estimate bundles and the financial-value
+prefill run only after this identity/address/preflight sequence. Retrying the
+check repeats client resolution and address hydration before querying the
+server. This is a client ordering repair only: it adds no column, migration, or
+RPC contract. Source:
+`ops-ios/OPS/Views/Leads/Sheets/ConvertToProjectSheet.swift` (code commit
+`bd496622`).
+
 **`convert_opportunity_to_project(...) RETURNS jsonb`** — the unified write transaction (`SECURITY DEFINER`, all-or-nothing), a superset of both retired RPCs. Full signature:
 
 ```sql
@@ -394,7 +418,7 @@ The RPC's jsonb result carries `relinked_estimates`, `materialized_tasks`, `atta
 
 | Method | Purpose |
 |---|---|
-| `getConversionPreflight(for:)` | Server preflight — replaced the old local-SwiftData `existingProject` / `clientProjectsSummary` dedup, which missed unsynced projects (new device, partial sync, another operator's just-created project). |
+| `getConversionPreflight(for:)` | Server preflight — replaced the old local-SwiftData `existingProject` / `clientProjectsSummary` dedup, which missed unsynced projects (new device, partial sync, another operator's just-created project). iOS invokes it only after linked-client resolution and address hydration; retries repeat that ordering. |
 | `matchableCandidateProjectIds(for:candidates:)` | Second round-trip that re-reads `projects.opportunity_id` / `opportunity_ref` for the preflight's candidates and keeps only those unlinked or already linked to THIS lead. Exists because the preflight filters on permissions only (above). Retires when the `already_linked` annotation lands. |
 | `convertOpportunityToProject(lead:actualValue:titleOverride:notes:linkToProjectId:userId:expectedStage:expectedAssignmentVersion:)` | Calls `convert_opportunity_to_project` directly (`p_source_path='ios'`); `titleOverride = nil` ⇒ auto-named (`title_is_auto=true`), a typed name ⇒ hand-set. Persists the returned project through `ProjectCacheMerge` before returning. |
 | `estimates(for:)` / `estimateBundles(for:)` | Network fetch for the estimates list + the LABOR tasks preview. |

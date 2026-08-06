@@ -881,18 +881,25 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 1. **Header**
    - Color stripe (status-dependent)
-   - Status badge (top right)
    - Breadcrumb: Company → Client → Project
    - Project title (large)
    - Floating action buttons (Edit, Delete)
+   - iOS does not repeat status in the header; status belongs in the Details document
 
-2. **Location Card**
+2. **Details Document** (iOS)
+   - Exactly one `STATUS` row, first in the document
+   - The complete row meets the 44pt touch-target minimum and opens status editing only for an authorized editor; read-only viewers receive a static row
+   - No oversized standalone status control or duplicate header badge
+   - Remaining project facts follow as compact, divider-separated rows
+   - Source: `ops-ios/OPS/Views/Components/Project/Tabs/DetailsTabView.swift` (code commit `8853bf49`)
+
+3. **Location Card**
    - Map icon
    - "LOCATION" section header
    - Address text
    - "Get Directions" button (primary accent)
 
-3. **Client Info Card**
+4. **Client Info Card**
    - Person icon
    - "CLIENT" section header
    - Client name
@@ -900,22 +907,22 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
    - Phone (tap to call)
    - Address (tap to map)
 
-4. **Notes Card** (iOS) / **Notes Tab** (OPS Web)
+5. **Notes Card** (iOS) / **Notes Tab** (OPS Web)
    - **iOS:** Note icon, "NOTES" section header, Notes text (expandable), "Show more" / "Show less" toggle
    - **OPS Web (Feb 2026 overhaul):** Full threaded notes tab with NoteComposer (text input with @mention autocomplete, Ctrl+Enter submit), NotesList (list of NoteCards with author avatar, time-ago, @mention rendering, photo grid, edit/delete dropdown), legacy migration from Bubble teamNotes on first visit. Notes are project-level only (task-level notes removed). See [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11 for full details.
 
-5. **Description Card**
+6. **Description Card**
    - Document icon
    - "DESCRIPTION" section header
    - Description text (expandable)
 
-6. **Team Members Card**
+7. **Team Members Card**
    - People icon
    - "TEAM MEMBERS" section header
    - Avatar row with names
    - "+Add" button (Admin/Office)
 
-7. **Tasks Section**
+8. **Tasks Section**
    - Checklist icon
    - "TASKS" section header
    - Task list grouped by status:
@@ -931,14 +938,14 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
      - Swipeable for status change
    - "Add Task" button (Admin/Office)
 
-8. **Images Section**
+9. **Images Section**
    - Camera icon
    - "IMAGES" section header
    - Photo grid (3 columns)
    - Full-screen viewer on tap
    - "Add Photos" button
 
-9. **Previous/Next Navigation Cards**
+10. **Previous/Next Navigation Cards**
    - "Previous Project" card (if exists)
    - "Next Project" card (if exists)
 
@@ -976,6 +983,39 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 **Role Differences:**
 - Admin/Office: Edit, delete, add tasks, add photos, assign team
 - Field Crew: View only (except status changes for assigned tasks)
+
+#### iOS Site Visit Record
+
+A `project_notes.event_kind = 'site_visit'` entry is a structured field record,
+not one large plain-text comment. The Activity feed shows a compact summary card;
+tapping it opens a full-height record sheet with a centered, width-bounded
+document. Identity, address, measurements, deck, checklist, notes, and permitted
+value sections render only when present. Internal hairlines and separate
+label/answer typography preserve the field hierarchy at compact widths and under
+Dynamic Type.
+
+Checklist presentation prefers additive `checklist_items[]` metadata and falls
+back to the legacy `checklist[]` strings when the structured key is absent,
+future-shaped, or malformed. Compatibility failure must never invalidate the
+rest of the visit packet.
+
+The photo section renders every available visit photo, in capture order, inside
+a bounded horizontal rail with the next item visibly peeking into the viewport;
+the sheet never widens to fit the evidence and never truncates the collection to
+a featured subset. The record-sheet host owns the full-screen
+`PhotoCommentViewer` presentation, so tapping a thumbnail opens the viewer
+immediately above the still-present record instead of waiting for the sheet to
+close. It passes the project id and the complete visit-photo collection so
+project-scoped viewer and comment behavior remain intact.
+
+Currency never travels in the packet. The current linked-opportunity value is
+resolved locally at render time and omitted unless the viewer has
+`finances.view`; see `03_DATA_ARCHITECTURE.md` §
+`project_notes.event_kind + project_notes.content_metadata`.
+Sources: `ops-ios/OPS/DataModels/SiteVisits/SiteVisitPacketMetadata.swift`,
+`ops-ios/OPS/Views/SiteVisits/SiteVisitRecordView.swift`, and
+`ops-ios/OPS/Views/Components/Project/Tabs/SiteVisitPacketEntryView.swift` (code
+commit `8fb04553`).
 
 ---
 
@@ -1702,17 +1742,23 @@ in the 2026-04-27 Phase 1+2 rework)
    - "Upgrade" button (if not on highest tier)
    - Trial countdown (if in trial)
 
-5. **Help & Support Section**
+5. **Data Section**
+   - "Pending Work" row with live count
+   - "Photos" row
+   - "Trash" row for Admin/Office users → recoverable Projects, Clients, and Tasks
+
+6. **Help & Support Section**
    - "Tutorial" row with chevron
+   - Visible `REPORT A BUG` row
    - "Help Center" row with chevron (future)
    - "Contact Support" row with chevron (future)
 
-6. **About Section**
+7. **About Section**
    - App version
    - "Terms of Service" row
    - "Privacy Policy" row
 
-7. **Logout Button** (Bottom)
+8. **Logout Button** (Bottom)
    - Red destructive button
    - "Log Out"
 
@@ -1722,6 +1768,8 @@ in the 2026-04-27 Phase 1+2 rework)
 - Tap PIN Management → PIN setup/change
 - Tap Upgrade → Stripe payment portal
 - Tap Tutorial → Restart tutorial
+- Tap REPORT A BUG → Open the guarded bug-report overlay without dismissing the current presenter or keyboard
+- Tap Trash → Open the Admin/Office recovery ledger for deleted projects, clients, and tasks
 - Tap Log Out → Confirmation dialog → Logout
 
 ---
