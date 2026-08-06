@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** August 4, 2026
+**Last Updated:** August 6, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -36,6 +36,13 @@
 26. [iPhone Calendar Mirror (iOS)](#26-iphone-calendar-mirror-ios-2026-05-11--bug-68123654)
 27. [LiDAR Dimensioned Photo Capture (iOS)](#27-lidar-dimensioned-photo-capture)
 28. [Auto Bug Reporting (iOS)](#28-auto-bug-reporting-ios-2026-05-15--may-12-outage-follow-up)
+29. [Phase-C Suggested Calendar Events (iOS)](#29-phase-c-suggested-calendar-events-ios-2026-06-22--item-63144953)
+30. [Add to OPS Share Extension (iOS)](#30-add-to-ops-share-extension-ios-2026-06-22--item-1e3c6fa8)
+31. [App Update Gate (iOS + Web)](#31-app-update-gate-ios--web-2026-06-23)
+32. [Email File Capture and Lead Attribution](#32-email-file-capture-and-lead-attribution-web-production-2026-07-17)
+33. [Lead Assignment and Scoped Lead Access](#33-lead-assignment-and-scoped-lead-access-backend--web-production-2026-07-17-ios-implementation-staged)
+34. [PENDING WORK — Sync Recovery Surface](#34-pending-work--sync-recovery-surface-ios-2026-07-22)
+35. [Trash — Recovery Ledger](#35-trash--recovery-ledger-ios-2026-08-06)
 
 ---
 
@@ -2952,6 +2959,37 @@ Mixed selections route through Properties so field users do not have to choose b
 **Label editing commit contract (updated 2026-07-25).** Edge and surface Label fields keep keystrokes in local draft state. Each edit captures its originating geometry and level so selection or active-level changes cannot redirect the pending value. Keyboard Done, focus loss, target change, or Properties-sheet dismissal commits the normalized final value exactly once; an unchanged value is a complete no-op. A changed label therefore creates one undo snapshot, one local save/sync enqueue, and one confirmation toast rather than repeating those effects for every character. Sources: `ops-ios/OPS/DeckBuilder/Views/PropertySheetView.swift`; `ops-ios/OPS/DeckBuilder/DeckBuilderViewModel.swift`.
 
 **Expanding canvas workspace (added 2026-07-22).** The embedded Deck Builder's 2D editor starts with the legacy 4,800 × 4,800-point workspace, then expands its session-only, non-shrinking bounds in 480-point increments with a 240-point gutter whenever persisted vertices, rendered stair outlines, or active draw, perimeter, move, or paste geometry approaches an edge. Expansion supports negative origins and never translates or rewrites deck geometry. `DeckCanvasView` renders a tokenized workspace fill and focused boundary against the tokenized exterior, clips the grid to the visible portion of those bounds, accepts screen-to-world input beyond the prior fixed limits, and constrains pan so at least one 44-point recovery strip remains visible. When the workspace fits the viewport, recentering is deferred until direct manipulation ends so content cannot jump under the finger. Perimeter reorientation cancels any in-flight camera snap while the finger is down and explicitly completes the deferred anchor center on lift. Bounds remain view/session state only: there is no `deck_designs.drawing_data` field, payload-shape change, Supabase schema change, or migration. Sources: `ops-ios/OPS/DeckBuilder/Models/DeckCanvasWorkspace.swift`; `ops-ios/OPS/DeckBuilder/Views/DeckCanvasView.swift`. Verified in `ops-ios` commit `6bbe72f4d85ca0c96a18f8e3c154ee2d9dde788a`.
+
+**Full-bleed embedded viewport (2026-08-06).** The main OPS app's 2D
+`DeckBuilderView` renders one full-container canvas `ZStack` through the bottom
+safe edge. Bottom toolbar and compact controls are safe-area-aware overlays;
+their real runtime height is measured instead of assumed, and the canvas render
+frame is never shortened above them. `DeckCanvasViewportLayout` derives a
+separate unobstructed work frame from that measured coverage. Fit/center,
+viewport constraints, edge-pan activation, speed-draw anchoring, selection
+instruments, and bottom controls all use the unobstructed frame so important
+geometry stays reachable above the toolbar while the visual canvas remains full
+bleed. A chrome-height change preserves the same world point at the visible
+center rather than jumping the drawing.
+
+**Live selection metrics (2026-08-06).** The `LENGTH` and `SURFACE AREA`
+instrument is a pure derived readout recomputed synchronously from the published
+drawing, measurement system, and `SelectionState`:
+
+| Selection | Length | Surface area |
+|---|---|---|
+| None | Whole-design edge length/perimeter, or `—` when unavailable | Whole-design area, or `—` when unavailable |
+| Edges only | Aggregate selected-edge length | `—` |
+| Surfaces only | `—` | Aggregate selected-surface area |
+| Edges + surfaces | Aggregate compatible selected-edge length | Aggregate compatible selected-surface area |
+| Vertices only | `—` | `—` |
+
+Any non-empty selection owns the readout, including a vertex-only selection;
+deselecting restores the whole-design values. Geometry edits, unit changes,
+undo/redo, and selection changes all recompute immediately without a timer,
+cache, save, or persistence change. Sources:
+`DeckBuilderMetricReadout.swift`, `DeckCanvasViewportLayout.swift`, and
+`DeckBuilderView.swift` in `ops-ios/OPS/DeckBuilder/` (code commit `ea1e8222`).
 
 **Perimeter entry mode:** Deck Builder now supports a perimeter-first drawing path for field use on iPhone. Long-pressing blank canvas creates a starting vertex; long-pressing an existing vertex starts from that vertex. Selecting a single vertex also exposes a compact `Draw` toolbar action that enters the same flow. For long-press entry, the viewport does not pan while the finger is still selecting direction; the radial wheel stays centered on the original press point until lift, then the canvas animates the selected vertex back to center for length entry. The selected anchor is drawn with a steel-blue reticle so the active point remains visible while controls are open. The direction wheel has no center hub and no solid disk; it uses floating arrow/label nodes only. First-segment labels use compass language (`NORTH`, `NORTHEAST`, etc.); continuation labels use signed angles relative to the existing connected edge (`0°`, `+45°`, `-45°`, etc.). Dragging through the wheel highlights the closest sector and lifting commits that direction. During speed draw, the normal deck toolbar is hidden and the controls float over the canvas in the lower touch zone. Direction selection keeps only a floating exit control; length entry uses the standardized frosted-glass `DeckMeasurementPickerView` with an imperial/metric toggle above larger wheel pickers, the live length readout and back/commit/dictation buttons below the wheels, and a separate floating exit control that stops at the last confirmed vertex. Wheel motion publishes live length values while the user spins, driving the canvas draft preview through the same endpoint math as commit so the line length updates before the edge is saved. During active perimeter entry, canvas tap/draw/select gestures remain blocked; during length entry, two-finger pan/zoom stays available and snaps the viewport back to the selected vertex with animation when the gesture ends while preserving the adjusted zoom. While length entry is active, dragging the current preview line reorients it to the nearest allowed compass or relative angle without losing the entered length. After pressing commit/continue, the next direction wheel remains tap/drag selectable without requiring a new long press. Dictation is the length panel's hands-free default (bug 722b1606): when speech access is already granted, the panel opens the mic automatically as it lands (deferred one panel-transition beat, `OPSStyle.Animation.durationPanel` + 0.05s, so the audio-session spin-up cannot hitch the slide-in) and the spoken length fills the wheels live. The picker is recreated for every edge, so `VoiceDimensionInput` seeds its published authorization status from `SFSpeechRecognizer.authorizationStatus()` at init — the previous `.notDetermined` default silently swallowed the first mic tap of every edge (the reported "dictate button ignores taps"). A first-ever tap chains the system grant straight into listening (`requestAuthorization(thenStartListening:)`); a denied/restricted status surfaces `SYS :: DICTATION BLOCKED — ALLOW IN SETTINGS`. Tapping the mic to stop mutes auto-start for the remainder of that walk (`dictationSuppressedForSession` on `DeckBuilderViewModel`, reset by `beginPerimeterEntry`); the persisted kill switch is `deckBuilder.dictateAutoStart` (UserDefaults, default ON), surfaced as a DICTATION toggle in the deck settings sheet. The mic and continue buttons sit on the 56pt standard touch target (`DeckMeasurementPickerTokens.standardTouch`); continue keeps its 44pt visual accent circle inside the larger hit zone. The measurement UI is standardized as `DeckMeasurementPickerView` backed by `DeckMeasurementValue`; Deck Builder measurement prompts should reuse it rather than creating local wheel pickers. The Project Details `DECK` quick action resolves through the same project-attached display candidate as the deck tab: open the existing attached design when present; otherwise launch deck creation. Committed perimeter lines persist as normal `DeckVertex`/`DeckEdge` geometry with `dimensionSource = manual`; the next anchor advances to the new endpoint unless the edge snaps closed to an existing vertex.
 
@@ -8060,6 +8098,27 @@ User-submitted reports use a local-first acceptance boundary. Source: `OPS/Servi
 - Queue payload diagnostics are optional when decoded so queue files written by earlier app versions remain readable; absent legacy diagnostics are delivered as empty JSON collections.
 - Drains are main-actor serialized and coalesced. Triggers are immediate after an online acceptance, post-authenticated app entry, foreground activation, and connectivity restoration.
 
+### iOS — supported user-report triggers (2026-08-06)
+
+There are exactly two public user triggers: shake the device, or tap the visible
+Settings → Support → `REPORT A BUG` row. Both enter
+`BugReportTriggerCoordinator` with an explicit source (`shake` or `settings`) so
+their eligibility and diagnostic source identity cannot drift.
+
+The coordinator applies one 1.5-second accepted-trigger debounce, rejects during
+the tutorial, rejects unauthenticated use, and honors the presenter's active
+latch so a second overlay cannot stack. It does not dismiss the current sheet or
+resign the current keyboard. The reporter uses its dedicated overlay window,
+and the coordinator captures the live screenshot before that overlay becomes
+key, preserving the screen the operator actually reported.
+
+Volume buttons are not a supported trigger. OPS does not observe, intercept, or
+mutate system volume, does not infer a volume-button chord, and uses no private
+API for bug reporting. Any future trigger must enter the same public coordinator
+boundary rather than bypassing its guards and capture ordering.
+Source: `ops-ios/OPS/Services/BugReport/BugReportTriggerCoordinator.swift` (code
+commit `10bd0fb6`).
+
 This change is source-only and adds no schema or migration. A local iOS commit does not imply App Store release or customer-runtime verification.
 
 ### Out of scope (Phase 1)
@@ -8296,15 +8355,42 @@ inventory is built by `RecoveryInventory` (`06` § file tree). Empty state: `—
 `// NOTHING PENDING · ALL CHANGES SAVED`. Single accent CTA `RETRY ALL (n)` when
 attention has retryable work.
 
-**Row actions:** tap → half-sheet detail (member statuses, `SYS :: REJECTED BY
-SERVER` + "Your copy is safe on this phone. Retry now or export it." for parked,
-raw error behind DETAILS) with RETRY NOW / EXPORT / DISCARD (`DESTRUCTIVE. NO
-UNDO.` confirm; create-ops delete the local entity, update-ops cancel the op,
-autocreates remove the queue receipt). EXPORT share-sheet = summary text
-(`OPS EXPORT — <name>`) + deck PNGs via the deck builder's own Core-Graphics
-renderer (never ImageRenderer) + failed photo files — the never-unrecoverable
-escape hatch. LINK picker (LEADS / JOBS segmented) enqueues the guarded
-`linkOpportunity` op (leads) or a `project_id` update op (jobs) — offline-safe.
+**Retention and review age:** Pending Work retains every live work unit
+indefinitely; there is no age-based expiry, pruning, or deletion. At age
+`>= 30 days` the row adds `STALE · 30D` as a review signal only. Items at 29, 30,
+and 31 days all remain in the inventory; the boundary changes presentation, not
+custody. This policy is unrelated to the API's separate job-history retention
+of 30 days (`AppConfiguration.Sync.jobHistoryDays`).
+
+**Capability-safe DELETE:** a row exposes the trailing DELETE swipe and detail
+action only when `RecoveryItem.discardPolicy` proves that exact work unit safe.
+Full-swipe execution is disabled. Both entry points show confirmation copy
+scoped to the records that will be removed and await an asynchronous
+`Bool` result; a failed action remains visible and reports the failure instead
+of dismissing optimistically.
+
+| Work unit | DELETE capability |
+|---|---|
+| Raw `SyncOperation` mutation | Unavailable; generic queue deletion cannot prove entity rollback/reconciliation |
+| Lead autocreate/delivery | Available only when parked; active delivery may be in progress |
+| Local photo batch | Available only when every photo in the batch is `failed` |
+| Site-visit packet | Available unless any packet member is `inProgress` |
+| Quarantined site visit | Available for that exact encrypted quarantine entry |
+| Uncommitted draft | Unavailable; resume the draft |
+| Orphan deck design | Unavailable; open or link the design |
+
+Deleting a site-visit row removes/tombstones only that visit packet and its own
+packet operations. A linked client, lead, deck design, and loose photos remain
+independently recoverable; one packet confirmation never erases adjacent work.
+
+**Other row actions:** tap → half-sheet detail (member statuses,
+`SYS :: REJECTED BY SERVER` + "Your copy is safe on this phone. Retry now or
+export it." for parked, raw error behind DETAILS) with the actions valid for the
+item. EXPORT share-sheet = summary text (`OPS EXPORT — <name>`) + deck PNGs via
+the deck builder's own Core-Graphics renderer (never ImageRenderer) + failed
+photo files — the never-unrecoverable escape hatch. LINK picker (LEADS / JOBS
+segmented) enqueues the guarded `linkOpportunity` op (leads) or a `project_id`
+update op (jobs) — offline-safe.
 
 **Entry points:** sync status pill (now tappable; badge escalates to
 `<n> NEED A LOOK` — tan, rose when anything is parked), the connection-restored
@@ -8318,6 +8404,73 @@ unit-tested cases). **Proof:** 5 rendered-state snapshot PNGs in
 `RecoveryInventoryTests`. iOS commits `602b25c9` + `70cd5d48` (screen),
 `efa5c95e`/`68224b22` (classifier + parked policy), `c8a1222a` (durable lead
 queue), `a1f3d5ef` (deck link path), `c2b064c5` (inventory).
+Capability-safe discard and awaited failure handling landed in `d86fda45` and
+`ee5d271a`.
+
+---
+
+## 35. Trash — Recovery Ledger (iOS, 2026-08-06)
+
+Settings → Data → Trash is the Admin/Office recovery ledger for soft-deleted
+Projects, Clients, and Tasks. It is organized into neutral `PROJECTS`, `CLIENTS`,
+and `TASKS` segments with counts; no segment uses the primary accent as
+decoration. Compact rows carry enough context to identify the record before any
+action: project rows use the first merged gallery image, client rows use the
+profile image, and task rows inherit their project image when available. Rows
+fall back to type symbols when no image exists. Project rows include client or
+address, status, deletion age, and task count; client rows include contact and
+project count; task rows always name their project and status. Tapping a row
+opens a quick-view sheet with the full recovery facts and the one valid restore
+action. Trash exposes recovery, not hard delete.
+
+### Restore eligibility
+
+| Deleted record | Recovery plan |
+|---|---|
+| Project | Ready; restore the project |
+| Client | Ready; restore the client |
+| Task with active project | Ready; restore the task |
+| Task with deleted project | Explicit `RESTORE TASK + PROJECT`; ordered project first, then task |
+| Task whose project is not on the device | `RESTORE UNAVAILABLE`; sync and re-evaluate rather than creating an orphan |
+
+The UI and `DataController.restoreTrash` both enforce the dependency plan, so a
+stale or malformed caller cannot restore a task while its required parent stays
+tombstoned.
+
+### Atomic local state + recovery outbox
+
+One `ModelContext` transaction owns the entire recovery decision:
+
+1. Clear each planned tombstone in dependency order and mark the model dirty.
+2. Build one matching `SyncEngine.BulkOperationSpec` per restored entity, in the
+   same parent-first order, with operation type `update` and payload exactly
+   `{ "deleted_at": null }`.
+3. Encode the complete batch before its first insert, stage it into the same
+   context without an intermediate save, and validate the complete staged
+   ledger: exact count and order, fresh unique ids, matching entity/id/type,
+   pending state, exact changed-field set, and exact JSON null tombstone.
+4. Commit model changes and ledger rows together.
+
+Zero-operation, partial, malformed, wrong-context, encoding, insertion, or save
+failure throws from the transaction and rolls back **both** every tombstone
+mutation and every staged outbox row. There is no valid intermediate state in
+which a record appears restored locally but its recovery cannot sync. Only after
+the shared transaction commits may OPS refresh the pending count, show a success
+toast, or push the ordered operations. Project + task recovery therefore reaches
+the server parent-first and remains retryable through the normal durable outbox.
+
+Primary implementation:
+`ops-ios/OPS/Views/Settings/TrashView.swift`,
+`ops-ios/OPS/Views/Settings/TrashRecoveryPolicy.swift`,
+`ops-ios/OPS/Utilities/DataController.swift`, and
+`ops-ios/OPS/Network/Sync/SyncEngine.swift`. Regression coverage injects
+zero/partial staging and missing-record failures and proves exact tombstone,
+`needsSync`, queue, ordering, and clean-context rollback in
+`OPSTests/Views/TrashRecoveryTests.swift`. Code commits: `f89764bc` (recovery
+ledger) and `39afa7c4` (shared atomic transaction).
+
+This implementation is source-verified in the iOS bug-batch branch; it is not
+customer-distributed until the signed-device/App Store release gate is complete.
 
 ---
 

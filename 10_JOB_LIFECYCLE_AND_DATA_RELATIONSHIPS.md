@@ -1206,6 +1206,12 @@ ON-SITE (staff opens visit on mobile/web)
   → SiteVisit.status → in_progress
   → Parent + SyncOperation commit together on the phone
   → SiteVisitIdentityDraft autosaves client/contact/address fields and queues behind the parent
+  → Primary form order is deterministic:
+      identity
+      optional read-only summary from the currently bound lead's trimmed opportunities.ai_summary
+      checklist
+      notes
+    A blank/whitespace summary renders no section; the form performs no second fetch, exposes no summary editor, and never substitutes email_threads.ai_summary
   → Selected company SiteVisitType fields snapshot into cloud-backed SiteVisitChecklistAnswer rows
   → If the attached lead, client, or address is wrong:
       Operator expands the lead/client panel
@@ -1247,7 +1253,7 @@ JOB WON (opportunity converts to project)
       source = 'site_visit', siteVisitId = siteVisit.id
       active (company, project, visit, URL) uniqueness prevents retry duplicates
   → Reviewed notes/transcripts/measurements become a project note
-  → Answered checklist lines become part of the same project note
+  → Answered checklist fields become additive structured checklist_items[] in the same project note while legacy content + checklist[] remain for older clients
   → Reviewed deck-design artifact attaches the standalone DeckDesign to the project
   → Photos appear in project gallery under "Site Visit" group
 ```
@@ -1604,6 +1610,17 @@ When a site visit is due:
 4. Captures photos (camera or gallery)
 5. Fills notes and measurements
 6. Taps "Complete Visit" → status → `completed`
+
+Within the primary capture form, section order is always identity → optional
+lead summary → checklist → notes. The summary is the trimmed
+`opportunities.ai_summary` already present on the currently bound lead, rendered
+read-only directly below identity so the operator sees the known job context
+before answering fields. Nil/blank summaries are omitted. This surface does not
+fetch or edit a summary and does not read `email_threads.ai_summary`, which
+remains a separate per-thread artifact. Sources:
+`ops-ios/OPS/Views/SiteVisits/SiteVisitCaptureView.swift` and
+`ops-ios/OPS/Views/SiteVisits/SiteVisitFormSemantics.swift` (code commit
+`6fd0ced6`).
 
 ### Site Visit Data Capture
 

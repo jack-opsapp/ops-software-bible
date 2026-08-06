@@ -2121,7 +2121,7 @@ Button(action: delete) {
     Image(systemName: OPSStyle.Icons.trash)
 }
 .accessibilityLabel("Delete project")
-.accessibilityHint("Permanently removes this project")
+.accessibilityHint("Moves this project to Trash, where it can be restored")
 ```
 
 #### Accessibility Traits

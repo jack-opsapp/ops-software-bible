@@ -1567,6 +1567,20 @@ The durable visit record remains the per-visit field snapshot, not a live pointe
 
 `public.site_visit_checklist_answers` is the cloud record: `id uuid`; `site_visit_id uuid` FK parent with cascade; `company_id text`; `opportunity_id uuid?`; optional local template id; field id/label/kind/required/help/sort snapshot; bounded `answer_value jsonb`; `created_by text`; timestamps; `deleted_at`. One active answer exists per `(site_visit_id, field_id)`. Reassigning the parent propagates its opportunity binding to every child.
 
+**Checklist logical-identity reconciliation (2026-08-06).** The active logical
+identity is `(site_visit_id, field_id)`; the UUID is the transport identity that
+the server may canonicalize. If an authoritative active server row arrives with
+a different UUID, `SiteVisitServerMerge` migrates the one matching local active
+answer to that canonical UUID and rewrites every unresolved checklist
+`SyncOperation` identity and routing envelope in the same `ModelContext`
+transaction. The merge validates the complete plan before applying it. Multiple
+local or incoming active rows for one logical identity, unresolved work already
+targeting the canonical UUID, an unknown queue lifecycle/type, or malformed
+company/visit/entity routing fail closed and quarantine through the existing
+recovery path; the merge must never guess a winner or overwrite captured field
+evidence. Source: `ops-ios/OPS/Network/Sync/SiteVisitServerMerge.swift` (code
+commit `a6a49da7`).
+
 Capture UX is field-first: note draft text autosaves into one live note/transcript artifact as the operator types or finishes dictation, clearing the text soft-deletes that draft artifact, and there is no separate Save Note command. Photo artifacts expose `previewAssetURL` (`renderedAssetURL ?? thumbnailURL ?? localAssetURL`) so capture-packet rows can show thumbnails and open a zoomable preview before markup. Checklist fields can auto-link matching captured evidence: photo fields use active photo/dimensioned-photo artifacts, measurement fields use measurement artifact text, and deck-design fields use the active deck-design artifact. The lead/client panel is part of the same capture console, not a pre-step: inline search suggests local active leads and clients, manual fields autosave into `SiteVisitIdentityDraft`, completed fields get completion treatment, and the operator can create/link the lead from the same panel before project handoff. Reassigning a visit moves the open `SiteVisit` plus all active `SiteVisitCaptureArtifact.opportunityId` and `SiteVisitChecklistAnswer.opportunityId` values to another active lead before project creation.
 
 ### 22D. Recovery, tenancy, export, and erasure
@@ -1846,7 +1860,7 @@ CREATE INDEX idx_project_notes_event_kind
 
 **iOS now reads both columns (2026-07-04, bug burndown I2).** `ProjectNote` gained optional `eventKind` + `contentMetadataJSON` (SwiftData schema **V13**, additive) and the DTO decodes `content_metadata` loosely (`AnyJSON` → raw JSON string). The iOS Activity feed branches on `eventKind`: `status_change` renders as a quiet one-line system row (`FROM → TO` from `{from,to}`), the iOS-authored `site_visit` kind renders as a rich packet card (see below), and any other / unknown `event_kind` falls back to the plain note card. So the "renders as a plain note" caveat above is resolved on iOS ≥ the I2 release.
 
-**iOS writes `event_kind = 'site_visit'`.** The site-visit packet (lead → project conversion) is now one `project_notes` row: `content` keeps the legacy plain-text packet (web + older iOS render it unchanged) and `content_metadata` carries the structured summary the iOS feed card + detail sheet render from — `{ "site_visit_id", "photo_count", "measurements": [{ "label", "value" }], "notes": [...], "checklist": [...], "address", "contact_name", "company_name", "deck_design_id" }` (the last four added 2026-07-29 with the SITE VISIT RECORD; all keys optional and additive, so older packets decode unchanged and a missing key simply renders no section). Photos in the sheet resolve from synced `project_photos` rows (`site_visit_id`, else `source = 'site_visit'`), never from the capturing device's local artifacts.
+**iOS writes `event_kind = 'site_visit'`.** The site-visit packet (lead → project conversion) is now one `project_notes` row: `content` keeps the legacy plain-text packet (web + older iOS render it unchanged) and `content_metadata` carries the structured summary the iOS feed card + detail sheet render from — `{ "site_visit_id", "photo_count", "measurements": [{ "label", "value" }], "notes": [...], "checklist": [...], "checklist_items": [{ "field_id", "label", "value", "kind", "artifact_count" }], "address", "contact_name", "company_name", "deck_design_id" }`. The structured `checklist_items[]` array is additive and is written beside the legacy `content` + `checklist[]` representations; it preserves field labels, typed values, and evidence counts without breaking older clients. All keys and item members are optional. A future-shaped or malformed `checklist_items` key is ignored and the reader falls back to `checklist[]`, so one compatibility problem never invalidates the rest of the packet. Photos in the sheet resolve from every matching synced `project_photos` row (`site_visit_id`, else `source = 'site_visit'`), in capture order and never from the capturing device's local artifacts.
 
 **No currency value is ever written into this blob — this is a hard contract, not a preference.** `content_metadata` syncs, and OPS-Web renders it with no financial gate of its own, so any money-shaped key here is money published past iOS's `finances.view` permission to every viewer of the web activity feed. A first cut of the record shipped `estimated_value` in the packet and was reverted for exactly this reason (2026-07-29). The lead's value is instead resolved at RENDER time from the local `opportunities` row and gated there — permitted viewers with the lead on-device see a `// VALUE` line, everyone else's record simply lacks it. Reading it live also keeps the figure honest: a record opened a month later shows what the lead is worth now, not a number frozen into a note. `OPSTests/SiteVisitPacketNoteTests.testPacketMetadataCarriesNoMoney` enforces the key set as an allowlist, so a future `deck_price` or `quote_total` fails the build rather than leaking. The packet is written through the iOS durable sync queue (`DataController.createProjectNote` → outbound create carrying both columns); the previous direct insert set `needsSync` but recorded no op, and project notes have no `needsSync` sweep, so packets never reached the server.
 
@@ -1866,7 +1880,7 @@ CREATE INDEX idx_project_notes_event_kind
 | `project_created` | `{}` |
 | `project_archived` | `{}` |
 | `task_completed` | `{ "taskId": "<uuid>", "title": "..." }` |
-| `site_visit` (iOS) | `{ "site_visit_id": "<uuid>", "photo_count": 4, "measurements": [{ "label": "Deck width", "value": "14 ft 6 in" }], "notes": ["..."], "checklist": ["..."], "address": "...", "contact_name": "...", "company_name": "...", "deck_design_id": "<uuid>" }` — **never any currency value**; see the packet contract above |
+| `site_visit` (iOS) | `{ "site_visit_id": "<uuid>", "photo_count": 4, "measurements": [{ "label": "Deck width", "value": "14 ft 6 in" }], "notes": ["..."], "checklist": ["..."], "checklist_items": [{ "field_id": "width", "label": "Deck width", "value": "14 ft 6 in", "kind": "measurement", "artifact_count": 1 }], "address": "...", "contact_name": "...", "company_name": "...", "deck_design_id": "<uuid>" }` — **never any currency value**; see the packet contract above |
 
 **Write paths** — `ProjectLifecycleService.onProjectStageChange` writes `status_change` rows with the `{from, to}` payload. The workspace `useProjectMutations` hook writes `project_created`, `project_archived`, and `photo_uploaded` rows. Estimate / invoice / payment / expense writes happen inside their respective services as those features are wired into the workspace timeline (later phases).
 
@@ -4079,6 +4093,21 @@ enum SupabaseDate {
 ### Overview
 
 Most models support **soft delete** via `deletedAt: Date?` timestamp.
+
+For `Project`, `Client`, and `ProjectTask`, a tombstone moves the record out of
+normal queries and into the Admin/Office Settings → Trash recovery ledger; it is
+not a permanent-delete promise. Restore sets `deleted_at` to exact JSON `null`
+through a durable update operation. A task with a live parent restores directly;
+a task whose project is also deleted restores only as one explicit combined
+project-first plan; a missing parent makes restore unavailable rather than
+creating an orphan.
+
+The local tombstone mutation and the complete ordered restore outbox are one
+`ModelContext` transaction. Zero, partial, malformed, or failed operation staging
+rolls back both the model mutations and every staged queue row. No restored state
+may become visible locally unless its complete sync ledger committed with it.
+Detailed presentation and transaction rules live in
+`07_SPECIALIZED_FEATURES.md` §35.
 
 ### Default Query Pattern
 
