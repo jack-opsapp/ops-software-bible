@@ -6416,9 +6416,8 @@ That is intended, not a gap. Every step is deterministic; no LLM is on this path
 **Where the booking lands.** `site_visits`, with `opportunity_id` set and
 `project_id` null — the same row the manual "Create Site Visit" modal writes.
 `project_tasks.project_id` is NOT NULL, so a pre-conversion lead cannot have a
-calendar task. Note that **site visits do not render on the Schedule page**
-(`calendar-service.ts` reads `project_tasks` only); that is a pre-existing gap
-affecting every site visit, not something this feature introduced.
+calendar task. Site visits **do** render on the Schedule page as of 2026-08-06
+— see § 19b.
 
 **Refusals — the parser returns null rather than guess.** Zero matches; two
 different matches ("Friday at 10 or Monday at 2?" is an options menu, not a
@@ -6471,6 +6470,60 @@ retro-book.
 anywhere in the codebase and mailbox OAuth is Gmail-scoped only; syncing bookings
 out needs a scope change, a consent re-prompt on every connected mailbox, and its
 own failure model.
+
+### 19b. Site Visits on the Schedule Page (Web, 2026-08-06)
+
+Site visits render on the Schedule page beside project tasks and personal
+events. Before this, `calendar-service.ts` read `project_tasks` only, so no site
+visit — auto-booked or hand-entered — appeared on the calendar at all.
+
+**Third calendar source.** `schedule/page.tsx` already merged two sources
+(`useScheduledTasks` → `project_tasks`, `useScheduledUserEvents` →
+`calendar_user_events`). Site visits follow that exact pattern:
+`useScheduledSiteVisits` → `SiteVisitService.fetchForRange` →
+`mapSiteVisitToInternalEvent` → the shared `InternalScheduleEvent` shape.
+Cancelled and soft-deleted visits are excluded; scope-limited viewers see only
+visits they are assigned to (`assignee_ids` containment, scope not role).
+
+**Read-only by design.** A visit belongs to a lead, and the customer
+conversation that set the time lives there — so it is rescheduled or removed on
+the lead, not dragged on the grid. Clicking routes to
+`/pipeline?opportunityId=…`.
+
+**`isTaskEvent` — the predicate that closes a bug class.** Five draggable /
+resizable call sites (`week-day-column`, `schedule-grid-day`,
+`month-scroll-container`, `crew-task-block` + its two resize handles) and the
+crew swimlane split previously gated on **positive** kind checks
+(`kind === "personal" || kind === "time_off"`) or on nothing at all. Any newly
+added kind therefore fell through as draggable — and a drag writes the dragged
+id straight into `project_tasks`. Everything now branches on
+`isTaskEvent(event)`, and the task-only context menu refuses to open on a
+non-task. **Never enumerate kinds; always use the predicate.**
+
+**One kind union.** `ScheduleEventKind` lives in `schedule-constants.ts` (a leaf
+module) and is imported by `schedule-utils.ts` and `weather-risk.ts`. There were
+previously three copies of the union, which is exactly how site visits silently
+skipped the weather subsystem — the compiler found all three once a single
+source existed.
+
+**Weather.** `isWeatherDependentEvent` returns true for a site visit (it is
+outdoor field work), classified on kind alone — a visit's title is the
+CUSTOMER'S name, so a client called "Shop Ltd" would otherwise suppress a real
+storm warning via the keyword pass. No warning surfaces yet, though:
+`weatherRiskForEvent` looks forecasts up by `projectId` and a lead has none.
+Making visits weather-aware needs forecasts keyed by the opportunity's own
+location.
+
+**Design token.** `tan #C4A868`. Not a choice — `.interface-design/system.md`
+assigns that hex to "site visit" by name. The `TASK_TYPE_COLORS.site_visit` key
+is named for the semantic rather than reusing `material`, which shares the hex.
+Adding the key also makes the visit appear automatically in the type filter and
+legend; without it, switching on any type filter would have hidden every visit.
+
+**Files:** `src/lib/hooks/use-scheduled-site-visits.ts`,
+`SiteVisitService.fetchForRange`, `mapSiteVisitToInternalEvent` +
+`isTaskEvent` in `schedule-utils.ts`, `ScheduleEventKind` in
+`schedule-constants.ts`.
 
 ## 20. Mobile Wizard System
 
