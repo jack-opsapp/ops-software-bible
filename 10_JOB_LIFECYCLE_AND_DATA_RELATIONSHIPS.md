@@ -1206,7 +1206,7 @@ ON-SITE (staff opens visit on mobile/web)
   → SiteVisit.status → in_progress
   → Parent + SyncOperation commit together on the phone
   → SiteVisitIdentityDraft autosaves client/contact/address fields and queues behind the parent
-  → Selected phone-local SiteVisitType fields snapshot into cloud-backed SiteVisitChecklistAnswer rows
+  → Selected company SiteVisitType fields snapshot into cloud-backed SiteVisitChecklistAnswer rows
   → If the attached lead, client, or address is wrong:
       Operator expands the lead/client panel
       Corrects address/contact/client fields inline
@@ -1588,6 +1588,12 @@ Site visits can be created from:
 3. **Project detail** → "Book Site Visit" (for post-win check-ins)
 
 **Required fields:** scheduledAt, assigneeIds (at least one), opportunityId OR projectId
+
+### Checklist Administration
+
+Company checklist managers use `Settings → Operations → Site Visit Types`. They can create a visit type, choose the company default, add/reorder form fields, select each field's input kind, mark it required, and toggle whether it is shown. Built-in types keep their product-owned identity and canonical field kinds, while company choices for visibility, requirement, order, and added fields are preserved across app upgrades. Custom types can be renamed or soft-deleted. All edits apply to future/blank checklists; answered visit records stay unchanged.
+
+The Site Visit type chooser places `EDIT TYPES` immediately after the available type options for users with `settings.company`. Their first Site Visit open also shows a user-scoped pointer to this Settings location with `NOT NOW` and `NEVER SHOW AGAIN`; opening Settings suppresses the guide. Crew without the permission see and use company templates but are never sent into an editor they cannot use.
 
 ### On-Site Experience (Mobile)
 
@@ -3082,6 +3088,7 @@ The list below was originally written as "tables needed." A live audit on 2026-0
 -- site_visit_artifacts            EXISTS IN PROD (company_id text; Realtime; RLS)
 -- site_visit_checklist_answers    EXISTS IN PROD (company_id text; Realtime; RLS)
 -- site_visit_identity_drafts      EXISTS IN PROD (company_id text; Realtime; RLS)
+-- site_visit_types                TRACKED, NOT PROD-APPLIED 2026-08-06 (company_id text; Realtime; RLS)
 -- project_photos                  EXISTS IN PROD — see schema below
 -- email_connections               (renamed from gmail_connections, status TBD)
 -- opportunity_email_threads       (status TBD)
@@ -3279,6 +3286,11 @@ Built iOS files:
 | `SiteVisitProjectHandoffStore.swift` | In-memory fast path staging the reviewed packet between the review sheet and the conversion sheet; when it is empty at conversion (app kill in between), the sheet falls back to `SiteVisitProjectHandoff.derivePayload` |
 | `SiteVisitCaptureArtifact.swift` | SwiftData model for the local pre-project packet and reviewed project payload |
 | `SiteVisitType.swift` | SwiftData models for company-scoped visit templates, custom fields, and per-visit checklist answer snapshots |
+| `Views/Settings/SiteVisitTypeSettingsView.swift` | Company checklist list/editor: create/default, field kind, order, required, show/hide, soft delete |
+| `Views/SiteVisits/SiteVisitChecklistGuideView.swift` | First-eligible-open Settings pointer with user-scoped never-show-again persistence |
+| `Network/Supabase/DTOs/SiteVisitTypeDTOs.swift` | Strict wire representation for shared checklist templates |
+| `Network/Supabase/Repositories/SiteVisitTypeRepository.swift` | Company-scoped template fetch/upsert/update/tombstone transport |
+| `Network/Sync/SiteVisitTypeServerMerge.swift` | Shared pending-write-preserving full-pull/delta/Realtime merge |
 | `Network/Supabase/DTOs/SiteVisitDTOs.swift` | Strict UUID/status/wire conversion for parent and normalized child tables plus completion response |
 | `Network/Supabase/Repositories/SiteVisitRepository.swift` | Company-scoped CRUD, bundle fetch, sparse parent updates, and guarded completion RPC |
 | `Services/SiteVisitPersistenceCoordinator.swift` | One local transaction for state + parent-first durable operation chain |
