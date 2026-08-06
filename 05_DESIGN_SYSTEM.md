@@ -2953,7 +2953,7 @@ The LEADS tab rebuild (Phases 0–6) is the first consumer:
 - `LeadActionCard` — `.glassSurface()`, mobile-contrast earth-tone variants for stage tag tones + urgency-tinted verbs and due chips
 - `WonConvertCarousel` — `.glassSurface()` per card, `oliveFillM` check-badge
 - `PipelineFooter` — `.glassSurface()`
-- `LeadTriageCard` (`ops-ios` commit `f079116f`, 2026-07-25) — the stage tag is the top-left scan anchor and retains its status-menu behavior for editable leads; estimated value is top-right, contact and job follow beneath, and the lower metadata row contains stage progress plus source only. Terminal cards use the same hierarchy with a read-only stage tag.
+- `LeadTriageCard` (`ops-ios` commit `f079116f`, 2026-07-25; compressed 2026-08-06) — the stage tag is the top-left scan anchor and retains its status-menu behavior for editable leads; estimated value is top-right and is **omitted rather than dashed** when the lead carries none. Four bands: stage+value / contact name with `assigneeLabel · source` trailing / chase strip / actions. The 6-segment stage progress bar and the job subtitle were both deleted in the round-2 compression — the bar was the card's only accent and repeated what the stage tag already says in words, so the card is now monochrome. Terminal cards use the same hierarchy with a read-only stage tag and no action row.
 - `LeadDetailView` family (`DetailHero`, `ContactCard`, `FollowUpsCard`, `ActivityTimeline`, `StageTimeline`, `StickyActionBar`) — combinations of `.glassSurface()` + `.nestedCard()` + earth-tone -M variants
 - `LeadFormView` + all five sheets — chip pickers, status lines, danger-zone destructive button
 
