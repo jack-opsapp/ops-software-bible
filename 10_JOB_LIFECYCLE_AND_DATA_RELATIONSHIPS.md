@@ -1690,17 +1690,23 @@ Core principles:
 The owner-fenced nonterminal checkpoint is live. Production migration record
 `20260805190312_email_provider_snapshot_health`, from repository source
 `20260805151056_email_provider_snapshot_health.sql`, makes the 2026-08-05
-provider-health split live in the database. OPS-Web commit
-`146f6d69c4d52d985bc516c0453db6590f92cf97` was promoted as deployment
-`dpl_6gxJ4P8dv7ohpXpi1wbbdPuyR7FY`; runtime proof drained the derived queue from
-seven IDs to zero and advanced both health timestamps. The current customer
-domain was subsequently superseded by deployment
-`dpl_2pmEULv4sbwCwjB4HbPd8XY9ofgh` at
-`d34427922cafda3fb17769a044941a6b6218ac64`, which does not contain the repair.
-The schema remains live, but a durable web release requires integrating
-`146f6d69` onto current `origin/main`, rerunning the release gates, and
-pushing/deploying main. Other prepared reactivation pieces in this subsection
-retain their explicitly dated rollout status.
+provider-health split live in the database. Authenticated sync behavior was
+runtime-proven on byte-identical repair commit
+`146f6d69c4d52d985bc516c0453db6590f92cf97` in deployment
+`dpl_6gxJ4P8dv7ohpXpi1wbbdPuyR7FY`, draining the derived queue from seven IDs to
+zero. The durable customer release is OPS-Web main commit
+`17e70559e5db5d51861e4d8bc8d57b2cd490d10b` in READY deployment
+`dpl_AiDK9ZkSfv6BvbP9pSkZiRwnVgSh` as of `2026-08-06T06:29:26.442Z`;
+`app.opsapp.co` resolves to that exact SHA with `aliasError = null`. Root/login
+returned HTTP 200, the unauthenticated heartbeat
+returned the expected HTTP 401, and deployment-scoped logs contained no
+error/fatal entry or HTTP 5xx. Current database readback has zero wrapped
+continuations, locks, or recovery state, with `last_synced_at`
+`2026-08-06T03:57:31.91Z` and `provider_snapshot_at`
+`2026-08-06T03:57:32.135712Z`. This exact final deployment was not made to
+perform a new authenticated sync or provider/email mutation; behavioral runtime
+proof remains the earlier byte-identical deployment. Other prepared reactivation
+pieces in this subsection retain their explicitly dated rollout status.
 
 - **Terminal sync authority:** `last_synced_at` means the provider snapshot and
   all bounded derived lead-summary work are complete. A structured Gmail

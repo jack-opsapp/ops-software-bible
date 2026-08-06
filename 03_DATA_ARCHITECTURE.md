@@ -4363,17 +4363,22 @@ is provider-terminal only when the folder cursor is a Graph `$deltatoken` and
 and raw URL cursors fail closed as pending. Heartbeat classification uses
 `provider_snapshot_at` with `last_synced_at` as the nullable rollout fallback.
 
-The matching OPS-Web repair was promoted from commit
-`146f6d69c4d52d985bc516c0453db6590f92cf97` as production deployment
-`dpl_6gxJ4P8dv7ohpXpi1wbbdPuyR7FY`. Runtime proof drained the derived
-continuation from seven pending opportunity IDs to zero; subsequent live
-readback showed latest `last_synced_at` `2026-08-05T19:22:36.949Z` and latest
-`provider_snapshot_at` `2026-08-05T19:22:37.018404Z`. The current customer
-domain was later superseded by deployment `dpl_2pmEULv4sbwCwjB4HbPd8XY9ofgh`
-at Git commit `d34427922cafda3fb17769a044941a6b6218ac64`, a sibling that does not
-contain the repair. The database contract remains live, but durable web release
-requires integrating `146f6d69` onto current `origin/main`, re-running the
-release gates, and pushing/deploying that main commit.
+Authenticated sync behavior was first runtime-proven on byte-identical repair
+commit `146f6d69c4d52d985bc516c0453db6590f92cf97` in production deployment
+`dpl_6gxJ4P8dv7ohpXpi1wbbdPuyR7FY`; the derived continuation drained from seven
+pending opportunity IDs to zero. The durable customer release is OPS-Web main
+commit `17e70559e5db5d51861e4d8bc8d57b2cd490d10b`, served by READY deployment
+`dpl_AiDK9ZkSfv6BvbP9pSkZiRwnVgSh` as of `2026-08-06T06:29:26.442Z`.
+`app.opsapp.co` resolves to that exact SHA with `aliasError = null`; root and
+login returned HTTP 200, the unauthenticated heartbeat correctly returned HTTP
+401, and deployment-scoped logs contained no error/fatal entry or HTTP 5xx.
+Migration record `20260805190312_email_provider_snapshot_health` remains live.
+Current database readback has zero wrapped continuations, locks, or recovery
+state, with `last_synced_at` `2026-08-06T03:57:31.91Z` and
+`provider_snapshot_at` `2026-08-06T03:57:32.135712Z`. This exact final
+deployment was not made to perform a new authenticated sync or provider/email
+mutation; behavioral runtime proof remains the earlier byte-identical
+deployment.
 
 `default_intake_owner_id` is valid only on `type='company'` connections. The
 database requires an active, nondeleted user in the same company with effective
