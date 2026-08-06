@@ -3927,6 +3927,12 @@ Fixed in the **matcher, not the template** — mimicking one provider in the sto
 
 *Backfill.* The five affected `ai_draft_history` rows were re-armed (`status='auto_drafted'`, `discarded_at=null`) so the connection-level reconciliation sweep — which selects on `status='auto_drafted'` regardless of new mail — reprocesses them. Known follow-up still not built: a historical learning audit of those rows.
 
+**Consumed total rewrites (2026-08-06, prepared `d230f2f6`).** A later five-send teaching run exposed a separate recognition failure. The source-message fence marked a draft stale when *any* activity followed its persisted source, so the operator's own outbound send made the row terminal before `classifyDraftOutcome`, the mailbox-actor RPC, or the durable learning queue could run. All five immutable Gmail draft objects were confirmed consumed; `deleteOrphanedMailboxDrafts` runs downstream and was not causal.
+
+The fence now examines the first activity after the exact source. An activity before/equal to draft placement, or an inbound after placement, still makes the draft stale. Only an outbound after placement may reach the provider check. If the exact mailbox draft object is gone, that outbound is `used` regardless of verbatim overlap, so a clipped reply or total rewrite remains an `operator_approved` edit lesson. If the object still exists, the existing overlap proof remains required; an unrelated outbound is still `from_scratch`, and orphan deletion still requires its independent derivation guard. Shared-mailbox actor resolution remains limited to `used`; exact signature removal, current assignment/permission proof, one-draft/one-message binding, durable idempotency, and writing-profile promotion thresholds are unchanged.
+
+The five 2026-08-06 teaching pairs remain recoverable from durable originals and sent activities. Re-arm only after this code is customer-live, then verify each row reaches the learning queue and its terminal sent/edit evidence before considering recovery complete.
+
 **Orphaned mailbox draft cleanup (2026-08-06).** Recognizing the send fixed the *record*; the draft object the operator left behind in Gmail was still sitting there reading like an unsent reply, and sending it delivers the same message to the customer twice. Two mechanisms, both in `draft-reconciliation.ts`:
 
 *Sync-time.* When an outcome resolves `used` while the draft is still in the mailbox, the orphan is deleted after the learning receipt is staged. The delete re-asserts `outboundDerivedFromDraft === true` at the call site rather than inheriting it from the classifier, so no future change to the decision tree can turn a `from_scratch` into a mailbox mutation. Cleanup is hygiene, not truth: `deleteOrphanedMailboxDrafts` swallows every provider failure, because the send is already recorded and a revoked scope must never withhold the sync cursor.
@@ -6363,6 +6369,92 @@ All gating flows through `inboxModule` in `src/lib/types/permissions.ts`:
 ### What replaced the old §19
 
 The pre-rebuild inbox used `InboxService.getPipelineThreads()` (pipeline-only) and grouped threads into `InboxConversation` by client. Legacy files removed in Phase 7 cleanup: `inbox-service.ts`, `use-unified-inbox.ts`, `use-inbox.ts`, `unified-inbox.ts` types, and nine legacy inbox components. The `ComposeEmailModal` and thread message fetching via provider `fetchThread` are retained and reused by v2.
+
+### 19a. Confirmation-Triggered Site-Visit Booking (Web, 2026-08-06)
+
+When OPS proposes a meeting time by email and the customer accepts it, the site
+visit is created automatically. Spec: `ops-web/docs/inbox/confirmation-triggered-booking-spec.md`.
+
+**The scope rule.** Booking happens only when **OPS proposed the datetime and the
+customer accepted it**. There is deliberately no free-text date parsing over
+arbitrary inbound mail. In the proposal case the system already knows the
+intended instant — it wrote it — so only the acceptance has to be recognised. An
+inbound "can you come Tuesday at 3?" with no prior OPS proposal books nothing.
+That is intended, not a gap. Every step is deterministic; no LLM is on this path.
+
+**Two phases.**
+
+| Phase | Where | What |
+|---|---|---|
+| Capture | `reconcileEmailSend`, after the outbound activity is durable | `parseProposedDateTime` resolves at most one clock time against `companies.timezone`, the send instant, and `open_hour`/`close_hour`; a hit writes a `pending` `meeting_proposals` row |
+| Book | `maybeBookProposedMeeting` in `sync-engine.ts`, after an inbound lands | `detectMeetingAcceptance` classifies the reply; an acceptance calls `book_proposed_meeting_as_system` |
+
+**Modules** (`ops-web/src/lib/api/services/meeting-booking/`):
+
+| File | Kind | Responsibility |
+|---|---|---|
+| `proposed-datetime.ts` | PURE | body + sentAt + tz + work hours → one absolute instant, or null |
+| `meeting-accept-detector.ts` | PURE | reply → `accepted` / `declined` / `counter_proposed` / `none` |
+| `booking-runtime.ts` | orchestration | `captureMeetingProposal`, `bookAcceptedMeeting` |
+
+**Where the booking lands.** `site_visits`, with `opportunity_id` set and
+`project_id` null — the same row the manual "Create Site Visit" modal writes.
+`project_tasks.project_id` is NOT NULL, so a pre-conversion lead cannot have a
+calendar task. Note that **site visits do not render on the Schedule page**
+(`calendar-service.ts` reads `project_tasks` only); that is a pre-existing gap
+affecting every site visit, not something this feature introduced.
+
+**Refusals — the parser returns null rather than guess.** Zero matches; two
+different matches ("Friday at 10 or Monday at 2?" is an options menu, not a
+proposal); a bare hour that fits the working window in neither reading ("at 7");
+a context word that contradicts the window ("afternoon at 10"); an unusable
+timezone; a past instant; anything beyond a 90-day horizon. Quantities, prices,
+ranges, measurements, and phone-number fragments are excluded so a body full of
+numbers cannot fabricate a time.
+
+**Refusals — the detector.** A restated time that disagrees with the proposal is
+checked first and outranks everything: "Yes, 2 on Friday works for us" reads as a
+yes and means a different appointment, so it can never book. Decline and counter
+language outrank acceptance language. Note the deliberate divergence from
+`accept-detector.ts`: "sounds good" is a LOW/soft signal for a deal award but is
+a genuine acceptance of a proposed time. Agreeing to a visit is **not** winning
+the deal — the two detectors answer different questions.
+
+**Guards at booking.** Proposal must be `pending` and belong to the same
+opportunity; the inbound must not predate the proposal (historical import); the
+sender must be on the opportunity's customer relationship
+(`loadOpportunityCustomerEmails`, the same rule commercial-outcome evaluation
+applies, so a CC'd vendor cannot book the operator's day). Inside
+`book_proposed_meeting_as_system` every guard is re-checked under a row lock: a
+replayed acceptance returns the booking it already made, an expired proposal
+self-marks, and a visit already sitting within ±2h of the proposed instant is
+adopted rather than duplicated.
+
+**Failure posture.** Neither entry point throws. A send the provider already
+accepted must not fail over a capture; the mailbox cursor must not stall over a
+booking. The booking call sits *outside* `maybeAutoAdvanceOnAccept`'s guarded
+block for exactly that reason — a missed booking is recoverable next cycle, a
+stuck mailbox is not.
+
+**Operator surface.** Rail notification `type='site_visit_booked'` to the
+operator who sent the proposal, stating when, why ("Confirmed by email reply"),
+and how to remove it; `action_url` deep-links to the lead. Copy in
+`buildMeetingBookedCopy` (`notification-copy.ts`), en + es. The visit's `notes`
+carry both halves of the evidence — the sentence that proposed and the sentence
+that accepted — so an unexpected appointment is auditable at a glance. Undo is
+the existing soft delete.
+
+**Forward-looking only.** Capture happens at send time, so no proposal row exists
+for mail sent before this shipped. Threads already awaiting a reply will not
+retro-book.
+
+**Migrations:** `20260806223702_meeting_proposals_confirmation_booking.sql`,
+`20260806223810_book_proposed_meeting_as_system.sql`.
+
+**Not included:** Google Calendar sync. There is no Google Calendar integration
+anywhere in the codebase and mailbox OAuth is Gmail-scoped only; syncing bookings
+out needs a scope change, a consent re-prompt on every connected mailbox, and its
+own failure model.
 
 ## 20. Mobile Wizard System
 

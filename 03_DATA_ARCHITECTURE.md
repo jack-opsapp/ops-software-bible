@@ -1494,6 +1494,29 @@ Nullable text column on `products`, CHECK `bundle_pricing_mode IS NULL OR bundle
 
 Inbound delta and Realtime subscribe to the parent plus all three children. `SiteVisitServerMerge` preserves dirty local fields, applies authoritative terminal status, and makes an in-progress visit resumable from a second authorized device. `SiteVisitOrphanRecovery` reconstructs a missing legacy parent only from exact same-company, valid, non-conflicting evidence; foreign, malformed, or ambiguous groups are encrypted and quarantined instead of uploaded or deleted.
 
+**`public.meeting_proposals` (web-only, 2026-08-06)** is a second writer into
+`site_visits`. It records the meeting datetime an OPS **outbound** email proposed,
+captured at send time inside `reconcileEmailSend`, so a later customer acceptance
+only has to point at it — no datetime is ever parsed out of inbound mail. Columns:
+`id uuid`; `company_id uuid` / `opportunity_id uuid` / `connection_id uuid` /
+`source_activity_id uuid` (all FK, cascade); `provider_thread_id text`;
+`proposed_start_at timestamptz`; `duration_minutes integer`; `time_zone text`;
+`proposal_text text` (the sentence that proposed it); `proposed_by_user_id uuid`
+FK `users`; `status text` (`pending | accepted | superseded | expired | declined`);
+`accepted_message_id text?`; `accepted_at timestamptz?`; `site_visit_id uuid?`;
+audit timestamps. Unique on `(connection_id, source_activity_id)` so capture is
+idempotent under send retry, and partial-unique on `(connection_id,
+provider_thread_id) where status='pending'` so one thread carries at most one live
+proposal. RLS is company-scoped SELECT only; all writes go through the service
+role or `public.book_proposed_meeting_as_system(proposal_id, accepted_message_id,
+notes)`, which locks the proposal, re-checks every guard, and inserts exactly one
+`site_visits` row — adopting rather than duplicating any visit already within ±2h
+of the proposed instant. Note the tenancy mismatch this bridges: `meeting_proposals.
+company_id` is `uuid` while `site_visits.company_id` is legacy `text`, so the RPC
+casts on insert. Client mirrors are written only when the opportunity's
+`client_id`/`client_ref` pair agrees, matching `resolveGuardedOpportunityClientId`.
+Full behaviour: `07_SPECIALIZED_FEATURES.md` § 19a.
+
 ### 22A. SiteVisitIdentityDraft (cloud-backed snapshot)
 
 **File**: `ops-ios/OPS/DataModels/SiteVisits/SiteVisitIdentityDraft.swift`
