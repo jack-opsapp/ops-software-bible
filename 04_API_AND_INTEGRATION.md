@@ -1096,6 +1096,41 @@ The reporting direction (Google Ads → OPS) is entirely separate from the conve
 
 **Sync state** lives in `ads_sync_status` (`daily-sync` + `backfill` rows). Cost: Google Ads API Basic access is free (15k operations/day quota; OPS usage is single-digit calls per day).
 
+### Attribution Capture (Unified Attribution P2 — 2026-08-06)
+
+The spend side above records what OPS *pays*. This records where a *customer* came from. Both feed the eventual unified attribution screen (P4).
+
+**Every company gets an attribution row at birth.** Trigger `companies_seed_trial_attribution` (`AFTER INSERT ON companies` → `seed_trial_attribution_for_company()`) inserts a `trial_attributions` row with `attributed_channel = 'unknown'`, on **every** creation path — web, iOS, or anything added later.
+
+This is deliberately a trigger and **not** part of `create_company_for_owner`. That RPC is the shared, atomic owner-setup path for both platforms; an analytics side-effect does not justify changing it. Two consequences depend on universal coverage:
+- attribution rates are computed against **all** companies, so a missing row silently understates every rate;
+- `billing_events_first_paid` only **UPDATEs** an existing row, so a company with no row can never be counted as a paid conversion.
+
+The insert is wrapped in an exception handler that logs a warning and continues — **company creation must never fail because analytics failed.**
+
+**First-touch cookie.** `ops-site` middleware writes `ops_attribution` on first visit (all four locale-routing branches), scoped **`Domain=.opsapp.co`** so it reaches `app.opsapp.co`. Before 2026-08-06 it was host-only, so the app never received it and signup attribution captured nothing. First touch is never overwritten. The domain is omitted outside production (a dotted domain is invalid on localhost).
+
+| Cookie | Written by | Shape |
+|---|---|---|
+| `ops_attribution` | `ops-site` middleware (primary — most real first touches) | `utm_*`, `gclid`, `fbclid`, `landing_url` (path+query), `first_touch_at` |
+| `__ops_first_touch` | `ops-web` client `captureOnLanding()` (defensive — tagged URL hitting `app.opsapp.co` directly) | same + `referrer`, `captured_at` |
+
+**Read at signup.** `POST /api/setup/progress` (step `company`) calls `readServerFirstTouch(req.headers.get("cookie"))`, which parses **both** cookie names off the raw `Cookie` header and returns the **earliest** `captured_at`/`first_touch_at`. Raw-header parsing is deliberate: duplicates of one name can coexist (host-only alongside `.opsapp.co`), and a parsed cookie store surfaces only whichever the browser ordered first — so first-touch would be ordering-dependent.
+
+`recordTrialAttribution()` then UPDATEs the row, scoped to `attributed_channel = 'unknown'` so a first touch is never overwritten. It skips only when the cookie carries **no signal at all** — not when the channel fails to classify, because `deriveAttributionChannel()` returns `unknown` for real-but-unrecognized sources (e.g. `utm_source=newsletter`), and gating on the channel would discard their UTM data. Never throws.
+
+**`first_paid_at` needs no application code.** Trigger `billing_events_first_paid` → `pmf_update_first_paid_at()` stamps it whenever the Stripe webhook inserts a `billing_events` row with `event_type = 'invoice.paid'` and a resolved `company_id`. This predates P2 and was already correct; it was a no-op only because `trial_attributions` was empty.
+
+**"How'd you find us" (`companies.referral_method`).** The only acquisition signal that survives an App Store install. Optional single-select on **both** the web company setup step and iOS `CompanyNameStepView`; never gates the CTA, and re-tapping the selection clears it (deselection is the skip). Stores a **slug**, not the label, so copy can change without breaking aggregation. Vocabulary is shared verbatim — `ops-web/src/lib/data/referral-sources.ts` and `ops-ios/OPS/Onboarding/Models/ReferralSource.swift`; **keep them in step or the platforms' answers stop aggregating**:
+
+`instagram` · `facebook` · `youtube` · `google` · `app_store` · `word_of_mouth` · `other`
+
+iOS writes it as a follow-up update after `create_company_for_owner` returns (the RPC does not accept it) — same pattern web uses for `company_size` / `company_age`. Both platforms validate against the known slug set before writing.
+
+Seven Bubble-era companies carry legacy free-text values (`Instagram`, `Word of Mouth (Onsite)`, `Internet Advertisement`, `Other`). These are **intentionally not migrated** — `Internet Advertisement` cannot be mapped to a slug without guessing. **Normalize at read time in P4.**
+
+**Known coverage limit.** Every primary CTA on `ops-site` points at the App Store, and no click id survives an install. Measured over companies created since 2026-03-01, only ~26% (5 of 19) were born through web setup. Cookie-based attribution therefore covers a minority of signups by construction; the referral question is what covers the rest. `try-ops` (ad landing pages) does not yet write the cookie — a `.opsapp.co` cookie written there would reach the app, so that remains an open follow-up.
+
 ---
 
 ## Stripe Subscription Integration
