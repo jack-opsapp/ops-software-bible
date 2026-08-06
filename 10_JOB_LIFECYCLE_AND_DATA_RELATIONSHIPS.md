@@ -3088,7 +3088,7 @@ The list below was originally written as "tables needed." A live audit on 2026-0
 -- site_visit_artifacts            EXISTS IN PROD (company_id text; Realtime; RLS)
 -- site_visit_checklist_answers    EXISTS IN PROD (company_id text; Realtime; RLS)
 -- site_visit_identity_drafts      EXISTS IN PROD (company_id text; Realtime; RLS)
--- site_visit_types                TRACKED, NOT PROD-APPLIED 2026-08-06 (company_id text; Realtime; RLS)
+-- site_visit_types                EXISTS IN PROD 2026-08-06 (migration 20260806211208; company_id text; Realtime; RLS)
 -- project_photos                  EXISTS IN PROD — see schema below
 -- email_connections               (renamed from gmail_connections, status TBD)
 -- opportunity_email_threads       (status TBD)

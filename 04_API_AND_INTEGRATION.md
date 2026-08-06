@@ -1427,7 +1427,7 @@ Account deletion invokes `eraseSiteVisitPrefix(companyId)` after the transaction
 
 `SiteVisitPersistenceCoordinator` commits local model mutations and their `SyncOperation` rows atomically. Dependencies enforce parent → artifacts/checklist/identity → media → completion. `SiteVisitOutboundSync` maps each operation to `SiteVisitRepository`; `InboundProcessor` and `RealtimeProcessor` fetch/subscribe to all four tables; `SiteVisitServerMerge` preserves unsent dirty fields while accepting authoritative server state. The local queue is retry machinery only and is encrypted into `SiteVisitRecoveryVault` during forced logout; it is not a Supabase company-data table.
 
-### Reusable checklist templates (tracked; not production-live 2026-08-06)
+### Reusable checklist templates (production backend/web live 2026-08-06)
 
 Migration `20260806103000_site_visit_checklist_templates.sql` adds `public.site_visit_types` for reusable company checklists. Its field JSON is bounded to 1–100 unique, nonblank definitions, requires at least one shown field, allowlists the eight supported field kinds, and caps the encoded document at 128 KiB. Partial unique indexes enforce one active row per company/slug and at most one active default. All members of the exact company can read; insert/update requires `settings.company`; authenticated/anonymous app roles cannot hard-delete. Service role retains hard-delete for eventual account closure. The table publishes full-row Realtime changes.
 
@@ -1435,7 +1435,7 @@ iOS routes the entity through `SiteVisitTypeRepository`, `InboundProcessor`, `Ou
 
 Operator UI is `Settings → Operations → Site Visit Types` and requires `settings.company`. The editor can create a type, choose the default, add/reorder fields, select field kinds, set required, and show/hide each field. The Site Visit type chooser ends with an `EDIT TYPES` route to the same screen. On the first eligible Site Visit open, a user-scoped guide points to this location with `NOT NOW` and `NEVER SHOW AGAIN`; opening Settings also suppresses future prompts.
 
-Rollout order is strict: apply the migration; regenerate live database types and the live company-data scope snapshot; add `site_visit_types` to the export/account-closure manifest; deploy the compatible web contract; then distribute the signed iOS client. Until those gates complete, this migration and client remain source-local only.
+Rollout order is strict: apply the migration; regenerate live database types and the live company-data scope snapshot; add `site_visit_types` to the export/account-closure manifest; deploy the compatible web contract; then distribute the signed iOS client. The first four gates completed on 2026-08-06: production migration version `20260806211208`, live-derived scope/privilege snapshots, lifecycle manifest/tests, and OPS-Web production commit `7e41c289`. Verified iOS source is published on `main` at `fd6d6e7d`; all eight focused checklist/settings simulator tests pass. Signed device/App Store distribution remains pending and must not be inferred from the source push.
 
 ## Guarded Sync-Recovery RPCs (2026-07-22)
 
