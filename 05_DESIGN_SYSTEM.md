@@ -614,6 +614,25 @@ VStack {
 
 **Rationale**: Critical actions at bottom are easier to reach with thumb while holding phone.
 
+#### Canonical iOS Header Geometry (2026-08-06)
+
+`OPSScreenHeader` is the single custom-header band used by root tabs, pushed
+Settings screens, and quick-action sheets. `AppHeader`, the `SettingsHeader`
+compatibility wrapper, and `QuickActionSheetHeader` all delegate to it.
+
+- The content band is a tokenized 52pt minimum, excluding the system top safe
+  area. Cake Mono titles scale with Dynamic Type, so the band grows vertically
+  instead of shrinking or clipping text.
+- Titles are uppercase and left-aligned. Long titles use the 22pt Cake Mono
+  variant and may wrap when accessibility sizing requires it.
+- Every interactive control provides at least a 44×44pt target.
+- The trailing edge renders at most two actions in source/VoiceOver order.
+  Schedule and Job Board consolidate secondary controls into one overflow menu
+  and keep universal search as the second slot.
+- Root-only metadata does not sit inside the title row: Home company/subscription
+  status and Schedule date context render in the first content strip below the
+  band. Sheet headers remain sheets, retaining their divider and save semantics.
+
 ### Shadows
 
 ```swift

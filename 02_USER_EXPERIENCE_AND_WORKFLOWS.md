@@ -780,6 +780,12 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 
 The Job Board uses a **role-based section system**. Each role sees a different set of sections and a different default view.
 
+The root header uses two trailing slots: **Review actions** (an overflow menu
+containing unscheduled, task-review, and payment-review entries when available)
+and universal **Search**. Review counts remain on the overflow control and in
+its menu labels; locked review entries still surface their existing unlock
+message. The task-review and payment-review walkthroughs target this menu first.
+
 ---
 
 #### Role: Field Crew
@@ -1052,8 +1058,9 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 1. **AppHeader** (Top)
    - Schedule header type
-   - Month icon button → tapping calls `viewModel.toggleMonthExpanded()` to show/hide the full month grid
-   - Filter button → opens CalendarFilterView (badge shows active filter count)
+   - Two trailing slots: **Schedule actions** overflow + universal **Search**
+   - Schedule actions → Month view calls `viewModel.toggleMonthExpanded()`, Filters opens `CalendarFilterView` with its active count, and My schedule / All team toggles scope
+   - `TODAY · <date>` renders in the first content strip below the 52pt title band
 
 2. **CalendarDaySelector** (Week strip + Month grid)
    - **Week strip** (default): horizontal row of `WeekDayCell`s showing day abbreviation, day number, and up to 4 colored density bars (one per task color). If >4 tasks exist on a day, the fourth bar is replaced by `···`.

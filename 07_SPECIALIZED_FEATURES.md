@@ -5212,7 +5212,7 @@ Unified bottom sheet for personal/custom events and time off:
 **File:** `Views/Calendar Tab/MonthGridView.swift`
 
 Full month calendar grid:
-- Accessible by tapping the month icon in `AppHeader`
+- Accessible from **Month view** in the `AppHeader` Schedule actions menu
 - Supports pinch-to-collapse gesture that restores week strip
 - Animates open/close via `matchedGeometryEffect` tied to `CalendarDaySelector`
 
@@ -5221,7 +5221,7 @@ Full month calendar grid:
 **File:** `Views/ScheduleView.swift`
 
 - Renders `CalendarDaySelector` above `DayCanvasView` (no more view-mode switch)
-- Passes `onMonthTapped: { viewModel.toggleMonthExpanded() }` to `AppHeader`
+- Passes `onMonthTapped: { viewModel.toggleMonthExpanded() }` to `AppHeader`, which exposes it as **Month view** inside the two-slot header's Schedule actions menu
 - Uses the schedule-mode floating action menu to present `UserEventSheet` as either `EVENT` or `TIME OFF`
 - Passes `isScheduleTab: true` to `FloatingActionMenu`
 
