@@ -1392,6 +1392,16 @@ Account deletion invokes `eraseSiteVisitPrefix(companyId)` after the transaction
 
 `SiteVisitPersistenceCoordinator` commits local model mutations and their `SyncOperation` rows atomically. Dependencies enforce parent → artifacts/checklist/identity → media → completion. `SiteVisitOutboundSync` maps each operation to `SiteVisitRepository`; `InboundProcessor` and `RealtimeProcessor` fetch/subscribe to all four tables; `SiteVisitServerMerge` preserves unsent dirty fields while accepting authoritative server state. The local queue is retry machinery only and is encrypted into `SiteVisitRecoveryVault` during forced logout; it is not a Supabase company-data table.
 
+### Reusable checklist templates (tracked; not production-live 2026-08-06)
+
+Migration `20260806103000_site_visit_checklist_templates.sql` adds `public.site_visit_types` for reusable company checklists. Its field JSON is bounded to 1–100 unique, nonblank definitions, requires at least one shown field, allowlists the eight supported field kinds, and caps the encoded document at 128 KiB. Partial unique indexes enforce one active row per company/slug and at most one active default. All members of the exact company can read; insert/update requires `settings.company`; authenticated/anonymous app roles cannot hard-delete. Service role retains hard-delete for eventual account closure. The table publishes full-row Realtime changes.
+
+iOS routes the entity through `SiteVisitTypeRepository`, `InboundProcessor`, `OutboundProcessor`, `RealtimeProcessor`, and `DataActor`. Settings mutations are local-first `SyncOperation` writes. One merge rule accepts authoritative server columns except fields still covered by a pending local operation. Template deletion is a tombstone. Per-visit `site_visit_checklist_answers` stay independent snapshots, so a definition change cannot mutate completed or already-answered visits.
+
+Operator UI is `Settings → Operations → Site Visit Types` and requires `settings.company`. The editor can create a type, choose the default, add/reorder fields, select field kinds, set required, and show/hide each field. The Site Visit type chooser ends with an `EDIT TYPES` route to the same screen. On the first eligible Site Visit open, a user-scoped guide points to this location with `NOT NOW` and `NEVER SHOW AGAIN`; opening Settings also suppresses future prompts.
+
+Rollout order is strict: apply the migration; regenerate live database types and the live company-data scope snapshot; add `site_visit_types` to the export/account-closure manifest; deploy the compatible web contract; then distribute the signed iOS client. Until those gates complete, this migration and client remain source-local only.
+
 ## Guarded Sync-Recovery RPCs (2026-07-22)
 
 Two prod contract changes landed with the SYNC RECOVERY initiative (migrations
