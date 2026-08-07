@@ -1404,6 +1404,16 @@ in the 2026-04-27 Phase 1+2 rework)
 
 ---
 
+### Lead Detail Dossier — iOS Chrome and Media (2026-08-07)
+
+`LeadDetailView` is one pure-black scrolling dossier. Its pinned identity keeps an opaque black title foundation and ends in the canonical `headerFade`, so records disappear under the header without tinting the page or exposing moving text behind the lead name. The prior stage-colored atmosphere is absent. The bottom edit/won controls float over the document with the single sanctioned mobile CTA elevation; no gradient floor or transparent strip extends beneath them.
+
+The fixed DETAILS document order is CLIENT → ADDRESS → PROJECT → optional LAST WORD → optional DECK → PHOTOS → FILES. ADDRESS uses the opportunity's existing address only: a populated value is one minimum-44pt directions action and a blank value is `—`. PHOTOS composes queued local uploads, public manual lead photos, and attributed `stored` raster email attachments. Email-backed pages stream through the authenticated attachment proxy and are immutable correspondence evidence, so the shared viewer never exposes DELETE for them.
+
+FILES keeps estimates actionable but collapses all email attachments to one `1 attachment` / `N attachments` row. That row opens a medium/large black sheet with a fixed thumbnail slot, filename, sender/date metadata, and one full-row action per attachment. Stored raster files load a downsampled cached thumbnail, stored PDFs render their first page, and unsupported or external files use the canonical document glyph without auto-fetching sender-controlled URLs. The strip is lazy and authenticated attachment transfer is capped at two concurrent files plus the canonical 25 MiB per-file ceiling. Selecting a stored file keeps the list visible with progress on that row while authenticated bytes load, then dismisses the list and continues into the existing file opener; the operator never has to close the sheet manually. Logout cancels and generation-invalidates private attachment bytes and decoded previews before auth teardown.
+
+---
+
 ### LEADS Tab — Permission Branch + Delegate Day Sheet (2026-07-28)
 
 **Purpose:** the LEADS tab renders a different surface per the operator's pipeline scope. Owners keep the triage console; assigned-scope delegates get a **day sheet** — their leads grouped by whose move it is, with contact/route verbs on every row and a stage-aware milestone button. Spec: `ops-ios/docs/superpowers/specs/2026-07-27-my-leads-day-sheet-design.md` (Jackson-approved).
