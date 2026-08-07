@@ -6212,6 +6212,14 @@ Below the rails, a horizontal strip of **category filter chips** (ALL + 12 categ
 
 **Global AUTO_SEND gate:** The router caps any category-level `auto_send` / `auto_follow_up` to `auto_draft` behavior until the global Phase C autonomy level in `AutonomyMilestoneService` reaches AUTO_SEND (level 4). This prevents any email from being sent before the overall writing profile is proven.
 
+#### Conversation-aware reply policy (prepared 2026-08-07, not deployed)
+
+Ops-web commit `cae90581` adds a deterministic response-disposition layer before autonomous drafting. It distinguishes `reply_required`, `no_reply_required`, and `operator_input_required`, then assigns a response mode (`answer`, `schedule`, `acknowledge_and_advance`, `close_loop`, or `no_reply`). Closed-loop thanks, sign-offs, and completion-only updates produce a clean `noop_no_reply_warranted` outcome before the model, draft-history insert, or provider-draft placement. Schedule/availability requests without verified calendar context are held for operator input instead of allowing the model to invent dates.
+
+Source-bound Phase C replies carry the triggering activity and exact authorized mailbox/lead access into `AIDraftService`. The service loads the complete opportunity conversation across provider-thread fragments, capped at 200 messages and 120,000 characters, and fails closed unless the triggering activity is included. Mutable `opportunities.ai_summary` is excluded from prompt context. The prompt receives the response mode plus actual inbound/outbound counts: first replies may establish context once, while ongoing replies are limited to the latest semantic change, one to three short sentences, at most 55 words before the sign-off, no repeated greeting or recap, and no generic call to action. Promoted `more_direct` and `shorter` edit preferences override historical averages.
+
+Attachment acknowledgement is limited to genuinely new, non-decorative material on the latest customer message. Content hash or content ID suppresses repeated quoted/forwarded files; small inline assets are treated as signature decoration, while large new inline customer images remain inspectable. Jobber transaction notifications are classified as system mail. Stock lead follow-ups no longer assume that a quote exists and use distinct first and final check-in copy; company-authored templates are preserved.
+
 **Terminal mailbox snapshot gate (prepared 2026-07-31, not deployed).** The
 router fails closed before policy/model work and again immediately before every
 provider draft, scheduled send, archive, or follow-up mutation. An active sync,
