@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: August 4, 2026
+**Last Updated**: August 7, 2026
 **iOS Reference**: `ops-ios/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -201,6 +201,16 @@ Central configuration for the app. Key values:
 | `Sync.minimumSyncInterval` | 5 minutes |
 | `Sync.jobHistoryDays` | 30 |
 | `Sync.jobFutureDays` | 60 |
+
+### Lead summary activity refresh (2026-08-07, staged)
+
+`POST /api/opportunities/[id]/summary-refresh` is the authenticated iOS-to-OPS-Web handoff after a human Lead Details activity has already been saved. Source: `ops-web/src/app/api/opportunities/[id]/summary-refresh/route.ts` (code commit `d4c04e0d`).
+
+The route requires a Firebase bearer token, validates the opportunity UUID, and calls `authorize_lead_summary_refresh` through the actor's access-token client. That RPC derives actor/company identity and requires live edit authority. Only then does the route use the service-role client to call `refreshLeadSummariesForOpportunities` for exactly one opportunity. No request body may supply actor or company authority.
+
+Responses: `200` when the targeted refresh writes or legitimately completes without a write; `202` when Phase C is disabled; `401` for missing/invalid authentication; `400` for malformed opportunity ids; `403`/`404` for denied/missing opportunities; `503` when generation is deferred or unavailable. The iOS activity save is authoritative and never rolls back on a refresh failure; the recurring server refresh remains the recovery boundary.
+
+**Release state:** route and migration are locally committed only. Until OPS-Web is deployed and `20260807123500_authorize_lead_summary_refresh.sql` is applied, released clients do not have this eager path. When enabled, each successful human lead-activity save can add one existing Phase C model invocation, with its normal token cost; no new provider or subscription is introduced.
 
 ---
 

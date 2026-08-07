@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: 2026-08-04
+**Last Updated**: 2026-08-07
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -1583,7 +1583,7 @@ recovery path; the merge must never guess a winner or overwrite captured field
 evidence. Source: `ops-ios/OPS/Network/Sync/SiteVisitServerMerge.swift` (code
 commit `a6a49da7`).
 
-Capture UX is field-first: note draft text autosaves into one live note/transcript artifact as the operator types or finishes dictation, clearing the text soft-deletes that draft artifact, and there is no separate Save Note command. Photo artifacts expose `previewAssetURL` (`renderedAssetURL ?? thumbnailURL ?? localAssetURL`) so capture-packet rows can show thumbnails and open a zoomable preview before markup. Checklist fields can auto-link matching captured evidence: photo fields use active photo/dimensioned-photo artifacts, measurement fields use measurement artifact text, and deck-design fields use the active deck-design artifact. The lead/client panel is part of the same capture console, not a pre-step: inline search suggests local active leads and clients, manual fields autosave into `SiteVisitIdentityDraft`, completed fields get completion treatment, and the operator can create/link the lead from the same panel before project handoff. Reassigning a visit moves the open `SiteVisit` plus all active `SiteVisitCaptureArtifact.opportunityId` and `SiteVisitChecklistAnswer.opportunityId` values to another active lead before project creation.
+Capture UX is field-first: note draft text autosaves into one live note/transcript artifact as the operator types or finishes dictation, clearing the text soft-deletes that draft artifact, and there is no separate Save Note command. Once committed, an active note/transcript may be edited in place: the stable artifact id, `capturedAt`, inclusion choice, and local history remain unchanged; `body` and `updatedAt` change, and `needsSync` returns to true. Blank edits fail without mutation. Photo artifacts expose `previewAssetURL` (`renderedAssetURL ?? thumbnailURL ?? localAssetURL`) so capture-packet rows can show thumbnails and open a zoomable preview before markup. Checklist fields can auto-link matching captured evidence: photo fields use active photo/dimensioned-photo artifacts, measurement fields use measurement artifact text, and deck-design fields use the active deck-design artifact. The lead/client panel is part of the same capture console, not a pre-step: inline search suggests local active leads and clients, manual fields autosave into `SiteVisitIdentityDraft`, completed fields get completion treatment, and the operator can create/link the lead from the same panel before project handoff. Reassigning a visit moves the open `SiteVisit` plus all active `SiteVisitCaptureArtifact.opportunityId` and `SiteVisitChecklistAnswer.opportunityId` values to another active lead before project creation. Source: `ops-ios/OPS/Views/SiteVisits/SiteVisitCaptureViewModel.swift` (code commit `c11472a6`).
 
 ### 22D. Recovery, tenancy, export, and erasure
 
@@ -1907,6 +1907,15 @@ The security-definer RPC:
 `project_note_mention_events` stores the raw request for exact replay comparison, before/after snapshots, the server-computed new-recipient delta, actor/project copy snapshots, and the committed note timestamp. Clients cannot read or write the table; only service-role notification resolution can select it. A trigger rejects event updates/deletes. Reusing an event UUID with the exact request returns the stored result without mutating a newer note state; reusing it with different input is rejected.
 
 Mention-edit notification rows use the durable key `mention-edit:<event_uuid>`. The partial unique index on `(user_id, company_id, type, dedupe_key)` is intentionally independent of read/resolved state so a retry cannot create a second rail item.
+
+### Manual project-link and eager lead-summary RPCs (2026-08-07, staged)
+
+Two additive public RPC boundaries are tracked in OPS-Web and mirrored here. Neither migration is production-applied.
+
+- `get_manual_project_link_candidates(p_opportunity_id uuid) RETURNS TABLE (...)` derives the actor and company from the authenticated request, requires lead-conversion authority, and returns every non-deleted project the actor may view and link that is unclaimed or already linked to the same lead. `same_address` and `same_client` are ranking metadata only. The paired guarded patch to `convert_opportunity_to_project` bypasses address/status duplicate gates only when an explicit `p_link_to_project_id` is supplied; the nil-target automatic-create path keeps its existing address duplicate protection. Migration: `migrations/20260807123000_manual_project_link_any_address.sql`; code commits: OPS-Web `705d32dc`, iOS `a06fe97f`.
+- `authorize_lead_summary_refresh(p_opportunity_id uuid) RETURNS uuid` derives the actor, resolves the live opportunity company, and requires `private.user_can_edit_opportunity` before returning that company id to the server route. It accepts no caller-supplied actor or company. Migration: `migrations/20260807123500_authorize_lead_summary_refresh.sql`; code commits: OPS-Web `d4c04e0d`, iOS `a087b0c9`.
+
+Both functions are `SECURITY DEFINER`, set a fixed search path, revoke `PUBLIC`, and grant only `authenticated`. Their bodies perform the authorization checks before returning data.
 
 ### `projects.trade` (Migration `20260507140000_projects_trade`)
 
