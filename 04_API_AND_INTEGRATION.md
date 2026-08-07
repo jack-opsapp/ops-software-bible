@@ -2600,6 +2600,8 @@ The in-app `/inbox` screen is hidden behind a per-company flag while the email e
 
 The source-message fence rejects a candidate if the first activity after the exact source predates/equalled draft placement or is inbound. It permits only an outbound that follows placement to reach the immutable provider-draft check. This prevents a later reply from being paired across an intervening customer message while keeping send recognition independent from edit magnitude. Shared-mailbox actor resolution, exact signature removal, assignment/permission proof, durable idempotency, and profile-promotion thresholds remain unchanged.
 
+Significant-edit analysis is required before the durable worker may complete an operator-approved rewrite. The OpenAI call uses a strict JSON schema with bounded arrays and enough completion headroom for the full response; refusal, truncation, a non-`stop` finish, malformed JSON, or missing required fields fails preparation so the queue retries instead of silently completing with only the deterministic diff. Legacy synchronous feedback remains fail-open so a post-send analysis outage cannot turn a successful customer send into an operator-facing failure.
+
 Generic provider Sent mail is recorded as autonomous/no-training unless an exact OPS activity proves an authenticated operator. A provider Sent-folder row alone is not human-authority evidence.
 
 The 12-month historical profile scan is stricter: it requests `operator_authored` learning only after removing an exact connection-scoped known signature revision. A signature lookup failure or unmatched historical footer skips the learning enqueue entirely, so raw/signature-bearing history cannot enter the durable queue.
