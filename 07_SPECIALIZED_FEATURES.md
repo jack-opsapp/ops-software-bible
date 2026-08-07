@@ -6587,12 +6587,66 @@ day per project.
 `google_calendar_sync_queue`, `google_calendar_sync_enqueue_trigger`,
 `google_calendar_sync_trigger_tenancy_cast_fix`.
 
-**Apple Calendar / Outlook — not this.** Apple publishes no OAuth or REST API for
-iCloud Calendar; the only route is CalDAV with a hand-generated app-specific
-password per user, and no webhooks. The intended answer is a read-only ICS
-subscription feed, which covers Apple, Outlook and anything else in one build.
-Polled, not pushed — Apple refreshes subscribed feeds on a user-chosen interval
-(5 minutes at best, ~hourly by default). Not built yet.
+**Apple Calendar / Outlook** use a subscription feed instead — see § 19d.
+
+### 19d. iCalendar Subscription Feed (Web, 2026-08-06)
+
+A read-only iCalendar feed of the operator's site visits, for Apple Calendar,
+Outlook, and anything else that speaks iCalendar. One feed covers every
+non-Google client.
+
+**Why a feed and not an integration.** Apple publishes no OAuth, no REST API and
+no developer console for iCloud Calendar. The only programmatic route is CalDAV
+authenticated with an app-specific password each user hand-generates in their
+Apple ID settings, and it supports no webhooks. Requiring every customer to
+paste a rotating password is not a product. **Polled, not pushed:** subscribers
+refresh on their own interval — 5 minutes at best, ~hourly by default on iOS —
+which is the accepted tradeoff versus the Google push (§ 19c).
+
+**The URL is the credential**, because a calendar client cannot send an auth
+header. Consequences, all load-bearing:
+
+- 32 random bytes (`randomBytes(32).toString("base64url")`).
+- Only the SHA-256 is stored in `calendar_feed_tokens`. The plaintext is
+  returned once from `POST /api/calendar/feed-token` and is **not recoverable** —
+  so the settings card offers "create a new link", never "reveal".
+- Partial unique index → one live token per user; minting revokes the previous,
+  because a forgotten but still-working calendar URL is a standing leak.
+- Unknown and revoked tokens both return 404 and cannot be told apart.
+- Visit scope is resolved **server-side from the token's user**: a viewer without
+  `all` scope on `calendar.view`/`tasks.view` sees only visits they are assigned
+  to. Holding the URL cannot widen it.
+- `X-Robots-Tag: noindex, nofollow` + `Referrer-Policy: no-referrer`.
+
+**RFC 5545 details that fail silently** (all covered in `src/lib/calendar/ics.ts`,
+unit-tested):
+
+| Requirement | Failure if wrong |
+|---|---|
+| CRLF line endings throughout | strict parsers reject the WHOLE feed |
+| Fold at 75 **octets**, never splitting a UTF-8 sequence | mojibake on accented names |
+| Escape `\` `;` `,` newline in TEXT | address truncates at the first comma |
+| UID stable across refreshes | **every poll duplicates every event** |
+| SEQUENCE increases on change | clients ignore reschedules |
+
+Cancelled and soft-deleted visits are omitted rather than marked
+`STATUS:CANCELLED` — a subscriber replaces its whole copy each refresh, and
+omission matches the Schedule page, keeping one product behaviour rather than
+two. Window is 60 days back / 365 forward. `generatedAt` is quantised to the
+minute so an unchanged schedule is byte-identical, which is what makes the ETag
+actually save a transfer.
+
+**`resolveCustomerLabel`** (`src/lib/calendar/customer-label.ts`) exists because
+OPS auto-titles leads `"Paul Holmes — Email Inquiry"`; used raw that renders as
+`"Site visit — Paul Holmes — Email Inquiry"`. It strips the generated suffix
+from the **lead-title fallback only** — a real linked client is used verbatim,
+since a business really can be called "Smith — Roofing". Applied to the feed,
+the Google push, and the Schedule card so all three agree.
+
+**Files:** `src/lib/calendar/{ics,feed-service,customer-label}.ts`,
+`/api/calendar/feed/[token]` (feed), `/api/calendar/feed-token` (mint/revoke),
+`src/components/settings/calendar-subscription-card.tsx`.
+**Migrations:** `calendar_feed_tokens`, `touch_calendar_feed_token`.
 
 ## 20. Mobile Wizard System
 
