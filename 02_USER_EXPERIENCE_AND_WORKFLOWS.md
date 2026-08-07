@@ -772,6 +772,12 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 - Admin/Office: See all today's events
 - Field Crew: See only assigned events
 
+### iOS field-surface continuity (2026-08-07)
+
+- **Project Activity keyboard:** `ProjectDetailsView` owns the real vertical scroll container. `ActivityTabView` receives that scroll proxy and moves the compose bar above the keyboard when editing begins; interactive downward scrolling dismisses the keyboard. A nested `ScrollViewReader` without a scrollable descendant is invalid because its `scrollTo` calls are no-ops. Sources: `ops-ios/OPS/Views/Components/Project/ProjectDetailsView.swift`, `ops-ios/OPS/Views/Components/Project/Tabs/ActivityTabView.swift` (code commit `ccf2d6e3`).
+- **Billable This Week:** the collapsed Home card is one compact 44pt-minimum scan row containing the label, total, job count, and disclosure. The full multi-line header and job list appear only after expansion, so the persistent collapsed state does not cover map controls or content. Source: `ops-ios/OPS/Views/Home/HomeContentView.swift` (code commit `6e081742`).
+- **Captured site notes:** a committed note/transcript row exposes an Edit action in both the capture packet and review sheet. Saving edits the same artifact in place and returns it to the offline sync queue; blank saves are rejected. Source: `ops-ios/OPS/Views/SiteVisits/SiteVisitCaptureView.swift` (code commit `c11472a6`).
+
 ---
 
 ### Job Board Screen (Redesigned March 2026)
