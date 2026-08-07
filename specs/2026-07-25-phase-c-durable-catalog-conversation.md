@@ -57,17 +57,37 @@ revision still match.
   query hash, selected memory IDs, categories, and version as provenance; raw
   memory content is not copied into the guided session.
 - Phase C may ask about or propose only behavior marked `available` in the
-  server-owned capability manifest. The released manifest supports core catalog
-  products and static product-material quantity rules. Deck geometry,
-  layout-derived waste, roll/sheet inventory, dynamic purchasing, and
-  Deck Designer automation are unavailable and cannot be implied.
+  server-owned capability manifest. That manifest is projected from
+  `ops-web/src/lib/ops-capabilities/registry.ts`, the shared runtime seam for
+  released OPS tools and Phase C access. Both the catalog-manifest revision and
+  registry revision are supplied to the model; the catalog-manifest revision is
+  pinned to the durable session.
+- Registry access is explicit: `configure` may drive questions and actions;
+  `discover_only` is context that prevents false promises; `unavailable` cannot
+  be offered. Every tool entry identifies released consumers, evidence paths,
+  verified abilities, and whether Phase C can configure or execute it.
+- Deck Designer is released but `discover_only`. Phase C knows its verified
+  DeckKit abilities—material quantities, vinyl cut plans, ordered area/waste,
+  compatible offcut reuse, and vinyl order notes—but cannot ask the operator to
+  configure or claim it will execute Deck Designer, geometry, purchasing, or
+  roll/offcut inventory behavior.
+- The released manifest supports core catalog products and fixed
+  product-material quantities. Guided Setup may set `isTaxable`, but it uses the
+  company's existing default tax rate and cannot create or change tax rates.
+  Quote pricing-unit display is not a Guided Setup capability.
 - Review readiness is server-owned. Phase C never asks the operator whether the
   setup is ready: it returns a review blueprint when all required confirmed
   facts exist, otherwise it asks one concrete question backed by an available
   capability.
 - Question templates and the model policy are generated from the same manifest.
-  Semantic validation rejects unsupported capabilities before review, and
-  commit revalidates the pinned manifest revision before any live catalog write.
+  Every available action also exposes an exact typed JSON Schema payload.
+  Semantic validation rejects unsupported capabilities, unknown fields, wrong
+  types, duplicate logical client IDs, direct database IDs the executor cannot
+  resolve, and unresolved executor references before review. Commit repeats
+  the same validation against the server-loaded plan before beginning any live
+  catalog write.
+- Pricing questions ask only for facts still missing. Tax treatment is a simple
+  taxable/not-taxable decision and explicitly uses the company's default rate.
 - The browser persists and renders each operator message immediately, then
   starts generation from that exact input revision.
 - An assistant question is logically identified by question ID plus prompt, not
@@ -77,6 +97,8 @@ revision still match.
 - While Phase C is working, the compact composer stays available for a quick
   follow-up or correction. The newest queued text message can be edited or
   removed.
+- Removing the newest queued answer restores the saved server-owned question,
+  including its helper text and quick-answer choices.
 - If a newer input arrives during generation, the stale response cannot commit
   or publish. The client automatically runs the latest queued revision.
 - A failed generation retains the persisted queued answer. Retry processes that
@@ -89,6 +111,14 @@ revision still match.
   records a `system_repair` source, then asks whether handling stays
   staff-managed or uses released fixed material quantities. It never mutates
   the live catalog.
+- An explicitly stale, non-committing active session is refreshed on resume.
+  Confirmed facts and transcript history remain; still-supported questions are
+  regenerated from current server-owned templates. Removed questions receive a
+  safe continuation question. When the question contract changes, queued input
+  for the old question is marked removed and its processed revision advances;
+  it is never interpreted as an answer to the replacement question. Any stale
+  proposed plan and approval are cleared before a new plan can be reviewed or
+  committed.
 - The transcript is presentation and audit state. It is not added to the model
   prompt; confirmed facts remain the canonical interview memory and avoid added
   token cost.
@@ -117,6 +147,9 @@ revision still match.
 ## Implementation references
 
 - `ops-web/src/lib/catalog-setup/phase-c/conversation-history.ts`
+- `ops-web/src/lib/ops-capabilities/registry.ts`
+- `ops-web/src/lib/catalog-setup/phase-c/action-payload-contracts.ts`
+- `ops-web/src/lib/catalog-setup/phase-c/catalog-capability-manifest.ts`
 - `ops-web/src/lib/catalog-setup/phase-c/catalog-knowledge-context.ts`
 - `ops-web/src/lib/catalog-setup/phase-c/session-service.ts`
 - `ops-web/src/lib/catalog-setup/phase-c/turn-service.ts`
