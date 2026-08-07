@@ -729,9 +729,12 @@ git commit -m "feat(agent-control-plane): add guarded change-set persistence"
 - Create: `src/lib/agent-control-plane/changes/issue-confirmation-receipt.ts`
 - Create: `src/lib/agent-control-plane/changes/commit.ts`
 - Create: `src/lib/agent-control-plane/changes/readback.ts`
+- Create: `src/lib/agent-control-plane/changes/domain-participant.ts`
+- Create: `supabase/migrations/<timestamp>_agent_change_set_commit_coordinator.sql`
 - Test: `src/lib/agent-control-plane/changes/__tests__/prepare.test.ts`
 - Test: `src/lib/agent-control-plane/changes/__tests__/confirmation.test.ts`
 - Test: `src/lib/agent-control-plane/changes/__tests__/commit.test.ts`
+- Test: `tests/unit/supabase/agent-change-set-commit-coordinator-migration.test.ts`
 
 - [ ] **Step 1: Write attack/concurrency tests first**
 
@@ -743,17 +746,19 @@ Normalize exact arguments deterministically and hash capability revision, actor/
 
 - [ ] **Step 3: Implement receipt issuance**
 
-Only an authenticated OPS approval action or supported modern MCP `input_required` response can mint it. Store only a hash; return an opaque single-use secret.
+Only the Firebase-authenticated OPS approval action for the exact preview can mint it. MCP `input_required` may present that action's secure OPS URL and poll its status, but host/model continuation text or an unverified host approval assertion cannot mint a receipt. Store only a hash; return an opaque single-use secret to the approved flow.
 
 - [ ] **Step 4: Implement atomic commit harness**
 
-Reauthorize, lock deterministic targets, verify all versions, consume receipt, invoke domain commit, write audit/readback, and return receipt in one controlled transaction boundary or a documented durable saga for external delivery.
+Create a service-role-only generic commit coordinator RPC and private static domain dispatcher. The wrapper accepts only change-set ID, opaque receipt secret, and idempotency key; it reloads actor/company/client/grant from locked immutable rows. Use an explicit fixed `search_path` and security mode, revoke execution from `PUBLIC`, `anon`, and `authenticated`, and grant only `service_role`. The private dispatcher uses a static capability-to-participant mapping—never a caller-supplied function name or dynamic SQL—and fails closed when no participant is registered.
+
+Reauthorize, lock deterministic targets, verify all versions, dispatch the registered private domain transaction participant, consume the receipt, write the sole generic audit/readback record, and return the receipt in that one database transaction. A participant owns only domain validation/effects/readback and cannot consume a receipt or write a parallel generic commit record. Use a documented durable saga only for external effects that cannot share the database transaction.
 
 - [ ] **Step 5: Verify and commit**
 
 ```bash
-npm test -- src/lib/agent-control-plane/changes
-git add src/lib/agent-control-plane/changes
+npm test -- src/lib/agent-control-plane/changes tests/unit/supabase/agent-change-set-commit-coordinator-migration.test.ts
+git add src/lib/agent-control-plane/changes supabase/migrations/<timestamp>_agent_change_set_commit_coordinator.sql tests/unit/supabase/agent-change-set-commit-coordinator-migration.test.ts
 git commit -m "feat(agent-control-plane): enforce confirmed atomic mutations"
 ```
 
@@ -763,22 +768,24 @@ git commit -m "feat(agent-control-plane): enforce confirmed atomic mutations"
 
 ### Task 19: Adapt guided catalog setup
 
+> **Refined task:** Execute this task through `specs/plans/2026-08-07-phase-c-catalog-authoring-control-plane-integration-implementation.md`. That plan preserves this control-plane boundary while expanding the catalog operation from import-only cards to a complete, service-scoped graph. Do not retain or recreate the former import-specific service pair as a parallel path.
+
 **Files:**
 
-- Create: `src/lib/agent-control-plane/services/prepare-catalog-import.ts`
-- Create: `src/lib/agent-control-plane/services/commit-catalog-import.ts`
+- Create: `src/lib/agent-control-plane/services/prepare-catalog-service-change.ts`
+- Create: `src/lib/agent-control-plane/services/commit-catalog-service-change.ts`
 - Modify only as needed: `src/lib/catalog-setup/phase-c/commit-service.ts`
 - Modify only as needed: `src/lib/catalog-setup/phase-c/supabase-commit-adapter.ts`
-- Test: `src/lib/agent-control-plane/services/__tests__/catalog-import.test.ts`
+- Test: `src/lib/agent-control-plane/services/__tests__/catalog-service-change.test.ts`
 - Run existing: `src/lib/catalog-setup/phase-c/__tests__/`
 
 - [ ] **Step 1: Prove adapter parity**
 
-The control-plane proposal must reuse the guided session's source facts, capability revision, live snapshot hash, proposal hash, validation, approval hash, commit operation, journal, and readback.
+The control-plane proposal must reuse the guided session's source facts, capability revision, live snapshot hash, transport-neutral catalog proposal hash, validation, commit operation, journal, and readback. Migrate the old Guided Catalog approval hash into the generic change-set/confirmation receipt; do not retain it as a second authorization system.
 
 - [ ] **Step 2: Support both provenance modes**
 
-OPS file source and model-transcribed structured source. Lower assurance is visible in preview. Unsupported/ambiguous capabilities block commit.
+OPS file source, structured imports, and model-transcribed structured source feed the same prepared service change. Lower assurance is visible in preview. Unsupported/ambiguous capabilities block commit.
 
 - [ ] **Step 3: Keep external exposure disabled**
 
@@ -787,9 +794,9 @@ Manifest availability may be internal/dark; no public commit tool until OAuth/co
 - [ ] **Step 4: Verify and commit**
 
 ```bash
-npm test -- src/lib/agent-control-plane/services/__tests__/catalog-import.test.ts src/lib/catalog-setup/phase-c
+npm test -- src/lib/agent-control-plane/services/__tests__/catalog-service-change.test.ts src/lib/catalog-setup/phase-c
 git add src/lib/agent-control-plane/services src/lib/catalog-setup/phase-c
-git commit -m "feat(agent-control-plane): adapt guarded catalog imports"
+git commit -m "feat(agent-control-plane): adapt guarded catalog service changes"
 ```
 
 ### Task 20: Add estimate import and project cost allocation
@@ -1081,11 +1088,11 @@ git commit -m "feat(mcp): serve stateless modern and legacy clients"
 
 - [ ] **Step 1: Test both eras**
 
-Modern clients may receive `input_required`; legacy clients receive the OPS approval URL/status contract. Both result in the same server-issued confirmation receipt and reauthorization.
+Modern clients may receive `input_required`; legacy clients receive the OPS approval URL/status contract. Both point to the same Firebase-authenticated OPS confirmation action and later observe the same server-issued receipt/status. Neither host response can mint the receipt.
 
 - [ ] **Step 2: Implement without exposing write tools**
 
-This is foundational/dark until a write capability is enabled. Never fall back to trusting `confirmed=true`.
+This is foundational/dark until a write capability is enabled. Never fall back to trusting `confirmed=true`, continuation text, or a host approval assertion. `input_required` is presentation/status only unless a separately approved cryptographic human-attestation profile is implemented.
 
 - [ ] **Step 3: Verify and commit**
 

@@ -588,7 +588,7 @@ A confirmation receipt is:
 - revoked when membership, permission, grant, target versions, or proposal changes;
 - consumed atomically with commit.
 
-Modern `2026-07-28` MCP multi-round-trip `input_required` may provide the confirmation UI when the host implements it. It is a UX enhancement, not the sole security boundary. Legacy/current hosts without that capability receive an OPS approval URL; after approval, the model can poll the change-set status or retry commit with the server-issued receipt.
+Modern `2026-07-28` MCP multi-round-trip `input_required` may present the approval URL, preview, and pending status when the host implements it. It cannot mint a receipt from host/model continuation text or an unverified host approval assertion. The receipt is minted only by the Firebase-authenticated OPS confirmation action for the exact preview. A future host-native path requires a separately specified cryptographically verifiable human-attestation profile before it can become an issuer. Legacy/current hosts receive the same OPS approval URL; after OPS approval, the model can poll status or retry commit with the server-issued receipt.
 
 Host-native per-tool approval remains additive defense. OPS does not assume every host conveys a cryptographically trustworthy approval assertion.
 
@@ -599,9 +599,11 @@ Host-native per-tool approval remains additive defense. OPS does not assume ever
 - Compare every expected version before the first write.
 - Reject ambiguity or stale state atomically.
 - Use a caller-provided idempotency key plus the server arguments hash.
-- Never partially apply a financial allocation, schedule batch, catalog import, or communication send batch unless the domain contract explicitly models partial success and a reconciliation receipt.
+- Never partially apply a financial allocation, schedule batch, catalog service change, or communication send batch unless the domain contract explicitly models partial success and a reconciliation receipt.
 - Perform post-commit readback.
 - Return exact created/updated IDs, versions, audit ID, side effects, and reconciliation state.
+
+The generic control plane is the sole transaction coordinator for database-backed changes. It locks/re-authorizes change-set and receipt state, then dispatches a registered private domain transaction participant inside the same PostgreSQL transaction. The participant owns only domain validation, effects, and domain readback; it never mints/consumes a second receipt or writes a parallel generic commit/audit record. Durable sagas remain limited to effects that cannot share the database transaction, such as external provider delivery.
 
 ### 8.5 Always-confirm actions
 
@@ -627,10 +629,10 @@ Planned domain-specific pairs:
 
 - `prepare_project_cost_allocation` / `commit_project_cost_allocation`
 - `prepare_estimate_import` / `commit_estimate_import`
-- `prepare_catalog_import` / `commit_catalog_import`
+- `prepare_catalog_service_change` / `commit_catalog_service_change`
 - `prepare_client_message_batch` / `commit_client_message_batch`
 
-Catalog tools must adapt the existing guided catalog session, source, capability-manifest, approval-hash, commit-journal, and readback machinery. They must not introduce a second catalog import rule engine.
+Catalog tools must adapt the existing guided catalog session, source, capability-manifest, approval-hash, commit-journal, and readback machinery. Imports are a provenance mode of `prepare_catalog_service_change`, not a separate catalog rule engine. The complete catalog design and task sequence are defined in `specs/2026-08-07-phase-c-catalog-authoring-control-plane-integration.md` and its implementation plan.
 
 ---
 
@@ -950,7 +952,7 @@ Read:
 
 Confirmed writes:
 
-- prepare/commit catalog imports and edits;
+- prepare/commit complete catalog service changes, with imports treated as source provenance;
 - prepare/commit supplier cost changes;
 - prepare/commit inventory adjustments;
 - prepare/commit purchase-order drafts.
