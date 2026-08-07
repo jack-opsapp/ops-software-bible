@@ -6466,10 +6466,7 @@ retro-book.
 **Migrations:** `20260806223702_meeting_proposals_confirmation_booking.sql`,
 `20260806223810_book_proposed_meeting_as_system.sql`.
 
-**Not included:** Google Calendar sync. There is no Google Calendar integration
-anywhere in the codebase and mailbox OAuth is Gmail-scoped only; syncing bookings
-out needs a scope change, a consent re-prompt on every connected mailbox, and its
-own failure model.
+**Google Calendar:** shipped 2026-08-06 — see § 19c.
 
 ### 19b. Site Visits on the Schedule Page (Web, 2026-08-06)
 
@@ -6524,6 +6521,78 @@ legend; without it, switching on any type filter would have hidden every visit.
 `SiteVisitService.fetchForRange`, `mapSiteVisitToInternalEvent` +
 `isTaskEvent` in `schedule-utils.ts`, `ScheduleEventKind` in
 `schedule-constants.ts`.
+
+### 19c. Google Calendar Push for Site Visits (Web, 2026-08-06)
+
+Site visits are mirrored onto the connected mailbox owner's Google Calendar.
+One-way, OPS → Google: OPS owns the visit and nothing is read back, which keeps
+the failure model to "landed or retry" with no merge to get wrong.
+
+**OAuth.** `/api/integrations/gmail` now requests
+`https://mail.google.com/ https://www.googleapis.com/auth/calendar.events`.
+Google classifies `calendar.events` as *sensitive* (the app already ships the
+stricter *restricted* mail scope). The callback records what Google actually
+granted into `email_connections.granted_scopes`.
+
+**Why granted_scopes exists.** A mailbox authorised before the calendar scope
+holds a mail-only refresh token that would 403 on every push forever. Recording
+the grant lets the feature stay **inert** on that connection instead of failing
+loudly — and only a fresh consent (`prompt=consent`, already set) reissues a
+token carrying the new scope. Existing rows were backfilled to
+`{'https://mail.google.com/'}`.
+
+**A trigger feeds the queue, not the callers.** `trg_site_visits_google_calendar_sync`
+(function `enqueue_google_calendar_sync`) fires on `site_visits`. `site_visits`
+has three writers — the web "Create Site Visit" modal, `book_proposed_meeting_as_system`,
+and the iOS outbox — and wiring an enqueue into each guarantees the next writer
+forgets. Do **not** add app-level enqueues; they race the trigger.
+
+| Change | Queued |
+|---|---|
+| insert (not already cancelled/deleted) | `create` |
+| `scheduled_at` / `duration_minutes` / `notes` changed | `update` |
+| `status → cancelled`, or soft delete | `delete` |
+| photos, measurements, internal notes | nothing — never reaches a calendar |
+| company has no calendar-scoped connection | nothing — inert |
+
+**Tenancy trap.** `email_connections.company_id` and `site_visits.company_id` are
+legacy **text**; `google_calendar_sync_queue.company_id` is **uuid**. The first
+version of the trigger compared text to uuid and threw 42883, aborting every
+site-visit insert. The trigger selects the connection on text and casts only for
+the queue insert. A malformed legacy tenant id is a no-op, never an error —
+the trigger must never abort the caller's write.
+
+**Queue semantics** (`google_calendar_sync_queue`, service-role only). Partial
+unique on `(site_visit_id, operation) where status='pending'` collapses repeat
+saves into one Google write. Outcomes map via `resolveQueueTransition`:
+`ok`→succeeded; `retryable` (429/5xx)→pending with capped exponential backoff,
+failing after `MAX_SYNC_ATTEMPTS` (6); `scope_missing` and `auth_revoked`→
+**skipped, not retried** — neither is fixable by trying again, and retrying burns
+quota while hiding the reconnect that fixes it. Worker:
+`/api/cron/google-calendar-sync`, every 5 minutes.
+
+**Event shape** (`buildSiteVisitEvent`). Title `Site visit — <customer>`,
+location = the lead address, description links back to
+`/pipeline?opportunityId=…`, times in `companies.timezone`. **No attendees,
+deliberately** — adding the customer makes Google email them an invitation as a
+side effect of an internal booking. Deleting an event that is already gone
+counts as success; the desired end state holds.
+
+**Cost:** $0. Google Calendar API standard use is free to 1,000,000 requests per
+day per project.
+
+**Files:** `providers/google-calendar-client.ts`,
+`meeting-booking/google-calendar-sync.ts`, `/api/cron/google-calendar-sync`.
+**Migrations:** `google_calendar_sync_for_site_visits`,
+`google_calendar_sync_queue`, `google_calendar_sync_enqueue_trigger`,
+`google_calendar_sync_trigger_tenancy_cast_fix`.
+
+**Apple Calendar / Outlook — not this.** Apple publishes no OAuth or REST API for
+iCloud Calendar; the only route is CalDAV with a hand-generated app-specific
+password per user, and no webhooks. The intended answer is a read-only ICS
+subscription feed, which covers Apple, Outlook and anything else in one build.
+Polled, not pushed — Apple refreshes subscribed feeds on a user-chosen interval
+(5 minutes at best, ~hourly by default). Not built yet.
 
 ## 20. Mobile Wizard System
 
