@@ -132,7 +132,8 @@ This prevents REST, Phase C, and MCP from drifting into three versions of OPS.
 - Initial hosting: the existing OPS-Web Vercel deployment, reached through the dedicated `mcp.opsapp.co` hostname.
 - Authorization-server issuer: `https://app.opsapp.co`, using the existing Firebase-authenticated OPS login as the human identity step.
 - Transport: public HTTPS Streamable HTTP.
-- Server implementation: official stable MCP TypeScript SDK v2 package `@modelcontextprotocol/server`.
+- Server implementation: official stable MCP TypeScript SDK package `@modelcontextprotocol/server@2.0.0`.
+- Schema dependency boundary: retain OPS-Web's existing `zod@^3.24.0` behavior, add the isolated alias `"zod-v4": "npm:zod@4.2.0"`, and author every SDK-bound MCP schema with `zod-v4`. Zod 3 and Zod 4 schema objects never compose; only validated plain values cross the boundary.
 - Protocol compatibility: serve both the 2025 era through `2025-11-25` and the current `2026-07-28` era from the same stateless entry point.
 - No sticky sessions or MCP session state. Durable application state is represented by explicit OPS IDs such as `change_set_id`, `conversation_id`, and `confirmation_request_id`.
 
@@ -1181,6 +1182,7 @@ Accessed 2026-08-07:
 - [MCP 2026-07-28 authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
 - [MCP TypeScript SDK v2 protocol versions](https://ts.sdk.modelcontextprotocol.io/v2/protocol-versions)
 - [MCP TypeScript server SDK v2](https://ts.sdk.modelcontextprotocol.io/v2/api/%40modelcontextprotocol/server/)
+- [MCP TypeScript SDK v2 migration guide](https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2)
 - [MCP security best practices](https://modelcontextprotocol.io/docs/2026-07-28/tutorials/security/security_best_practices)
 - [OpenAI Apps SDK authentication](https://developers.openai.com/apps-sdk/build/auth)
 - [OpenAI MCP server guide](https://developers.openai.com/apps-sdk/build/mcp-server)

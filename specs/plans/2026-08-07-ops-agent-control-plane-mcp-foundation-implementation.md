@@ -6,7 +6,7 @@
 
 **Architecture:** One typed `OpsAgentDomainService` receives a server-created `ActorContext` and returns bounded, source-provenanced contracts. Phase C, REST, and MCP are adapters only. Job conversations are independent of provider threads. External access uses OAuth 2.1 protected-resource discovery and exact-audience tokens. All material writes use server-owned change sets, explicit confirmation receipts, expected versions, idempotency, atomic commit, audit, and readback.
 
-**Tech Stack:** Next.js 15 App Router, TypeScript 5.9, Node 22, React 19, Vitest, Playwright, Supabase Postgres, Firebase Admin identity, `jose`, Zod, official MCP TypeScript SDK v2 (`@modelcontextprotocol/server`), Vercel, public HTTPS Streamable HTTP.
+**Tech Stack:** Next.js 15 App Router, TypeScript 5.9, Node 22, React 19, Vitest, Playwright, Supabase Postgres, Firebase Admin identity, `jose`, existing OPS `zod@^3.24.0`, isolated MCP-schema alias `zod-v4@npm:zod@4.2.0`, official MCP TypeScript SDK `@modelcontextprotocol/server@2.0.0`, Vercel, public HTTPS Streamable HTTP.
 
 **Design System:** The OAuth consent, connected-app management, and confirmation surfaces use the existing OPS-Web design system at `ops-design-system/project/DESIGN.md`. Use current OPS-Web Tailwind tokens and `lucide-react`; no new visual system, raw values, marketing surface, MCP App widget, or motion language.
 
@@ -63,14 +63,17 @@ If that branch already exists, inspect it and coordinate; do not delete/recreate
 - [ ] Record existing Vercel/Supabase/security-provider plans and incremental costs. Escalate any paid tier or vendor purchase to Jackson.
 - [ ] Confirm the exact customer-facing resource URL and DNS ownership before implementing discovery metadata. No DNS write yet.
 
-### Gate 3 — dependency compatibility spike
+### Gate 3 — verified SDK/Zod dependency boundary
 
-The official MCP v2 server package is ESM and its examples use Zod v4. OPS currently uses Zod 3.24.
+The official stable server package is `@modelcontextprotocol/server@2.0.0`. SDK-bound schemas require Zod 4.2 or newer because that release supplies the `~standard.jsonSchema` contract. OPS-Web must retain its existing `zod@^3.24.0` behavior, so the MCP boundary uses the official migration guide's isolated-alias pattern.
 
-- [ ] Inspect the current `@modelcontextprotocol/server` peer constraints.
-- [ ] Prefer the latest compatible Zod 3.25 line exposing `zod/v4`, so existing `zod` imports retain v3 semantics while new MCP schemas import `zod/v4`.
-- [ ] If the current SDK requires a repository-wide Zod v4 upgrade, stop and update this plan with a separately verified migration path before changing dependencies.
-- [ ] Pin the resolved SDK version in `package-lock.json`; do not use a floating unreviewed major.
+- [ ] Pin `@modelcontextprotocol/server` to `2.0.0` in `package.json` and `package-lock.json`; do not use a floating major.
+- [ ] Leave the existing `"zod": "^3.24.0"` dependency unchanged.
+- [ ] Add the exact alias `"zod-v4": "npm:zod@4.2.0"`.
+- [ ] Import every SDK-bound MCP schema from `zod-v4`, never from `zod` or `zod/v4`.
+- [ ] Do not use Zod 3.25's `zod/v4` compatibility subpath: it predates the required `~standard.jsonSchema` support and is not sufficient for SDK v2 registration.
+- [ ] Keep Zod 3 and Zod 4 schema objects isolated. Existing OPS schemas remain Zod 3; agent-control-plane schemas exposed to MCP are authored once in `zod-v4`; only parsed plain values cross between them.
+- [ ] Verify the installed graph with `npm ls @modelcontextprotocol/server zod zod-v4` and exercise a real MCP `tools/list` call so a quiet schema-conversion failure cannot pass unnoticed.
 
 ---
 
@@ -111,6 +114,8 @@ Transport routes and product UI live in their normal Next.js locations. Existing
 
 Test that the MCP adapter can import `McpServer`/`createMcpHandler`, while no file outside `src/lib/agent-control-plane/mcp/` and `src/app/mcp/` imports the SDK.
 
+Also enforce that SDK-bound schemas import from `zod-v4`, the repository's existing Zod 3 dependency is unchanged, and no MCP schema imports `zod/v4`.
+
 - [ ] **Step 2: Run it and prove failure**
 
 ```bash
@@ -121,22 +126,23 @@ Expected: fail because the package/adapter does not exist.
 
 - [ ] **Step 3: Install verified dependencies**
 
-Use the versions verified in Gate 3. Expected shape:
+Install the exact versions verified in Gate 3 without changing the repository-wide Zod 3 dependency:
 
 ```bash
-npm install @modelcontextprotocol/server@^2 zod@^3.25.0
+npm install @modelcontextprotocol/server@2.0.0 zod-v4@npm:zod@4.2.0
 ```
 
-Do not install the deprecated monolithic v1 `@modelcontextprotocol/sdk` package.
+Do not install the deprecated monolithic v1 `@modelcontextprotocol/sdk` package. Do not upgrade or replace the existing `zod@^3.24.0` dependency.
 
 - [ ] **Step 4: Add the smallest import-only adapter shell**
 
-Create `src/lib/agent-control-plane/mcp/sdk.ts` exporting only the approved SDK symbols/types used by OPS.
+Create `src/lib/agent-control-plane/mcp/sdk.ts` exporting only the approved SDK symbols/types used by OPS. MCP registration schemas import `z` from `zod-v4`; never re-export either Zod instance across the boundary.
 
 - [ ] **Step 5: Verify**
 
 ```bash
 npm test -- src/lib/agent-control-plane/__tests__/dependency-boundary.test.ts
+npm ls @modelcontextprotocol/server zod zod-v4
 npm run type-check
 ```
 
@@ -185,7 +191,7 @@ npm test -- src/lib/agent-control-plane/contracts/__tests__/schemas.test.ts
 
 - [ ] **Step 3: Implement schemas and inferred types**
 
-Use Zod schemas as the one runtime/type source. Do not hand-maintain duplicate TypeScript interfaces and JSON schemas.
+Author the new agent-control-plane contracts exposed through MCP once with `zod-v4` and infer their TypeScript types. Existing OPS Zod 3 schemas remain unchanged and exchange only parsed plain values with these contracts. Do not compose Zod 3 and Zod 4 schema objects or hand-maintain duplicate TypeScript interfaces and JSON schemas.
 
 - [ ] **Step 4: Add contract fixture snapshot**
 
@@ -1107,7 +1113,7 @@ Do not expose every domain method merely because it exists. Add routes required 
 
 - [ ] **Step 2: Implement adapter**
 
-No REST-specific business logic. Parse exact same Zod schemas, domain errors, evidence, and freshness.
+No REST-specific business logic. Parse the exact same agent-control-plane `zod-v4` schemas, domain errors, evidence, and freshness; existing OPS Zod 3 schemas meet this boundary only as parsed plain values.
 
 - [ ] **Step 3: Verify and commit**
 
