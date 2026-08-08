@@ -2767,7 +2767,7 @@ STOCK
   │       ▸ HARDWARE STAIR
   │     // FASTENERS
   │       • 2" Screw — Black · 3000
-  └─ ⋮ STOCK: Guided Setup · Stock Setup · Add Variant · Add Family · Import · Snapshots
+  └─ ⋮ STOCK: Guided Setup · Stock Setup · Bulk Add Variants · Add Variant · Add Family · Import · Snapshots
 
 PRODUCTS
   ├─ Filter: type · kind · "has recipe"
@@ -2780,7 +2780,7 @@ PRODUCTS
   └─ ⋮ PRODUCTS: Guided Setup · New Service · New Good · New Bundle
 
 ⋮ menu (grouped):
-  ── STOCK ──     Guided Setup · Stock Setup · Add Variant · Add Family · Import · Snapshots
+  ── STOCK ──     Guided Setup · Stock Setup · Bulk Add Variants · Add Variant · Add Family · Import · Snapshots
   ── PRODUCTS ──  Guided Setup · New Service · New Good · New Bundle
   ── MANAGE ──    Categories… · Tags… · Units… · Thresholds… · Defaults…
   ── ORDERS ──    Suggested · Drafts · Sent
@@ -3455,6 +3455,26 @@ Form for creating/editing a variant. Sections:
 - **Notes**.
 
 Family creation deep-link: tap "+ add family" within the family picker to open `CatalogFamilyFormSheet`. Editing an existing variant replaces its option-value join rows through `CatalogRepository.replaceVariantOptionValues`.
+
+#### Bulk Add Variants (iOS — added 2026-08-07)
+
+**Location:** `OPS/Views/Catalog/Stock/BulkVariants/`
+
+Catalog `⋮ -> STOCK -> Bulk Add Variants` is the no-spreadsheet path for expanding one real variant dimension across many existing families. The entry point is visible only with `catalog.manage`. It is intentionally separate from `Add Variant` (one unusual SKU) and CSV Import (creating a catalog from rows).
+
+The full-screen flow has three operator decisions:
+
+1. **FAMILIES** — search and multi-select active stock families. Search includes family, category, current option names, and option values. Families with ambiguous or incomplete variant matrices are visible but disabled with the exact reason; Select all selects only safe visible families.
+2. **CHANGE** — name the axis, identify the existing/source value, and add up to 20 new values. For Canpro's rail change this is `Top profile`, `Round top`, and `Flat top`. Case- or whitespace-equivalent duplicates are blocked.
+3. **REVIEW** — show affected families, the number of existing variants that will be labelled, the number of zero-stock variants that will be created, the preservation rules, and expandable before/after combinations. Apply is a single deliberate action.
+
+Draft selection and values persist locally by company, including the current step and a stable idempotency key. The operator may leave and keep the draft. Offline mode keeps editing available but disables Apply; no optimistic local variants are created.
+
+Apply uses the atomic `catalog_bulk_expand_variants` RPC described in `03_DATA_ARCHITECTURE.md`. Existing variants retain identity, stock, SKU, pricing, thresholds, unit, and history. New variants copy the safe settings from the selected existing/source combination but begin at zero quantity with no SKU. A server-side full-snapshot comparison blocks stale work before the first write. Exact retries replay the saved result; if the same key was already used with edited inputs, iOS refreshes the catalog, preserves the draft, renews the key, and returns the operator to the updated review.
+
+On success, the returned options, values, variants, and joins reconcile into SwiftData and the catalog refreshes immediately. Completion is synchronous and visible in the flow; it does not add a notification-rail event because there is no background operation to revisit.
+
+**Boundary:** use Bulk Add Variants when one shared dimension must be expanded across existing families; use Add Variant for a one-off combination; use Import only to create new families/variants from a CSV. Bulk Add Variants never copies stock units, inventory movement, orders, or snapshot/history rows.
 
 #### Catalog Setup Data Foundation (iOS — data only, added 2026-05-21)
 

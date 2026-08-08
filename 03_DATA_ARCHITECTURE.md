@@ -3133,6 +3133,44 @@ Both are gated by `private.get_user_company_id() = p_company_id`. `EXECUTE` gran
 
 **No update path**: import is INSERT-only. Re-importing the same CSV creates duplicate families. Use Snapshots (kebab Setup → Snapshots) to roll back a bad import.
 
+### Catalog Bulk Variant Expansion (added 2026-08-07)
+
+`public.catalog_bulk_expand_variants(p_company_id uuid, p_idempotency_key text, p_payload jsonb) RETURNS jsonb` is the mutation boundary for adding one variant axis across as many as 200 existing stock families in one operation. SQL lives at `OPS/Migrations/2026-08-07-catalog-bulk-variant-expansion.sql`; the iOS client builds the source snapshot with `CatalogBulkVariantExpansionPlanner` and calls the RPC through `CatalogRepository` / `CatalogBulkVariantExpansionService`.
+
+The companion `catalog_bulk_variant_requests` table stores `company_id`, the client-generated idempotency key, the exact request payload, and the successful response. `(company_id, idempotency_key)` is unique. RLS permits authenticated members with `catalog.manage` to select and insert receipts only for their own active company; the RPC is `SECURITY INVOKER`, pins its search path, repeats the active-company and permission checks, and grants execution only to `authenticated`.
+
+**Payload contract**:
+
+```json
+{
+  "axis_name": "Top profile",
+  "existing_value": "Round top",
+  "new_values": ["Flat top"],
+  "families": [
+    {
+      "family_id": "uuid",
+      "source_fingerprint": "sha256",
+      "source": {"id": "uuid", "name": "...", "options": [], "variants": []}
+    }
+  ]
+}
+```
+
+The embedded `source` is a canonical snapshot of the family name, active options and values, active variants, every safe-to-copy variant field, and ordered option-value IDs. Before the first write, Postgres locks the selected families and active variants in deterministic UUID order, rebuilds the same snapshot from current rows, and compares it to the client payload exactly. Any difference returns `stale_catalog`; the operator must review the refreshed catalog. The SHA-256 fingerprint is the client's stable draft/review identity, while the full JSON comparison is the server's stale-write guard.
+
+**Expansion rules**:
+
+- When the axis does not exist on a family, the RPC creates it, creates the existing/source value, and attaches that value to every active source variant without changing those variants' IDs.
+- When the axis already exists, it must contain exactly one normalized match for the existing/source value. Only variants pinned to that value are expansion sources.
+- For each new value, the RPC clones every source combination across the family's other axes. Existing combinations are skipped, so retrying cannot create duplicate matrix rows.
+- A clone starts with `quantity = 0` and `sku = null`. It copies price override, unit-cost override, warning and critical thresholds, unit, and active status from its source variant.
+- Existing variants retain their IDs, quantities, SKUs, settings, and joins. `catalog_stock_units`, inventory deductions, snapshots, orders, and all other stock/history rows are never copied or reassigned.
+- Families with incomplete option assignments, duplicated normalized option names/values, duplicate matrix signatures, missing source values, or stale source snapshots fail preflight before any mutation.
+
+**Atomicity and replay**: validation for every family completes before the mutation phase. Any raised database error rolls back the whole call, so no family can land partially. A successful request and response are written in the same transaction. Repeating the same company/key/payload returns the stored result with `replayed = true`; reusing the key for a different payload returns `idempotency_conflict`. The iOS client syncs the returned rows into SwiftData immediately and treats a successful server response as authoritative even if local reconciliation needs a follow-up refresh.
+
+This RPC is intentionally an **existing-catalog dimensional expansion**, not a general import or arbitrary bulk editor. `catalog_import_apply` remains INSERT-only catalog creation from CSV; interactive `Add Variant` remains the path for a one-off SKU.
+
 ### Products Import RPCs (added 2026-05-08)
 
 Sibling to the catalog import RPCs above. Drives the second tab (`PRODUCTS`) in the iOS `CatalogImportSheet` — bulk-creates rows in the `products` table (services + goods). SQL lives at `OPS/OPS/Migrations/2026-05-08-products-import-rpc.sql` (also documented in `OPS/OPS/Migrations/2026-05-08-products-import-rpc.md`); the iOS client calls them through `ProductsImportRepository`. Same `SECURITY DEFINER`, same `EXECUTE TO authenticated`, same caller-vs-`p_company_id` guard.
