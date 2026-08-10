@@ -32,7 +32,11 @@ Existing columns gain real semantics for booked visits: `scheduled_at` = appoint
 
 ### Settings
 
-Default heads-up lead time is a per-user notification preference (stored with the existing `notification_preferences` mechanism; exact shape verified at plan time). Product default: 30 minutes.
+Default heads-up lead time is a per-user notification preference: new additive column `notification_preferences.site_visit_reminder_lead_minutes int NULL` (NULL = product default 30), plus a `site_visit_reminder` event key in the existing `channel_preferences` jsonb (push default true). Verified 2026-08-10: `notification_preferences` exists per-user with `channel_preferences` jsonb + quiet-hours columns.
+
+### Prompt state
+
+No fired-state columns on `site_visits`. Prompt idempotency lives entirely in `notifications.dedupe_key` — `site_visit:<visit_id>:<kind>:<user_id>:<scheduled_at epoch>`. A reschedule changes `scheduled_at`, which changes the key, which re-arms every prompt automatically. (Requires a unique index on `dedupe_key` where not null — added by the migration if absent.)
 
 ### Server RPCs — the single write path
 
@@ -42,7 +46,9 @@ Three new public RPCs, used by **every** surface (iOS, web, and the future MCP t
 - `reschedule_site_visit(p_site_visit_id, p_scheduled_at, p_duration_minutes, p_assignee_ids, p_reminder_lead_minutes)` — guarded update; logs a reschedule activity; re-enqueues calendar sync; resets fired-reminder state.
 - `cancel_site_visit_booking(p_site_visit_id)` — status → `cancelled`, logs activity, removes/updates external calendar events.
 
-All three follow the `complete_site_visit_guarded` pattern: company + permission checks (`pipeline.convert` gate, matching the existing start-visit gate), status monotonicity, idempotency. Activity `type` uses the existing `site_visit` activity type (no enum addition; allowed values verified against the `activities` constraint at plan time).
+All three follow the `complete_site_visit_guarded` pattern: company + permission checks (`pipeline.convert` gate, matching the existing start-visit gate), status monotonicity, idempotency. Activity `type` = **`site_visit_scheduled`** — verified 2026-08-10 as already present in `activities_type_check`; no constraint change needed.
+
+**One-open-booking rule (refined):** a second booking is rejected only while an existing booked visit is `status='scheduled'`. Once a visit is `in_progress`, `completed`, or `cancelled`, a new booking is allowed (e.g., booking a follow-up while on site).
 
 ## 4. Product behavior
 
@@ -63,7 +69,7 @@ Booked visits (`booked_at IS NOT NULL`, status `scheduled`/`in_progress`) render
 ### 4.4 Personal calendars (one-way outward)
 
 - **Apple:** `CalendarMirrorService` gains the reserved `siteVisit` mirror source (`CalendarMirrorMap.swift:16`) — booked visits mirror into the on-device "OPS" calendar with title, lead name, address as location, and the booked window. Same reconcile-and-revert drift handling as existing sources.
-- **Google:** wire the dormant `google_calendar_sync_queue` — a worker (Vercel cron) drains the queue and pushes events via the Google Calendar API for accounts with a connected Google mailbox, writing back `google_calendar_event_id` / `google_calendar_id` / `google_calendar_synced_at`. **Open verification item for the plan:** whether the existing mailbox OAuth grant includes calendar scope; if not, a one-time incremental re-consent flow is required and must be designed (compact settings affordance, not a permanent card). Reschedule/cancel propagate (patch/delete the remote event).
+- **Google:** wire the dormant `google_calendar_sync_queue` — a worker (Vercel cron) drains the queue and pushes events via the Google Calendar API for accounts with a connected Google mailbox, writing back `google_calendar_event_id` / `google_calendar_id` / `google_calendar_synced_at`. **Verified 2026-08-10: the existing Gmail grant is `https://mail.google.com/` only — no calendar scope has ever been granted** (`email_connections.granted_scopes`). A one-time incremental re-consent adding `https://www.googleapis.com/auth/calendar.events` is required: compact settings affordance (not a permanent card), reusing the `/api/integrations/gmail` OAuth flow with the additional scope and `include_granted_scopes=true`. Until a user re-consents, their queue rows settle as `skip_reason='missing_calendar_scope'` — never as errors. Reschedule/cancel propagate (patch/delete the remote event).
 - Event location = the linked lead's address, resolved at sync time (no address column exists on `site_visits`; a booking is always lead-attached). Lead without an address → event without location.
 
 Costs: Google Calendar API is free at this volume; the sync worker is one small Vercel cron on the existing plan; MapKit drive-time is free on-device; OneSignal push is already in use. No new paid services.
@@ -72,8 +78,10 @@ Costs: Google Calendar API is free at this volume; the sync worker is one small 
 
 Per assignee, per booked visit:
 
-1. **Heads-up push** at `scheduled_at − lead` (user default, per-booking override) — remote push (OneSignal) driven by a server fire function on the existing pg_cron 5-minute cadence, plus a rail notification (web) with `actionUrl` to the lead. Site visits get their own fire path — the task-anchored `task_reminders` engine is not polymorphed.
-2. **START push** at `scheduled_at` — "Site visit — 123 Main St. Start now?" Tap deep-links (existing `routeToScreen` routing) straight into `SiteVisitCaptureView` with the lead bound.
+**Authority split (locked):** the **server** owns the heads-up and START pushes — a Vercel cron (`/api/cron/site-visit-prompts`, every 5 min) selects due booked visits, gates per-assignee via `notification_preferences`, inserts rail notifications, and sends OneSignal push by external user id. This works even when the assignee's app hasn't synced. The **device** owns only the time-to-leave alert (it needs live location anyway). iOS schedules no local heads-up/START notifications — this removes any remote/local double-notification problem by construction. Visit prompts **bypass quiet hours**: the user chose this appointment time themselves.
+
+1. **Heads-up push** at `scheduled_at − lead` (per-assignee lead: booking override, else that user's default, else 30 min) — remote push + rail notification with `actionUrl` to the lead. Site visits get their own fire path — the task-anchored `task_reminders` engine is not polymorphed. Skipped once the visit is no longer `scheduled`.
+2. **START push** at `scheduled_at` (fire window: up to 15 min late, never after) — "Site visit — 123 Main St. Start now?" Tap deep-links (existing `routeToScreen` routing) straight into `SiteVisitCaptureView` with the lead bound. Skipped if already started or cancelled.
 3. **Time-to-leave alert (iOS local):** for today's booked visits, the device computes drive-time ETA from current location to the visit address (MapKit `MKDirections`), schedules a local notification at `scheduled_at − ETA − 5 min`, and refreshes it on foreground + background refresh. Requires location permission and a lead address; absent either, this alert silently does not exist (heads-up and START pushes are unaffected). Never fires after the visit is started.
 4. **START card (in-app):** on the visit day, from the morning, a card sits at the top of the day sheet / leads surface — lead name, time, address, START. Persists until the visit is started, dismissed, or the day ends. Dismissal kills the card, not the pushes.
 
