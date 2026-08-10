@@ -4886,6 +4886,21 @@ CREATE TABLE ai_draft_history (
 - `changes_made`: Structured diff — `{ greeting?: {from, to}, closing?: {from, to}, tone?: string }`.
 - When `sent_without_changes` reaches 95% over 20+ drafts, auto-send is suggested to the user.
 
+### Agent job conversation evidence and immutable delivered turns (2026-08-10) — local only, unapplied
+
+The local agent-control-plane branch adds three migrations: `20260807220000_agent_job_conversation_memory.sql`, `20260807223000_agent_correspondence_evidence_read.sql`, and `20260807224500_agent_provider_delivery_sources.sql`. They are committed through `5f9e4d6a` but have not been applied to Supabase.
+
+The schema separates provider transport from conversational memory:
+
+- `job_conversations` and `job_conversation_anchors` bind memory to the OPS job/opportunity lifecycle, never to a Gmail or Microsoft thread.
+- `job_conversation_turns` is append-only and accepts only provider-confirmed delivered evidence. Drafts and prepared send intents are not turns.
+- `job_memory_versions`, `job_memory_version_evidence`, and redaction events provide the durable foundation for the later running-summary task; summary generation is not implemented yet.
+- `private.agent_provider_delivery_sources` stores the bounded exact provider-delivered MIME source plus cryptographic source metadata. `private.agent_provider_delivery_turn_sources` seals the first-observation job, actor, event, participant, recipient, and attachment projection used to create a turn.
+
+Gmail must supply raw RFC 822 bytes and Microsoft 365 must supply Graph MIME `$value`. Capture hashes the exact byte stream before parsing, requires complete header/recipient/attachment enumeration, and binds provider type plus immutable company/connection identity. Direct sends additionally bind the prepared provider request tuple before the external call and reauthorize the exact current source/action state at final claim. Legacy ambiguous attempts are reconciliation-only so rollout cannot resend an uncertain message.
+
+Local verification is complete at the application/static-SQL boundary: 214 evidence tests and 492 exact staged delivered-turn/provider tests passed, TypeScript and formatting passed, ESLint had zero errors, and fresh adversarial review found no remaining P1/P2. A live PostgreSQL migration/RLS execution test is still required before any apply or deployment claim.
+
 ### email_send_intents follow-up outcome receipt
 
 Migration `20260723233000_operator_one_tap_lead_follow_up.sql` extends the durable send-intent ledger with `follow_up_outcome_applied_at`, nullable `follow_up_comeback_at`, and `follow_up_notification_id`. A provider-confirmed template follow-up writes all three as one immutable reconciliation receipt: the applied timestamp proves the local outcome ran, the notification foreign key proves the operator-visible result exists, and a null comeback means newer opportunity-wide correspondence or lead state won the race and was preserved. Replays return this stored receipt; they do not increment lifecycle counters, reschedule the lead, create another notification, or call the provider again.

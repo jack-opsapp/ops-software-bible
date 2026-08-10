@@ -2223,6 +2223,21 @@ Lead-linked reads require the intersection of canonical `pipeline.view` and `inb
 
 Before provider I/O, the send route persists `email_send_intents` with a deterministic idempotency key, canonical actor, connection, internal/provider thread identity, opportunity, assignment snapshot, draft provenance, request fingerprint, and delivery state. After provider acceptance, database reconciliation is idempotent and may retry without invoking the provider again. Provider rejection preserves the draft and writes no sent activity. An accepted-but-not-yet-reconciled intent returns a pending/recovery result instead of risking a duplicate send.
 
+#### Provider proof and immutable-turn RPC boundary (2026-08-10) — local only, unapplied
+
+Ops-web commit `5f9e4d6a` adds the service-role-only RPC boundary for exact provider source capture and job-turn ingestion. The SQL is in `20260807220000_agent_job_conversation_memory.sql`, `20260807223000_agent_correspondence_evidence_read.sql`, and `20260807224500_agent_provider_delivery_sources.sql`; none is applied or customer-live.
+
+| RPC family | Contract |
+|---|---|
+| `capture_agent_provider_delivery_source_as_system` | Stores one bounded exact Gmail/Microsoft MIME source after verifying provider, company, connection, message, recipients, headers, attachments, source hash, and first-observation projection. Replays must match the immutable source exactly. |
+| `reserve_*_prepared_provider_recovery` + `claim_*_provider_send_request` | Reserves a deterministic recovery identity, then atomically binds provider, connection, expected thread, request revision, and request hash immediately before provider I/O. Final claim rechecks the current source/action authorization. |
+| `mark_*_provider_accepted`, `mark_*_provider_rejected`, `mark_approved_action_email_delivery_unknown`, `recover_prepared_provider_delivery_as_system` | Advances the durable intent only with the bound provider proof. Ambiguous/legacy attempts are reconciliation-only and cannot be resent through the direct path. |
+| `read_agent_provider_delivery_source_receipt_as_system` + `read_agent_provider_delivery_source_as_system` | Returns the immutable capture receipt or the exact source projection for the same company/connection/message/activity tuple; no caller-supplied tenant scope is trusted. |
+| `ingest_job_conversation_turn_as_system` | Idempotently inserts one delivered turn and resolves its job anchor. Provider thread identity is evidence, never the conversation key. Drafts and unconfirmed intents are ineligible. |
+| `read_agent_correspondence_evidence_as_system` | Returns bounded, deterministic, prompt-safe evidence only after actor/capability/entity authorization and exact evidence-id lookup. |
+
+Private triggers independently freeze the source/send proof, enforce source-to-turn integrity, and re-run current authorization at final claim. Application services also bind the immutable provider instance's company and connection before any raw fetch, attachment read, provider call, or RPC. Live PostgreSQL execution/RLS proof remains a required pre-apply gate.
+
 #### POST `/api/leads/[opportunityId]/follow-up` — one-tap lead follow-up (implemented 2026-07-23)
 
 The authenticated operator sends only a UUID `idempotencyKey`; the server derives the recipient, mailbox, signature, template body, current provider subject, reply target, source event, and linked opportunity. The action is available only for due, active `quoted`, `follow_up`, or `negotiation` leads with a single authorized mailbox and a provider-backed conversation whose newest meaningful message is OPS outbound.

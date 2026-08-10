@@ -1,6 +1,6 @@
 # OPS Agent Control Plane and MCP Foundation (2026-08-07)
 
-**Status:** Product direction approved by Jackson on 2026-08-07. Architecture design only. Nothing in this document is implemented, migrated, deployed, or customer-live.
+**Status:** Product direction approved by Jackson on 2026-08-07. The local control-plane foundation through immutable provider-delivered turn ingestion is implemented on `feat/ops-agent-control-plane-20260807`, culminating in commits `bfb5099b` and `5f9e4d6a`. It has not been pushed, deployed, or applied to Supabase, and nothing here is customer-live. Versioned running summaries, cross-job seeding/querying, the shared read service, remote MCP transport, and OAuth remain unbuilt.
 
 **Decision:** Build one company- and actor-scoped OPS domain service, then expose it through three adapters: Phase C, the existing OPS API, and a public remote MCP server for Claude, ChatGPT, and other approved hosts. MCP is a transport and discovery layer. It does not own OPS business rules.
 
@@ -56,9 +56,9 @@ The following do not currently exist as one coherent system:
 
 - A shared typed `OpsAgentDomainService` used by Phase C, REST, and MCP.
 - A general actor context that intersects OAuth scopes with current OPS permissions and entity assignment.
-- Job-anchored immutable conversation turns plus versioned running memory.
+- A production-applied job conversation store and versioned running memory. The local schema and immutable delivered-turn ingestion now exist, but running-summary generation, cross-job seeding/querying, and production application do not.
 - A general change-set and cryptographic confirmation-receipt engine.
-- A public remote MCP server or MCP SDK dependency in OPS-Web.
+- A public remote MCP server. The isolated MCP SDK/Zod dependency boundary exists locally, but no remote transport is deployed.
 - An OAuth 2.1 authorization-server facade for external MCP clients, protected-resource discovery, grants, revocation, and MCP audience-bound access tokens.
 - A public connector consent/revocation surface.
 - MCP-specific audit, rate-limit, schema-version, adversarial-evaluation, and rollout controls.
@@ -80,6 +80,18 @@ Verified current code boundaries include:
 - guided catalog proposal/approval/commit/readback: `ops-web/src/lib/catalog-setup/phase-c/`
 
 These are sources to adapt behind the shared service, not MCP handler dependencies to call directly.
+
+### 2.4 Local-only evidence and delivered-turn checkpoint (2026-08-10)
+
+The first memory boundary is implemented locally and independently reviewed:
+
+- Prompt evidence is normalized from immutable source material, strips active/hidden presentation, preserves visible semantic content as data, binds its projection metadata cryptographically, and enforces company scope plus deterministic size/count limits.
+- Gmail ingestion requires provider-native raw RFC 822 bytes; Microsoft 365 ingestion requires Graph MIME `$value`. Both paths hash the exact bounded byte stream before parsing and reject incomplete header, recipient, or attachment enumeration.
+- A provider delivery source is accepted only when provider type, immutable provider instance company/connection, prepared intent company/connection, provider message identity, source activity, permitted recipients, and attachment count all agree.
+- Direct sends bind provider, connection, recovery identity, thread expectation, request revision, and request hash before the provider call. Final claim rechecks current authorization and source state; ambiguous legacy attempts are quarantined for reconciliation rather than resent.
+- Only provider-confirmed inbound persistence and outbound delivery/reconciliation can create an immutable job turn. Draft generation and send intent creation cannot become memory.
+
+Local proof: 214/214 evidence tests and 492/492 exact staged delivered-turn/provider tests passed; TypeScript and formatting passed; ESLint reported zero errors; and a fresh adversarial review found no remaining P1/P2. SQL migration verification is structural only because no local PostgreSQL/Supabase runtime was available. The migrations remain unapplied.
 
 ---
 
