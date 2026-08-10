@@ -1272,9 +1272,10 @@ Only if Jackson explicitly authorizes production migrations:
 
 - [ ] Re-fetch production schema and migration ledger immediately before apply.
 - [ ] Confirm migration files exactly match reviewed commits.
+- [ ] Build an expected-mutation manifest from the exact SQL and fresh production preflight before any write. Include the temporary `ai_auto_send`/mailbox-setting changes and every migration-time DML predicate: legacy pending-send cancellation in `20260807213219`, approved-action retry-cap normalization/eligible terminalization plus alert-outbox writes in `20260809180033`, and missing tenant-root inserts for existing source fences in `20260809183000`. Capture exact qualifying keys, per-predicate counts, and the before values required for readback; abort if the qualifying set changes before apply.
 - [ ] Apply one migration at a time through Supabase tooling.
 - [ ] Read back tables, columns, constraints, indexes, RLS, grants, functions, and migration ledger after each apply.
-- [ ] Verify no customer rows were created/changed beyond empty foundation tables.
+- [ ] Reconcile every changed row to the expected-mutation manifest with exact changed keys and before/after counts and values. Verify no unlisted customer row was inserted, updated, or deleted.
 - [ ] Mirror each applied migration into the bible and update numbered chapters in the same session.
 - [ ] If any readback differs, stop; do not continue the sequence.
 
@@ -1285,7 +1286,9 @@ Migration `20260809183000_phase_c_auto_send_generation_reservations.sql` deliber
 Production execution requires separate migration and deployment authorization plus this exact order:
 
 - [ ] Snapshot the exact pre-cutover values, then disable new Phase C email generation: set and read back the company `ai_auto_send` override as false for every company and `auto_send_settings.enabled` as false for every email connection. Do not rely on the general `phase_c` flag alone. Pause `/api/cron/email-sync`, `/api/cron/stale-leads`, `/api/cron/auto-send`, `/api/cron/auto-execute-actions`, and `/api/cron/email-send-reconciliation`; block provider-webhook and user/manual dispatch to `/api/integrations/email/manual-sync`; then wait for in-flight classification/router requests and mailbox/reconciliation leases to drain.
+- [ ] Capture the cutover's expected-mutation manifest and exact qualifying row keys/counts from the now-quiescent database. It must cover cancellation of legacy pending sends, approved-action retry normalization and capped-row terminalization with alert-outbox writes, missing tenant-root backfill, and the temporary settings already changed above. Stop if pre-apply readback no longer matches the captured set.
 - [ ] Apply every reviewed migration in ledger order through `20260809183000`; do not apply the final migration alone.
+- [ ] Reconcile exact changed keys, before/after counts, and relevant values against the manifest; fail closed on any unlisted customer-data change.
 - [ ] Read back the ledger and `pg_proc`/ACL state. Assert the legacy 28-argument scheduling overload is absent; the reservation, resolution, and 30-argument scheduling functions exist; only `service_role` can execute the public system RPCs; and public/anonymous/authenticated execution remains revoked.
 - [ ] Verify reconciliation intent tables grant `service_role` read access only, with mutation available solely through the reviewed security-definer RPCs.
 - [ ] Deploy the compatible application commit while all workers remain paused. Verify exact commit ancestry and customer alias before any runtime invocation.
