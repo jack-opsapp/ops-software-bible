@@ -1,6 +1,6 @@
 # OPS Agent Control Plane and MCP Foundation (2026-08-07)
 
-**Status:** Product direction approved by Jackson on 2026-08-07. Architecture design only. Nothing in this document is implemented, migrated, deployed, or customer-live.
+**Status:** Product direction approved by Jackson on 2026-08-07. Foundation Tasks 1–7 are implemented in the local OPS-Web branch `feat/ops-agent-control-plane-takeover-20260807` through commits `1e866814` and `556c514f`, but their SQL migrations have not been applied. The branch has not been pushed or deployed. Versioned running memory, the shared domain read service, OAuth, and the remote MCP server remain unbuilt and nothing here is customer-live.
 
 **Decision:** Build one company- and actor-scoped OPS domain service, then expose it through three adapters: Phase C, the existing OPS API, and a public remote MCP server for Claude, ChatGPT, and other approved hosts. MCP is a transport and discovery layer. It does not own OPS business rules.
 
@@ -50,22 +50,32 @@ The following exist in OPS-Web and/or the production Supabase project:
 - Existing catalog guided-setup sessions with input revisions, source evidence, live snapshot hashes, proposal hashes, approval hashes, commit operation IDs, commit journals, and post-commit readback.
 - Existing idempotent/guarded patterns in scheduling, email delivery, lifecycle, financial, and catalog services.
 
-### 2.2 Verified gaps
+### 2.2 Local foundation implementation, not deployed
+
+The isolated OPS-Web implementation branch now contains:
+
+- the MCP v2/Zod 4 alias boundary, stable v1 contracts, actor/entity authorization context, and governed capability manifest;
+- the job-conversation schema migration, bounded evidence normalization, exact provider-delivery source capture, participant/anchor resolution, and immutable delivered-turn ingestion at inbound and provider-accepted outbound chokepoints;
+- durable provider-accepted approved-action reconciliation, mailbox/reconciliation lease renewal, database-pressure backoff, and forward-only Phase C generation/source/recipient fences.
+
+The relevant local commits are `c53b4664`, `99b30cfc`, `2969debe`, `46aedaf2`, `fd9e17c5`, `6f9e387f`, `8af1ee5d`, `1e866814`, and `556c514f`. This is source and test evidence only. The migrations are unapplied, and there is no production schema, deployment, runtime, host, or customer-live proof.
+
+### 2.3 Verified gaps
 
 The following do not currently exist as one coherent system:
 
 - A shared typed `OpsAgentDomainService` used by Phase C, REST, and MCP.
-- A general actor context that intersects OAuth scopes with current OPS permissions and entity assignment.
-- Job-anchored immutable conversation turns plus versioned running memory.
+- An OAuth-authenticated actor context that intersects external scopes/grants with the locally implemented OPS permission and entity-assignment context.
+- Versioned running memory, bounded context assembly, memory catch-up, and deliberate cross-job retrieval over the locally implemented immutable turn ledger.
 - A general change-set and cryptographic confirmation-receipt engine.
-- A public remote MCP server or MCP SDK dependency in OPS-Web.
+- A public remote MCP server, deployed MCP endpoint, or registered host integration. Only the SDK/schema boundary exists locally.
 - An OAuth 2.1 authorization-server facade for external MCP clients, protected-resource discovery, grants, revocation, and MCP audience-bound access tokens.
 - A public connector consent/revocation surface.
 - MCP-specific audit, rate-limit, schema-version, adversarial-evaluation, and rollout controls.
 
 No remote OPS MCP server was found in the inspected repositories. This design must not be described as an existing integration.
 
-### 2.3 Current implementation references
+### 2.4 Current implementation references
 
 Verified current code boundaries include:
 
@@ -1116,6 +1126,21 @@ Success requires correct tool selection, no unauthorized data, complete evidence
    - Host review/submission, published privacy/security material, incident runbooks, support path, and measured SLOs.
 
 Each stage has a kill switch by company, client, tool, and capability revision. Read-only fallback remains available if a write domain is disabled.
+
+### 17.1 Mandatory Phase C email cutover order
+
+The Phase 2 email safety migrations are a forward-only application/database cutover, not an ordinary migration followed by an eventually consistent deployment. Migration `20260809183000_phase_c_auto_send_generation_reservations.sql` removes the legacy 28-argument `schedule_phase_c_auto_send_fenced` overload and replaces it with the reservation-bound 30-argument contract. Old application workers and the new database contract must never run concurrently.
+
+When production migration and deployment are separately authorized, operators must use this order:
+
+1. Snapshot the exact pre-cutover settings, then disable new Phase C email generation before pausing traffic: set and read back the company `ai_auto_send` feature override as false for every company and the connection `auto_send_settings.enabled` value as false for every mailbox. The general `phase_c` flag alone is not the auto-send kill switch. Pause `/api/cron/email-sync`, `/api/cron/stale-leads`, `/api/cron/auto-send`, `/api/cron/auto-execute-actions`, and `/api/cron/email-send-reconciliation`; block provider-webhook and user/manual dispatch to `/api/integrations/email/manual-sync`; then drain every in-flight classification/router invocation and mailbox/reconciliation lease before changing the database.
+2. Apply the reviewed migration sequence in ledger order through `20260809183000`. Do not skip directly to the final file.
+3. Read back the migration ledger, functions, signatures, owners, and grants. The 28-argument `schedule_phase_c_auto_send_fenced` overload must be absent. The 30-argument overload plus `reserve_phase_c_auto_send_generation_as_system` and `resolve_phase_c_auto_send_generation_as_system` must exist, and their public/anonymous/authenticated grants must remain revoked. Validate the recovery RPCs and the absence of direct service-role writes to reconciliation intent rows as part of the same gate.
+4. Deploy only application code that reserves generation first and supplies the returned generation token plus arguments hash to the 30-argument scheduling RPC. Keep every paused worker paused until deployed commit and customer alias readback agree.
+5. Run a non-sending canary for a designated internal test company: reserve against exact delivered source evidence, verify the reservation/lease and audit identity, then resolve it as `failed` with a cutover-canary reason. Do not invoke model generation, schedule a send, or call a provider.
+6. Restore the snapshotted `ai_auto_send` and connection settings for one internal/test-company path first, restore its sync dispatch, and verify runtime reservation and reconciliation evidence. Then deliberately restore the remaining pre-cutover values and resume the remaining ingress paths and schedulers. Existing queued sends remain governed by the new delivery fences.
+
+Rollback never restores the 28-argument overload. If any step fails, keep the workers paused and roll the application forward to a compatible reviewed build or apply a reviewed forward database repair. Reintroducing the old overload would recreate the reservation bypass that this migration closes.
 
 ---
 

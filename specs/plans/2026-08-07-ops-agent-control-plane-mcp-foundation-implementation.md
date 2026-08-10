@@ -10,6 +10,8 @@
 
 **Design System:** The OAuth consent, connected-app management, and confirmation surfaces use the existing OPS-Web design system at `ops-design-system/project/DESIGN.md`. Use current OPS-Web Tailwind tokens and `lucide-react`; no new visual system, raw values, marketing surface, MCP App widget, or motion language.
 
+**Execution status (2026-08-08):** Tasks 1–4 and the source-code portions of Tasks 5–7 are locally committed on `feat/ops-agent-control-plane-takeover-20260807` through `1e866814` and `556c514f`. This includes the SDK/schema boundary, actor scope, capability manifest, immutable conversation schema, evidence normalization, exact provider-delivery capture, delivered-turn ingestion, approved-action reconciliation recovery, and Phase C generation fences. The migrations have not been applied to local/test or production Supabase. Nothing has been pushed or deployed; Tasks 8 onward, including versioned running memory, the domain read service, OAuth, and the remote MCP server, remain incomplete. Checklist boxes below remain acceptance gates rather than a live source-commit tracker; an unchecked migration, deployment, or runtime box must not be inferred complete from this status.
+
 **Required Skills:** `custom-skills:executing-plans`, `superpowers:using-git-worktrees`, `superpowers:test-driven-development`, `superpowers:systematic-debugging` when a failure appears, `supabase:supabase`, `supabase:supabase-postgres-best-practices`, `openai-docs`, `plugin-dev:mcp-integration`, `ops-design`, `frontend-design:frontend-design`, `custom-skills:interface-design`, `custom-skills:ui-ux-pro-max`, `ops-copywriter:ops-copywriter`, `custom-skills:wizard-audit`, `custom-skills:audit-design-system`, `superpowers:verification-before-completion`, and `superpowers:requesting-code-review`.
 
 ---
@@ -1275,6 +1277,21 @@ Only if Jackson explicitly authorizes production migrations:
 - [ ] Verify no customer rows were created/changed beyond empty foundation tables.
 - [ ] Mirror each applied migration into the bible and update numbered chapters in the same session.
 - [ ] If any readback differs, stop; do not continue the sequence.
+
+#### Mandatory Phase 2 email migration/deploy cutover
+
+Migration `20260809183000_phase_c_auto_send_generation_reservations.sql` deliberately drops the already-shipped 28-argument `schedule_phase_c_auto_send_fenced` overload. The replacement takes a generation token and arguments hash, for 30 arguments total. This is a forward-only safety boundary: never leave the legacy overload installed as a compatibility bridge and never restore it during rollback.
+
+Production execution requires separate migration and deployment authorization plus this exact order:
+
+- [ ] Snapshot the exact pre-cutover values, then disable new Phase C email generation: set and read back the company `ai_auto_send` override as false for every company and `auto_send_settings.enabled` as false for every email connection. Do not rely on the general `phase_c` flag alone. Pause `/api/cron/email-sync`, `/api/cron/stale-leads`, `/api/cron/auto-send`, `/api/cron/auto-execute-actions`, and `/api/cron/email-send-reconciliation`; block provider-webhook and user/manual dispatch to `/api/integrations/email/manual-sync`; then wait for in-flight classification/router requests and mailbox/reconciliation leases to drain.
+- [ ] Apply every reviewed migration in ledger order through `20260809183000`; do not apply the final migration alone.
+- [ ] Read back the ledger and `pg_proc`/ACL state. Assert the legacy 28-argument scheduling overload is absent; the reservation, resolution, and 30-argument scheduling functions exist; only `service_role` can execute the public system RPCs; and public/anonymous/authenticated execution remains revoked.
+- [ ] Verify reconciliation intent tables grant `service_role` read access only, with mutation available solely through the reviewed security-definer RPCs.
+- [ ] Deploy the compatible application commit while all workers remain paused. Verify exact commit ancestry and customer alias before any runtime invocation.
+- [ ] Run a non-sending internal-company canary: reserve generation from exact delivered source evidence, read back reservation identity/lease/audit fields, and resolve it to `failed` with reason `cutover_canary`. Do not generate text, create a pending send, or contact an email provider.
+- [ ] Restore the snapshotted `ai_auto_send` plus connection settings for one internal/test-company path, restore its sync dispatch, and prove the new reservation and reconciliation runtime records. Then restore only the remaining pre-cutover values and deliberately resume the remaining ingress paths and schedulers.
+- [ ] On any failure, keep workers paused and use a reviewed forward application/database repair. Do not recreate or grant the 28-argument overload.
 
 ### Task 36: Staged production rollout
 
