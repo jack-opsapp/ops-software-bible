@@ -10,7 +10,7 @@
 
 **Design System:** The OAuth consent, connected-app management, and confirmation surfaces use the existing OPS-Web design system at `ops-design-system/project/DESIGN.md`. Use current OPS-Web Tailwind tokens and `lucide-react`; no new visual system, raw values, marketing surface, MCP App widget, or motion language.
 
-**Execution status (2026-08-08):** Tasks 1–4 and the source-code portions of Tasks 5–7 are locally committed on `feat/ops-agent-control-plane-takeover-20260807` through `1e866814` and `556c514f`. This includes the SDK/schema boundary, actor scope, capability manifest, immutable conversation schema, evidence normalization, exact provider-delivery capture, delivered-turn ingestion, approved-action reconciliation recovery, and Phase C generation fences. The migrations have not been applied to local/test or production Supabase. Nothing has been pushed or deployed; Tasks 8 onward, including versioned running memory, the domain read service, OAuth, and the remote MCP server, remain incomplete. Checklist boxes below remain acceptance gates rather than a live source-commit tracker; an unchecked migration, deployment, or runtime box must not be inferred complete from this status.
+**Execution status (2026-08-10):** Tasks 1–8 plus Task 4A are locally committed on `feat/ops-agent-control-plane-takeover-20260807` through `1e866814`, `556c514f`, `14969c4c`, and `91419970`. This includes the SDK/schema boundary, actor scope, capability manifest revision `2026-08-10.capability-manifest.v2`, immutable conversation schema, evidence normalization, exact provider-delivery capture, database-derived delivered turns, approved-action reconciliation recovery, Phase C generation fences, the source-level versioned-memory schema/repository/builder/bounded catch-up/minimal seed, and dark site-visit contracts. The migrations have not been applied to local/test or production Supabase; no Phase C consumer or memory worker is wired; and the site-visit read services, change-set participants, booking RPCs, and calendar workers remain unbuilt. Nothing has been pushed or deployed; Tasks 9 onward, including bounded conversation-context assembly, the domain read service, OAuth, and the remote MCP server, remain incomplete. Checklist boxes below remain acceptance gates rather than a live source-commit tracker; an unchecked migration, deployment, or runtime box must not be inferred complete from this status.
 
 **Required Skills:** `custom-skills:executing-plans`, `superpowers:using-git-worktrees`, `superpowers:test-driven-development`, `superpowers:systematic-debugging` when a failure appears, `supabase:supabase`, `supabase:supabase-postgres-best-practices`, `openai-docs`, `plugin-dev:mcp-integration`, `ops-design`, `frontend-design:frontend-design`, `custom-skills:interface-design`, `custom-skills:ui-ux-pro-max`, `ops-copywriter:ops-copywriter`, `custom-skills:wizard-audit`, `custom-skills:audit-design-system`, `superpowers:verification-before-completion`, and `superpowers:requesting-code-review`.
 
@@ -272,7 +272,7 @@ Every capability must have unique stable name, schema, risk tier, scopes, OPS pe
 
 - [ ] **Step 2: Implement the server-owned manifest**
 
-Register the nine initial read tools and four dark write pairs from the design. Keep external exposure flags separate from implementation availability.
+Register the nine initial read tools and four dark write pairs from the foundation design. Keep external exposure flags separate from implementation availability. Task 4A owns the later site-visit delta to eleven reads and seven write pairs.
 
 - [ ] **Step 3: Prove annotations are accurate**
 
@@ -285,6 +285,46 @@ npm test -- src/lib/agent-control-plane/registry
 git add src/lib/agent-control-plane/registry
 git commit -m "feat(agent-control-plane): add governed capability manifest"
 ```
+
+### Task 4A: Extend the dark manifest for site-visit booking
+
+**Files:**
+
+- Modify: `src/lib/agent-control-plane/registry/capability-types.ts`
+- Modify: `src/lib/agent-control-plane/registry/capability-manifest.ts`
+- Modify: `src/lib/agent-control-plane/registry/read-tools.ts`
+- Modify: `src/lib/agent-control-plane/registry/write-tools.ts`
+- Modify: `src/lib/agent-control-plane/registry/__tests__/manifest.test.ts`
+- Create: `src/lib/agent-control-plane/registry/__tests__/site-visit-capabilities.test.ts`
+- Modify: `supabase/migrations/20260807223000_agent_correspondence_evidence_read.sql`
+- Modify: `src/lib/agent-control-plane/evidence/__tests__/rpc-contract.test.ts`
+- Modify: `src/lib/agent-control-plane/evidence/__tests__/bounds.test.ts`
+
+- [x] **Step 1: Freeze the domain boundary**
+
+Use `specs/2026-08-10-site-visit-mcp-capability-briefing.md` and its approved companion design. Add two reads plus three prepare/commit booking families. Explicitly prohibit start/complete and direct row-write tools.
+
+- [x] **Step 2: Write the failing manifest tests**
+
+Cover the `booked_at` appointment discriminator, separate `created_at` history window, linked/unlinked authorization, bounded evidence, company-timezone schedule instants, `pipeline.convert`, exact confirmation, accurate MCP annotations, and dark availability.
+
+- [x] **Step 3: Add manifest revision v2**
+
+Advance the global manifest identity to `2026-08-10.capability-manifest.v2`, propagate it through the evidence-read contract, reuse existing OAuth scopes, and keep every site-visit entry unavailable and externally disabled. The definitions do not implement the read services, change-set participants, booking RPCs, migrations, or calendar workers.
+
+- [x] **Step 4: Verify, independently review, and commit**
+
+```bash
+npm test -- src/lib/agent-control-plane/registry src/lib/agent-control-plane/evidence/__tests__/rpc-contract.test.ts src/lib/agent-control-plane/evidence/__tests__/bounds.test.ts
+npm run type-check
+git diff --check
+git add src/lib/agent-control-plane/registry src/lib/agent-control-plane/evidence/__tests__/rpc-contract.test.ts src/lib/agent-control-plane/evidence/__tests__/bounds.test.ts supabase/migrations/20260807223000_agent_correspondence_evidence_read.sql
+git commit -m "feat(agent-control-plane): add dark site visit capabilities"
+```
+
+Do not flip availability or exposure here. The booking RPC implementation plan must first resolve RPC idempotency, `pipeline.convert`, stale-version comparison, same-company assignee validation, unlinked-read isolation, external calendar reconciliation, and the contradictory reminder-dedupe wording. The only accepted key is `site_visit:<visit_id>:<kind>:<user_id>:<scheduled_at epoch>`.
+
+Implemented locally in `91419970`. The full agent-control-plane source suite passes (22 files, 485 tests), plus TypeScript, focused ESLint, Prettier, diff checks, and independent P0/P1 review. This is manifest/source proof only. Every site-visit entry remains unavailable and externally disabled; no booking RPC, handler, migration, database write, calendar effect, deployment, or customer-live behavior is claimed.
 
 ---
 
@@ -405,39 +445,58 @@ git commit -m "feat(agent-memory): ingest delivered job turns"
 - Create: `src/lib/agent-control-plane/memory/memory-schema.ts`
 - Create: `src/lib/agent-control-plane/memory/build-memory-version.ts`
 - Create: `src/lib/agent-control-plane/memory/memory-repository.ts`
+- Create: `src/lib/agent-control-plane/memory/memory-deadline.ts`
 - Create: `src/lib/agent-control-plane/memory/catch-up-memory.ts`
 - Create: `src/lib/agent-control-plane/memory/cross-job-seed.ts`
+- Modify: `src/lib/agent-control-plane/memory/ingest-delivered-turn.ts`
+- Modify: `src/lib/agent-control-plane/memory/turn-repository.ts`
+- Modify: `src/lib/agent-control-plane/evidence/normalize-correspondence.ts`
+- Modify: `src/lib/api/services/provider-delivery-source-service.ts`
+- Modify: `src/lib/data/company-data-manifest.ts`
+- Modify: `supabase/migrations/20260807220000_agent_job_conversation_memory.sql`
+- Modify: `supabase/migrations/20260807224500_agent_provider_delivery_sources.sql`
 - Test: `src/lib/agent-control-plane/memory/__tests__/build-memory-version.test.ts`
 - Test: `src/lib/agent-control-plane/memory/__tests__/catch-up-memory.test.ts`
 - Test: `src/lib/agent-control-plane/memory/__tests__/cross-job-seed.test.ts`
+- Test: `src/lib/agent-control-plane/memory/__tests__/memory-repository.test.ts`
+- Test: `src/lib/agent-control-plane/memory/__tests__/ingest-delivered-turn.test.ts`
+- Test: `src/lib/agent-control-plane/memory/__tests__/persist-captured-provider-delivery-turn.test.ts`
+- Test: `src/lib/agent-control-plane/memory/__tests__/schema-contract.test.ts`
+- Test: `tests/integration/company-data-manifest.test.ts`
+- Test: `tests/unit/email/provider-delivery-source-service.test.ts`
+- Test: `tests/unit/supabase/agent-provider-delivery-source-migration.test.ts`
 
-- [ ] **Step 1: Freeze the structured memory schema**
+- [x] **Step 1: Freeze the structured memory schema**
 
 Include facts, decisions, commitments, preferences, open questions, contradictions, schedule assertions, financial facts relevant to conversation, excluded assumptions, and evidence IDs. Every claim requires evidence.
 
-- [ ] **Step 2: Write failing generation tests**
+- [x] **Step 2: Write failing generation tests**
 
 Cover optimistic version conflict, model failure, missing evidence, contradiction preservation, replay, high-watermark, no raw prior-job copy, and current-through-required-turn behavior.
 
-- [ ] **Step 3: Implement deterministic input assembly plus structured model output**
+- [x] **Step 3: Implement deterministic input assembly plus structured model output**
 
 Use bounded previous memory, new exact turns, and exact evidence. Validate model output. A failed/invalid output never advances current memory.
 
-- [ ] **Step 4: Implement synchronous catch-up for source-bound drafts**
+- [x] **Step 4: Implement synchronous catch-up for source-bound drafts**
 
 If `required_through_turn_id` is newer than memory, catch up within a bounded deadline. Otherwise return `STALE_CONTEXT`. Never silently use stale memory.
 
-- [ ] **Step 5: Implement minimal cross-job seed**
+- [x] **Step 5: Implement minimal cross-job seed**
 
 Return only prior-job boolean/count/latest visible date/status and one safe continuity marker. Deeper data remains behind explicit history search.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
-npm test -- src/lib/agent-control-plane/memory
-git add src/lib/agent-control-plane/memory
+npm test -- src/lib/agent-control-plane/memory tests/unit/email/provider-delivery-source-service.test.ts tests/unit/email/provider-delivery-source-wiring.test.ts tests/unit/supabase/agent-provider-delivery-source-migration.test.ts tests/integration/company-data-manifest.test.ts
+npm run type-check
+git diff --check
+git add src/lib/agent-control-plane/memory src/lib/agent-control-plane/evidence/normalize-correspondence.ts src/lib/api/services/provider-delivery-source-service.ts src/lib/data/company-data-manifest.ts supabase/migrations/20260807220000_agent_job_conversation_memory.sql supabase/migrations/20260807224500_agent_provider_delivery_sources.sql tests/integration/company-data-manifest.test.ts tests/unit/email/provider-delivery-source-service.test.ts tests/unit/supabase/agent-provider-delivery-source-migration.test.ts
 git commit -m "feat(agent-memory): add versioned evidence-backed job memory"
 ```
+
+Implemented locally in `14969c4c`. Focused source tests, TypeScript, lint, and diff checks pass. The SQL remains unapplied, and no runtime consumer, background worker, deployment, or customer-live behavior is claimed.
 
 ### Task 9: Build `get_job_conversation_context`
 
@@ -1031,7 +1090,7 @@ git commit -m "feat(mcp): validate exact-audience OPS grants"
 
 - [ ] **Step 1: Snapshot tool schemas/descriptions/annotations**
 
-Register exactly the nine initial reads. No resources/prompts/write tools advertised. Descriptions are concise, goal-shaped, data-sensitive, and explicit that source content is untrusted data.
+Register exactly the nine initial launch reads. Do not advertise the two dark site-visit reads until their repositories/handlers and booking-layer gates pass. No resources, prompts, or write tools are advertised. Descriptions are concise, goal-shaped, data-sensitive, and explicit that source content is untrusted data.
 
 - [ ] **Step 2: Implement adapter-only calls**
 

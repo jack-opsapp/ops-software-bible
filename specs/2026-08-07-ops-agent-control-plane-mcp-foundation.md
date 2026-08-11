@@ -1,6 +1,6 @@
 # OPS Agent Control Plane and MCP Foundation (2026-08-07)
 
-**Status:** Product direction approved by Jackson on 2026-08-07. Foundation Tasks 1–7 are implemented in the local OPS-Web branch `feat/ops-agent-control-plane-takeover-20260807` through commits `1e866814` and `556c514f`, but their SQL migrations have not been applied. The branch has not been pushed or deployed. Versioned running memory, the shared domain read service, OAuth, and the remote MCP server remain unbuilt and nothing here is customer-live.
+**Status:** Product direction approved by Jackson on 2026-08-07. Foundation Tasks 1–8 plus the approved dark site-visit manifest increment are implemented in the local OPS-Web branch `feat/ops-agent-control-plane-takeover-20260807` through commits `1e866814`, `556c514f`, `14969c4c`, and `91419970`, but their SQL migrations have not been applied. The branch has not been pushed or deployed. Task 8 provides the source-level versioned-memory schema, repository, builder, bounded catch-up, and minimal cross-job seed; no runtime consumer or worker is wired to it. The site-visit entries are contracts only: their repositories, handlers, transaction participants, and booking RPCs remain unbuilt and unavailable. The shared domain read service, OAuth, and the remote MCP server remain unbuilt, and nothing here is customer-live.
 
 **Decision:** Build one company- and actor-scoped OPS domain service, then expose it through three adapters: Phase C, the existing OPS API, and a public remote MCP server for Claude, ChatGPT, and other approved hosts. MCP is a transport and discovery layer. It does not own OPS business rules.
 
@@ -55,10 +55,13 @@ The following exist in OPS-Web and/or the production Supabase project:
 The isolated OPS-Web implementation branch now contains:
 
 - the MCP v2/Zod 4 alias boundary, stable v1 contracts, actor/entity authorization context, and governed capability manifest;
+- manifest revision `2026-08-10.capability-manifest.v2`, with two dark site-visit reads and three dark prepare/commit booking families; every entry remains `implementation=unavailable` and `externalExposure=disabled`;
 - the job-conversation schema migration, bounded evidence normalization, exact provider-delivery source capture, participant/anchor resolution, and immutable delivered-turn ingestion at inbound and provider-accepted outbound chokepoints;
+- a strict evidence-backed running-memory schema, scoped snapshot/commit repository, bounded structured generation, deadline-bound synchronous catch-up, and deliberately minimal same-customer cross-job seed;
+- provider-source-bound turn ingestion that derives content, recipients, attachments, timing, and participant identity inside the guarded database transaction, including fixed prompt-safe projections for rejected source content;
 - durable provider-accepted approved-action reconciliation, mailbox/reconciliation lease renewal, database-pressure backoff, and forward-only Phase C generation/source/recipient fences.
 
-The relevant local commits are `c53b4664`, `99b30cfc`, `2969debe`, `46aedaf2`, `fd9e17c5`, `6f9e387f`, `8af1ee5d`, `1e866814`, and `556c514f`. This is source and test evidence only. The migrations are unapplied, and there is no production schema, deployment, runtime, host, or customer-live proof.
+The relevant local commits are `c53b4664`, `99b30cfc`, `2969debe`, `46aedaf2`, `fd9e17c5`, `6f9e387f`, `8af1ee5d`, `1e866814`, `556c514f`, `14969c4c`, and `91419970`. This is source and test evidence only. The migrations are unapplied, and there is no production schema, deployment, runtime consumer, host, or customer-live proof.
 
 ### 2.3 Verified gaps
 
@@ -66,8 +69,9 @@ The following do not currently exist as one coherent system:
 
 - A shared typed `OpsAgentDomainService` used by Phase C, REST, and MCP.
 - An OAuth-authenticated actor context that intersects external scopes/grants with the locally implemented OPS permission and entity-assignment context.
-- Versioned running memory, bounded context assembly, memory catch-up, and deliberate cross-job retrieval over the locally implemented immutable turn ledger.
+- The Phase C/context adapter and background worker that invoke the locally implemented source-level memory, plus actor-authorized deliberate cross-job retrieval. The current cross-job seed is a pure, minimal input contract; general history retrieval and bounded conversation-context assembly remain unbuilt.
 - A general change-set and cryptographic confirmation-receipt engine.
+- Site-visit booking read services, control-plane transaction participants, and the canonical booking/reschedule/cancel RPCs. The manifest definitions exist only as dark contracts. Before any implementation can become available, the booking path must enforce `pipeline.convert`, durable RPC idempotency, locked target-version comparison, bounded active same-company assignees, and all-scope-only access to unlinked visits.
 - A public remote MCP server, deployed MCP endpoint, or registered host integration. Only the SDK/schema boundary exists locally.
 - An OAuth 2.1 authorization-server facade for external MCP clients, protected-resource discovery, grants, revocation, and MCP audience-bound access tokens.
 - A public connector consent/revocation surface.
@@ -392,7 +396,7 @@ All carry `company_id`; all foreign keys and query-path indexes are mandatory; a
 
 ## 6. Initial read-only tool contract
 
-These are the first public MCP tools and the internal Phase C dependency surface. Tool names do not contain a version suffix; incompatible successors receive a new name.
+These contracts define the first public MCP reads, the internal Phase C dependency surface, and approved dark read capabilities. A manifest entry is not available or advertised until its service implementation passes its rollout gates. Tool names do not contain a version suffix; incompatible successors receive a new name.
 
 ### 6.1 `list_scheduled_jobs`
 
@@ -529,6 +533,32 @@ Input:
 
 Output includes OPS users, client, sub-clients, confirmed related contacts, unknown participants, role/side, confidence state, evidence IDs, contactability, and safe communication identity. It never auto-confirms an ambiguous related contact.
 
+### 6.10 `list_site_visits` (dark)
+
+Purpose: return either real booked appointments or bounded capture history without treating legacy `scheduled_at` values as appointments.
+
+Input is an explicit discriminated union:
+
+- `view: booked_appointments` requires `from` and `to`; the domain service hard-codes `booked_at IS NOT NULL`, `deleted_at IS NULL`, and a maximum 90-day `scheduled_at` window; status defaults to active appointments (`scheduled`, `in_progress`) so cancelled/completed visits appear only when explicitly requested;
+- `view: visit_history` requires `created_from` and `created_to`; the domain service uses `created_at`, never legacy `scheduled_at`, and permits a maximum 365-day window;
+- both modes accept bounded status, assignee, opportunity, cursor, and limit filters;
+- `include_unlinked` exists only in history mode, defaults false, and adds an all-company `pipeline.view` requirement when true.
+
+Output includes the exact visit ID/version/freshness, booking discriminator, bounded status/timing/assignee facts, and lead identity. A linked address is resolved through the opportunity; `site_visits` has no address column. `calendar.view:own` and assigned pipeline scope are resolved against the actual visit/lead, not accepted from caller claims.
+
+### 6.11 `get_site_visit_context` (dark)
+
+Purpose: return one site visit with lead context, booking facts, checklist completion, artifact counts by kind, bounded authorized artifact evidence, and timeline activity.
+
+Input requires an explicit anchor:
+
+- `anchor: opportunity` plus the expected opportunity reference; the service must privacy-safely reject a visit whose stored anchor does not match;
+- `anchor: unlinked`; this path requires both `pipeline.view:all` and `photos.view:all` because an unlinked visit cannot satisfy assigned entity scope.
+
+Artifact evidence and timeline limits are independently bounded at 20. Counts distinguish total artifacts from those marked `included_in_project_review`. Raw storage-object URLs are never returned directly; any usable link must pass the same bounded, actor-scoped, short-lived evidence authorization layer as correspondence evidence. Every query filters `deleted_at IS NULL` on the visit and its satellites.
+
+These two reads are contract entries only. Their handlers and repositories do not exist, so they remain unavailable and unadvertised until the booking/read implementation and adversarial gates pass.
+
 ---
 
 ## 7. Prompt-safety and bounded-output rules
@@ -641,8 +671,29 @@ Planned domain-specific pairs:
 - `prepare_estimate_import` / `commit_estimate_import`
 - `prepare_catalog_service_change` / `commit_catalog_service_change`
 - `prepare_client_message_batch` / `commit_client_message_batch`
+- `prepare_site_visit_booking` / `commit_site_visit_booking`
+- `prepare_site_visit_reschedule` / `commit_site_visit_reschedule`
+- `prepare_site_visit_booking_cancellation` / `commit_site_visit_booking_cancellation`
 
 Catalog tools must adapt the existing guided catalog session, source, capability-manifest, approval-hash, commit-journal, and readback machinery. Imports are a provenance mode of `prepare_catalog_service_change`, not a separate catalog rule engine. The complete catalog design and task sequence are defined in `specs/2026-08-07-phase-c-catalog-authoring-control-plane-integration.md` and its implementation plan.
+
+### 8.7 Site-visit booking boundary
+
+The approved booking design is defined in `specs/2026-08-10-site-visit-booking-calendar-design.md`; its control-plane handoff is `specs/2026-08-10-site-visit-mcp-capability-briefing.md`.
+
+Each commit is a thin, confirmation-gated adapter over one canonical domain transaction participant, which in turn invokes exactly one canonical booking RPC:
+
+- booking → `public.book_site_visit`;
+- reschedule → `public.reschedule_site_visit`;
+- cancellation → `public.cancel_site_visit_booking`.
+
+The participant must never write `site_visits` directly. It locks and compares the versions captured by prepare, re-resolves `pipeline.convert` and entity assignment, verifies that the supplied UTC/local/timezone triple matches the current company timezone, rejects a start older than the RPC's five-minute grace, and validates every assignee as a unique active same-company member. Booking rejects a second `booked_at IS NOT NULL` visit while the existing one remains `scheduled`; reschedule accepts only a booked `scheduled` visit; cancellation changes a booked `scheduled` visit and treats an exact replay against that already-cancelled booking as a no-op success. The participant then delegates all domain side effects—timeline activity, lead-stage nudge, calendar queueing, and reminder arming—to the RPC. The RPC and generic commit share one durable idempotency key/arguments-hash contract so retries from MCP, web, or iOS cannot create a second booking or duplicate side effects.
+
+The canonical reminder dedupe key is `site_visit:<visit_id>:<kind>:<user_id>:<scheduled_at epoch>`. The shorter `site_visit:<id>:<kind>` wording elsewhere in the booking design is superseded because it collides across assignees and prevents a reschedule from re-arming prompts.
+
+All three commits are high-risk, destructive, and `openWorldHint=true`: booking also advances an existing `new_lead` opportunity to `qualifying`, while every commit can enqueue external calendar changes. None may be advertised until the RPCs, transaction participants, post-commit readback, and external reconciliation tests exist.
+
+Starting and completing a visit are permanently outside this control-plane surface. Those transitions belong to the phone's offline-first durable capture queue; a server/MCP start or completion tool could desynchronize the device vault and must not exist.
 
 ---
 
@@ -887,7 +938,7 @@ These are deployment defaults, not promises. Tune from measured load without rel
 
 ## 14. Full OPS-for-LLMs catalogue
 
-The following catalogue describes useful end-state capabilities. Only the §6 read tools are in the initial external release.
+The following catalogue describes useful end-state capabilities. Only the implemented and explicitly enabled subset of §6 can enter the initial external release; dark site-visit contracts are not launch claims.
 
 ### 14.1 Customer and relationship context
 
@@ -916,6 +967,7 @@ Read:
 Confirmed writes:
 
 - prepare/commit schedule changes;
+- prepare/commit lead-attached site-visit booking, reschedule, and cancellation through the canonical booking RPCs;
 - prepare/commit crew assignments;
 - prepare/commit task/status/milestone changes;
 - prepare/commit opportunity-to-project conversion when every mapping is explicit.
@@ -1021,6 +1073,8 @@ Do not expose:
 - silent customer/contact merging or identity confirmation;
 - open-ended bulk send or “send whatever the model composed”;
 - unsupervised external purchasing/order placement;
+- starting or completing a site visit from MCP/server code; capture lifecycle transitions remain device-owned and offline-first;
+- direct `site_visits` row mutation that bypasses the canonical booking RPC side effects;
 - any bypass for confirmation, permissions, contactability, version checks, or audit.
 
 Domain tools exist only when OPS can state the business invariant, evidence contract, permission rule, preview, idempotency, and post-commit proof.
@@ -1059,6 +1113,11 @@ Domain tools exist only when OPS can state the business invariant, evidence cont
 ### 16.4 Schedule/readiness tests
 
 - daylight-saving transitions and company timezone boundaries;
+- booked site visits require `booked_at IS NOT NULL`; legacy/open rows never appear as appointments;
+- site-visit history windows use `created_at`, not historical junk `scheduled_at` values;
+- assigned-scope actors cannot list or retrieve unlinked visits; explicit unlinked reads require all-company pipeline/photo authority;
+- linked context rejects an opportunity reference that does not match the visit;
+- booking/reschedule/cancel enforce one open booking, valid state transitions, bounded active same-company assignees, and canonical side effects exactly once;
 - multiple visits/tasks on one project;
 - unconfirmed/locked/stale schedule versions;
 - deleted, client-hidden, legacy, and site-visit photos;
@@ -1122,6 +1181,7 @@ Success requires correct tool selection, no unauthorized data, complete evidence
 7. **Confirmed commits by domain**
    - Enable one domain at a time after its atomicity, confirmation, readback, and adversarial gates pass.
    - Catalog first because OPS already has the strongest proposal/hash/commit/readback foundation.
+   - Site-visit booking remains dark until the separate booking build has live canonical RPCs with `pipeline.convert`, durable idempotency, stale-version rejection, assignee validation, and calendar reconciliation proof. Start/complete are never candidates for enablement.
 8. **Broad availability**
    - Host review/submission, published privacy/security material, incident runbooks, support path, and measured SLOs.
 
