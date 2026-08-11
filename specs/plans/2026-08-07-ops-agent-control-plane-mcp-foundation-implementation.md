@@ -10,7 +10,7 @@
 
 **Design System:** The OAuth consent, connected-app management, and confirmation surfaces use the existing OPS-Web design system at `ops-design-system/project/DESIGN.md`. Use current OPS-Web Tailwind tokens and `lucide-react`; no new visual system, raw values, marketing surface, MCP App widget, or motion language.
 
-**Execution status (2026-08-10):** Tasks 1–8 plus Task 4A are locally committed on `feat/ops-agent-control-plane-takeover-20260807` through `1e866814`, `556c514f`, `14969c4c`, and `91419970`. This includes the SDK/schema boundary, actor scope, capability manifest revision `2026-08-10.capability-manifest.v2`, immutable conversation schema, evidence normalization, exact provider-delivery capture, database-derived delivered turns, approved-action reconciliation recovery, Phase C generation fences, the source-level versioned-memory schema/repository/builder/bounded catch-up/minimal seed, and dark site-visit contracts. The migrations have not been applied to local/test or production Supabase; no Phase C consumer or memory worker is wired; and the site-visit read services, change-set participants, booking RPCs, and calendar workers remain unbuilt. Nothing has been pushed or deployed; Tasks 9 onward, including bounded conversation-context assembly, the domain read service, OAuth, and the remote MCP server, remain incomplete. Checklist boxes below remain acceptance gates rather than a live source-commit tracker; an unchecked migration, deployment, or runtime box must not be inferred complete from this status.
+**Execution status (2026-08-11):** Tasks 1–9 plus Task 4A are locally committed on `feat/ops-agent-control-plane-takeover-20260807` through `1e866814`, `556c514f`, `14969c4c`, `91419970`, and `7472219a`. This includes the SDK/schema boundary, actor scope, capability manifest revision `2026-08-11.capability-manifest.v3`, immutable conversation schema, evidence normalization, exact provider-delivery capture, database-derived delivered turns, approved-action reconciliation recovery, Phase C generation fences, the source-level versioned-memory schema/repository/builder/bounded catch-up/minimal seed, dark site-visit contracts, and the dark actor-authorized `get_job_conversation_context` source service/RPC contract. The Task 9 RPC applies same-statement authority and source checks, distinct full-turn/evidence/participant/history projection versions, current redactions, bounded pre-aggregation, exact invalidation totals, claim/proof coupling, catch-up/stale markers, and a final 60,000-character result ceiling. Its migration has not been database-compiled, executed, or applied to local/test or production Supabase. No Phase C consumer, memory worker, shared `OpsAgentDomainService` facade, REST/MCP handler, OAuth facade, or remote MCP server is wired. The site-visit read services, change-set participants, booking RPCs, and calendar workers also remain unbuilt. Nothing has been pushed or deployed; Tasks 10 onward remain incomplete. Checklist boxes below remain acceptance gates rather than deployment evidence.
 
 **Required Skills:** `custom-skills:executing-plans`, `superpowers:using-git-worktrees`, `superpowers:test-driven-development`, `superpowers:systematic-debugging` when a failure appears, `supabase:supabase`, `supabase:supabase-postgres-best-practices`, `openai-docs`, `plugin-dev:mcp-integration`, `ops-design`, `frontend-design:frontend-design`, `custom-skills:interface-design`, `custom-skills:ui-ux-pro-max`, `ops-copywriter:ops-copywriter`, `custom-skills:wizard-audit`, `custom-skills:audit-design-system`, `superpowers:verification-before-completion`, and `superpowers:requesting-code-review`.
 
@@ -503,23 +503,35 @@ Implemented locally in `14969c4c`. Focused source tests, TypeScript, lint, and d
 **Files:**
 
 - Create: `src/lib/agent-control-plane/services/get-job-conversation-context.ts`
+- Create: `src/lib/agent-control-plane/services/job-conversation-context-authorization.ts`
+- Create: `src/lib/agent-control-plane/services/job-conversation-context-repository.ts`
+- Create: `supabase/migrations/20260811120000_agent_job_conversation_context_read.sql`
+- Modify: `src/lib/agent-control-plane/registry/read-tools.ts`
+- Modify: `src/lib/agent-control-plane/registry/capability-manifest.ts`
+- Modify: `src/lib/agent-control-plane/evidence/repository.ts`
+- Modify: `supabase/migrations/20260807223000_agent_correspondence_evidence_read.sql`
 - Test: `src/lib/agent-control-plane/services/__tests__/get-job-conversation-context.test.ts`
+- Test: `src/lib/agent-control-plane/services/__tests__/job-conversation-context-rpc.test.ts`
+- Test: `src/lib/agent-control-plane/registry/__tests__/conversation-context-capability.test.ts`
 
-- [ ] **Step 1: Write contract tests**
+- [x] **Step 1: Write contract tests**
 
 Assert ordering: memory, recent exact turns, triggering evidence, participants, freshness/gaps. Default 20 turns, maximum 50, complete result maximum 60,000 characters. Permission checks apply to every source.
 
-- [ ] **Step 2: Implement service**
+- [x] **Step 2: Implement service**
 
 Return memory version/high-watermark and warnings. Evidence excerpts are exact normalized source, not a second model summary.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
-npm test -- src/lib/agent-control-plane/services/__tests__/get-job-conversation-context.test.ts
-git add src/lib/agent-control-plane/services/get-job-conversation-context.ts src/lib/agent-control-plane/services/__tests__
+node node_modules/vitest/vitest.mjs run src/lib/agent-control-plane
+node node_modules/typescript/bin/tsc --noEmit
+git diff --check
 git commit -m "feat(agent-control-plane): expose job conversation context"
 ```
+
+Implemented locally in `7472219a`. The final gate passed 25 agent-control-plane test files / 514 tests, TypeScript, focused lint, formatting, staged diff checks, and three independent P0/P1 reviews. The capability remains dark (`implementation=unavailable`, `externalExposure=disabled`). Its SQL is source-reviewed and structurally tested but has not been executed by PostgreSQL or applied to any Supabase environment. No handler, shared domain facade, Phase C consumer, background worker, OAuth surface, remote MCP transport, push, deployment, or customer-live behavior is claimed.
 
 ---
 
