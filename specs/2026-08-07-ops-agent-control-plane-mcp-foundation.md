@@ -1,6 +1,6 @@
 # OPS Agent Control Plane and MCP Foundation (2026-08-07)
 
-**Status:** Product direction approved by Jackson on 2026-08-07. Foundation Tasks 1–9 plus the approved dark site-visit manifest increment are implemented in the local OPS-Web branch `feat/ops-agent-control-plane-takeover-20260807` through commits `1e866814`, `556c514f`, `14969c4c`, `91419970`, and `7472219a`. Their SQL migrations have not been executed or applied against local, test, or production Supabase. The branch has not been pushed or deployed. Task 8 provides the source-level versioned-memory schema, repository, builder, bounded catch-up, and minimal cross-job seed; Task 9 adds the dark, actor-authorized, prompt-bounded conversation-context service and fixed source-read RPC contract. No Phase C consumer, memory worker, REST handler, MCP handler, or shared domain-service facade is wired to it. The site-visit entries remain contracts only: their repositories, handlers, transaction participants, and booking RPCs are unbuilt and unavailable. OAuth and the remote MCP server remain unbuilt, and nothing here is customer-live.
+**Status:** Product direction approved by Jackson on 2026-08-07. Foundation Tasks 1–10 plus the approved dark site-visit manifest increment are implemented in the local OPS-Web branch `feat/ops-agent-control-plane-takeover-20260807` through commits `1e866814`, `556c514f`, `14969c4c`, `91419970`, `7472219a`, and `73712b4f`. Their SQL migrations have not been executed or applied against local, test, or production Supabase. The branch has not been pushed or deployed. Task 8 provides the source-level versioned-memory schema, repository, builder, bounded catch-up, and minimal cross-job seed; Task 9 adds the actor-authorized, prompt-bounded conversation-context source service and fixed source-read RPC contract; Task 10 adds the first truthful `OpsAgentDomainService` increment and makes only `get_job_conversation_context` internally available. External exposure remains disabled. No Phase C consumer, memory worker, REST handler, MCP handler, OAuth facade, or remote MCP server invokes it. The site-visit entries remain contracts only: their repositories, handlers, transaction participants, and booking RPCs are unbuilt and unavailable. Nothing here is customer-live.
 
 **Decision:** Build one company- and actor-scoped OPS domain service, then expose it through three adapters: Phase C, the existing OPS API, and a public remote MCP server for Claude, ChatGPT, and other approved hosts. MCP is a transport and discovery layer. It does not own OPS business rules.
 
@@ -55,20 +55,21 @@ The following exist in OPS-Web and/or the production Supabase project:
 The isolated OPS-Web implementation branch now contains:
 
 - the MCP v2/Zod 4 alias boundary, stable v1 contracts, actor/entity authorization context, and governed capability manifest;
-- manifest revision `2026-08-11.capability-manifest.v3`, with the conversation-context capability plus two dark site-visit reads and three dark prepare/commit booking families; all remain manifest-dark with `implementation=unavailable` and `externalExposure=disabled`;
+- manifest revision `2026-08-11.capability-manifest.v3`, with only `get_job_conversation_context` marked `implementation=available`; every other capability remains `implementation=unavailable`, and every capability remains `externalExposure=disabled`;
 - the job-conversation schema migration, bounded evidence normalization, exact provider-delivery source capture, participant/anchor resolution, and immutable delivered-turn ingestion at inbound and provider-accepted outbound chokepoints;
 - a strict evidence-backed running-memory schema, scoped snapshot/commit repository, bounded structured generation, deadline-bound synchronous catch-up, and deliberately minimal same-customer cross-job seed;
 - provider-source-bound turn ingestion that derives content, recipients, attachments, timing, and participant identity inside the guarded database transaction, including fixed prompt-safe projections for rejected source content;
 - durable provider-accepted approved-action reconciliation, mailbox/reconciliation lease renewal, database-pressure backoff, and forward-only Phase C generation/source/recipient fences.
 - a caller-independent `getJobConversationContext` service boundary with nominal authorization proof, a fixed repository, same-statement actor/job/customer/mailbox checks, versioned running memory, whole recent turns, exact bounded evidence excerpts, resolved participant provenance, deliberately minimal prior-job continuity, catch-up/stale semantics, current redactions, and a deterministic 60,000-character result ceiling. Source projections are bounded before collection; claims and their retained proofs are reduced together.
+- a frozen, transport-neutral `OpsAgentDomainService` composition root that accepts only a server-minted `ActorContext` plus canonical typed input, owns manifest parsing and authorization, closes over nominal repository dependencies, normalizes invalid input once, and returns the same domain result for internal, OPS API, and fully scoped MCP actor contexts. It currently exposes only the real `getJobConversationContext` method; future methods are absent rather than stubbed.
 
-The relevant local commits are `c53b4664`, `99b30cfc`, `2969debe`, `46aedaf2`, `fd9e17c5`, `6f9e387f`, `8af1ee5d`, `1e866814`, `556c514f`, `14969c4c`, `91419970`, and `7472219a`. This is source and test evidence only. The Task 9 migration has not been database-compiled or executed, all migrations remain unapplied, and there is no production schema, deployment, runtime consumer, host, or customer-live proof.
+The relevant local commits are `c53b4664`, `99b30cfc`, `2969debe`, `46aedaf2`, `fd9e17c5`, `6f9e387f`, `8af1ee5d`, `1e866814`, `556c514f`, `14969c4c`, `91419970`, `7472219a`, and `73712b4f`. This is source and test evidence only. The Task 9 migration has not been database-compiled or executed, all migrations remain unapplied, and there is no production schema, deployed adapter or consumer, host, or customer-live proof.
 
 ### 2.3 Verified gaps
 
 The following do not currently exist as one coherent system:
 
-- A shared typed `OpsAgentDomainService` used by Phase C, REST, and MCP.
+- The remaining shared domain methods beyond `getJobConversationContext`, including schedule, readiness, communication, customer-job, summary, history-search, evidence, participant, site-visit, and write operations.
 - An OAuth-authenticated actor context that intersects external scopes/grants with the locally implemented OPS permission and entity-assignment context.
 - The Phase C/context adapter and background worker that invoke the locally implemented source-level memory and dark bounded context assembly. The minimal actor-visible cross-job continuity projection exists locally; deliberate general history retrieval remains unbuilt.
 - A general change-set and cryptographic confirmation-receipt engine.
@@ -93,6 +94,8 @@ Verified current code boundaries include:
 - Phase C participant/conversation services: `ops-web/src/lib/api/services/conversation-state/`
 - current project/photo/estimate/invoice services: `ops-web/src/lib/api/services/`
 - guided catalog proposal/approval/commit/readback: `ops-web/src/lib/catalog-setup/phase-c/`
+- first shared domain facade: `ops-web/src/lib/agent-control-plane/services/domain-service.ts`
+- domain composition root and repository bundle: `ops-web/src/lib/agent-control-plane/services/create-domain-service.ts` and `ops-web/src/lib/agent-control-plane/services/repositories.ts`
 
 These are sources to adapt behind the shared service, not MCP handler dependencies to call directly.
 
@@ -162,12 +165,25 @@ The parent Phase C system can depend on this contract before the public MCP adap
 
 ### 4.1 Service shape
 
+The current locally implemented interface is deliberately honest: it contains only the method with a complete source service, authorization path, repository, bounds, and tests.
+
+```ts
+interface OpsAgentDomainService {
+  getJobConversationContext(
+    ctx: ActorContext,
+    input: GetJobConversationContextInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentResult<JobConversationContext>>;
+}
+```
+
+The complete target facade adds the following methods only as their real implementations pass the same gates:
+
 ```ts
 interface OpsAgentDomainService {
   listScheduledJobs(ctx: ActorContext, input: ListScheduledJobsInput): Promise<AgentResult<ScheduledJobPage>>;
   listJobReadinessIssues(ctx: ActorContext, input: ListJobReadinessIssuesInput): Promise<AgentResult<JobReadinessPage>>;
   getJobCommunicationContext(ctx: ActorContext, input: GetJobCommunicationContextInput): Promise<AgentResult<JobCommunicationContext>>;
-  getJobConversationContext(ctx: ActorContext, input: GetJobConversationContextInput): Promise<AgentResult<JobConversationContext>>;
   listCustomerJobs(ctx: ActorContext, input: ListCustomerJobsInput): Promise<AgentResult<CustomerJobPage>>;
   getJobSummary(ctx: ActorContext, input: GetJobSummaryInput): Promise<AgentResult<JobSummary>>;
   searchJobHistory(ctx: ActorContext, input: SearchJobHistoryInput): Promise<AgentResult<JobHistoryPage>>;
