@@ -2051,6 +2051,28 @@ Expandable FAB with role-based and context-based item visibility. Admin and offi
 - The `canShowFAB` logic should check if the user has ANY create permission for the current tab context
 - See `03_DATA_ARCHITECTURE.md` > Permissions System Tables for the complete permission schema
 
+**Review-queue unlock gates (2026-08-10):**
+`OPS/Utilities/ReviewUnlockThresholds.swift` is the single source for the
+completed-work counts that unlock the review queues — `taskReview` (5 completed
+tasks, counted over the operator's whole task history, not a window) and
+`paymentReview` (5 completed-or-closed projects). Review is a learned habit, not
+a day-one feature: an operator with two finished jobs has nothing to review, and
+a review stack shown empty teaches them the entry point is dead. So both queues
+stay **locked but visible, with the remaining count**, until enough work has
+actually closed out.
+
+The same gate renders in two places — the JobBoard header entries and the FAB
+review menu (which caches the locked/unlocked verdict rather than recomputing it
+per render). Both read the constant, so the number promised on one surface
+cannot drift from the other or from the "Complete N …" copy explaining the lock.
+
+**Not to be confused with `ReviewThresholdService.threshold`** (also 5), which
+decides when a review BACKLOG is loud enough to earn a rail notification. The two
+answer different questions — *may I open this?* versus *should I be told about
+this?* — and are deliberately separate knobs: retuning rail loudness must never
+move the unlock gate, or vice versa. Their coincidence today is a design choice,
+not a dependency.
+
 **Current Implementation (being migrated to permissions):**
 ```swift
 struct FloatingActionMenu: View {
@@ -8753,6 +8775,17 @@ update op (jobs) — offline-safe.
 `<n> NEED A LOOK` — tan, rose when anything is parked), the connection-restored
 toast (`VIEW` action), Settings › DATA › `Pending Work` (live mono count, `—` at
 zero), and Notifications sync section `VIEW ALL →`.
+
+**Refresh (updated 2026-08-10):** both surfaces — the pill and this screen — were
+rebuilding the inventory on a 2-second `.common`-mode poll, which fires during
+scroll tracking and ran a six-fetch main-context load forever, whether or not
+anything had changed and whether or not the pill was on screen. They are now
+event-driven off store-change notifications with a 500 ms `RunLoop.main` debounce
+and a 60 s self-heal tick (`RecoveryRefreshSignal` / `RecoveryRefreshMonitor`),
+and the capture scan short-circuits when there are no visit ids to match. Full
+mechanism and the debounce-scheduler rule:
+`06_TECHNICAL_ARCHITECTURE.md` § Performance Optimization → "Event-Driven Sync
+Pill". No change to what either surface displays.
 
 **Copy:** every string is a `SyncStatusCopy` static (single chokepoint, 21 new
 unit-tested cases). **Proof:** 5 rendered-state snapshot PNGs in
