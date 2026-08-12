@@ -1350,6 +1350,45 @@ better than the wrong tab winning.
 wiring (offsets, per-slot animation eligibility, insertion direction, Reduce
 Motion, mount-set growth).
 
+### Tab Bar Touch Targets (2026-08-11)
+
+Source: `OPS/Views/Components/Common/CustomTabBar.swift`. The tab bar is a
+manual overlay, not a `TabView` bar, so it owns its own hit geometry and its own
+touch-down timing. Both were wrong, and both read to the operator as lag rather
+than as a miss.
+
+**Rule: a SwiftUI `Button` is tappable across its LABEL's bounds only.**
+`.frame(...)` and `.contentShape(...)` applied to the `Button` itself position
+the same small label inside a bigger box — they do not grow the responsive area.
+The tab bar had exactly that shape: each tab published a 28×50 interactive region
+(the glyph) inside a 60pt cell, with a 32pt dead gap between neighbours, under
+the 44pt field minimum from `MOBILE.md`. The fix moves the frame and the content
+shape INSIDE the `Button` label, sized to the cell width the lane already
+computes and passes down (`TabBarItem.cellWidth`), with the cell height tokenized
+as `OPSStyle.Layout.tabBarItemHeight` (50pt — the same value the lane's divider
+matches). Lane geometry, `PeekSnapBehavior` math, and VoiceOver traits are
+unchanged; only the responsive area grows. Tests measure the published
+accessibility frames rather than the layout intent:
+`OPSTests/Views/TabBarHitTargetTests.swift`.
+
+**Rule: a control hosted in a `UIScrollView` must release
+`delaysContentTouches` or its press state arrives ~150 ms late.** The tab lane is
+a horizontal `ScrollView` (it scrolls to reveal the Settings peek). A scroll view
+withholds touches from its content while it decides whether the gesture is a
+scroll, so every quick tap spent that window with nothing on screen changing —
+the action always fired on lift, but the acknowledgment did not. `ImmediateTouchDown`
+(a private `UIViewRepresentable` in the same file) walks up from its own
+superview to the enclosing `UIScrollView` and clears the flag, on both
+`didMoveToSuperview` and `didMoveToWindow` because SwiftUI can attach the
+representable before the scroll view is an ancestor.
+
+`canCancelContentTouches` is deliberately left ON: a touch that becomes a drag
+must still cancel the press so swipe-to-reveal and the peek snap behave exactly
+as before. Only the moment of acknowledgment moves earlier. The introspector is
+non-interactive at both layers (`isUserInteractionEnabled = false` plus
+`.allowsHitTesting(false)`), idempotent, and harmless when the lane is hosted
+without an enclosing scroll view (previews, tests).
+
 ### Sheet-Based Navigation Pattern
 
 **Pattern**: Forms and detail views use `.sheet()` for modal presentation.
@@ -2152,6 +2191,146 @@ second identical pass writes nothing. Keyed diffs cover junction rows whose only
 identity is the pair itself. Reference implementation and required shape:
 `OPSTests/Sync/CatalogMergeDiffGateTests.swift` — new full-fetch merges are
 expected to bring their own equivalent.
+
+### 11. Local-First Screen Opens (2026-08-11)
+
+**Rule: navigation NEVER triggers a whole-app sync.** Opening a screen is a
+read of data already on the device. A screen that needs one row current fetches
+that one row; it does not start a push+pull pass over every entity type because
+one of them happens to contain what it wants.
+
+**The canonical failure.** `DataController.refreshSingleClient(clientId:)` —
+called on EVERY open of a project's details — was literally
+`await syncEngine.triggerSync()`: push plus pull across all 40
+`SyncEntityType`s, main-actor orphan sweeps, and a photo-prefetch kickoff, to
+refresh one `clients` row. The method name said "single client"; the body said
+"sync the app." A rename is not the lesson — the lesson is that the targeted
+entry point did not exist, so the nearest available hammer was used.
+
+**The targeted-fetch pattern.** `SyncEngine.syncClientNow(clientId:)` is the
+shape every future one-entity refresh should copy:
+
+- Fetches ONE row by id and merges it through the SAME merge path the pull and
+  realtime paths use — `DataActor.syncClientOnly` when `FeatureFlags.useDataActor`
+  is on, `InboundProcessor.syncClient` otherwise — so conflict handling and the
+  `InboundChangeSignal` post are not re-implemented per call site.
+- Gated on `connectivity?.shouldAttemptSync`, matching the offline behavior of
+  the full pass it replaces: an airplane-mode open fails fast instead of riding a
+  URLSession timeout, and the screen renders from local data.
+- Does **not** acquire the `syncInProgress` lock and never writes `statusText` /
+  `isSyncing`. A single-row read is not a sync pass and must not present itself
+  to the operator as one — the pill stays quiet.
+
+Scope honestly, or leave it whole and say why: `triggerProjectTasksSync` is
+still a full pass, documented at its site as such, because no scoped
+project-task inbound entry point exists (the task repository fetches by company
++ cursor, not by project) and its only caller is the debug-only `TaskTestView`.
+A half-scoped fetch that silently drops rows is worse than an honest full one.
+
+**Local-first paint.** A screen whose data is already on disk paints from disk
+first, synchronously, then repaints when the network merge lands.
+`ProjectNotesViewModel.loadNotes` calls `loadNotesFromLocal()` before it touches
+the network; the activity feed's spinner condition
+(`isLoading && notes.isEmpty && annotations.isEmpty`) then yields on its own, so
+no UI change was needed to suppress the spinner. The read half of the repository
+is injectable (`ProjectNoteFetching`) precisely so the paint ORDER is assertable
+against a fetch that deliberately has not resolved yet — ordering that only holds
+by luck of timing is not a guarantee.
+
+**Image work belongs off the main actor.** Annotation compositing and photo
+download moved their decode / JPEG encode / disk writes off the main actor.
+Compositing runs on `PhotoCompositeRenderer`, a serial `actor`
+(`OPS/Network/PhotoAnnotationSyncManager.swift`), which preserves the durable-write
+serialization that main-actor isolation used to provide for free.
+
+**Per-key generation guard (the race the move widened).** A render suspended on
+a base-image or overlay download can resume AFTER a later render — started
+because the annotation changed — has already persisted its result, overwriting
+the fresh composite with pre-edit pixels. The stale write also refreshes the
+file's mtime, so it then passes the freshness check and the operator keeps seeing
+pre-edit markup until the next edit. The race predates the off-main move; the
+move only widened the window.
+
+`beginRender(for:)` hands out a per-key token and the renderer drops any write
+whose token is no longer the newest claim on that key. The check and the write
+stay one synchronous stretch on the actor, so no render can interleave between
+them. A superseded render also returns `nil`, so its stale pixels never reach the
+display cache. A failed disk write is distinguished from supersession and still
+publishes, as before. **Any actor-serialized cache that can be re-entered for the
+same key needs this guard; serialization alone does not order the results.**
+
+Tests: `OPSTests/Sync/ProjectDetailsLocalFirstTests.swift` (targeted fetch vs.
+full sync, offline gating, local-first paint order, renderer supersession). It
+seeds the inert warm-up `SyncOperation` row described in § Defensive Programming
+→ "The `SyncOperation` `#Predicate` Warm-Up Trap", so no test reaching the merge's
+conflict guards is green by luck of ordering.
+
+### 12. List Row Rendering (2026-08-11)
+
+Scroll-heavy lists are the app's most expensive surface: everything a row does is
+paid per row, per render pass, and again on every scroll recycle.
+
+**Rule: a card reads its RELATIONSHIPS, never the whole table.** The job board's
+task card re-fetched the whole project table twice and the whole task-type table
+three times just to name its own title, subtitle, stripe, and metadata — eight
+visible cards meant roughly 16 project fetches and 16 task-type fetches per render
+pass. `ProjectTask` already owns `project` and `taskType` SwiftData relationships,
+wired from the same id columns those fetches were matching on
+(`InboundProcessor.linkAllRelationships`), so the lookups are gone entirely.
+
+The replaced fetch was `deletedAt`-predicated, so the relationship read must
+reproduce that: `JobBoardCardText.liveProject(of:)` returns `nil` for a tombstoned
+parent, preserving the same "No project" fallback and the same suppressed address
+cell. **When replacing a fetch with a relationship, port the fetch's predicate
+into the accessor** — otherwise deleted rows quietly reappear on screen.
+
+**Rule: derive sections ONCE per body, then bind.** The task list ran its full
+filter+sort pipeline about six times per render (once per partition, once per
+`isEmpty` check); the project list read its three partitions seven times, each
+read re-running a comparator that touches four or five `Date` properties per
+side. Both compute once at the top of `body` and bind. The same applies inside a
+row: the progress bars and the UNSCHEDULED rule were three and four separate
+walks of `project.tasks`, now one pass each, and the assignee CSV is split once
+and serves both the badge and the crew count. The derivations live in
+`OPS/Views/JobBoard/JobBoardCardModels.swift` as plain values with no SwiftUI in
+them, which is what makes them testable on their own.
+
+**Rule: row identity is the entity id — never a mutable field of it.** Both job
+board lists folded the crew CSV into row identity, so any crew change destroyed
+and rebuilt the row with fresh `@State`. Identity is the project id; the card
+observes the `@Model`, so a crew edit still redraws it. (Fixed on the active list
+and on the `ProjectListSheet` CLOSED/ARCHIVED rows.)
+
+**Rule: presentation modifiers do not belong per row.** Ten stacked presentations
+per card (eight sheets, a dialog, a delete confirmation), installed on every
+visible row, collapse to one `.sheet(item:)` driven by a route enum plus one
+dialog and one confirmation shared by all three card kinds. In the same pass, the
+wizard's scroll-tracking `GeometryReader` — which re-measured on every scroll
+frame, forever, to serve a one-shot wizard step — now mounts only while a wizard
+is running and the notification is still owed, and the duplicate-task dedup log
+(fired per duplicate inside a main-thread list build) is DEBUG-only.
+
+`JobBoardView`'s `.id(selectedSection)` is deliberately kept: the section slide
+needs it, and the rebuild it triggers is now cheap.
+
+**Rule: live materials belong on overlays and sheets, not on rows.** Every job
+board row painted `.ultraThinMaterial`, and so did each of its badges — eight
+rows meant 16 to 40 live blur layers recomposited every scroll frame, over a
+pure-black canvas with nothing behind them worth blurring. The design system now
+carries an opaque L1 variant for exactly this case: `.glassSurface(.listRow)`,
+with `listRowBadgeFill` as the badge counterpart. Same hairline, same radius,
+same top-edge gradient, `surfaceRaised` instead of the material. Founder-approved
+and applied at the job-board card call sites only — every full-screen surface,
+sheet, overlay, and detail panel keeps true glass. Full token detail:
+`05_DESIGN_SYSTEM.md` § 20.1.
+
+Tests: `OPSTests/JobBoard/JobBoardCardModelTests.swift` and
+`OPSTests/JobBoard/JobBoardSectionBindingParityTests.swift` pin the new
+derivations against oracles that run the ORIGINAL code verbatim over the same
+store — including a tombstoned parent project, a task with no resolvable type, a
+task reachable through two projects, and every filter and sort shape the list can
+be in. A parity test whose fixture cannot produce the anomaly it guards is
+vacuous; seed the anomaly.
 
 ---
 

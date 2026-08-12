@@ -793,6 +793,14 @@ and universal **Search**. Review counts remain on the overflow control and in
 its menu labels; locked review entries still surface their existing unlock
 message. The task-review and payment-review walkthroughs target this menu first.
 
+**Row surface (2026-08-11):** the three scrolling row kinds render on the opaque
+`.glassSurface(.listRow)` L1 variant rather than true glass — same hairline,
+radius, and top-edge gradient, no blur. Founder-approved; the visual change is
+limited to badges now fully covering the text behind them instead of dimming it.
+Nothing else about the screen changed. Tokens: `05_DESIGN_SYSTEM.md` § 20.1;
+the per-row render rules the job board is the reference case for:
+`06_TECHNICAL_ARCHITECTURE.md` § Performance Optimization → "List Row Rendering".
+
 ---
 
 #### Role: Field Crew
