@@ -1462,11 +1462,14 @@ covers, and dedicated overlay windows. OPS-owned UIKit-backed custom editors
 must prepare the accessory when their input is created, before it becomes first
 responder; editing-activation installation is only the fallback for
 system-managed inputs. This avoids reloading the keyboard during a custom
-editor's focus transition. The accessory reports the OPS minimum touch-target
-token as its intrinsic height, weakly retains its exact owning input, and
+editor's focus transition. The accessory uses one compact 44pt band: an
+invisible full-band `DONE` hit target preserves the OPS minimum touch target,
+while its visible label is top-aligned with tokenized clear space between the
+label and keyboard. The accessory weakly retains its exact owning input and
 resigns that input. `DONE` therefore remains fully above the keyboard and hides
 it without dismissing the screen, clearing data, or relying on the active
-window's responder chain.
+window's responder chain. Source: `ops-ios/OPS/Styles/Components/OPSKeyboardDoneAccessory.swift`
+(code commit `e120ab0c`).
 
 Generic local `.toolbar(placement: .keyboard)` implementations and
 presentation-scoped dismissal modifiers are forbidden because they can miss
