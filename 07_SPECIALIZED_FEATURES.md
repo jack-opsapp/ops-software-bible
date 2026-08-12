@@ -6743,6 +6743,59 @@ the Google push, and the Schedule card so all three agree.
 `src/components/settings/calendar-subscription-card.tsx`.
 **Migrations:** `calendar_feed_tokens`, `touch_calendar_feed_token`.
 
+### 19e. Site-Visit Opportunity Link Guard (DB, 2026-08-12)
+
+`site_visits.opportunity_id` is the one opportunity-child link the CLIENT
+legitimately changes after insert: the iOS capture flow's quick-start path
+(`SiteVisitCaptureViewModel.loadOrCreateVisit()`, FAB start) creates the visit
+unlinked — it syncs to the server within ~a second — and the operator attaches
+(`reassignVisit(to:)`), switches, or clears (`clearIdentitySelection()`) the
+lead mid-visit via plain field updates. The generic token-only
+`private.guard_opportunity_child_reparent` therefore rejected every
+quick-start visit's follow-up sync with `[42501] child_reparent_forbidden`,
+wedging the visit and its whole dependency chain (artifacts, media uploads,
+checklist answers, identity drafts, guarded completion) — 114 operations on
+the founder's device, diagnosed 2026-08-12 (bug `ac712cca`).
+
+**Behavior since `20260812174334_site_visit_opportunity_link_guard`:**
+`trg_site_visits_guard_opportunity_reparent` executes the site-visit-specific
+`private.guard_site_visit_opportunity_link()` instead of the generic guard.
+On an `opportunity_id` change it allows, in order:
+
+1. **Token path (unchanged):** a minted `opportunity_child_reparent_tokens`
+   row for this (txid, backend pid, table, row, old→new) is consumed —
+   admin/RPC flows keep working exactly as before.
+2. **Live-visit permission path (new):** while the visit is live
+   (`completed_at IS NULL` and `status` in scheduled/in_progress) the change
+   is allowed when the caller has a resolvable identity
+   (`private.get_current_user_id()`), belongs to the visit's company, passes
+   `private.current_user_can_edit_site_visit(...)` against the visit's
+   CURRENT parent context, and — when linking to a target — the target
+   opportunity is in-company, not archived/deleted, and passes
+   `private.user_can_edit_opportunity(actor, target)`. Attach (NULL→X),
+   reassign (A→B), and clear (X→NULL) are all covered because all three are
+   designed client actions on a live visit.
+3. Otherwise `child_reparent_forbidden` (42501).
+
+**Completed/cancelled visits stay frozen** — linkage changes are token-only,
+because a completed visit is money-bearing evidence (its completion activity,
+photos, and downstream quoting hang off the lead). Every OTHER guarded table
+(deck_designs, activities, email_threads, follow_ups, …) keeps the generic
+token-only guard; site_visits is deliberately the only permission-windowed
+one. Children stay consistent server-side via the existing
+`site_visits_propagate_child_opportunity` trigger and the
+`site_visit_child_opportunity_mismatch` checks.
+
+The same migration fixed a second parked-sync cause: the CHECK constraint on
+`site_visit_types` calls `private.site_visit_type_fields_valid(jsonb)`, which
+was EXECUTE-granted only to `postgres` — CHECK constraints run as the invoking
+role, so every client insert of a custom checklist type failed with
+`permission denied`. Now granted to `anon`, `authenticated`, `service_role`.
+
+`complete_site_visit_guarded` is unrelated to linking: its completion payload
+allowlist is `notes` / `measurements` / `photos` / `internal_notes` only, and
+it never touches `opportunity_id`.
+
 ## 20. Mobile Wizard System
 
 Cross-platform reference for the in-app guided wizard system. Both iOS and Android implementations conform to this dock.
