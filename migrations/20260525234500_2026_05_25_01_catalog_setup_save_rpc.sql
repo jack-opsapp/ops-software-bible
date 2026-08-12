@@ -1,0 +1,10 @@
+-- Backfilled migration history row reconciling Supabase Dashboard apply with schema_migrations.
+-- Original SQL pasted into Supabase Dashboard SQL Editor on 2026-05-25 around 23:45 UTC,
+-- bypassing the MCP/CLI migration-tracking path. DDL is live as of that apply.
+-- Canonical source on disk: ops-software-bible/migrations/2026-05-25-01-catalog-setup-save-rpc.sql
+-- The digest() schema-qualifier fix is tracked separately at version 20260526061917
+-- (migration name: catalog_setup_save_digest_schema; file: 2026-05-25-02-catalog-setup-save-digest-schema.sql).
+-- The source file was later edited in-place to fold the digest() fix into the canonical SQL,
+-- so the on-disk SHA-256 (4c418e31...) no longer matches what was originally applied via dashboard
+-- (efee5f7a...). This row exists solely to keep the supabase_migrations ledger in sync with the
+-- on-disk archive; it carries no executable SQL.
