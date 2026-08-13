@@ -3355,6 +3355,22 @@ No attachment route or worker calls Gmail/Graph send, draft, label, delete, move
 
 ---
 
+## Internal Agent Operational Reads (local, externally dark 2026-08-13)
+
+`OpsAgentDomainService` locally exposes two additional transport-neutral methods: `listScheduledJobs(actor, input, options?)` and `listJobReadinessIssues(actor, input, options?)`. The same frozen facade owns manifest parsing, capability authorization, specialized read proof minting, repository selection, cancellation, result validation, prompt-safety marking, and the 60,000-character reduction boundary. Callers supply only a nominal `ActorContext`, canonical input, and optional `AbortSignal`; they cannot supply tenant ids, permission scopes, policies, repositories, database clients, clocks, or authorization proofs.
+
+`list_scheduled_jobs` is project-task-only in v1. It uses a half-open UTC window of at most 90 days, default limit 25/maximum 50, source-stable signed keyset pagination, company-local schedule authority, and a separate display-timezone projection. Task lifecycle, derived timing, and current confirmation are orthogonal. Output includes only bounded customer-shareable crew identity; employee email, phone, HR role, profile, and other private roster data never cross the domain boundary.
+
+`list_job_readiness_issues` evaluates `SITE_PHOTOS_MISSING`, `CUSTOMER_RECORD_UNRESOLVED`, `SCHEDULE_UNCONFIRMED`, `CREW_UNASSIGNED`, and `ADDRESS_INCOMPLETE`. A request may scan at most five physical pages of 50 authorized candidates under one immutable source fence. The SQL repository returns safe raw facts and one job projection proof; `readiness-rules.ts` alone derives fixed facts, severity, rule revision, and `issue | clear | not_evaluated`. Missing authorization or truncated source evidence is `not_evaluated`, never a negative fact. Customer and photo scopes are conditionally required only when their rule is selected.
+
+The capability manifest revision advances locally to `2026-08-12.capability-manifest.v4`. Only `get_job_conversation_context`, `list_scheduled_jobs`, and `list_job_readiness_issues` are internally implemented; all external exposure remains disabled. There is no MCP handler, REST adapter, remote catalogue entry, external advertisement, deployment, or customer-live proof for these reads.
+
+Schedule confirmation routes and workers are locally redirected through exact-version database receipts and durable purpose events because readiness cannot truthfully infer current confirmation from a timestamp alone. Retryable pre-provider email work returns to the pending queue; provider-owned states remain with durable transport reconciliation. This supporting write-path hardening is part of the same local gate and is not live.
+
+Implemented locally in OPS Web commit `5bba3c5e`. The final focused matrix passed 47 files / 784 tests, the company-data manifest passed 71/71, TypeScript and formatting/diff hygiene passed, and the independent final security review found no P0/P1 issue. The full repository run passed 11,495 tests and retained 82 known email/provider fixture failures that reproduce unchanged on baseline `73712b4f`; Task 11 adds no deterministic full-suite failure.
+
+**Release prerequisite:** the migrations deliberately fail closed until production PostgreSQL and the pinned Node runtime agree with current timezone rules, including permanent UTC-7 for Vancouver after the 2026 final clock change. Platform update cost and downtime have not been established. No Supabase branch, migration apply, push, deploy, or production mutation occurred during this implementation checkpoint.
+
 **End of Document**
 
 This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, email pipeline integration, and error management with full fidelity to the current implementation.

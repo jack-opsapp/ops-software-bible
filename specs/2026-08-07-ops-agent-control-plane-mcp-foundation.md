@@ -422,17 +422,24 @@ Purpose: return authoritative scheduled job occurrences for a bounded time windo
 Input:
 
 - `from` and `to` RFC 3339 instants;
-- optional status filters;
+- optional task-lifecycle and confirmation-state filters;
+- optional display timezone;
 - optional cursor;
 - `limit`, default 25, maximum 50.
 
 Constraints:
 
 - maximum window 90 days;
-- company timezone is authoritative unless a valid display timezone is requested;
-- task/visit occurrences are canonical, not one collapsed project date;
+- company timezone is authoritative; a valid display timezone changes representation only, never selection or ordering;
+- v1 is deliberately limited to materialized `project_tasks` occurrences. Site visits stay on their separately approved dark capability boundary until `booked_at` exists and Task 13 implements it;
+- one task row is one canonical occurrence, never one collapsed project date or a recurrence-template expansion;
+- lifecycle (`active | completed | cancelled`), timing (`upcoming | in_progress | past_due | past`), and confirmation (`confirmed | unconfirmed`) are orthogonal;
+- an all-day occurrence uses company-local calendar dates and an exclusive next-local-midnight end; timed DST gaps/folds are rejected rather than guessed;
 - every occurrence includes task schedule version, confirmation/lock state, assignment IDs, and project update/version markers;
-- assignment output includes customer-shareable crew display fields only, never private employee contact/HR data.
+- a confirmation is current only when `confirmed_schedule_version = schedule_version`; lock state is independent;
+- assignment output includes bounded customer-shareable user ID/display-name fields only, never private employee contact/HR data;
+- opaque signed keyset cursors bind the actor, company, permission snapshot, source fence, manifest/schema, normalized filters, timezones, and last retained occurrence. A relevant source change returns `STALE_CONTEXT` and requires restart;
+- every returned occurrence has one bounded authoritative projection proof; claims and proofs are removed together if the 60,000-character prompt budget is reached.
 
 ### 6.2 `list_job_readiness_issues`
 
@@ -448,12 +455,18 @@ Input:
 Initial rule catalogue:
 
 - `SITE_PHOTOS_MISSING`
-- `CUSTOMER_CONTACT_UNRESOLVED`
+- `CUSTOMER_RECORD_UNRESOLVED`
 - `SCHEDULE_UNCONFIRMED`
 - `CREW_UNASSIGNED`
 - `ADDRESS_INCOMPLETE`
 
-Each issue includes rule revision, severity, exact evaluated sources, current entity versions, and a human-readable fact—not an instruction to the model. `SITE_PHOTOS_MISSING` ignores deleted photos and counts only usable project/site-visit photo evidence according to the server rule revision.
+Readiness v1 evaluates distinct current projects that have an active scheduled task in the half-open window. A physical source page contains at most 50 projects, and the service may scan at most five pages under one immutable source fence to fill a logical page, for a hard ceiling of 250 evaluated candidates. The continuation cursor advances from the last evaluated candidate, including clear candidates that were not returned.
+
+The SQL boundary returns bounded, actor-authorized raw facts only. One TypeScript rules module owns derivation, status, severity, revision, and fixed human-readable fact copy, so business rules are not duplicated between SQL, REST, Phase C, and MCP. Each evaluation is `issue`, `clear`, or `not_evaluated`; an inaccessible or truncated fact source is never treated as proof of absence.
+
+`CUSTOMER_RECORD_UNRESOLVED` means the project has no current same-company, nondeleted, unmerged client record. It does not mean missing email/phone, and it does not replace Task 12 contactability or participant resolution. `SITE_PHOTOS_MISSING` ignores deleted and unusable/local assets, counts only approved operational photo categories, and uses the bounded legacy `project_images` fallback only when no structured `project_photos` row—including a tombstone—exists. Customer and photo permissions/scopes are required only when their corresponding rule is selected; all selected rule policies must authorize.
+
+Every job result has one authoritative projection proof covering its exact safe raw facts, evaluated occurrence IDs, selected rule order, actor/company/permission snapshot, source fence, rule revisions, and time boundary. Rules may share that job-level proof, keeping the result below the global source/evidence cap. Source strings remain marked untrusted business data and never become model instructions or tool authority.
 
 ### 6.3 `get_job_communication_context`
 

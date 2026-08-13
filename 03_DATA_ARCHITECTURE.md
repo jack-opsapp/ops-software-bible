@@ -5792,4 +5792,19 @@ Durable exactly-once receipts for Payment Review write-offs. The primary key is 
 
 Short-lived service-only claims keyed by `(company_id, source_id)`, where `source_id` is the canonical invoice UUID plus reminder tier. Rows carry an opaque claim token, claim time, and ten-minute expiry. The claim transaction rechecks durable approval actions before acquiring, so concurrent requests do not duplicate paid drafting or queue work. Forced RLS and revoked client grants keep this table outside the browser and iOS data surface. Source migration: `migrations/20260721122000_payment_reminder_delivery_guards.sql`; live version `20260721102146`.
 
+## Agent Operational Schedule and Readiness Foundation (local, unapplied 2026-08-13)
+
+The local Task 11 foundation adds two internal, transport-neutral operational reads over fixed service-role RPCs:
+
+- `read_agent_scheduled_jobs_as_system` returns bounded, actor-authorized `project_tasks` occurrences. It does not read or infer site-visit appointments.
+- `read_agent_job_readiness_issues_as_system` returns bounded raw project/task/photo/customer/address/crew facts. TypeScript owns all five versioned readiness decisions; SQL does not duplicate rule copy or issue/clear semantics.
+
+Migration `20260812120000_agent_operational_schedule_readiness.sql` is the local schema authority. It adds `project_tasks.confirmed_schedule_version`, a company-scoped operational-read source revision, fixed RPC boundaries, and source-revision triggers. A schedule is currently confirmed only when its timestamp is present and `confirmed_schedule_version = schedule_version`; a later schedule mutation clears the complete proof.
+
+Confirmation, explicit unconfirmation, and edits to a currently confirmed schedule persist a purpose-bound dispatch event in `task_schedule_automation_outbox` in the same transaction as the schedule state change. The new event kinds are `schedule_confirmation_dispatch` and `schedule_unconfirmation_dispatch`. The latter records an immutable origin (`explicit_admin` or `schedule_edit`) plus exact before/after schedule projections, so customer communication survives route or worker crashes without granting a structural caller authority. Provider delivery is independently re-authorized by `20260812121000_agent_schedule_confirmation_delivery_guard.sql` immediately before provider ownership.
+
+Operational cursors bind actor, company, permission revision, capability/schema/rule revisions, normalized filters and timezones, the last retained key, and the source revision. Any relevant source mutation returns `STALE_CONTEXT`; it cannot silently duplicate or omit work. Source arrays and text are capped before aggregation or regular-expression work. One signed projection proof covers each returned occurrence or readiness job, keeping source/evidence references within the global bound.
+
+The complete local implementation is recorded in OPS Web commit `5bba3c5e`. The two migration files remain unapplied everywhere: local, test, preview, and production Supabase have not received them. Their install/read gate intentionally rejects the current production PostgreSQL timezone rules: OPS production still resolves post-November-2026 Vancouver with the superseded seasonal offset, while the authoritative BC rule is permanent UTC-7. Supabase/PostgreSQL tzdata must be upgraded and the database/runtime conformance vectors must pass before either migration can be applied. No data backfill is authorized or implied.
+
 **End of Data Architecture Documentation**

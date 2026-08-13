@@ -571,34 +571,54 @@ Implemented locally in `73712b4f`. The runtime interface exposes only `getJobCon
 
 **Files:**
 
+- Create: `src/lib/agent-control-plane/contracts/schedule.ts`
 - Create: `src/lib/agent-control-plane/services/list-scheduled-jobs.ts`
 - Create: `src/lib/agent-control-plane/services/list-job-readiness-issues.ts`
 - Create: `src/lib/agent-control-plane/services/readiness-rules.ts`
-- Reuse/adapt: `src/lib/api/services/project-table-service.ts`
-- Reuse/adapt: `src/lib/api/services/project-table-team-service.ts`
-- Reuse/adapt: `src/lib/api/services/project-photo-service.ts`
-- Test: `src/lib/agent-control-plane/services/__tests__/list-scheduled-jobs.test.ts`
-- Test: `src/lib/agent-control-plane/services/__tests__/list-job-readiness-issues.test.ts`
+- Create: `src/lib/agent-control-plane/services/scheduled-jobs-authorization.ts`
+- Create: `src/lib/agent-control-plane/services/job-readiness-authorization.ts`
+- Create: `src/lib/agent-control-plane/services/scheduled-jobs-repository.ts`
+- Create: `src/lib/agent-control-plane/services/job-readiness-repository.ts`
+- Create: `src/lib/agent-control-plane/services/operational-read-cursor.ts`
+- Create: `src/lib/agent-control-plane/services/operational-read-projection.ts`
+- Create: `supabase/migrations/20260812120000_agent_operational_schedule_readiness.sql`
+- Modify: shared domain-service facade/repository bundle and capability manifest
+- Modify: guarded schedule-confirmation writers and generated database types
+- Test: schedule/readiness contracts, rules, authorization, repositories, reducers, facade parity, cursors, projection hashes, SQL/RPC structure, and confirmation writer contracts
 
-- [ ] **Step 1: Write adversarial schedule tests**
+- [x] **Step 1: Write adversarial schedule tests**
 
 Include DST boundaries, company timezone, multiple task occurrences, stale/versioned schedules, locked/unconfirmed tasks, assignments, reschedule during pagination, and assigned-scope filtering.
 
-- [ ] **Step 2: Write readiness tests**
+- [x] **Step 2: Write readiness tests**
 
 Cover missing/non-missing photos, deleted photos, site-visit photos, legacy fallback, unresolved customer, incomplete address, crew missing, unconfirmed schedule, and rule revision evidence.
 
-- [ ] **Step 3: Implement keyset pagination and hard bounds**
+- [x] **Step 3: Implement fixed source reads, keyset pagination, and hard bounds**
 
-Maximum 90-day window, default 25/maximum 50. Use task-level schedule as canonical. Return safe crew display only.
+Do not adapt the browser project/team/photo services: their caller-supplied tenant IDs, multi-query snapshots, offset pagination, and broad employee/photo payloads cannot satisfy the agent-control-plane authority boundary. Use nominal service-owned authorization proofs and repository brands over two fixed service-role-only RPCs. Each RPC must re-resolve the complete actor permission registry, entity access, scopes, tenant, permission revision, and source fence inside the same SQL statement.
 
-- [ ] **Step 4: Verify and commit**
+Schedule v1 is project-task-only, with maximum 90-day windows, default 25/maximum 50 rows, exact company-local time conversion, orthogonal lifecycle/timing/confirmation state, current-version confirmation proof, safe bounded crew display, and signed source-stable keyset pagination. Site visits remain dark and excluded.
+
+Readiness SQL returns bounded safe raw facts, never rule decisions. `readiness-rules.ts` alone derives the five versioned rules. Conditional manifest variants add photos/customer scopes only when their rule is requested. One read may scan at most five 50-project source pages under one fence, while returned claims/proofs remain under the 60,000-character and 100-evidence limits.
+
+The operational source revision advances for every table that can change selection, ordering, schedule display, assignments, customer resolution, or photo readiness. Cursors bind that revision and all authority/query/schema/rule inputs. Any relevant mutation returns `STALE_CONTEXT`; it never silently duplicates or omits rows.
+
+The manifest advances once to `2026-08-12.capability-manifest.v4`. Existing conversation/evidence reads receive compatibility wrappers so the revision bump does not break the already-available internal conversation capability. Only `get_job_conversation_context`, `list_scheduled_jobs`, and `list_job_readiness_issues` may be internally available after the complete gate; all external exposure remains disabled.
+
+- [x] **Step 4: Verify and commit**
 
 ```bash
-npm test -- src/lib/agent-control-plane/services/__tests__/list-scheduled-jobs.test.ts src/lib/agent-control-plane/services/__tests__/list-job-readiness-issues.test.ts
-git add src/lib/agent-control-plane/services
+npm test -- --run src/lib/agent-control-plane
+npm run type-check
+git diff --check
+git add <Task 11 paths only>
 git commit -m "feat(agent-control-plane): add schedule and readiness reads"
 ```
+
+Implemented locally in OPS Web commit `5bba3c5e` on 2026-08-13. The final Task 11 matrix passed 47 files / 784 tests; the company-data manifest passed 71/71; exact TypeScript, Prettier, and diff checks passed. An independent final review of the frozen SQL and TypeScript boundaries found no P0/P1 issue. The full repository run passed 11,495 tests and retained 82 pre-existing email/provider fixture failures that reproduce unchanged on baseline `73712b4f`; Task 11 adds no deterministic full-suite failure.
+
+Both migrations remain unapplied. No Supabase branch, local/test/preview/production migration apply, push, deployment, MCP/REST adapter, external advertisement, or customer-live behavior is claimed. Production PostgreSQL tzdata must be updated to the current BC permanent-UTC-7 rules and pass the migration's database/runtime conformance vectors before release; platform update cost and downtime remain unknown.
 
 ### Task 12: Implement communication and participant reads
 
