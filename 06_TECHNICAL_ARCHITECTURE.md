@@ -181,7 +181,7 @@ ops-ios/OPS/
 │   ├── Sync/ (12 files — rebuilt 2026-03-08, DataActor refactor 2026-04-19, SYNC RECOVERY 2026-07-22)
 │   │   ├── SyncEngine.swift             # @MainActor @Observable orchestrator; dispatches through DataActor when FeatureFlags.useDataActor is on (default true 2026-04-19); reenqueueRecoverableOperations() launch/reconnect sweep + one-time deck-link backfill (2026-07-22)
 │   │   ├── SyncErrorClassifier.swift    # Pure failure-disposition seam (SYNC RECOVERY 2026-07-22): transient (5xx/429/408/timeouts/40001-class SQLSTATEs) vs permanent (other 4xx, 22xxx/23xxx/42xxx/P000x) vs auth (PGRST3xx/JWT/401). SyncOperationFailurePolicy = the ONE shared post-catch state transition both outbound paths call
-│   │   ├── RecoveryInventory.swift      # Pure PENDING WORK model: indefinite retention, STALE · 30D review state, capability-safe discard, and attention/sending/drafts/unlinked joins across SyncOperations + lead autocreate + LocalPhotos + site-visit packets + orphan decks
+│   │   ├── RecoveryInventory.swift      # Pure PENDING WORK model: indefinite retention, STALE · 30D review state, capability-safe discard (scopes: leadDeliveryRequest / localPhotos / queuedSends / quarantinedVisit, only the latter two of which are `isDestructive`), and attention/sending/drafts/unlinked joins across SyncOperations + lead autocreate + LocalPhotos + site-visit packets + orphan decks. `SiteVisitBundle.hasOperationInFlight` is carried explicitly — `members` holds one worst-tone representative per packet stage, so a `failed` sibling would otherwise mask an `inProgress` send from the discard guard
 │   │   ├── RecoveryRefreshSignal.swift  # Event-driven refresh for the sync pill + PENDING WORK (2026-08-10): store-change publisher, 500ms RunLoop.main debounce (never DispatchQueue.main), injectable scheduler; RecoveryRefreshMonitor owns the pipeline as @StateObject so re-renders can't drop in-flight events
 │   │   ├── OutboundProcessor.swift      # LEGACY @MainActor path for local→server push; retained behind FeatureFlags.useDataActor for rollback
 │   │   ├── InboundProcessor.swift       # LEGACY @MainActor path for server→local pull; retained behind FeatureFlags.useDataActor for rollback
@@ -1690,11 +1690,45 @@ called identically by both outbound paths (`DataActor.executeOperation`,
 | `permanent` | other HTTP 4xx; SQLSTATE classes 22/23/42; P0001/P0002 | `status="parked"` immediately, no retry consumed, `sync_parked` analytics. Only an explicit user recovery action moves it; Discard is exposed only when that work unit's policy can prove it safe |
 | `auth` | PGRST3xx / JWT / 401 | `status="failed"` + `.syncAuthExpired` → re-auth (unchanged) |
 
-`status` values: `pending → inProgress → completed / failed / parked`. PK-violation
+`status` values: `pending → inProgress → completed / failed / parked`, plus two
+terminal states written outside the processor — `quarantined` (identity review,
+`SiteVisitOrphanRecovery`) and `declined` (see below). PK-violation
 idempotency (23505 `_pkey` on create retry → treat as completed) still runs BEFORE
 classification. The 2026-07-22 outage motivated the split: a permanent 400
 (auto-lead `source_thread_key` rejection, RC1) previously burned the same 20-retry
 budget as a transient 504, then sat invisible.
+
+**`declined` — the operator stopped a send (2026-08-13, bug f7431c17).** PENDING
+WORK is a sync-recovery surface: its rows are queued SENDS, so DELETE there means
+"stop trying to send this", never "delete the record". Declining sets
+`status="declined"` and clears `lastError` / `lastAttemptedAt` / `completedAt` on
+every operation in the work unit, and touches NO model row — no `deletedAt`, no
+status change, no tombstone operation. It is refused outright while any operation
+in the unit is `inProgress`.
+
+Before this existed, discarding one stuck child send ran a whole-visit teardown:
+it cancelled the parent `SiteVisit`, tombstoned every artifact, checklist answer
+and identity draft, and enqueued durable soft-DELETEs for all of them — wiping a
+COMPLETED visit's server copy from a sync list. Deleting a visit is now only ever
+a decision made on the visit's own surface.
+
+Consumers that must know the status:
+- `OutboundProcessor` fetches `status == "pending"` only, so declined work is
+  never drained and never counted by `SyncEngine.getPendingOperations()`.
+- `SyncEngine.reenqueueRecoverableOperations()` touches only `inProgress`/`failed`,
+  and PENDING WORK's RETRY ALL only `failed`/`parked` — neither revives a decline.
+- `RecoveryInventory.isConsidered` excludes it, so the row leaves the screen at the
+  next rebuild.
+- `SiteVisitPersistenceCoordinator.unresolvedStatuses` **includes** it. This is
+  load-bearing: `queueDirtyGraphs(onlyOrphans:)` runs before every drain and
+  re-derives a send from any still-dirty row — and media sends are re-derived from
+  a still-local asset URL regardless of `needsSync`, so no model flag can stop
+  them. Counting `declined` as unresolved is what makes the decline stick, and it
+  also makes a genuine later edit revive that same operation via `enqueue` instead
+  of duplicating it.
+- `SiteVisitServerMerge.checklistResolvedStatuses` = `{completed, declined}`.
+  Checklist-id canonicalization fails closed on unrecognized lifecycles, so a
+  declined operation must read as settled — never migrated, never a collision.
 
 Site-visit failures retain their structured origin through this pipeline.
 `SiteVisitRepositoryError.server(code:message:detail:hint:)` preserves the four
