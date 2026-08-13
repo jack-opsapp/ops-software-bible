@@ -8850,6 +8850,35 @@ queue), `a1f3d5ef` (deck link path), `c2b064c5` (inventory).
 Capability-safe discard and awaited failure handling landed in `d86fda45` and
 `ee5d271a`.
 
+**Cross-entity create barrier (2026-08-13, bug `06f68200`).** The queue ordered
+writes *within* an entity group but never *across* entities, so an op could
+reference a row the server had never seen — canonically a `deckDesign` update
+carrying `{updated_at, project_id}` pushed ahead of that project's own create.
+`deck_designs`' `assigned_lead_scope_update` policy resolves
+`private.current_user_can_edit_deck_design(company_id, opportunity_id,
+project_id, 'deck_builder.edit')` against the absent project, returns `42501`,
+and `SyncErrorClassifier` — context-free by design — parks the op permanently.
+Observed on the founder's device 2026-08-12: designs `edc90edf` and `6ce2875c`
+parked while projects `8876b1dd` and `11a363d6` landed in the same drain.
+
+`SyncCrossEntityDependency` (`ops-ios/OPS/Network/Sync/`) is the fix, wired
+identically into both outbound paths (`OutboundProcessor` + `DataActor`) at
+three points: the eligibility filter **holds** any op whose payload carries a
+mapped foreign key (`project_id`, `client_id`, `company_id`, `task_type_id`)
+to an entity with a non-`completed` local create; the drain loop re-runs when a
+landed create releases held work; and a pass-start step **releases** ops parked
+by this race — an RLS/FK rejection whose `lastAttemptedAt` is *strictly* before
+its blocking create's `completedAt` — back to `pending` with `retryCount = 0`.
+Strictness is the loop guard: the next claim stamps an attempt later than that
+completion, so an op can never be released twice. Parks with any other cause
+are untouched. The classifier was deliberately NOT changed — reclassifying RLS
+as retryable would re-open the 2026-07-22 retry-storm failure mode and burn the
+budget against a dependency of unbounded latency (a create can sit unsent for
+days off-signal). The module is pure (`[SyncOperation]` in, no fetches) because
+a `#Predicate` fetch of `SyncOperation` traps against a never-populated table.
+Suite `SyncCrossEntityDependencyTests` (23 cases: 21 module, 2 driving the real
+`OutboundProcessor`).
+
 ---
 
 ## 35. Trash — Recovery Ledger (iOS, 2026-08-06)
