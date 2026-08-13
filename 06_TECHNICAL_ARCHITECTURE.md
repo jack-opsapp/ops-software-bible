@@ -1687,7 +1687,7 @@ called identically by both outbound paths (`DataActor.executeOperation`,
 | Disposition | Trigger | SyncOperation transition |
 |---|---|---|
 | `transient` | URLError offline/timeout; HTTP 5xx/429/408; SQLSTATE 40001/40P01/55P03/57014; anything unknown | `retryCount += 1`; backoff `min(2^retryCount, 60)`s; at 20 → `status="failed"` (recoverable) |
-| `permanent` | other HTTP 4xx; SQLSTATE classes 22/23/42; P0001/P0002 | `status="parked"` immediately, no retry consumed, `sync_parked` analytics. Only an explicit user recovery action moves it; Discard is exposed only when that work unit's policy can prove it safe |
+| `permanent` | other HTTP 4xx; SQLSTATE classes 22/23/42; P0001/P0002; `SiteVisitPayloadError` (payload never reached the server) | `status="parked"` immediately, no retry consumed, `sync_parked` analytics. Only an explicit user recovery action moves it; Discard is exposed only when that work unit's policy can prove it safe |
 | `auth` | PGRST3xx / JWT / 401 | `status="failed"` + `.syncAuthExpired` → re-auth (unchanged) |
 
 `status` values: `pending → inProgress → completed / failed / parked`, plus two
@@ -1697,6 +1697,33 @@ idempotency (23505 `_pkey` on create retry → treat as completed) still runs BE
 classification. The 2026-07-22 outage motivated the split: a permanent 400
 (auto-lead `source_thread_key` rejection, RC1) previously burned the same 20-retry
 budget as a transient 504, then sat invisible.
+
+**Payload-build failures park (2026-08-13, bug 70db7ed6).** A DTO that cannot be
+built from its local row (`SiteVisitPayloadError`) never reached the server, and
+rebuilding it from the same row fails identically — so a retry can only burn the
+budget, and `reenqueueRecoverableOperations` revives a `failed` op on every launch.
+That combination made one authorless site-visit row retry forever. Such failures
+now classify `permanent` and park: visible in PENDING WORK, user-retryable, never
+automatic. `SiteVisitPayloadError` conforms to `LocalizedError` so the detail
+sheet's DETAILS disclosure states plainly what is missing.
+
+**Authorship heal — legacy site-visit rows (2026-08-13, bug 70db7ed6).**
+`created_by` arrived with the V19→V20 lightweight migration, which could only
+default existing rows to nil — parents included, since the V19 `SiteVisit` carried
+no author field either. Those rows can never satisfy the wire contract, so they
+threw at payload build before every send, and an unresolved CHILD is a live barrier
+in `SiteVisitOutboundSync.isReady`, damming its visit's `siteVisitComplete` (the
+operator's completion notes) behind it. `SiteVisitAuthorHeal`
+(`OPS/Network/Sync/SiteVisitAuthorHeal.swift`) resolves an author — the row's own
+value, else the parent visit's, else the signed-in operator (`currentUserId`) — at
+the outbound boundary for visits, artifacts, checklist answers and identity drafts,
+and persists it. `SyncEngine.healSiteVisitAuthorshipOnce()` clears the whole backlog
+ahead of the drain, gated by UserDefaults `siteVisitAuthorBackfill.v1`; the flag
+flips only after a pass that leaves NOTHING unresolved, so a launch that runs before
+sign-in completes retries next launch instead of retiring having healed no one. Both
+paths write `created_by` ONLY — flipping `needsSync` would enqueue a fresh write for
+every legacy row on the device at once. Soft-deleted rows are skipped: they sync as
+a delete, which carries no author.
 
 **`declined` — the operator stopped a send (2026-08-13, bug f7431c17).** PENDING
 WORK is a sync-recovery surface: its rows are queued SENDS, so DELETE there means
