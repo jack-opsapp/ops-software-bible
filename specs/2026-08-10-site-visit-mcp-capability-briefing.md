@@ -35,12 +35,14 @@ Satellites: `site_visit_artifacts` (captured evidence; `kind` ∈ photo, annotat
 The booking design centralizes ALL side effects (timeline activity, `new_lead → qualifying` stage nudge, Google Calendar sync enqueue, reminder arming) inside three public RPCs. **Wrap these; never write `site_visits` rows directly**, or your writes will silently skip calendar sync and prompts:
 
 - **`book_site_visit`** → `public.book_site_visit(p_opportunity_id, p_scheduled_at, p_duration_minutes, p_assignee_ids, p_reminder_lead_minutes)`. One open booking per lead — the RPC rejects a second; surface the existing one and offer reschedule.
-- **`reschedule_site_visit`** → `public.reschedule_site_visit(p_site_visit_id, p_scheduled_at, p_duration_minutes, p_assignee_ids, p_reminder_lead_minutes)`.
-- **`cancel_site_visit_booking`** → `public.cancel_site_visit_booking(p_site_visit_id)`.
+- **`reschedule_site_visit`** → `public.reschedule_site_visit(p_site_visit_id, p_scheduled_at, p_duration_minutes, p_assignee_ids, p_reminder_lead_minutes)`. Only a booked, still-`scheduled` visit can move. NULL keeps a field unchanged; **`p_reminder_lead_minutes = -1` is the explicit "clear the override" sentinel** (NULL already means "leave as is").
+- **`cancel_site_visit_booking`** → `public.cancel_site_visit_booking(p_site_visit_id)`. Cancelling an already-cancelled booking is a no-op success.
 
 All three enforce company boundary + permission checks server-side and are idempotent, following the `complete_site_visit_guarded` pattern (see `20260731235533_site_visit_cloud_sync.sql:659` and the security hardening in `20260802093608_site_visit_completion_rpc_security_boundary.sql`).
 
-**Sequencing:** these RPCs are part of the booking build and may not exist yet when you read this. Land the manifest entries behind your `rolloutFlag` mechanism; the flag flips when the RPCs are live. Coordinate via the companion design doc, which is the single source of truth for RPC signatures.
+**Error contract** — map SQLSTATE, do not parse message text: `22004` missing argument · `42501` unresolvable actor / permission denied / cross-company · `P0002` target row not found · `22023` failed validation (past time, duration outside 15–480, reminder outside 0–1440, invalid assignee) · `55000` state rule violated (`site_visit_already_booked`, `site_visit_not_a_booking`, `site_visit_not_reschedulable`, `site_visit_already_started`, …).
+
+**Sequencing — RESOLVED 2026-08-11.** ~~These RPCs may not exist yet.~~ All three are **live in production** (migrations `20260810194251_site_visit_booking.sql`, `20260811053942_site_visit_booking_rpcs.sql`, `20260811054117_site_visit_booking_trigger_fn_acl.sql`, mirrored in `migrations/`). Signatures above are verified as-built and no longer subject to change from the booking build — **you can land manifest entries without a `rolloutFlag` gate.** The authoritative source for these contracts is now `04_API_AND_INTEGRATION.md` § *Site-visit booking RPCs*, not the companion design doc.
 
 ### Permissions
 
