@@ -10,7 +10,7 @@
 
 **Design System:** The OAuth consent, connected-app management, and confirmation surfaces use the existing OPS-Web design system at `ops-design-system/project/DESIGN.md`. Use current OPS-Web Tailwind tokens and `lucide-react`; no new visual system, raw values, marketing surface, MCP App widget, or motion language.
 
-**Execution status (2026-08-11):** Tasks 1–10 plus Task 4A are locally committed on `feat/ops-agent-control-plane-takeover-20260807` through `1e866814`, `556c514f`, `14969c4c`, `91419970`, `7472219a`, and `73712b4f`. This includes the SDK/schema boundary, actor scope, capability manifest revision `2026-08-11.capability-manifest.v3`, immutable conversation schema, evidence normalization, exact provider-delivery capture, database-derived delivered turns, approved-action reconciliation recovery, Phase C generation fences, the source-level versioned-memory schema/repository/builder/bounded catch-up/minimal seed, dark site-visit contracts, the actor-authorized `get_job_conversation_context` source service/RPC contract, and the first transport-neutral `OpsAgentDomainService` composition root. Only `get_job_conversation_context` is internally available; every external exposure remains disabled and every future method remains unavailable. The Task 9 RPC applies same-statement authority and source checks, distinct full-turn/evidence/participant/history projection versions, current redactions, bounded pre-aggregation, exact invalidation totals, claim/proof coupling, catch-up/stale markers, and a final 60,000-character result ceiling. Its migration has not been database-compiled, executed, or applied to local/test or production Supabase. No Phase C consumer, memory worker, REST/MCP handler, OAuth facade, or remote MCP server invokes the facade. The site-visit read services, change-set participants, booking RPCs, and calendar workers also remain unbuilt. Nothing has been pushed or deployed; Tasks 11 onward remain incomplete. Checklist boxes below remain acceptance gates rather than deployment evidence.
+**Execution status (2026-08-14):** Tasks 1–12 plus Task 4A are locally committed on `feat/ops-agent-control-plane-takeover-20260807` through `dc91a349`. This includes the SDK/schema boundary, actor scope, capability manifest revision `2026-08-13.capability-manifest.v5`, immutable conversation and memory foundations, the first transport-neutral `OpsAgentDomainService`, schedule/readiness reads, and current-only communication/participant reads. Exactly five capabilities are internally available: `get_job_conversation_context`, `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, and `resolve_job_participants`. Every external exposure remains disabled and every unimplemented method remains absent from the facade rather than stubbed. Task 12 adds purpose-minimized strict contracts, nominal authorization/repository boundaries, fixed same-statement RPC reads, contactability freshness, privacy-safe identity derivation, source-provenanced results, and a 60,000-character claim/proof reducer. The Task 9, Task 11, and Task 12 migrations have not been database-compiled, executed, or applied to local, test, preview, or production Supabase. No Phase C consumer, memory worker, REST/MCP handler, OAuth facade, or remote MCP server invokes the facade. The site-visit read services, change-set participants, booking RPCs, and calendar workers remain unbuilt. Nothing has been pushed or deployed; Tasks 13 onward remain incomplete. Checklist boxes below remain acceptance gates rather than deployment evidence.
 
 **Required Skills:** `custom-skills:executing-plans`, `superpowers:using-git-worktrees`, `superpowers:test-driven-development`, `superpowers:systematic-debugging` when a failure appears, `supabase:supabase`, `supabase:supabase-postgres-best-practices`, `openai-docs`, `plugin-dev:mcp-integration`, `ops-design`, `frontend-design:frontend-design`, `custom-skills:interface-design`, `custom-skills:ui-ux-pro-max`, `ops-copywriter:ops-copywriter`, `custom-skills:wizard-audit`, `custom-skills:audit-design-system`, `superpowers:verification-before-completion`, and `superpowers:requesting-code-review`.
 
@@ -424,7 +424,7 @@ Cover inbound/outbound, replay, unsent draft exclusion, send-intent exclusion, d
 
 - [ ] **Step 2: Resolve anchors and roles from evidence**
 
-Use opportunity/project conversion links. Preserve one conversation across conversion. Never anchor to provider thread. Client/sub-client/confirmed related contacts map to memory `user`; OPS actor/Phase C maps to memory `assistant`; ambiguous remains unresolved.
+Use opportunity/project conversion links. Preserve one conversation across conversion. Never anchor to provider thread. Current client/sub-client rows map to memory `user`; a related contact does so only when a concrete authorized relationship record confirms it. OPS actor/Phase C maps to memory `assistant`; conversation-only or otherwise ambiguous identity remains unresolved.
 
 - [ ] **Step 3: Insert idempotently at delivery chokepoints**
 
@@ -624,29 +624,61 @@ Both migrations remain unapplied. No Supabase branch, local/test/preview/product
 
 **Files:**
 
+- Create: `src/lib/agent-control-plane/contracts/communication.ts`
+- Create: `src/lib/agent-control-plane/services/communication-participant-snapshot.ts`
 - Create: `src/lib/agent-control-plane/services/get-job-communication-context.ts`
 - Create: `src/lib/agent-control-plane/services/resolve-job-participants.ts`
-- Reuse/adapt: `src/lib/api/services/conversation-state/contact-resolver.ts`
-- Reuse/adapt: `src/lib/api/services/conversation-state/party-classifier.ts`
-- Reuse/adapt: current contactability/suppression services
-- Test: `src/lib/agent-control-plane/services/__tests__/get-job-communication-context.test.ts`
-- Test: `src/lib/agent-control-plane/services/__tests__/resolve-job-participants.test.ts`
+- Create: `src/lib/agent-control-plane/services/job-communication-authorization.ts`
+- Create: `src/lib/agent-control-plane/services/job-participants-authorization.ts`
+- Create: `src/lib/agent-control-plane/services/job-communication-context-repository.ts`
+- Create: `src/lib/agent-control-plane/services/job-participants-repository.ts`
+- Create: `supabase/migrations/20260813120000_agent_job_communication_participants.sql`
+- Modify: shared readiness photo derivation, domain facade/repository bundle, capability manifest, and compatibility RPCs
+- Test: communication contracts; pure derivation/services; authorization; repositories; SQL/RPC structure; manifest/facade parity; proof, freshness, bounds, abort, and privacy invariants
 
-- [ ] **Step 1: Write participant/privacy tests**
+- [x] **Step 1: Write participant/privacy tests**
 
-Cover client, sub-client, confirmed related contact, ambiguous participant, OPS actor, Phase C, opt-out/suppression, private employee contact exclusion, and wrong-company identity collision.
+Cover current primary client and sub-client rows, conversation ambiguity/unresolved/redaction, the deliberate absence of confirmed conversation-only related contacts, OPS delivery actors, Phase C, purpose-bound task assignments, global email suppression, duplicate email ownership, missing/invalid/unavailable contactability, private employee contact/role exclusion, wrong-company identity collisions, malicious source strings, projection tampering, source freshness, abort forwarding, and bounded reduction.
 
-- [ ] **Step 2: Implement purpose-specific context**
+- [x] **Step 2: Implement current-only, purpose-specific context**
 
-Schedule notice and photo request return only facts needed for that purpose, exact schedule occurrence/evidence, contactability, and customer-shareable crew identity.
+Do not adapt the browser contact resolver, party classifier, or broad contactability services: their multi-query/browser trust boundaries cannot prove one current actor-authorized snapshot. Use two nominal service-owned authorization/repository paths over one private strict snapshot schema and two fixed service-role-only RPCs. The private SQL implementation re-resolves the actor, company, permission snapshot, job/customer/project/mailbox visibility, and purpose-dependent task/photo access inside the same statement.
 
-- [ ] **Step 3: Verify and commit**
+Inputs are current-only: neither capability accepts `as_of`. `get_job_communication_context` supports `general`, `schedule_notice`, and `photo_request`; the latter two add only their bounded schedule/photo facts. Photo readiness reuses the Task 11 TypeScript-owned `SITE_PHOTOS_MISSING` rule. `resolve_job_participants` defaults to `general`; only `schedule` and `assignment` may add active same-company assignment users after task/project authorization.
+
+V1 contactability is email-only. Only one confirmed, normalized, unsuppressed address is returned. Suppression, duplicate ownership, absence, ambiguity, unavailable/query-bound/invalid sources, unresolved identity, and redaction withhold the address and produce a matching fixed non-recipient state. Primary client is the only default-eligible recipient; a contactable sub-client requires explicit selection. Preferred channel is always null; phone/SMS consent, preference, and opt-out claims are unavailable. OPS and Phase C stay assistant-side and expose no private contact or employee-role fields.
+
+Concrete IDs require a current confirmed record. Ambiguous/unresolved identities receive `unknown:sha256:<digest>`; redacted identities receive `redacted:sha256:<digest>`. Conversation evidence alone never confirms a related contact. Each participant carries one authoritative projection evidence atom; collection/context proofs bind the actor, tenant, job, purpose, permission/manifest/source/contactability revisions, lower-bound truth, fixed gaps, and ordered claim proofs. The service retains complete claims with evidence/proofs under 60,000 characters, prioritizing schedule occurrences before participant claims for communication context.
+
+Manifest revision `2026-08-13.capability-manifest.v5` makes both capabilities internally available and keeps external exposure disabled. V5 compatibility wrappers accept only the exact v5 revision and privately supply the frozen v4 literal to the earlier conversation, evidence, schedule, and readiness implementations; callers cannot select a legacy revision.
+
+- [x] **Step 3: Verify and commit**
 
 ```bash
-npm test -- src/lib/agent-control-plane/services/__tests__/get-job-communication-context.test.ts src/lib/agent-control-plane/services/__tests__/resolve-job-participants.test.ts
-git add src/lib/agent-control-plane/services src/lib/api/services/conversation-state
-git commit -m "feat(agent-control-plane): add communication and participant context"
+/Users/jacksonsweet/.nvm/versions/node/v22.22.3/bin/node node_modules/vitest/vitest.mjs run \
+  --maxWorkers=4 --minWorkers=1 --testTimeout=60000 \
+  src/lib/agent-control-plane/contracts/__tests__/communication.test.ts \
+  src/lib/agent-control-plane/registry/__tests__/manifest.test.ts \
+  src/lib/agent-control-plane/services/__tests__/communication-participant-authorization.test.ts \
+  src/lib/agent-control-plane/services/__tests__/communication-participant-domain-service.test.ts \
+  src/lib/agent-control-plane/services/__tests__/get-job-communication-context.test.ts \
+  src/lib/agent-control-plane/services/__tests__/job-communication-context-repository.test.ts \
+  src/lib/agent-control-plane/services/__tests__/job-communication-rpc-contract.test.ts \
+  src/lib/agent-control-plane/services/__tests__/job-participants-repository.test.ts \
+  src/lib/agent-control-plane/services/__tests__/job-participants-rpc-contract.test.ts \
+  src/lib/agent-control-plane/services/__tests__/readiness-rules.test.ts \
+  src/lib/agent-control-plane/services/__tests__/resolve-job-participants.test.ts \
+  src/lib/agent-control-plane/services/__tests__/task12-manifest-v5-rpc-compatibility.test.ts
+/Users/jacksonsweet/.nvm/versions/node/v22.22.3/bin/node node_modules/typescript/bin/tsc --noEmit --pretty false
+git diff --check
+git commit -m "feat(agent-control-plane): add communication and participant reads"
 ```
+
+Implemented locally in OPS Web commit `dc91a349` on 2026-08-14. The exact focused Task 12 matrix passed 12 files / 169 tests; Node 22 TypeScript `--noEmit` and `git diff --check` passed; an independent frozen cross-boundary review found no P0/P1 issue. This is local source/test evidence, not database-runtime or deployment proof.
+
+Migration `20260813120000_agent_job_communication_participants.sql` remains unapplied and has not been database-compiled or executed. It requires the Task 9 and Task 11 tables/functions plus both Task 11 migrations in order. Any schedule-bearing Task 12 purpose also invokes the Task 11 timezone conformance gate, so production PostgreSQL tzdata and the pinned Node runtime must first agree with the current BC permanent-UTC-7 rules. After those prerequisites, apply and rollback must be exercised on an isolated Supabase branch, then the fixed RPCs must receive runtime same-statement authority, wrong-company, suppression-change, source-change, bound, proof, and privilege tests before any adapter or rollout flag can be enabled. No migration copy belongs in the Bible archive until it is actually applied.
+
+No Supabase branch, local/test/preview/production migration apply, Phase C/REST/MCP adapter, push, deployment, external advertisement, or customer-live behavior is claimed.
 
 ### Task 13: Implement customer jobs, job summary, history search, and evidence lookup
 
