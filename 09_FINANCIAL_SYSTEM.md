@@ -1018,9 +1018,11 @@ The Books EXPENSES segment (`ops-web/src/components/books/segments/expenses-segm
 
 On-device OCR using Apple's Vision framework (`VNRecognizeTextRequest` with `.accurate` recognition level). No external vendor dependency.
 
-**Extracted fields**: merchant name, date, total, subtotal, tax amount, payment method (cash/card detection), raw text.
+**Extracted fields**: merchant name, date, total, subtotal, tax amount, payment method (cash/card detection), purchased line-item labels, raw text.
 
 **Architecture**: Protocol-based (`ExpenseOCRServiceProtocol`) for future swappability (e.g., Veryfi integration).
+
+**Expense-form autofill (2026-08-14):** `ReceiptParser` accepts only price-linked item labels that occur before the receipt totals section, rejects receipt/payment metadata and dates, preserves reading order, and stores the labels in `OCRResult.lineItems` plus `ocr_raw_data.line_items`. `ExpenseFormSheet` joins those labels into the description only when the operator has not already entered a description; typed text is never overwritten. The merchant input retains the existing OPS visual treatment but declares `.organizationName` text semantics so iOS does not offer credential/password AutoFill. iOS source: `OPS/Services/ExpenseOCRService.swift` and `OPS/Views/Expenses/ExpenseFormSheet.swift`, commit `21e143bc`.
 
 ### Multi-Project Expense Splitting
 
@@ -1784,7 +1786,7 @@ protocol ExpenseOCRServiceProtocol {
 }
 ```
 
-**OCRResult** struct: `merchantName`, `date`, `total`, `subtotal`, `taxAmount`, `paymentMethod`, `rawText`, `confidenceScores` (per-field confidence 0-1).
+**OCRResult** struct: `merchantName`, `date`, `total`, `subtotal`, `taxAmount`, `paymentMethod`, `lineItems`, `rawText`, `confidenceScores` (per-field confidence 0-1). `descriptionSuggestion` joins non-empty `lineItems`; `rawDataDict` persists the same ordered labels under `line_items` for auditability.
 
 **AppleVisionOCRService**: Uses `VNRecognizeTextRequest` with `.accurate` recognition level. Processes all recognized text through `ReceiptParser` which uses regex patterns and heuristics to extract structured fields from raw OCR text.
 
