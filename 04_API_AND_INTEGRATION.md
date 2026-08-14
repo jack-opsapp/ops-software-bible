@@ -1465,6 +1465,40 @@ Operator UI is `Settings → Operations → Site Visit Types` and requires `sett
 
 Rollout order is strict: apply the migration; regenerate live database types and the live company-data scope snapshot; add `site_visit_types` to the export/account-closure manifest; deploy the compatible web contract; then distribute the signed iOS client. Until those gates complete, this migration and client remain source-local only.
 
+## Site-visit booking RPCs (production live 2026-08-11)
+
+**Release status:** migrations `20260810194251_site_visit_booking.sql` (columns, indexes, trigger gate), `20260811053942_site_visit_booking_rpcs.sql` (the three functions), and `20260811054117_site_visit_booking_trigger_fn_acl.sql` (trigger-function grant hygiene) are applied in production and mirrored in `migrations/`. Design: `specs/2026-08-10-site-visit-booking-calendar-design.md`.
+
+These three RPCs are the **only** write path for a booking on any surface — iOS, OPS-Web, and the future MCP tools. Every side effect (timeline activity, stage nudge, Google Calendar enqueue) is centralized in them, so no caller can produce a divergent visit and a new surface inherits the full behavior for free. All three are `security definer` with a pinned `search_path`, resolve the actor through the `complete_site_visit_guarded` pattern (`private.get_current_user_id()` / `private.get_user_company_id()` match the JWT `sub` against `users.auth_id` OR `users.firebase_uid` — `auth.uid()` is unusable under the Firebase bridge), and authorize through the existing `private.current_user_can_edit_site_visit` boundary (granular permission, never a role name).
+
+Booking columns and the `booked_at` discriminator are documented in `03_DATA_ARCHITECTURE.md` § 22.
+
+### `public.book_site_visit(p_opportunity_id uuid, p_scheduled_at timestamptz, p_duration_minutes int default 60, p_assignee_ids text[] default null, p_reminder_lead_minutes int default null) → uuid`
+
+Locks the opportunity `for update`, asserts the edit boundary and exact company equality, then validates: `p_scheduled_at > now() - interval '5 minutes'`; duration 15–480; reminder override null or 0–1440; every assignee a parseable UUID belonging to an undeleted user in the caller's company (empty/NULL array defaults to the booker alone, deduplicated and sorted). The **one-open-booking rule** rejects a second booking only while an existing booked visit on that opportunity is `status='scheduled'` — once it is `in_progress`, `completed`, or `cancelled` the slot is free (booking a follow-up while on site is legal).
+
+On success it inserts the visit (`status='scheduled'`, `booked_at=now()`, `created_by=actor`), inserts one `activities` row (`type='site_visit_scheduled'`, subject `Site visit booked`, content the ISO-8601 UTC appointment time, `site_visit_id` linked), nudges the opportunity from `new_lead` to `qualifying` via `public.move_opportunity_stage` (only from `new_lead`), and returns the new visit id. Google Calendar enqueue is **not** performed here — the deployed `trg_site_visits_google_calendar_sync` trigger observes exactly the writes these RPCs make.
+
+### `public.reschedule_site_visit(p_site_visit_id uuid, p_scheduled_at timestamptz, p_duration_minutes int default null, p_assignee_ids text[] default null, p_reminder_lead_minutes int default null) → uuid`
+
+Only a **booked** (`booked_at IS NOT NULL`), still-`scheduled` visit can move — a started visit is history, not a plan. NULL keeps a field unchanged; `p_reminder_lead_minutes = -1` is the explicit **clear** sentinel for the per-booking override (NULL means "leave as is", so a separate sentinel is required). Logs a `site_visit_scheduled` activity (`Site visit rescheduled`). The changed `scheduled_at` re-arms every prompt by construction because dedupe keys carry the epoch. An identical call writes nothing (idempotent).
+
+### `public.cancel_site_visit_booking(p_site_visit_id uuid) → uuid`
+
+Flips a booked visit to `cancelled` (which fires the trigger's remote `delete`), then **neutralizes any still-pending `create`/`update` queue rows** for that visit to `status='skipped'`, `skip_reason='booking_cancelled'` — a cancelled booking must never materialize remotely by draining stale work enqueued moments earlier. Logs a `site_visit_scheduled` activity (`Site visit cancelled`). Cancelling an already-cancelled booking is a no-op success; a completed or already-started visit is refused.
+
+### Error contract (SQLSTATE → meaning)
+
+Clients map these to presentable errors rather than parsing message text. `ops-web/src/lib/api/services/site-visit-service.ts` raises `SiteVisitBookingError`; `ops-ios/OPS/Services/SiteVisitBookingService.swift` maps to terse operator copy.
+
+| SQLSTATE | Raised as | Meaning |
+|---|---|---|
+| `22004` | `opportunity_id_required`, `scheduled_at_required`, `site_visit_id_required` | Missing required argument |
+| `42501` | `site_visit_actor_not_found`, `site_visit_edit_denied`, `site_visit_company_mismatch` | Unresolvable actor, permission denied, or cross-company attempt |
+| `P0002` | `opportunity_not_found`, `site_visit_not_found` | Target row absent (or invisible to this tenant) |
+| `22023` | `site_visit_time_in_past`, `site_visit_duration_out_of_range`, `site_visit_reminder_out_of_range`, `site_visit_assignees_invalid` | Argument failed validation |
+| `55000` | `site_visit_already_booked`, `site_visit_not_a_booking`, `site_visit_not_reschedulable`, `site_visit_already_started`, `cannot_cancel_completed_site_visit`, `cannot_cancel_deleted_site_visit`, `cannot_reschedule_deleted_site_visit` | State rule violated |
+
 ## Guarded Sync-Recovery RPCs (2026-07-22)
 
 Two prod contract changes landed with the SYNC RECOVERY initiative (migrations
@@ -2642,6 +2676,63 @@ The 12-month historical profile scan is stricter: it requests `operator_authored
 **Notifications:** when `inbox_ui` is off, the per-draft "Draft ready" notification is suppressed (silent), the email-sync-complete notification repoints from `/inbox` to `/pipeline`, and a one-time "Replies, drafted" explainer fires on the first mailbox draft for the company.
 
 **Schema:** `ai_draft_history.mailbox_draft_id` + the status-CHECK expansion (`sent_from_mailbox`, `discarded_in_mailbox`) — migrations `20260602000000` and `20260602010000` (see `03_DATA_ARCHITECTURE.md` → `ai_draft_history`).
+
+### 25. GET /api/cron/site-visit-prompts (2026-08-11)
+
+**Source:** `ops-web/src/app/api/cron/site-visit-prompts/route.ts`. **Schedule:** `*/5 * * * *` — **full-day, deliberately NOT the `13-23,0-4` email window.** Appointments are time-critical; a heads-up that only fires in the overnight window is worthless.
+
+| Field | Value |
+|-------|-------|
+| Auth | Cron secret (`Authorization: Bearer $CRON_SECRET`) |
+| Runtime | `maxDuration = 60`, `runWithCronWorkloadControl` durable lease (mandatory for every new cron) |
+| Client | `getServiceRoleClient()` |
+| Caps | 200 visits per run; candidate window `now − 20 min` → `now + 24 h` (covers the 15-minute START grace plus cron latency, and the 1440-minute maximum heads-up lead) |
+
+Selects booked visits through the `site_visits_booked_window_idx` partial index, runs the pure engine `src/lib/site-visits/prompt-engine.ts` per assignee, inserts rail notifications, and pushes via OneSignal external ids **for freshly created rows only**.
+
+**Engine rules (pure, unit-tested):** heads-up is due on `[scheduled_at − lead, scheduled_at)`; START is due on `[scheduled_at, scheduled_at + 15 min)`; nothing is due when `status ≠ 'scheduled'`, `booked_at` is NULL, or `deleted_at` is set. Lead resolution is `visit.reminder_lead_minutes ?? user.site_visit_reminder_lead_minutes ?? 30`. Dedupe keys are exactly `site_visit:<visitId>:<heads_up|start>:<userId>:<epochSeconds(scheduled_at)>`.
+
+**Idempotency.** PostgREST cannot express the partial arbiter of `notifications_site_visit_prompt_dedupe_uidx` in `ON CONFLICT`, and the key must suppress re-fires *even after the row is read*. The route therefore inserts plainly and treats SQLSTATE `23505` as "already prompted" — precisely the semantics the index provides. `create_notification_if_new_with_identity` is **unfit** here: its conflict reconcile only re-reads unread rows, so it raises `55000` once a prompt has been read.
+
+**Gating.** The rail row is inserted for **all** active assignees — the rail has no opt-out (house rule) and is the durable audit surface. `notification_preferences.channel_preferences['site_visit_reminder']` is `{push, email}`-shaped, so it gates **the push only**. **Quiet hours are intentionally bypassed**: the operator chose this appointment time themselves (design § 4.5).
+
+**Copy and routing** (`type = 'site_visit_reminder'` for both kinds):
+
+| Kind | Title | Body | `action_label` | `deep_link_type` |
+|---|---|---|---|---|
+| Heads-up | `Site visit in <n> min — <lead title>` | lead address, else `No address on the lead.` | `OPEN LEAD` | `site_visit_heads_up` |
+| START | `Site visit — <address, else lead title>` | `Start now?` | `START VISIT` | `site_visit_start` |
+
+`action_url` is `/pipeline?opportunityId=<id>` for both; the lead name column is `opportunities.title`. Push data carries `{deep_link_type, leadId, siteVisitId}`. See `07_SPECIALIZED_FEATURES.md` § 14.3.7.
+
+### 26. GET /api/cron/google-calendar-sync (2026-08-12)
+
+**Source:** `ops-web/src/app/api/cron/google-calendar-sync/route.ts` + `src/lib/site-visits/google-calendar.ts`. **Schedule:** `*/5 * * * *`, full-day — booked appointments propagate outward whenever they change. Drains `public.google_calendar_sync_queue` against the Google Calendar API using the company's calendar-scoped Gmail connection. Full feature narrative: `07_SPECIALIZED_FEATURES.md` § 19c.
+
+**Queue contract** (`google_calendar_sync_queue`, service-role only; migration `20260807010510_google_calendar_sync_queue.sql`):
+
+- `operation ∈ {create, update, delete}` — **never `upsert`**; the enqueue is a trigger, not a caller.
+- `status ∈ {pending, succeeded, failed, skipped}` — the success terminal is **`succeeded`**, not `done`.
+- Partial unique `(site_visit_id, operation) WHERE status='pending'` collapses repeated saves into one Google write.
+- Retry ladder 5 → 10 → 20 → 40 minutes on `attempts`; the fifth attempt settles `failed`.
+
+**Skips are never errors** — each records a `skip_reason`: `missing_calendar_scope` (mail-only grant), `grant_revoked` (typed `GmailTokenRefreshError.isGrantRevoked`, i.e. `invalid_grant` on the shared refresher, or a provider 401), `connection_missing` / `connection_inactive`, `visit_not_syncable` (the drain re-reads the visit, so a cancellation between enqueue and drain cannot orphan a remote event; completed visits *do* keep patching — they happened), and `booking_cancelled` (written by `cancel_site_visit_booking`, not the drain).
+
+`create`/`update` upsert on the connection's `primary` calendar — patch when an event id is known, insert otherwise, and a 404/410 on patch recreates, because OPS is the source of truth. The event id is written back to `site_visits.google_calendar_event_id` / `google_calendar_id` / `google_calendar_synced_at`; `delete` clears them, and a 404/410 counts as done. **Concurrency:** PostgREST cannot express `FOR UPDATE SKIP LOCKED`, so the durable cron lease serializes whole runs instead and the plain select-then-update cannot double-send.
+
+**`*/5` grid budget is now exhausted.** `tests/unit/api/heavy-cron-schedule-isolation.test.ts` keeps an exhaustive cron inventory, a guard regex, and a minute-collision simulator. These two crons plus `fire_due_task_reminders` occupy all **three** full-day lanes the simulator permits on the `*/5` grid. **Any further full-day cron needs a different grid** (offset minutes or a coarser interval) — adding a fourth `*/5` lane fails that test by design. Every new cron must also be registered in that inventory.
+
+### 26a. GET /api/integrations/gmail?include_calendar=1 — calendar consent lane (2026-08-12)
+
+**Source:** `ops-web/src/app/api/integrations/gmail/route.ts` + `callback/route.ts`; migration `20260812170628_email_oauth_calendar_source.sql`.
+
+Calendar access is a **separate, opt-in consent**, not a widening of the mail connect flow. Without `include_calendar=1` the authorization URL requests the mail scope alone. With it, the URL requests the existing mail scope **plus** `https://www.googleapis.com/auth/calendar.events`, bound to one exact connection via `connectionId`. **All** Gmail auth URLs now carry `include_granted_scopes=true`, so any re-consent returns the union of previously granted scopes and the flow is self-healing.
+
+The callback persists the token response's actual `scope` list into `email_connections.granted_scopes` on **every** path. That column is the source of truth for what the stored refresh token can actually do — a mail-only reconnect will honestly narrow it, and a calendar upgrade restores it. `src/lib/email/calendar-scope.ts` (`hasCalendarScope`) is the TypeScript half of the scope agreement the enqueue trigger enforces in SQL.
+
+A new OAuth state `source='calendar'` binds to one exact connection like `'alert'` does, and updates **credentials, grant, and status only** — it never touches `sync_enabled` or `auto_send`, and never demotes an active mailbox to `setup_incomplete`. (The wizard upsert path *does* demote; that trap is precisely why the calendar branch exists.) Upgrade is allowed for status `active` or `needs_reconnect` regardless of `sync_enabled`, because the sync toggle governs mail while the grant governs the credential.
+
+Operator surface: one state-aware `CALENDAR SYNC — OFF/ON` row on the connected Gmail card in Settings → COMMS (`src/components/settings/integrations-tab.tsx`), Gmail-only and status-gated; return params `calendar=connected|error` raise a toast and are stripped. Until a company connects, the enqueue trigger finds no calendar-scoped connection and the whole feature is simply **inert** — no queue rows, no errors.
 
 ---
 
