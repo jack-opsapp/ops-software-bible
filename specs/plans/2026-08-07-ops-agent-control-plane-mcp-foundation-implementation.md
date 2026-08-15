@@ -27,6 +27,15 @@ Read before implementation:
 
 The design spec wins when this plan is terse. If production schema/code differs from this plan, verify the current state, update the design and plan, and do not guess.
 
+## Local implementation checkpoint — 2026-08-10
+
+- Tasks 1-5 are present in the local branch history through `6f9e387f`.
+- Task 6 is committed locally as `bfb5099b` (`feat(agent-control-plane): normalize source-provenanced evidence`).
+- Task 7 is committed locally as `5f9e4d6a` (`feat(agent-memory): ingest provider-delivered job turns`).
+- Exact local proof for the last two tasks is 214/214 evidence tests plus 492/492 staged delivered-turn/provider tests, green TypeScript and formatting, zero ESLint errors, and a clean fresh adversarial review.
+- The provider-source migration was verified structurally, not executed against PostgreSQL, because no local Supabase/PostgreSQL runtime was available.
+- Nothing in this checkpoint has been pushed, deployed, applied to production, exposed through a public connector, or proven customer-live. Tasks 8 onward remain unimplemented.
+
 ---
 
 ## Execution gates
@@ -337,15 +346,15 @@ Implemented locally in `91419970`. The full agent-control-plane source suite pas
 **Files:**
 
 - Create: `supabase/migrations/<timestamp>_agent_job_conversation_memory.sql`
-- Mirror after implementation: `ops-software-bible/migrations/<same-file>.sql`
+- Mirror only after production apply/readback: `ops-software-bible/migrations/<same-file>.sql`
 - Modify after implementation: `ops-software-bible/03_DATA_ARCHITECTURE.md`
 - Test: `src/lib/agent-control-plane/memory/__tests__/schema-contract.test.ts`
 
-- [ ] **Step 1: Re-read production schema and migration ledger**
+- [x] **Step 1: Re-read production schema and migration ledger**
 
 Verify opportunities/projects/client identifiers, email/activity source IDs, cascade behavior, RLS helpers, and conversion references. Choose a fresh timestamp after the current ledger.
 
-- [ ] **Step 2: Write failing repository/schema expectations**
+- [x] **Step 2: Write failing repository/schema expectations**
 
 Cover:
 
@@ -357,7 +366,7 @@ Cover:
 - `job_conversation_redaction_events`;
 - foreign-key indexes, RLS, CHECK constraints, and no direct client update/delete on immutable turns/versions.
 
-- [ ] **Step 3: Write migration with comments and guarded functions**
+- [x] **Step 3: Write migration with comments and guarded functions**
 
 Use UUID foreign keys where authoritative tables use UUID; do not copy guessed text types. Enforce company consistency. Add append-only triggers/policies. Add a guarded function for atomic turn insert plus conversation/anchor resolution.
 
@@ -365,14 +374,14 @@ Use UUID foreign keys where authoritative tables use UUID; do not copy guessed t
 
 Do not apply production in this task unless Jackson explicitly authorized production migrations. Run schema/RLS/readback tests against the local/test database.
 
-- [ ] **Step 5: Commit code migration only**
+- [x] **Step 5: Commit code migration only**
 
 ```bash
 git add supabase/migrations/<timestamp>_agent_job_conversation_memory.sql src/lib/agent-control-plane/memory
 git commit -m "feat(agent-memory): add immutable job conversation schema"
 ```
 
-Mirror/update the bible only in the same session as a real code implementation; do not claim the migration is deployed until production ledger/readback proves it.
+Update the bible schema chapter in the same session as a real code implementation. The bible `migrations/` archive is production-applied history, so mirror this SQL there only after the production ledger/readback proves it was applied. Do not claim deployment before that proof.
 
 ### Task 6: Implement evidence normalization and prompt-safe output
 
@@ -387,19 +396,19 @@ Mirror/update the bible only in the same session as a real code implementation; 
 - Test: `src/lib/agent-control-plane/evidence/__tests__/prompt-injection.test.ts`
 - Test: `src/lib/agent-control-plane/evidence/__tests__/bounds.test.ts`
 
-- [ ] **Step 1: Write adversarial fixtures**
+- [x] **Step 1: Write adversarial fixtures**
 
 Include hidden HTML, scripts/styles, tracking markup, remote includes, prompt instructions, hostile filenames, oversized bodies, attachment metadata, Unicode controls, contradictory claims, and cross-company evidence IDs.
 
-- [ ] **Step 2: Implement normalization**
+- [x] **Step 2: Implement normalization**
 
 Return exact persisted normalized plain text plus immutable content hash and trust classification. Preserve source text as data while stripping active/hidden markup. Do not “clean” semantic content into a summary.
 
-- [ ] **Step 3: Implement bounded evidence repository**
+- [x] **Step 3: Implement bounded evidence repository**
 
 Require authorized context, maximum 20 evidence IDs, maximum 60,000 total characters, deterministic ordering, and privacy-safe not-found.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 npm test -- src/lib/agent-control-plane/evidence
@@ -420,19 +429,19 @@ git commit -m "feat(agent-control-plane): normalize source-provenanced evidence"
 - Test: `src/lib/agent-control-plane/memory/__tests__/ingest-delivered-turn.test.ts`
 - Test: `src/lib/agent-control-plane/memory/__tests__/conversation-anchor.test.ts`
 
-- [ ] **Step 1: Write lifecycle tests**
+- [x] **Step 1: Write lifecycle tests**
 
 Cover inbound/outbound, replay, unsent draft exclusion, send-intent exclusion, delivery reconciliation, ambiguous participant, provider thread spanning jobs, opportunity conversion, new returning-customer job, and redaction overlay.
 
-- [ ] **Step 2: Resolve anchors and roles from evidence**
+- [x] **Step 2: Resolve anchors and roles from evidence**
 
 Use opportunity/project conversion links. Preserve one conversation across conversion. Never anchor to provider thread. Current client/sub-client rows map to memory `user`; a related contact does so only when a concrete authorized relationship record confirms it. OPS actor/Phase C maps to memory `assistant`; conversation-only or otherwise ambiguous identity remains unresolved.
 
-- [ ] **Step 3: Insert idempotently at delivery chokepoints**
+- [x] **Step 3: Insert idempotently at delivery chokepoints**
 
 Do not scatter hooks through draft generation. The inbound delivered-message persist and outbound delivery reconciliation paths are the only initial entry points.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 npm test -- src/lib/agent-control-plane/memory/__tests__/ingest-delivered-turn.test.ts src/lib/agent-control-plane/memory/__tests__/conversation-anchor.test.ts

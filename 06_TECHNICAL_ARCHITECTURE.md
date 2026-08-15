@@ -178,10 +178,11 @@ ops-ios/OPS/
 │   │       ├── PhotoAnnotationRepository.swift
 │   │       ├── NotificationRepository.swift
 │   │       └── CalendarUserEventRepository.swift  # CRUD for calendar_user_events (added 2026-03-02)
-│   ├── Sync/ (11 files — rebuilt 2026-03-08, DataActor refactor 2026-04-19, SYNC RECOVERY 2026-07-22)
+│   ├── Sync/ (12 files — rebuilt 2026-03-08, DataActor refactor 2026-04-19, SYNC RECOVERY 2026-07-22)
 │   │   ├── SyncEngine.swift             # @MainActor @Observable orchestrator; dispatches through DataActor when FeatureFlags.useDataActor is on (default true 2026-04-19); reenqueueRecoverableOperations() launch/reconnect sweep + one-time deck-link backfill (2026-07-22)
 │   │   ├── SyncErrorClassifier.swift    # Pure failure-disposition seam (SYNC RECOVERY 2026-07-22): transient (5xx/429/408/timeouts/40001-class SQLSTATEs) vs permanent (other 4xx, 22xxx/23xxx/42xxx/P000x) vs auth (PGRST3xx/JWT/401). SyncOperationFailurePolicy = the ONE shared post-catch state transition both outbound paths call
-│   │   ├── RecoveryInventory.swift      # Pure PENDING WORK model: indefinite retention, STALE · 30D review state, capability-safe discard, and attention/sending/drafts/unlinked joins across SyncOperations + lead autocreate + LocalPhotos + site-visit packets + orphan decks
+│   │   ├── RecoveryInventory.swift      # Pure PENDING WORK model: indefinite retention, STALE · 30D review state, capability-safe discard (scopes: leadDeliveryRequest / localPhotos / queuedSends / quarantinedVisit, only the latter two of which are `isDestructive`), and attention/sending/drafts/unlinked joins across SyncOperations + lead autocreate + LocalPhotos + site-visit packets + orphan decks. `SiteVisitBundle.hasOperationInFlight` is carried explicitly — `members` holds one worst-tone representative per packet stage, so a `failed` sibling would otherwise mask an `inProgress` send from the discard guard
+│   │   ├── RecoveryRefreshSignal.swift  # Event-driven refresh for the sync pill + PENDING WORK (2026-08-10): store-change publisher, 500ms RunLoop.main debounce (never DispatchQueue.main), injectable scheduler; RecoveryRefreshMonitor owns the pipeline as @StateObject so re-renders can't drop in-flight events
 │   │   ├── OutboundProcessor.swift      # LEGACY @MainActor path for local→server push; retained behind FeatureFlags.useDataActor for rollback
 │   │   ├── InboundProcessor.swift       # LEGACY @MainActor path for server→local pull; retained behind FeatureFlags.useDataActor for rollback
 │   │   ├── RealtimeProcessor.swift      # @MainActor Supabase Realtime WebSocket subscription (9 merged entity types + 3 notification-only leads tables: opportunities/activities/follow_ups → post .opsLeadsDidChange, no SwiftData merge); SwiftData writes dispatch to DataActor when flag on
@@ -291,10 +292,12 @@ ops-ios/OPS/
 │   │       └── ProjectNotificationPreferences.swift
 │   │
 │   ├── Components/ (76 files organized by domain)
-│   │   ├── Common/ (26 files)
+│   │   ├── Common/ (28 files)
 │   │   │   ├── LoadingOverlay.swift
 │   │   │   ├── CustomTabBar.swift
 │   │   │   ├── TabBarBackground.swift
+│   │   │   ├── KeepAliveTabContainer.swift  # Keep-alive tab slots + slide geometry (2026-08-10); every visited tab stays mounted — see § Navigation System
+│   │   │   ├── TabActivationKey.swift       # \.isActiveTab environment key + onReceiveWhileActive; the activation protocol hidden tabs are held to
 │   │   │   ├── AppHeader.swift
 │   │   │   ├── SearchField.swift
 │   │   │   ├── AddressSearchField.swift
@@ -609,8 +612,10 @@ ops-ios/OPS/
 │       ├── CrewTooltipCard.swift
 │       └── GeofenceBannerView.swift
 │
-├── Utilities/ (28 files)
+├── Utilities/ (85 Swift files + Analytics/ — key files listed)
 │   ├── DataController.swift        # Central data coordinator (~5000 lines; @MainActor, owns DataActor + refresh bridge)
+│   ├── ReviewUnlockThresholds.swift  # Single source for the completed-work counts that unlock Task Review + Payment Review (2026-08-10). Distinct from ReviewThresholdService.threshold (rail-notification loudness)
+│   ├── ReviewCountRefreshMonitor.swift  # Debounced refresh pipeline for the FAB review badge (2026-08-10); same RunLoop.main scheduler seam as RecoveryRefreshMonitor
 │   ├── DataActor.swift             # @ModelActor singleton — owns all sync/cleanup/background SwiftData writes (~2400 lines, Phase 1 2026-04-19)
 │   ├── MainContextRefreshBridge.swift  # Sendable notification rebroadcast for @Query refresh (iOS 18.2 FB14750050 insurance; iOS 26 fixed)
 │   ├── FeatureFlags.swift          # useDataActor (default true), useActorForDataControllerWrites (Phase 2), usePhotoActor (Phase 3)
@@ -1214,46 +1219,36 @@ OPS uses a **hybrid navigation system**:
 ### Main Navigation Structure
 
 ```swift
-// MainTabView.swift (~300 lines)
+// MainTabView.swift — index-keyed tab roots, every visited one mounted at once
 struct MainTabView: View {
     @State private var selectedTab = 0
+    @State private var previousTab = 0
+    /// Tabs the operator has visited. Mounted on first visit, never unmounted.
+    @State private var mountedTabs: Set<Int> = [0]
 
-    private var tabs: [TabItem] {
-        var baseTabs: [TabItem] = [
-            TabItem(iconName: "house.fill")        // Home
-        ]
-
-        // All users get Job Board
-        baseTabs.append(TabItem(iconName: "briefcase.fill"))
-
-        // Schedule and Settings for all users
-        baseTabs.append(contentsOf: [
-            TabItem(iconName: "calendar"),         // Schedule
-            TabItem(iconName: "gearshape.fill")    // Settings
-        ])
-
-        return baseTabs
-    }
+    // The tab SET is permission- and flag-gated (LEADS needs `pipeline.view`
+    // + the `pipeline` feature flag; CATALOG needs `catalog.view` = all), so
+    // the index→tab mapping is computed, not fixed: `leadsTabIndex`,
+    // `booksTabIndex`, `jobBoardTabIndex`, `catalogTabIndex`,
+    // `scheduleTabIndex`, `settingsTabIndex`. Index 0 is always Home.
 
     var body: some View {
         ZStack {
-            // Tab content with slide transitions
-            ZStack {
-                switch selectedTab {
-                case 0: HomeView()
-                case 1: JobBoardView()
-                case 2: ScheduleView()
-                case 3: SettingsView()
-                default: HomeView()
-                }
-            }
-            .transition(slideTransition)
-            .animation(.spring(response: 0.3), value: selectedTab)
+            // Keep-alive container: renders every mounted tab and slides
+            // between them. See "Keep-Alive Tab Container" below.
+            KeepAliveTabContainer(
+                selected: selectedTab,
+                previous: previousTab,
+                mounted: mountedTabIndices
+            ) { index in
+                tabRoot(for: index)   // Home / Leads / Books / JobBoard /
+            }                         // Catalog / Schedule / Settings
 
-            // Custom tab bar overlay
+            // Custom tab bar overlay — writes through `tabSelection`, never
+            // `$selectedTab` (see the same-transaction contract below)
             VStack {
                 Spacer()
-                CustomTabBar(selectedTab: $selectedTab, tabs: tabs)
+                CustomTabBar(selectedTab: tabSelection, tabs: tabs)
             }
 
             // Floating action menu (context-aware)
@@ -1263,6 +1258,136 @@ struct MainTabView: View {
     }
 }
 ```
+
+### Keep-Alive Tab Container (2026-08-10)
+
+**Problem it solves.** The router this replaced wrapped the tab content in
+`Group { tabContent }.id(selectedTab)` — the `.id()` was what made the slide
+transition fire at all, and it also forced SwiftUI to destroy and cold-rebuild
+the whole tab on every switch. Home reconstructed its entire Mapbox stack, Leads
+and Books threw away their view models and refetched behind a spinner, scroll
+positions died. Tab switching is the app's primary navigation, so that teardown
+was the single largest source of navigation lag.
+
+**Slot architecture.** `OPS/Views/Components/Common/KeepAliveTabContainer.swift`
+renders every mounted tab at once inside a `ZStack` and moves them with
+`offset`: the selected tab sits at `0`, every other mounted tab parks exactly
+one measured container width to the side its index lives on
+(`TabContainerWidthKey`, a `max`-reducing preference). Direction of travel is a
+straight index comparison. Only the arriving and departing slots animate — every
+other mounted slot merely flips which side it is parked on, and animating that
+would drag whole screens across the display on a non-adjacent jump. First visit
+to a tab has no offset to animate from, so an asymmetric insertion transition
+supplies the identical slide (removal is `.identity`; slots are never removed).
+Reduce Motion pins every offset to `0` and carries the switch on opacity alone.
+
+The container owns **geometry only**. Selection policy — what the indices mean,
+how a tab is chosen, when the mounted set is rebuilt — stays in `MainTabView`.
+
+**Same-transaction contract.** `selectedTab` is never assigned directly.
+Every selection routes through `MainTabView.selectTab(_:with:)` (or the
+`tabSelection` binding that wraps it), which sets `previousTab`, inserts the
+arriving index into `mountedTabs`, and sets `selectedTab` in the SAME
+transaction. `previous` is load-bearing, not bookkeeping: it is the only way to
+know which slot is leaving, and a stale value teleports the outgoing tab
+off-screen instead of sliding it. Updating it in a later `onChange` pass also
+mounts an arriving tab a frame too late to animate in.
+
+**Never-evict RAM trade.** A tab mounts on first visit and is never unmounted;
+there is no eviction policy. This is a deliberate memory-for-responsiveness
+trade — the whole point is that returning to a tab costs nothing. The mounted
+set is reset only by `remapMountedTabs()`, on a role or permission change,
+because those rewrite which tab each index maps to and a slot mounted under the
+old map would render the wrong root.
+
+**Activation protocol.** `OPS/Views/Components/Common/TabActivationKey.swift`
+defines `\.isActiveTab`, injected per slot by the container and defaulting to
+`true` so sheets, pushed screens, previews, and tests behave exactly as before.
+The keep-alive trade only holds if hidden tabs stay quiet, so work that used to
+ride `onAppear` is reclassified:
+
+| Class | Where it runs | Examples |
+|---|---|---|
+| Mount-once | `onAppear` only | one-time wiring; first-visit loads |
+| Per-visit | `onAppear` (first visit) + `onChange(of: isActiveTab)` | `HomeView.beginVisit()` / `loadTodaysProjects(silent:)`, `ScheduleView`, `LeadsTabView`, `BooksTabView`, `JobBoardView`, `ExpensesListView`, `MyExpensesView`, `SettingsView`, `MonthGridView` |
+| Defer-while-hidden | guarded by `isActiveTab`, recomputed on activation | signal-driven refetches; a hidden tab sets a pending flag and consumes it when it comes back |
+
+Mount and activation coincide on a first visit, so the `onAppear` +
+`onChange(of: isActiveTab)` pair does not double-fire. Return-visit refreshes are
+silent (`loadTodaysProjects(silent: true)`) — the data is already on screen, and
+re-showing the loading state would flash the carousel and, through
+`appState.isLoadingProjects`, blink the tab bar and FAB out on every visit.
+
+**Cross-tab broadcasts.** `onReceiveWhileActive(_:perform:)` is `onReceive`
+gated on `isActiveTab`. Some notifications are answered by more than one tab —
+`ShowCalendarTaskDetails` is posted by Home's event carousel and by the calendar
+grids, and answered by both Home and Schedule. That was safe when exactly one tab
+existed; with every visited tab mounted an ungated handler runs twice and
+presents the same sheet twice. Two classes of listener were audited and
+deliberately left ungated, documented at their sites: `AppHeader`'s unread-count
+refresh (idempotent recount onto shared `AppState`; gating it risks a stale
+badge) and wizard listeners on PUSHED screens (wizards drive the tab themselves).
+The two wizard listeners that sit in tab BODIES and genuinely collide
+(`JobBoardProjectListView` and `ScheduleView`, both answering
+`WizardEvaluatePrerequisites` with different count sets) ARE gated.
+
+**Header height.** Every mounted tab's `AppHeader` is alive at once and
+`AppHeaderHeightKey` reduces with `max`, so inactive headers report the default
+floor (`AppHeader` gates its own contribution on `isActiveTab`). Without that,
+the tallest header ever mounted would pin the status band for the rest of the
+session.
+
+**Screen breadcrumbs.** `ScreenTrackingModifier`
+(`OPS/Services/BugReport/BugReportCaptureService.swift`) claims the bug-report
+breadcrumb on `isActiveTab` rather than on `onAppear`: with several tab roots
+mounted, the last writer would otherwise win nondeterministically — quite
+possibly a parked tab. Known residual: a pushed screen and its tab root both
+track, and on re-activation both fire with no ordering contract, so the deeper
+screen is not guaranteed to win. Inherent to a per-view breadcrumb, and strictly
+better than the wrong tab winning.
+
+**Tests:** `OPSTests/Views/KeepAliveTabContainerTests.swift` hosts the real
+wiring (offsets, per-slot animation eligibility, insertion direction, Reduce
+Motion, mount-set growth).
+
+### Tab Bar Touch Targets (2026-08-11)
+
+Source: `OPS/Views/Components/Common/CustomTabBar.swift`. The tab bar is a
+manual overlay, not a `TabView` bar, so it owns its own hit geometry and its own
+touch-down timing. Both were wrong, and both read to the operator as lag rather
+than as a miss.
+
+**Rule: a SwiftUI `Button` is tappable across its LABEL's bounds only.**
+`.frame(...)` and `.contentShape(...)` applied to the `Button` itself position
+the same small label inside a bigger box — they do not grow the responsive area.
+The tab bar had exactly that shape: each tab published a 28×50 interactive region
+(the glyph) inside a 60pt cell, with a 32pt dead gap between neighbours, under
+the 44pt field minimum from `MOBILE.md`. The fix moves the frame and the content
+shape INSIDE the `Button` label, sized to the cell width the lane already
+computes and passes down (`TabBarItem.cellWidth`), with the cell height tokenized
+as `OPSStyle.Layout.tabBarItemHeight` (50pt — the same value the lane's divider
+matches). Lane geometry, `PeekSnapBehavior` math, and VoiceOver traits are
+unchanged; only the responsive area grows. Tests measure the published
+accessibility frames rather than the layout intent:
+`OPSTests/Views/TabBarHitTargetTests.swift`.
+
+**Rule: a control hosted in a `UIScrollView` must release
+`delaysContentTouches` or its press state arrives ~150 ms late.** The tab lane is
+a horizontal `ScrollView` (it scrolls to reveal the Settings peek). A scroll view
+withholds touches from its content while it decides whether the gesture is a
+scroll, so every quick tap spent that window with nothing on screen changing —
+the action always fired on lift, but the acknowledgment did not. `ImmediateTouchDown`
+(a private `UIViewRepresentable` in the same file) walks up from its own
+superview to the enclosing `UIScrollView` and clears the flag, on both
+`didMoveToSuperview` and `didMoveToWindow` because SwiftUI can attach the
+representable before the scroll view is an ancestor.
+
+`canCancelContentTouches` is deliberately left ON: a touch that becomes a drag
+must still cancel the press so swipe-to-reveal and the peek snap behave exactly
+as before. Only the moment of acknowledgment moves earlier. The introspector is
+non-interactive at both layers (`isUserInteractionEnabled = false` plus
+`.allowsHitTesting(false)`), idempotent, and harmless when the lane is hosted
+without an enclosing scroll view (previews, tests).
 
 ### Sheet-Based Navigation Pattern
 
@@ -1562,14 +1687,75 @@ called identically by both outbound paths (`DataActor.executeOperation`,
 | Disposition | Trigger | SyncOperation transition |
 |---|---|---|
 | `transient` | URLError offline/timeout; HTTP 5xx/429/408; SQLSTATE 40001/40P01/55P03/57014; anything unknown | `retryCount += 1`; backoff `min(2^retryCount, 60)`s; at 20 → `status="failed"` (recoverable) |
-| `permanent` | other HTTP 4xx; SQLSTATE classes 22/23/42; P0001/P0002 | `status="parked"` immediately, no retry consumed, `sync_parked` analytics. Only an explicit user recovery action moves it; Discard is exposed only when that work unit's policy can prove it safe |
+| `permanent` | other HTTP 4xx; SQLSTATE classes 22/23/42; P0001/P0002; `SiteVisitPayloadError` (payload never reached the server) | `status="parked"` immediately, no retry consumed, `sync_parked` analytics. Only an explicit user recovery action moves it; Discard is exposed only when that work unit's policy can prove it safe |
 | `auth` | PGRST3xx / JWT / 401 | `status="failed"` + `.syncAuthExpired` → re-auth (unchanged) |
 
-`status` values: `pending → inProgress → completed / failed / parked`. PK-violation
+`status` values: `pending → inProgress → completed / failed / parked`, plus two
+terminal states written outside the processor — `quarantined` (identity review,
+`SiteVisitOrphanRecovery`) and `declined` (see below). PK-violation
 idempotency (23505 `_pkey` on create retry → treat as completed) still runs BEFORE
 classification. The 2026-07-22 outage motivated the split: a permanent 400
 (auto-lead `source_thread_key` rejection, RC1) previously burned the same 20-retry
 budget as a transient 504, then sat invisible.
+
+**Payload-build failures park (2026-08-13, bug 70db7ed6).** A DTO that cannot be
+built from its local row (`SiteVisitPayloadError`) never reached the server, and
+rebuilding it from the same row fails identically — so a retry can only burn the
+budget, and `reenqueueRecoverableOperations` revives a `failed` op on every launch.
+That combination made one authorless site-visit row retry forever. Such failures
+now classify `permanent` and park: visible in PENDING WORK, user-retryable, never
+automatic. `SiteVisitPayloadError` conforms to `LocalizedError` so the detail
+sheet's DETAILS disclosure states plainly what is missing.
+
+**Authorship heal — legacy site-visit rows (2026-08-13, bug 70db7ed6).**
+`created_by` arrived with the V19→V20 lightweight migration, which could only
+default existing rows to nil — parents included, since the V19 `SiteVisit` carried
+no author field either. Those rows can never satisfy the wire contract, so they
+threw at payload build before every send, and an unresolved CHILD is a live barrier
+in `SiteVisitOutboundSync.isReady`, damming its visit's `siteVisitComplete` (the
+operator's completion notes) behind it. `SiteVisitAuthorHeal`
+(`OPS/Network/Sync/SiteVisitAuthorHeal.swift`) resolves an author — the row's own
+value, else the parent visit's, else the signed-in operator (`currentUserId`) — at
+the outbound boundary for visits, artifacts, checklist answers and identity drafts,
+and persists it. `SyncEngine.healSiteVisitAuthorshipOnce()` clears the whole backlog
+ahead of the drain, gated by UserDefaults `siteVisitAuthorBackfill.v1`; the flag
+flips only after a pass that leaves NOTHING unresolved, so a launch that runs before
+sign-in completes retries next launch instead of retiring having healed no one. Both
+paths write `created_by` ONLY — flipping `needsSync` would enqueue a fresh write for
+every legacy row on the device at once. Soft-deleted rows are skipped: they sync as
+a delete, which carries no author.
+
+**`declined` — the operator stopped a send (2026-08-13, bug f7431c17).** PENDING
+WORK is a sync-recovery surface: its rows are queued SENDS, so DELETE there means
+"stop trying to send this", never "delete the record". Declining sets
+`status="declined"` and clears `lastError` / `lastAttemptedAt` / `completedAt` on
+every operation in the work unit, and touches NO model row — no `deletedAt`, no
+status change, no tombstone operation. It is refused outright while any operation
+in the unit is `inProgress`.
+
+Before this existed, discarding one stuck child send ran a whole-visit teardown:
+it cancelled the parent `SiteVisit`, tombstoned every artifact, checklist answer
+and identity draft, and enqueued durable soft-DELETEs for all of them — wiping a
+COMPLETED visit's server copy from a sync list. Deleting a visit is now only ever
+a decision made on the visit's own surface.
+
+Consumers that must know the status:
+- `OutboundProcessor` fetches `status == "pending"` only, so declined work is
+  never drained and never counted by `SyncEngine.getPendingOperations()`.
+- `SyncEngine.reenqueueRecoverableOperations()` touches only `inProgress`/`failed`,
+  and PENDING WORK's RETRY ALL only `failed`/`parked` — neither revives a decline.
+- `RecoveryInventory.isConsidered` excludes it, so the row leaves the screen at the
+  next rebuild.
+- `SiteVisitPersistenceCoordinator.unresolvedStatuses` **includes** it. This is
+  load-bearing: `queueDirtyGraphs(onlyOrphans:)` runs before every drain and
+  re-derives a send from any still-dirty row — and media sends are re-derived from
+  a still-local asset URL regardless of `needsSync`, so no model flag can stop
+  them. Counting `declined` as unresolved is what makes the decline stick, and it
+  also makes a genuine later edit revive that same operation via `enqueue` instead
+  of duplicating it.
+- `SiteVisitServerMerge.checklistResolvedStatuses` = `{completed, declined}`.
+  Checklist-id canonicalization fails closed on unrecognized lifecycles, so a
+  declined operation must read as settled — never migrated, never a collision.
 
 Site-visit failures retain their structured origin through this pipeline.
 `SiteVisitRepositoryError.server(code:message:detail:hint:)` preserves the four
@@ -1925,6 +2111,288 @@ syncEngine.recordOperation(
 ) var projects: [Project]
 ```
 
+### 7. Fetch Predication on Hot Paths (2026-08-10)
+
+**Rule: an unpredicated `FetchDescriptor` on a hot path is a defect.** "Hot path"
+means anything re-run on inbound data change, sync completion, badge refresh, or
+render — which covers most main-context reads in this app.
+
+- **`deletedAt == nil` belongs in the `#Predicate`, never in a trailing
+  `.filter`.** Same rows out either way; the difference is that the in-memory
+  form materializes every tombstoned row on the main thread first.
+- **Every gate that CAN ride the predicate must** — dated gates
+  (`startDate != nil`), lower bounds (`startDate >= cutoff`), scope columns.
+  Each excluded row is also relationship-faulting work not done, because the
+  permission filters that follow fault `teamMembers` and `project` per surviving
+  row.
+- **Relationship-walking filters stay in memory** and must be named as residual
+  cost at the call site, not quietly left to look free. Task assignment is a
+  comma-joined string (`ProjectTask.teamMemberIdsString`, parsed by
+  `getTeamMemberIds()`) OR'd with a to-many traversal; neither is expressible in
+  a `#Predicate`. **The CSV column is the schema constraint that blocks the
+  unlock** — normalizing assignment into a queryable form is the future schema
+  work that would let these filters follow the gates into the predicate.
+
+Predicated in this pass: `DataController.getProjects`, `getAllTasks`,
+`getAllScheduledTasks(from:)`, `CalendarViewModel.rebuildWeekCache`, the month
+grid. Two behavior corrections rode along, both previously-undocumented bugs:
+`getProjects` now excludes tombstones (the completed-work counters gating the
+review stacks were counting deleted jobs toward the unlock), and
+`getAllScheduledTasks` now gates `deletedAt` (a deleted task kept drawing a
+month-grid badge until the next launch — it was the only calendar fetcher that
+did not). `CalendarViewModel.rebuildWeekCache` takes **no** date bound on
+purpose: its per-day filter admits a task by overlap, tasks carry no maximum
+span, and any lower bound on `startDate` would silently drop long-running work
+off the canvas.
+
+`DataController.getProjectsForToday` was deleted in the same pass — dead code,
+no call sites. Tests: `OPSTests/Sync/CalendarFetchPredicationTests.swift`,
+`OPSTests/Sync/TaskReviewQueryParityTests.swift`.
+
+**Related: single-fetch count derivation.** `TaskReviewQuery` and
+`ProjectReviewQuery` each expose two shapes per queue — one that fetches the
+table, and one that takes an already-fetched array. The fetching shape is a
+one-line delegate onto the array shape so scoping cannot diverge between them.
+The FAB badge derived five counts from four entry points, each re-fetching the
+whole task table on the main thread on every sync completion and every schedule
+mutation, from every tab; one fetch now feeds them all.
+
+### 8. Event-Driven Sync Pill (2026-08-10)
+
+**Problem**: The sync pill (`SyncStatusIndicator`) and the PENDING WORK screen
+both polled `RecoveryInventory` every 2 seconds in `.common` runloop mode —
+forever, whether or not anything had changed and whether or not the pill was on
+screen. `.common` mode fires *during scroll tracking*, so a six-fetch
+main-context load ran with the operator's finger down.
+
+**Solution**: `OPS/Network/Sync/RecoveryRefreshSignal.swift`. The inventory only
+changes when the store changes, so the surfaces listen for that instead:
+`.dataActorDidSave` (background saves), `ModelContext.didSave` (main-context
+saves), and `.opsLeadsDidChange` (realtime lead rows), merged and debounced
+500 ms so a sync pass's save storm costs one load. `ModelContext.didSave` is
+subscribed name-wide, so DataActor's own saves arrive twice; the debounce
+collapses the overlap. A 60 s fallback timer self-heals inputs that reach no save
+notification (notably recovery-vault quarantine entries, which live outside
+SwiftData); it is merged *after* the debounce, never through it, so continuous
+store activity cannot postpone it indefinitely.
+
+**Rule: debounce UI-adjacent work on `RunLoop.main`, never `DispatchQueue.main`.**
+Main-QUEUE blocks drain during scroll tracking too, so a save landing mid-gesture
+delivers mid-gesture — the exact hitch being removed. `RunLoop.main` in
+`.default` mode defers delivery to gesture end. Nothing is dropped; it arrives
+when it can be paid for. Trailing-edge with no max-latency bound is a deliberate
+divergence from `InboundChangeSignal`'s router (which forces a flush after 1 s):
+starvation is bounded twice over here by the fallback tick and by the fact that a
+storm long enough to matter is a sync pass, which the pill is already displaying
+as SYNCING off `DataController` state.
+
+**Ownership is load-bearing.** `RecoveryRefreshMonitor` is an `ObservableObject`
+held as `@StateObject`, not a chain stored on the view struct. Stored on the
+struct, SwiftUI rebuilds the pipeline on every re-evaluation and `.onReceive`
+drops the previous subscription — along with any event still inside the 500 ms
+window, which is precisely the sync completion the pill needs. The same applies
+to the fallback timer: a struct-stored timer restarts its 60 s countdown on every
+re-render and never reaches its deadline. The scheduler is injectable
+(`publisher(center:scheduler:)`); production always passes `RunLoop.main`, and
+tests pass `OPSTests/Sync/VirtualScheduler.swift` because wall-clock debounce
+tests were outrun by parallel-build load.
+
+**Empty-guard on the capture scan.** `RecoveryInventory.captureSnapshots` fetches
+site-visit artifacts and checklist answers — two whole-live-table scans, because
+the visit-id match cannot ride a `#Predicate` (stored casing varies: 
+`UUID().uuidString` is uppercase, Postgres `uuid` columns are lowercase). Both
+tables grow without bound (server artifacts merge in and are never pruned), so an
+empty visit-id set **short-circuits before either fetch runs** rather than
+filtering to empty after. The fetches are injected so that skip is directly
+assertable. Ids are normalized inside the function, never trusted from the call
+site. Tests: `RecoveryRefreshSignalTests`, `ReviewCountRefreshMonitorTests`,
+`RecoveryInventoryCaptureScanTests`.
+
+### 9. Batched Operation Recording (2026-08-10)
+
+**Rule: any flow that mutates more than one item records through
+`SyncEngine.recordOperations`, never a per-item `recordOperation` loop.** A
+per-op loop is N context saves plus N push triggers on the main thread; the
+batch is one save and one push cycle. A per-item loop in a multi-item flow is a
+defect, not a style preference.
+
+**Invariant**: when the caller lets the batch commit its own model edits, it must
+first confirm `syncEngine.sharesModelContext(with: context)` — the single save
+inside `recordOperations` only commits pending edits made on the engine's own
+context. This mirrors the `===` guard in `stageOperationsForTransaction`.
+
+Converted in this pass: project cascade-delete (project tombstone + every child
+task in one batch) and task reorder. Tests:
+`OPSTests/Sync/BulkOperationBatchingTests.swift`.
+
+### 10. Diff-Gated Inbound Merges (2026-08-10)
+
+**Rule: every full-fetch inbound sync compares before it assigns.** Thirteen
+catalog-family merges run on EVERY delta pass (`pullDelta` seeds epoch cursors
+for all entity types, so they never skip). Un-gated they rewrote `lastSyncedAt`
+on every local row — and the variant↔option-value junction wiped and reinserted
+its whole company scope — which saved the DataActor context and broadcast
+`.dataActorDidSave` even when the server returned byte-identical data. Every such
+save wakes the main-context merge, `@Query` invalidation, and the sync-pill
+inventory refresh. Products were the quiet case: they carry no `lastSyncedAt`, so
+their cost was pure same-value reassignment — which SwiftData dirties anyway.
+
+The gate pattern, per entity: a `<entity>Differs(dto:from:accepting:)` predicate
+paired with an `apply<Entity>(dto:to:accepting:)` writer, the diff computed from
+fetches alone, and **the transaction skipped entirely** when nothing differs —
+never opened and left empty. (`test_emptyTransactionDoesNotPostDidSave` pins
+which of those two SwiftData actually requires, so a behavior change surfaces
+there first.)
+
+**Drift guards are part of the pattern.** A differ that stops listing a field the
+applier writes silently reintroduces the bug — the merge would skip a real
+change. The suite therefore walks the production field lists and asserts
+flip-and-converge for each: mutate one field, prove the merge writes, prove a
+second identical pass writes nothing. Keyed diffs cover junction rows whose only
+identity is the pair itself. Reference implementation and required shape:
+`OPSTests/Sync/CatalogMergeDiffGateTests.swift` — new full-fetch merges are
+expected to bring their own equivalent.
+
+### 11. Local-First Screen Opens (2026-08-11)
+
+**Rule: navigation NEVER triggers a whole-app sync.** Opening a screen is a
+read of data already on the device. A screen that needs one row current fetches
+that one row; it does not start a push+pull pass over every entity type because
+one of them happens to contain what it wants.
+
+**The canonical failure.** `DataController.refreshSingleClient(clientId:)` —
+called on EVERY open of a project's details — was literally
+`await syncEngine.triggerSync()`: push plus pull across all 40
+`SyncEntityType`s, main-actor orphan sweeps, and a photo-prefetch kickoff, to
+refresh one `clients` row. The method name said "single client"; the body said
+"sync the app." A rename is not the lesson — the lesson is that the targeted
+entry point did not exist, so the nearest available hammer was used.
+
+**The targeted-fetch pattern.** `SyncEngine.syncClientNow(clientId:)` is the
+shape every future one-entity refresh should copy:
+
+- Fetches ONE row by id and merges it through the SAME merge path the pull and
+  realtime paths use — `DataActor.syncClientOnly` when `FeatureFlags.useDataActor`
+  is on, `InboundProcessor.syncClient` otherwise — so conflict handling and the
+  `InboundChangeSignal` post are not re-implemented per call site.
+- Gated on `connectivity?.shouldAttemptSync`, matching the offline behavior of
+  the full pass it replaces: an airplane-mode open fails fast instead of riding a
+  URLSession timeout, and the screen renders from local data.
+- Does **not** acquire the `syncInProgress` lock and never writes `statusText` /
+  `isSyncing`. A single-row read is not a sync pass and must not present itself
+  to the operator as one — the pill stays quiet.
+
+Scope honestly, or leave it whole and say why: `triggerProjectTasksSync` is
+still a full pass, documented at its site as such, because no scoped
+project-task inbound entry point exists (the task repository fetches by company
++ cursor, not by project) and its only caller is the debug-only `TaskTestView`.
+A half-scoped fetch that silently drops rows is worse than an honest full one.
+
+**Local-first paint.** A screen whose data is already on disk paints from disk
+first, synchronously, then repaints when the network merge lands.
+`ProjectNotesViewModel.loadNotes` calls `loadNotesFromLocal()` before it touches
+the network; the activity feed's spinner condition
+(`isLoading && notes.isEmpty && annotations.isEmpty`) then yields on its own, so
+no UI change was needed to suppress the spinner. The read half of the repository
+is injectable (`ProjectNoteFetching`) precisely so the paint ORDER is assertable
+against a fetch that deliberately has not resolved yet — ordering that only holds
+by luck of timing is not a guarantee.
+
+**Image work belongs off the main actor.** Annotation compositing and photo
+download moved their decode / JPEG encode / disk writes off the main actor.
+Compositing runs on `PhotoCompositeRenderer`, a serial `actor`
+(`OPS/Network/PhotoAnnotationSyncManager.swift`), which preserves the durable-write
+serialization that main-actor isolation used to provide for free.
+
+**Per-key generation guard (the race the move widened).** A render suspended on
+a base-image or overlay download can resume AFTER a later render — started
+because the annotation changed — has already persisted its result, overwriting
+the fresh composite with pre-edit pixels. The stale write also refreshes the
+file's mtime, so it then passes the freshness check and the operator keeps seeing
+pre-edit markup until the next edit. The race predates the off-main move; the
+move only widened the window.
+
+`beginRender(for:)` hands out a per-key token and the renderer drops any write
+whose token is no longer the newest claim on that key. The check and the write
+stay one synchronous stretch on the actor, so no render can interleave between
+them. A superseded render also returns `nil`, so its stale pixels never reach the
+display cache. A failed disk write is distinguished from supersession and still
+publishes, as before. **Any actor-serialized cache that can be re-entered for the
+same key needs this guard; serialization alone does not order the results.**
+
+Tests: `OPSTests/Sync/ProjectDetailsLocalFirstTests.swift` (targeted fetch vs.
+full sync, offline gating, local-first paint order, renderer supersession). It
+seeds the inert warm-up `SyncOperation` row described in § Defensive Programming
+→ "The `SyncOperation` `#Predicate` Warm-Up Trap", so no test reaching the merge's
+conflict guards is green by luck of ordering.
+
+### 12. List Row Rendering (2026-08-11)
+
+Scroll-heavy lists are the app's most expensive surface: everything a row does is
+paid per row, per render pass, and again on every scroll recycle.
+
+**Rule: a card reads its RELATIONSHIPS, never the whole table.** The job board's
+task card re-fetched the whole project table twice and the whole task-type table
+three times just to name its own title, subtitle, stripe, and metadata — eight
+visible cards meant roughly 16 project fetches and 16 task-type fetches per render
+pass. `ProjectTask` already owns `project` and `taskType` SwiftData relationships,
+wired from the same id columns those fetches were matching on
+(`InboundProcessor.linkAllRelationships`), so the lookups are gone entirely.
+
+The replaced fetch was `deletedAt`-predicated, so the relationship read must
+reproduce that: `JobBoardCardText.liveProject(of:)` returns `nil` for a tombstoned
+parent, preserving the same "No project" fallback and the same suppressed address
+cell. **When replacing a fetch with a relationship, port the fetch's predicate
+into the accessor** — otherwise deleted rows quietly reappear on screen.
+
+**Rule: derive sections ONCE per body, then bind.** The task list ran its full
+filter+sort pipeline about six times per render (once per partition, once per
+`isEmpty` check); the project list read its three partitions seven times, each
+read re-running a comparator that touches four or five `Date` properties per
+side. Both compute once at the top of `body` and bind. The same applies inside a
+row: the progress bars and the UNSCHEDULED rule were three and four separate
+walks of `project.tasks`, now one pass each, and the assignee CSV is split once
+and serves both the badge and the crew count. The derivations live in
+`OPS/Views/JobBoard/JobBoardCardModels.swift` as plain values with no SwiftUI in
+them, which is what makes them testable on their own.
+
+**Rule: row identity is the entity id — never a mutable field of it.** Both job
+board lists folded the crew CSV into row identity, so any crew change destroyed
+and rebuilt the row with fresh `@State`. Identity is the project id; the card
+observes the `@Model`, so a crew edit still redraws it. (Fixed on the active list
+and on the `ProjectListSheet` CLOSED/ARCHIVED rows.)
+
+**Rule: presentation modifiers do not belong per row.** Ten stacked presentations
+per card (eight sheets, a dialog, a delete confirmation), installed on every
+visible row, collapse to one `.sheet(item:)` driven by a route enum plus one
+dialog and one confirmation shared by all three card kinds. In the same pass, the
+wizard's scroll-tracking `GeometryReader` — which re-measured on every scroll
+frame, forever, to serve a one-shot wizard step — now mounts only while a wizard
+is running and the notification is still owed, and the duplicate-task dedup log
+(fired per duplicate inside a main-thread list build) is DEBUG-only.
+
+`JobBoardView`'s `.id(selectedSection)` is deliberately kept: the section slide
+needs it, and the rebuild it triggers is now cheap.
+
+**Rule: live materials belong on overlays and sheets, not on rows.** Every job
+board row painted `.ultraThinMaterial`, and so did each of its badges — eight
+rows meant 16 to 40 live blur layers recomposited every scroll frame, over a
+pure-black canvas with nothing behind them worth blurring. The design system now
+carries an opaque L1 variant for exactly this case: `.glassSurface(.listRow)`,
+with `listRowBadgeFill` as the badge counterpart. Same hairline, same radius,
+same top-edge gradient, `surfaceRaised` instead of the material. Founder-approved
+and applied at the job-board card call sites only — every full-screen surface,
+sheet, overlay, and detail panel keeps true glass. Full token detail:
+`05_DESIGN_SYSTEM.md` § 20.1.
+
+Tests: `OPSTests/JobBoard/JobBoardCardModelTests.swift` and
+`OPSTests/JobBoard/JobBoardSectionBindingParityTests.swift` pin the new
+derivations against oracles that run the ORIGINAL code verbatim over the same
+store — including a tombstoned parent project, a task with no resolvable type, a
+task reachable through two projects, and every filter and sort shape the list can
+be in. A parity test whose fixture cannot produce the anomaly it guards is
+vacuous; seed the anomaly.
+
 ---
 
 ## Defensive Programming
@@ -2060,6 +2528,28 @@ let taskCount = project.tasks.count  // Safe, never nil
 // ❌ Unsafe force unwrap
 Text(project.client!.name)  // CRASH if client is nil
 ```
+
+### 9. The `SyncOperation` `#Predicate` Warm-Up Trap (2026-08-10)
+
+A `#Predicate` fetch of `SyncOperation` **traps** against a table that has never
+held a row: an uncatchable `EXC_BREAKPOINT` inside SwiftData, not a thrown error,
+so `try?` does not save the caller. It reproduces in every fresh in-memory
+container, which means any test whose code path reaches the inbound conflict
+guards (`acceptableFields`, `hasPendingOperations`) dies on the fetch rather than
+failing an assertion.
+
+Two remedies, by context:
+
+- **Tests** seed one inert warm-up `SyncOperation` into the container before
+  exercising those paths — see `makeContainer` in
+  `OPSTests/Sync/CatalogMergeDiffGateTests.swift`.
+- **Production code that must stay crash-proof** fetches predicate-free and
+  filters in Swift — see the note on `ProjectCacheMerge.operations`
+  (`OPS/Network/Sync/ProjectCacheMerge.swift`).
+
+This is the one documented exception to the fetch-predication rule in
+§ Performance Optimization → "Fetch Predication on Hot Paths"; it applies to
+`SyncOperation` specifically, not to model tables generally.
 
 ---
 

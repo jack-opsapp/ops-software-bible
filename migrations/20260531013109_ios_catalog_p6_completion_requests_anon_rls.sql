@@ -1,0 +1,8 @@
+alter policy task_material_consumption_requests_insert_rpc
+  on public.task_material_consumption_requests to public;
+
+alter policy task_material_consumption_requests_select_company
+  on public.task_material_consumption_requests to public;
+
+alter policy task_material_consumption_requests_update_rpc
+  on public.task_material_consumption_requests to public;

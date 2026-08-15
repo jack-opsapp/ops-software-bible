@@ -701,6 +701,7 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 5. **Action:** Open the header kebab (⋮) → Add Variant or Add Family
    - Variant flow: pick family (or deep-link to create one), pick option-value combinations, set quantity, unit, SKU. Effective threshold previews based on family/category fallback
    - Family flow: name, category, default price/cost, default unit, default thresholds
+   - **Bulk Add Variants:** `STOCK → Bulk Add Variants` opens `FAMILIES → CHANGE → REVIEW`. Search covers family, category, option names, and option values. Structurally unsafe families remain visible but disabled with the exact reason; Select all affects only safe visible rows. The operator names one option axis, identifies its existing/source value, enters 1–20 normalized new values, then reviews exact existing and new combinations before one synchronous apply. The browser keeps a company-scoped local draft; offline editing remains available but Apply is disabled. A successful apply closes only after the active TanStack stock query and the expansion snapshot query have both refetched. This is foreground work and does not create a notification-rail event.
 6. **Action:** Tap a LIST row, a single-variant GRID tile, a family-picker row, or a TABLE row → StockQuickAdjustSheet → adjust quantity. Long press a row → Open Full Detail.
 7. **Observation:** Status never relies on color alone. CRITICAL and LOW remain explicit text, with mobile-bright rose/tan foregrounds and brick/tan reserved for borders/dots.
 
@@ -774,7 +775,7 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 
 ### iOS field-surface continuity (2026-08-07)
 
-- **Project Activity keyboard:** `ProjectDetailsView` owns the real vertical scroll container. `ActivityTabView` receives that scroll proxy and moves the compose bar above the keyboard when editing begins; interactive downward scrolling dismisses the keyboard. A nested `ScrollViewReader` without a scrollable descendant is invalid because its `scrollTo` calls are no-ops. Sources: `ops-ios/OPS/Views/Components/Project/ProjectDetailsView.swift`, `ops-ios/OPS/Views/Components/Project/Tabs/ActivityTabView.swift` (code commit `ccf2d6e3`).
+- **Project Activity keyboard:** `ProjectDetailsView` owns the real vertical scroll container. `ActivityTabView` receives that scroll proxy and moves the compose bar above the keyboard when editing begins; interactive downward scrolling dismisses the keyboard. The Activity composer is a UIKit `UITextView`, so UIKit owns its first-responder lifecycle: SwiftUI state may request and observe focus but cannot resign the live editor when a view transaction briefly republishes `false`. A nested `ScrollViewReader` without a scrollable descendant is invalid because its `scrollTo` calls are no-ops. Sources: `ops-ios/OPS/Views/Components/Project/ProjectDetailsView.swift`, `ops-ios/OPS/Views/Components/Project/Tabs/ActivityTabView.swift`, `ops-ios/OPS/Views/Components/Common/ProjectNoteMentionEditingField.swift` (code commits `ccf2d6e3`, `e120ab0c`).
 - **Billable This Week:** the collapsed Home card is one compact 44pt-minimum scan row containing the label, total, job count, and disclosure. The full multi-line header and job list appear only after expansion, so the persistent collapsed state does not cover map controls or content. Source: `ops-ios/OPS/Views/Home/HomeContentView.swift` (code commit `6e081742`).
 - **Captured site notes:** a committed note/transcript row exposes an Edit action in both the capture packet and review sheet. Saving edits the same artifact in place and returns it to the offline sync queue; blank saves are rejected. Source: `ops-ios/OPS/Views/SiteVisits/SiteVisitCaptureView.swift` (code commit `c11472a6`).
 
@@ -791,6 +792,14 @@ containing unscheduled, task-review, and payment-review entries when available)
 and universal **Search**. Review counts remain on the overflow control and in
 its menu labels; locked review entries still surface their existing unlock
 message. The task-review and payment-review walkthroughs target this menu first.
+
+**Row surface (2026-08-11):** the three scrolling row kinds render on the opaque
+`.glassSurface(.listRow)` L1 variant rather than true glass — same hairline,
+radius, and top-edge gradient, no blur. Founder-approved; the visual change is
+limited to badges now fully covering the text behind them instead of dimming it.
+Nothing else about the screen changed. Tokens: `05_DESIGN_SYSTEM.md` § 20.1;
+the per-row render rules the job board is the reference case for:
+`06_TECHNICAL_ARCHITECTURE.md` § Performance Optimization → "List Row Rendering".
 
 ---
 
@@ -1636,11 +1645,12 @@ FILES keeps estimates actionable but collapses all email attachments to one `1 a
 - CatalogOrdersSheet (Suggested · Drafts · Sent)
 - CompanyDefaultProductsSheet (component_type → product mapping for drawing adapter)
 - SpreadsheetImportSheet (variant-aware import wizard)
+- CatalogBulkVariantExpansionFlow (guided FAMILIES → CHANGE → REVIEW dimensional expansion)
 - CatalogSnapshotListView (variant-aware historical snapshots)
 - ProductDetailView (Product detail — view + light edits; options/modifiers/recipe read-only)
 - ProductQuickAddSheet (3-field FAB flow for barebones Products)
 
-**Web sibling (2026-06-12, OPS-Web overhaul wave 3.2):** `OPS-Web` ships a matching `/catalog` surface (`src/components/catalog/`) with the same PRODUCTS / STOCK segments. It is the variant-aware replacement for the retired `/products` + `/inventory` pages (Direction D "Workbench"): a 3-tile supply strip (STOCK HEALTH / ON-HAND / PRODUCTS), inline quantity editing that writes audited `inventory_deductions` rows keyed by `catalog_variant_id`, a stock detail drawer (quick-adjust + unit-cost + threshold-cascade sources + used-in + adjustment ledger), and a full product editor at `/catalog/products/[id]` (base fields + options + modifiers + recipe) — which is the 308 redirect target of the iOS `ProductDetailView` "VIEW ON WEB →" link (`https://app.ops.dev/products/{id}` → `/catalog/products/{id}`, `ProductDetailView.swift:1054`). Unlike iOS, web authors the configurable layer (options/modifiers/recipe) fully. Web has no ORDERS surface (`catalog_orders` is consumed nowhere on web) — the buy-run exit is a filter pivot + COPY LIST/PRINT, not a restock order. Threshold status uses the canonical 3-level cascade (variant → family → category); legacy tag thresholds are not consulted (web/iOS agree). Threshold-less variants render as `UNTRACKED`, never `OK`.
+**Web sibling (updated 2026-08-12):** `OPS-Web` ships a matching `/catalog` surface (`src/components/catalog/`) with the same PRODUCTS / STOCK segments. It is the variant-aware replacement for the retired `/products` + `/inventory` pages (Direction D "Workbench"): a 3-tile supply strip (STOCK HEALTH / ON-HAND / PRODUCTS), inline quantity editing that writes audited `inventory_deductions` rows keyed by `catalog_variant_id`, a stock detail drawer (quick-adjust + unit-cost + threshold-cascade sources + used-in + adjustment ledger), and a full product editor at `/catalog/products/[id]` (base fields + options + modifiers + recipe) — which is the 308 redirect target of the iOS `ProductDetailView` "VIEW ON WEB →" link (`https://app.ops.dev/products/{id}` → `/catalog/products/{id}`, `ProductDetailView.swift:1054`). Unlike iOS, web authors the configurable layer (options/modifiers/recipe) fully. Its STOCK kebab also exposes the permission-gated Bulk Add Variants workflow described above. Web has no ORDERS surface (`catalog_orders` is consumed nowhere on web) — the buy-run exit is a filter pivot + COPY LIST/PRINT, not a restock order. Threshold status uses the canonical 3-level cascade (variant → family → category); legacy tag thresholds are not consulted (web/iOS agree). Threshold-less variants render as `UNTRACKED`, never `OK`.
 
 ---
 

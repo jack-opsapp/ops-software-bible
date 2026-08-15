@@ -1586,14 +1586,31 @@ Timeline includes:
 
 ## Site Visits
 
-### Creating a Site Visit
+### Creating a Site Visit (as-built 2026-08-12)
 
-Site visits can be created from:
-1. **Opportunity card** → "Book Site Visit" button
-2. **Calendar** → "New Event" → select type "Site Visit" → link to Opportunity/Project
-3. **Project detail** → "Book Site Visit" (for post-win check-ins)
+A site visit exists in exactly **two** shapes, separated by one column:
 
-**Required fields:** scheduledAt, assigneeIds (at least one), opportunityId OR projectId
+| Shape | `booked_at` | Meaning |
+|---|---|---|
+| **Walk-up capture (NOW)** | `NULL` | The operator is standing at the door right now. `scheduled_at` defaults to `created_at` and is **junk** — the row is invisible to every scheduling surface. |
+| **Booked appointment (BOOK)** | non-null | A real appointment. `scheduled_at` is the start, `duration_minutes` the length, `assignee_ids` who is going. |
+
+`status='scheduled'` means **open**, not booked, and must never be used as the discriminator. See `03_DATA_ARCHITECTURE.md` § 22.
+
+**Entry points (all lead-attached).** Every lead-attached visit affordance presents a two-option branch: **NOW** → the existing immediate capture, unchanged; **BOOK A VISIT** → the booking sheet/modal. On iOS that is the leads-tab VISIT chip, lead detail, the day-sheet panel, and the add-lead sheet; on web it is the pipeline lead detail next-steps strip. The branch is **state-aware**: when the lead already has an open booking, the second option reads `RESCHEDULE — THU 10:30AM` and opens the same sheet in reschedule mode. A second booking is never stacked.
+
+The **FAB stays immediate-capture only**. Booking always has a lead, so booking lives on lead surfaces; the FAB exists for the operator standing at a door. Booking from the calendar or from an empty slot is deliberately out of scope.
+
+**The write path is server-only.** All three surfaces (iOS, web, future MCP tools) call the same RPCs — `book_site_visit`, `reschedule_site_visit`, `cancel_site_visit_booking` (`04_API_AND_INTEGRATION.md` § *Site-visit booking RPCs*). Booking requires connectivity by design: the side effects are server-owned, so there is no offline queueing of a booking — iOS surfaces a terse error instead. Fields are date, time, duration (default 60), WHO'S GOING (defaults to the booker), and a heads-up override defaulting to the user's setting.
+
+**One open booking per lead.** A second booking is rejected only while an existing booked visit is `status='scheduled'`. Once it is `in_progress`, `completed`, or `cancelled` the slot frees — booking a follow-up while on site is legal.
+
+**Side effects of a booking**, all inside the RPC so no caller can diverge:
+1. One `activities` row, `type='site_visit_scheduled'` (`Site visit booked` / `rescheduled` / `cancelled`), linked to the visit.
+2. A `new_lead` opportunity is nudged to `qualifying` via `move_opportunity_stage` — booking a visit is qualification. Only from `new_lead`.
+3. The `trg_site_visits_google_calendar_sync` trigger enqueues outward calendar work (`07_SPECIALIZED_FEATURES.md` § 19c).
+
+**Where a booked visit appears.** Both OPS calendars render booked visits as a **third source** alongside tasks and user events (iOS `CalendarViewModel`; web schedule day/week/month). Visits are explicitly **excluded** from drag-reschedule, cascade, auto-schedule, the unscheduled tray, and crew scheduling — a visit is not a task and must never enter task machinery. They also mirror one-way outward to the operator's personal calendars: Apple via the on-device `CalendarMirrorService` `.siteVisit` source, Google via the queue drain. Editing in Apple or Google does **not** move the OPS booking; reschedules happen in OPS and reconcile outward.
 
 ### Checklist Administration
 
@@ -1603,13 +1620,21 @@ The Site Visit type chooser places `EDIT TYPES` immediately after the available 
 
 ### On-Site Experience (Mobile)
 
-When a site visit is due:
-1. Staff receives calendar notification
-2. Opens site visit from Calendar or Opportunity card
-3. Taps "Start Visit" → status → `in_progress`
-4. Captures photos (camera or gallery)
-5. Fills notes and measurements
-6. Taps "Complete Visit" → status → `completed`
+**When a booked visit comes due**, prompts arrive in this order (full contract in `07_SPECIALIZED_FEATURES.md` § 14.3.7). All are per-assignee:
+
+1. **Time to leave** — on-device local alert at `scheduled_at − driving ETA − 5 min`. Silently absent without location permission or a lead address; it never prompts for location just for this.
+2. **Heads-up push** at `scheduled_at − lead` (per-booking override, else the user's default, else 30 min) — server-fired, so it arrives even if the phone has not synced.
+3. **START push** at `scheduled_at`, firing up to 15 minutes late and never after. Tapping it lands directly in the capture view with the lead bound.
+4. **START card** in-app from the morning of the visit day, at the top of the day sheet and leads surface. Dismissal is per-visit and kills the card only — never the pushes.
+
+Prompts stop once the visit is no longer `scheduled`. A reschedule re-arms all of them automatically, because the dedupe key carries the appointment epoch.
+
+**The visit itself** (identical for walk-up and booked):
+1. Opens the site visit from the START card, a push, the calendar, or the lead
+2. Taps "Start Visit" → status → `in_progress`
+3. Captures photos (camera or gallery)
+4. Fills notes and measurements
+5. Taps "Complete Visit" → status → `completed`
 
 Within the primary capture form, section order is always identity → optional
 lead summary → checklist → notes. The summary is the trimmed

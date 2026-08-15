@@ -2051,6 +2051,28 @@ Expandable FAB with role-based and context-based item visibility. Admin and offi
 - The `canShowFAB` logic should check if the user has ANY create permission for the current tab context
 - See `03_DATA_ARCHITECTURE.md` > Permissions System Tables for the complete permission schema
 
+**Review-queue unlock gates (2026-08-10):**
+`OPS/Utilities/ReviewUnlockThresholds.swift` is the single source for the
+completed-work counts that unlock the review queues — `taskReview` (5 completed
+tasks, counted over the operator's whole task history, not a window) and
+`paymentReview` (5 completed-or-closed projects). Review is a learned habit, not
+a day-one feature: an operator with two finished jobs has nothing to review, and
+a review stack shown empty teaches them the entry point is dead. So both queues
+stay **locked but visible, with the remaining count**, until enough work has
+actually closed out.
+
+The same gate renders in two places — the JobBoard header entries and the FAB
+review menu (which caches the locked/unlocked verdict rather than recomputing it
+per render). Both read the constant, so the number promised on one surface
+cannot drift from the other or from the "Complete N …" copy explaining the lock.
+
+**Not to be confused with `ReviewThresholdService.threshold`** (also 5), which
+decides when a review BACKLOG is loud enough to earn a rail notification. The two
+answer different questions — *may I open this?* versus *should I be told about
+this?* — and are deliberately separate knobs: retuning rail loudness must never
+move the unlock gate, or vice versa. Their coincidence today is a design choice,
+not a dependency.
+
 **Current Implementation (being migrated to permissions):**
 ```swift
 struct FloatingActionMenu: View {
@@ -4252,7 +4274,7 @@ Every notification inserted into the `notifications` table MUST satisfy this con
 | `type` | Specific event type (e.g. `expense_submitted`, `email_sync_complete`, `projects_needing_tasks`) — NOT a catch-all like `"mention"` or `"update"`. Must exist in `NOTIF_TYPE_META` (web) and the `notificationIcon(for:)` switch (iOS). |
 | `title` | ≤ 32 chars, sentence case for content / UPPERCASE for authority (matches OPS voice). Names what happened, not the system that did it. |
 | `body` | ≤ 140 chars. Includes at least one **concrete reference** the user can act on: a sender name, a count + unit, an amount, a deadline, an entity name. Never bare counts ("3 new"). |
-| `deep_link_type` | Required when the action is anything other than "mark read". Free-form short identifier — both clients route on it. Current values: `subscription` / `trial_expiry` / `paymentReview` / `taskReview` / `unscheduledReview` / `photoStorage` / `catalogOrders` / `expense` / `invoice` / `lead` / `leads` / `opportunity` / `opportunities` / `inbox` / `projectsNeedingTasks` / `billableThisWeek` / `email_sync_complete` / `cashflow_forecast`. |
+| `deep_link_type` | Required when the action is anything other than "mark read". Free-form short identifier — both clients route on it. Current values: `subscription` / `trial_expiry` / `paymentReview` / `taskReview` / `unscheduledReview` / `photoStorage` / `catalogOrders` / `expense` / `invoice` / `lead` / `leads` / `opportunity` / `opportunities` / `inbox` / `projectsNeedingTasks` / `billableThisWeek` / `email_sync_complete` / `cashflow_forecast` / `site_visit_heads_up` / `site_visit_start`. |
 | `action_url` | Web URL or `ops://` deep link. Web reads it directly, iOS uses it as supplementary info (e.g. `?tab=...` query strings). |
 | `action_label` | UPPERCASE imperative verb phrase (e.g. `REVIEW`, `VIEW PLAN`, `PLAN THE WORK`). The action button label. |
 | `persistent` | `true` only for long-running operations the user is waiting on (scans, imports, threshold rail entries that auto-clear). `false` (dismissible) for everything else. |
@@ -4569,6 +4591,29 @@ Created only inside the provider-confirmed, replay-safe reconciliation transacti
 | Recipient | The canonical actor captured on the provider-send intent |
 
 The partial unique index `notifications_lead_follow_up_sent_dedupe_idx` makes the intent-scoped dedupe permanent, including after the standard notification is read or dismissed. The notification id is also stored in `email_send_intents.follow_up_notification_id`; an exact reconciliation replay returns that receipt and cannot create another row. Web presentation is registered in `NotificationType`, `NOTIF_TYPE_META`, and the dashboard notification widget. iOS routes it through the existing `lead` deep-link contract.
+
+### §14.3.7 Booked site-visit prompts (`site_visit_reminder`, 2026-08-11)
+
+One notification type covers both server-owned booking prompts; the two moments are distinguished by `deep_link_type`, not by `type`. Fired by `GET /api/cron/site-visit-prompts` every 5 minutes, full-day — the endpoint contract, engine rules, and dedupe-key grammar are in `04_API_AND_INTEGRATION.md` § 25.
+
+| Field | Heads-up | START |
+|---|---|---|
+| `type` | `site_visit_reminder` | `site_visit_reminder` |
+| `deep_link_type` | `site_visit_heads_up` | `site_visit_start` |
+| `title` | `Site visit in <n> min — <lead title>` | `Site visit — <address, else lead title>` |
+| `body` | lead address, else `No address on the lead.` | `Start now?` |
+| `action_label` | `OPEN LEAD` | `START VISIT` |
+| `action_url` | `/pipeline?opportunityId=<opportunity_id>` | `/pipeline?opportunityId=<opportunity_id>` |
+| `persistent` | `false` | `false` |
+| `dedupe_key` | `site_visit:<visit_id>:heads_up:<user_id>:<epoch>` | `site_visit:<visit_id>:start:<user_id>:<epoch>` |
+
+**Authority split (locked in the design).** The **server** owns the heads-up and START prompts, so they fire even when the assignee's phone has not synced. The **device** owns only the time-to-leave alert, which needs live location anyway. iOS schedules **no** local heads-up/START notification — this removes the remote/local double-notification problem by construction rather than by coordination.
+
+**Registration.** Web: `NotificationType` union in `notification-service.ts` and `NOTIF_TYPE_META` in `notification-meta.ts` (label `SITE VISIT`, calendar-clock icon, `attn` tone), plus both notification inventory tests. iOS: `NotificationEventType` (push-on by default), `NotificationManager.routeByType`, and the `AppDelegate` push handler — which now inspects `deep_link_type` **or** `type` *before* the bare-`leadId` short-circuit that would otherwise have swallowed every site-visit push. Tapping START lands in `SiteVisitCaptureView` with the lead bound, through the same single capture cover the calendar's START NOW uses.
+
+**Rail has no opt-out.** Rail rows are written for all active assignees; `channel_preferences['site_visit_reminder']` gates the push only. Quiet hours are bypassed on purpose — the operator chose the appointment time.
+
+**Time-to-leave alert (iOS local, not a `notifications` row).** `SiteVisitDepartureAlertScheduler` fires at `scheduled_at − driving ETA − 5 min` for today's booked visits assigned to the user, using the app's **existing** location authorization; it never prompts for location just for this, and with no permission or no lead address it is silently absent. Cancel-then-schedule on every booking change; armed at launch and refreshed on foreground, booking changes, and the CalendarMirror background wake. It carries no time-sensitive entitlement (that needs provisioning — a deliberate deferral).
 
 ### §14.4 Email infrastructure (typed React Email)
 
@@ -6601,11 +6646,27 @@ Site visits are mirrored onto the connected mailbox owner's Google Calendar.
 One-way, OPS → Google: OPS owns the visit and nothing is read back, which keeps
 the failure model to "landed or retry" with no merge to get wrong.
 
-**OAuth.** `/api/integrations/gmail` now requests
-`https://mail.google.com/ https://www.googleapis.com/auth/calendar.events`.
-Google classifies `calendar.events` as *sensitive* (the app already ships the
-stricter *restricted* mail scope). The callback records what Google actually
-granted into `email_connections.granted_scopes`.
+> **As-built correction (2026-08-12).** The 2026-08-06 version of this section
+> described an OAuth flow, a drain worker, and client files that were designed
+> but never built: only the **database half** shipped on 2026-08-06/07 (queue
+> table, trigger, tenancy cast fix). Verified against `origin/main`: there was
+> no `/api/cron/google-calendar-sync` route, no `providers/google-calendar-client.ts`,
+> no `meeting-booking/google-calendar-sync.ts`, no `resolveQueueTransition`, and
+> the Gmail OAuth route requested `https://mail.google.com/` **only**. The
+> worker and consent lane below are the real implementations, landed
+> 2026-08-12 with the SITE VISIT BOOKING initiative. Retry policy, file paths,
+> and function names differ from the earlier text and are corrected in place.
+
+**OAuth — opt-in, not automatic.** Calendar access is a **separate consent**,
+never a widening of the mail connect flow. `/api/integrations/gmail` requests
+the mail scope alone; only `?include_calendar=1&connectionId=…` adds
+`https://www.googleapis.com/auth/calendar.events`. Google classifies
+`calendar.events` as *sensitive* (the app already ships the stricter
+*restricted* mail scope). Every Gmail auth URL now carries
+`include_granted_scopes=true`, so any re-consent returns the union of scopes
+and the flow is self-healing. The callback records what Google actually granted
+into `email_connections.granted_scopes` on **every** path. Full contract:
+`04_API_AND_INTEGRATION.md` § 26a.
 
 **Why granted_scopes exists.** A mailbox authorised before the calendar scope
 holds a mail-only refresh token that would 403 on every push forever. Recording
@@ -6626,7 +6687,17 @@ forgets. Do **not** add app-level enqueues; they race the trigger.
 | `scheduled_at` / `duration_minutes` / `notes` changed | `update` |
 | `status → cancelled`, or soft delete | `delete` |
 | photos, measurements, internal notes | nothing — never reaches a calendar |
+| `booked_at IS NULL` (walk-up or legacy row) | nothing — **not an appointment** |
 | company has no calendar-scoped connection | nothing — inert |
+
+**Booking gate (2026-08-10, migration `20260810194251_site_visit_booking.sql`).**
+The original trigger enqueued on *every* `site_visits` write. Walk-up captures
+and the ~20 legacy rows carry a junk `scheduled_at` defaulted to `created_at`,
+so they would have published garbage onto real calendars. The trigger now
+returns early unless `coalesce(new.booked_at, old.booked_at)` is non-null —
+only genuine appointments reach a calendar. Operations are `create` / `update` /
+`delete`; there is **no `upsert` operation**, despite what the original plan
+text said.
 
 **Tenancy trap.** `email_connections.company_id` and `site_visits.company_id` are
 legacy **text**; `google_calendar_sync_queue.company_id` is **uuid**. The first
@@ -6635,30 +6706,63 @@ site-visit insert. The trigger selects the connection on text and casts only for
 the queue insert. A malformed legacy tenant id is a no-op, never an error —
 the trigger must never abort the caller's write.
 
-**Queue semantics** (`google_calendar_sync_queue`, service-role only). Partial
-unique on `(site_visit_id, operation) where status='pending'` collapses repeat
-saves into one Google write. Outcomes map via `resolveQueueTransition`:
-`ok`→succeeded; `retryable` (429/5xx)→pending with capped exponential backoff,
-failing after `MAX_SYNC_ATTEMPTS` (6); `scope_missing` and `auth_revoked`→
-**skipped, not retried** — neither is fixable by trying again, and retrying burns
-quota while hiding the reconnect that fixes it. Worker:
-`/api/cron/google-calendar-sync`, every 5 minutes.
+**Queue semantics** (`google_calendar_sync_queue`, service-role only). `status`
+is CHECK-constrained to `pending | succeeded | failed | skipped` — the success
+terminal is **`succeeded`**, not `done`. Partial unique on
+`(site_visit_id, operation) where status='pending'` collapses repeat saves into
+one Google write. Transient provider failures back off **5 → 10 → 20 → 40
+minutes** and settle `failed` on the **fifth** attempt
+(`GOOGLE_CALENDAR_SYNC_MAX_ATTEMPTS`).
 
-**Event shape** (`buildSiteVisitEvent`). Title `Site visit — <customer>`,
+**Skips are never errors.** Each records a `skip_reason`:
+`missing_calendar_scope` (mail-only grant — the ordinary state before a company
+consents), `grant_revoked` (typed `GmailTokenRefreshError.isGrantRevoked`, i.e.
+`invalid_grant` on the shared refresher, or a provider 401),
+`connection_missing` / `connection_inactive`, `visit_not_syncable`, and
+`booking_cancelled`. Neither a missing scope nor a dead credential is fixable by
+retrying, and retrying burns quota while hiding the reconnect that actually
+fixes it.
+
+**The drain re-reads the visit** before writing, so a cancellation landing
+between enqueue and drain cannot orphan a remote event. Completed visits **do**
+keep patching — they happened, and the calendar should say so.
+`cancel_site_visit_booking` additionally neutralizes still-pending
+`create`/`update` rows to `skipped`/`booking_cancelled`, so a cancelled booking
+can never materialize remotely from stale queued work.
+
+**Concurrency.** PostgREST cannot express `FOR UPDATE SKIP LOCKED`; the durable
+cron lease (`runWithCronWorkloadControl`) serializes whole runs instead, so the
+plain select-then-update cannot double-send.
+
+**Event shape** (`buildSiteVisitCalendarEvent`). Title `Site visit — <customer>`,
 location = the lead address, description links back to
-`/pipeline?opportunityId=…`, times in `companies.timezone`. **No attendees,
-deliberately** — adding the customer makes Google email them an invitation as a
-side effect of an internal booking. Deleting an event that is already gone
-counts as success; the desired end state holds.
+`/pipeline?opportunityId=…`. `create`/`update` upsert on the connection's
+`primary` calendar — patch when an event id is known, insert otherwise, and a
+404/410 on patch **recreates**, because OPS is the source of truth. The event id
+is written back to `site_visits.google_calendar_event_id` /
+`google_calendar_id` / `google_calendar_synced_at`; `delete` clears them.
+**No attendees, deliberately** — adding the customer makes Google email them an
+invitation as a side effect of an internal booking. Deleting an event that is
+already gone counts as success; the desired end state holds.
 
 **Cost:** $0. Google Calendar API standard use is free to 1,000,000 requests per
-day per project.
+day per project, and both `*/5` crons run on the existing Vercel plan.
 
-**Files:** `providers/google-calendar-client.ts`,
-`meeting-booking/google-calendar-sync.ts`, `/api/cron/google-calendar-sync`.
-**Migrations:** `google_calendar_sync_for_site_visits`,
-`google_calendar_sync_queue`, `google_calendar_sync_enqueue_trigger`,
-`google_calendar_sync_trigger_tenancy_cast_fix`.
+**Activation is one operator click** — Settings → COMMS → the connected Gmail
+card → `CALENDAR SYNC` CONNECT. Until then the trigger finds no calendar-scoped
+connection, nothing is enqueued, and the feature is inert rather than broken.
+
+**Files:** `src/lib/site-visits/google-calendar.ts`,
+`src/app/api/cron/google-calendar-sync/route.ts`,
+`src/lib/email/calendar-scope.ts`, `src/lib/email/email-oauth-state.ts`,
+`src/components/settings/integrations-tab.tsx`.
+**Migrations:** `20260807010455_google_calendar_sync_for_site_visits.sql`,
+`20260807010510_google_calendar_sync_queue.sql`,
+`20260807011112_google_calendar_sync_enqueue_trigger.sql`,
+`20260807011226_google_calendar_sync_trigger_tenancy_cast_fix.sql`,
+`20260810194251_site_visit_booking.sql` (booking gate),
+`20260811054117_site_visit_booking_trigger_fn_acl.sql` (grant hygiene),
+`20260812170628_email_oauth_calendar_source.sql` (consent lane).
 
 **Apple Calendar / Outlook** use a subscription feed instead — see § 19d.
 
@@ -6720,6 +6824,59 @@ the Google push, and the Schedule card so all three agree.
 `/api/calendar/feed/[token]` (feed), `/api/calendar/feed-token` (mint/revoke),
 `src/components/settings/calendar-subscription-card.tsx`.
 **Migrations:** `calendar_feed_tokens`, `touch_calendar_feed_token`.
+
+### 19e. Site-Visit Opportunity Link Guard (DB, 2026-08-12)
+
+`site_visits.opportunity_id` is the one opportunity-child link the CLIENT
+legitimately changes after insert: the iOS capture flow's quick-start path
+(`SiteVisitCaptureViewModel.loadOrCreateVisit()`, FAB start) creates the visit
+unlinked — it syncs to the server within ~a second — and the operator attaches
+(`reassignVisit(to:)`), switches, or clears (`clearIdentitySelection()`) the
+lead mid-visit via plain field updates. The generic token-only
+`private.guard_opportunity_child_reparent` therefore rejected every
+quick-start visit's follow-up sync with `[42501] child_reparent_forbidden`,
+wedging the visit and its whole dependency chain (artifacts, media uploads,
+checklist answers, identity drafts, guarded completion) — 114 operations on
+the founder's device, diagnosed 2026-08-12 (bug `ac712cca`).
+
+**Behavior since `20260812174334_site_visit_opportunity_link_guard`:**
+`trg_site_visits_guard_opportunity_reparent` executes the site-visit-specific
+`private.guard_site_visit_opportunity_link()` instead of the generic guard.
+On an `opportunity_id` change it allows, in order:
+
+1. **Token path (unchanged):** a minted `opportunity_child_reparent_tokens`
+   row for this (txid, backend pid, table, row, old→new) is consumed —
+   admin/RPC flows keep working exactly as before.
+2. **Live-visit permission path (new):** while the visit is live
+   (`completed_at IS NULL` and `status` in scheduled/in_progress) the change
+   is allowed when the caller has a resolvable identity
+   (`private.get_current_user_id()`), belongs to the visit's company, passes
+   `private.current_user_can_edit_site_visit(...)` against the visit's
+   CURRENT parent context, and — when linking to a target — the target
+   opportunity is in-company, not archived/deleted, and passes
+   `private.user_can_edit_opportunity(actor, target)`. Attach (NULL→X),
+   reassign (A→B), and clear (X→NULL) are all covered because all three are
+   designed client actions on a live visit.
+3. Otherwise `child_reparent_forbidden` (42501).
+
+**Completed/cancelled visits stay frozen** — linkage changes are token-only,
+because a completed visit is money-bearing evidence (its completion activity,
+photos, and downstream quoting hang off the lead). Every OTHER guarded table
+(deck_designs, activities, email_threads, follow_ups, …) keeps the generic
+token-only guard; site_visits is deliberately the only permission-windowed
+one. Children stay consistent server-side via the existing
+`site_visits_propagate_child_opportunity` trigger and the
+`site_visit_child_opportunity_mismatch` checks.
+
+The same migration fixed a second parked-sync cause: the CHECK constraint on
+`site_visit_types` calls `private.site_visit_type_fields_valid(jsonb)`, which
+was EXECUTE-granted only to `postgres` — CHECK constraints run as the invoking
+role, so every client insert of a custom checklist type failed with
+`permission denied`. Now granted to `anon`, `authenticated`, `service_role`.
+
+`complete_site_visit_guarded` is unrelated to linking: its completion payload
+allowlist is `notes` / `measurements` / `photos` / `internal_notes` only, and
+it never touches `opportunity_id`.
 
 ## 20. Mobile Wizard System
 
@@ -8754,6 +8911,17 @@ update op (jobs) — offline-safe.
 toast (`VIEW` action), Settings › DATA › `Pending Work` (live mono count, `—` at
 zero), and Notifications sync section `VIEW ALL →`.
 
+**Refresh (updated 2026-08-10):** both surfaces — the pill and this screen — were
+rebuilding the inventory on a 2-second `.common`-mode poll, which fires during
+scroll tracking and ran a six-fetch main-context load forever, whether or not
+anything had changed and whether or not the pill was on screen. They are now
+event-driven off store-change notifications with a 500 ms `RunLoop.main` debounce
+and a 60 s self-heal tick (`RecoveryRefreshSignal` / `RecoveryRefreshMonitor`),
+and the capture scan short-circuits when there are no visit ids to match. Full
+mechanism and the debounce-scheduler rule:
+`06_TECHNICAL_ARCHITECTURE.md` § Performance Optimization → "Event-Driven Sync
+Pill". No change to what either surface displays.
+
 **Copy:** every string is a `SyncStatusCopy` static (single chokepoint, 21 new
 unit-tested cases). **Proof:** 5 rendered-state snapshot PNGs in
 `ops-ios/docs/artifacts/sync-recovery-proof/`; suites
@@ -8763,6 +8931,35 @@ unit-tested cases). **Proof:** 5 rendered-state snapshot PNGs in
 queue), `a1f3d5ef` (deck link path), `c2b064c5` (inventory).
 Capability-safe discard and awaited failure handling landed in `d86fda45` and
 `ee5d271a`.
+
+**Cross-entity create barrier (2026-08-13, bug `06f68200`).** The queue ordered
+writes *within* an entity group but never *across* entities, so an op could
+reference a row the server had never seen — canonically a `deckDesign` update
+carrying `{updated_at, project_id}` pushed ahead of that project's own create.
+`deck_designs`' `assigned_lead_scope_update` policy resolves
+`private.current_user_can_edit_deck_design(company_id, opportunity_id,
+project_id, 'deck_builder.edit')` against the absent project, returns `42501`,
+and `SyncErrorClassifier` — context-free by design — parks the op permanently.
+Observed on the founder's device 2026-08-12: designs `edc90edf` and `6ce2875c`
+parked while projects `8876b1dd` and `11a363d6` landed in the same drain.
+
+`SyncCrossEntityDependency` (`ops-ios/OPS/Network/Sync/`) is the fix, wired
+identically into both outbound paths (`OutboundProcessor` + `DataActor`) at
+three points: the eligibility filter **holds** any op whose payload carries a
+mapped foreign key (`project_id`, `client_id`, `company_id`, `task_type_id`)
+to an entity with a non-`completed` local create; the drain loop re-runs when a
+landed create releases held work; and a pass-start step **releases** ops parked
+by this race — an RLS/FK rejection whose `lastAttemptedAt` is *strictly* before
+its blocking create's `completedAt` — back to `pending` with `retryCount = 0`.
+Strictness is the loop guard: the next claim stamps an attempt later than that
+completion, so an op can never be released twice. Parks with any other cause
+are untouched. The classifier was deliberately NOT changed — reclassifying RLS
+as retryable would re-open the 2026-07-22 retry-storm failure mode and burn the
+budget against a dependency of unbounded latency (a create can sit unsent for
+days off-signal). The module is pure (`[SyncOperation]` in, no fetches) because
+a `#Predicate` fetch of `SyncOperation` traps against a never-populated table.
+Suite `SyncCrossEntityDependencyTests` (23 cases: 21 module, 2 driving the real
+`OutboundProcessor`).
 
 ---
 

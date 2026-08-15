@@ -1481,11 +1481,14 @@ covers, and dedicated overlay windows. OPS-owned UIKit-backed custom editors
 must prepare the accessory when their input is created, before it becomes first
 responder; editing-activation installation is only the fallback for
 system-managed inputs. This avoids reloading the keyboard during a custom
-editor's focus transition. The accessory reports the OPS minimum touch-target
-token as its intrinsic height, weakly retains its exact owning input, and
+editor's focus transition. The accessory uses one compact 44pt band: an
+invisible full-band `DONE` hit target preserves the OPS minimum touch target,
+while its visible label is top-aligned with tokenized clear space between the
+label and keyboard. The accessory weakly retains its exact owning input and
 resigns that input. `DONE` therefore remains fully above the keyboard and hides
 it without dismissing the screen, clearing data, or relying on the active
-window's responder chain.
+window's responder chain. Source: `ops-ios/OPS/Styles/Components/OPSKeyboardDoneAccessory.swift`
+(code commit `e120ab0c`).
 
 Generic local `.toolbar(placement: .keyboard)` implementations and
 presentation-scoped dismissal modifiers are forbidden because they can miss
@@ -2931,10 +2934,28 @@ Three SwiftUI view modifiers, one per surface tier from `ops-design-system/proje
 | Modifier | Tier | Treatment |
 |---|---|---|
 | `.glassSurface(cornerRadius: 10)` | L1 section card | `.ultraThinMaterial` + `glassApprox` tint (`rgba(18,18,20,0.58)`) + `glassBorder` hairline (`rgba(255,255,255,0.09)`) + 4% white top-edge gradient |
+| `.glassSurface(.listRow, cornerRadius: 10)` | L1 opaque — long scrolling list rows (2026-08-11) | Same hairline, radius, and top-edge gradient; `surfaceRaised` (`#141416`) replaces the material. No blur |
 | `.glassDense(cornerRadius: 12)` | L1 dense (sheets / popovers / dropdowns) | Same fill model, `glassDenseApprox` (`rgba(18,18,20,0.78)`), no top-edge gradient |
 | `.nestedCard(cornerRadius: 6)` | L2 nested card | Flat `Color.white.opacity(0.04)` + `Color.white.opacity(0.08)` hairline. No blur, no top-edge gradient |
 
 Three glass layers deep is forbidden — see `MOBILE.md` § 3.
+
+**When to reach for `.listRow` (added 2026-08-11, founder-approved):** rows in a
+long scrolling list, and nothing else. Live materials belong on overlays, sheets,
+detail panels, and full-screen surfaces — anywhere a card sits over content worth
+blurring. A scrolling board is the opposite case: it keeps 8–10 rows plus their
+badges on screen over the pure-black canvas, where each material is its own blur
+pass recomposited every frame, and there is nothing behind a row to blur.
+`MOBILE.md` § 3 already sanctions the solid panel for exactly this — it reads
+crisper in outdoor glare and avoids stacking blur passes.
+
+`listRowBadgeFill(_:cornerRadius:)` (`OPS/Views/Components/Common/TaskBadge.swift`)
+is the badge counterpart: it keeps the tint wash and hairline over the row's own
+opaque fill, so a badge fully covers the title behind it where the material only
+dimmed it. `GlassSurfaceFill` is the enum behind the variant
+(`.translucent` default / `.listRow`); every value is an existing token, no new
+colors. Rationale and the render-cost measurement that drove it:
+`06_TECHNICAL_ARCHITECTURE.md` § Performance Optimization → "List Row Rendering".
 
 **Migration path:** existing call sites using `OPSStyle.Colors.cardBackground` (a flat `#191919` asset) remain for legacy consumers (Books `HeroCarousel`, JobBoard cards, etc.) and continue to compile. New code must use the modifiers; old code migrates opportunistically when the surface is otherwise rebuilt.
 
@@ -2976,7 +2997,9 @@ The LEADS tab rebuild (Phases 0–6) is the first consumer:
 - `LeadDetailView` family (`DetailHero`, `ContactCard`, `FollowUpsCard`, `ActivityTimeline`, `StageTimeline`, `StickyActionBar`) — combinations of `.glassSurface()` + `.nestedCard()` + earth-tone -M variants
 - `LeadFormView` + all five sheets — chip pickers, status lines, danger-zone destructive button
 
-Future consumers (Books tab, JobBoard cards, Schedule, Settings) should migrate to the modifiers when those surfaces are otherwise rebuilt — not as a standalone change.
+- `UniversalJobBoardCard` (2026-08-11) — the three scrolling row kinds (project row, task row, kanban compact row) use `.glassSurface(.listRow)` with `listRowBadgeFill` badges; the sheet-hosted picker rows in the same file keep `.glassSurface()`. See the `.listRow` guidance above.
+
+Future consumers (Books tab, Schedule, Settings) should migrate to the modifiers when those surfaces are otherwise rebuilt — not as a standalone change.
 
 ---
 

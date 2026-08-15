@@ -1,0 +1,127 @@
+-- HIGH-3: check_pending_invites was anon+PUBLIC executable and keyed off a
+-- caller-supplied p_email with no ownership check, so an unauthenticated probe
+-- could enumerate any email and harvest the company join code, the inviter's
+-- name, and the full seated-team roster (names + avatars).
+--
+-- Fix: derive the lookup email from the verified JWT (auth.jwt()->>'email') and
+-- ignore the caller-supplied p_email entirely, so an authenticated caller can
+-- only ever see invites addressed to their OWN token email; and restrict
+-- execution to authenticated (REVOKE anon, PUBLIC). The p_email parameter is
+-- retained in the signature (iOS passes it) but no longer trusted. company_code
+-- stays in the payload: it is the invitee's own pending-invite code and the iOS
+-- invite-accept flow uses it as the join proof; gating to the verified email
+-- owner is what closes the leak. iOS calls this after Firebase sign-up (the
+-- JWT email equals the address it checks). Web does not call this RPC.
+CREATE OR REPLACE FUNCTION public.check_pending_invites(p_email text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_invites jsonb := '[]'::jsonb;
+  v_invite RECORD;
+  v_team_members jsonb;
+  v_team_size INT;
+  v_inviter_name TEXT;
+  v_role_name TEXT;
+  v_company RECORD;
+  v_caller_email TEXT;
+BEGIN
+  -- Ownership is proven by the verified token, not the parameter.
+  v_caller_email := auth.jwt() ->> 'email';
+
+  IF v_caller_email IS NULL OR TRIM(v_caller_email) = '' THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  FOR v_invite IN
+    SELECT
+      ti.id AS invitation_id,
+      ti.company_id,
+      ti.role_id,
+      ti.invited_by,
+      ti.expires_at,
+      ti.created_at
+    FROM team_invitations ti
+    WHERE LOWER(TRIM(ti.email)) = LOWER(TRIM(v_caller_email))
+      AND ti.status = 'pending'
+      AND ti.expires_at > NOW()
+    ORDER BY ti.created_at DESC
+  LOOP
+    SELECT
+      c.id,
+      c.name,
+      c.company_code,
+      c.logo_url,
+      c.industries,
+      c.seated_employee_ids
+    INTO v_company
+    FROM companies c
+    WHERE c.id = v_invite.company_id
+      AND c.deleted_at IS NULL;
+
+    IF v_company IS NULL THEN
+      CONTINUE;
+    END IF;
+
+    SELECT
+      COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')
+    INTO v_inviter_name
+    FROM users u
+    WHERE u.id::text = v_invite.invited_by::text
+      AND u.deleted_at IS NULL;
+
+    v_inviter_name := COALESCE(TRIM(v_inviter_name), 'Unknown');
+
+    v_role_name := NULL;
+    IF v_invite.role_id IS NOT NULL THEN
+      SELECT r.name INTO v_role_name
+      FROM roles r
+      WHERE r.id = v_invite.role_id;
+
+      IF v_role_name = 'Unassigned' THEN
+        v_role_name := NULL;
+      END IF;
+    END IF;
+
+    v_team_size := COALESCE(
+      array_length(v_company.seated_employee_ids, 1), 0
+    );
+
+    SELECT COALESCE(jsonb_agg(member), '[]'::jsonb)
+    INTO v_team_members
+    FROM (
+      SELECT jsonb_build_object(
+        'first_name', COALESCE(u.first_name, ''),
+        'last_name', COALESCE(u.last_name, ''),
+        'profile_image_url', u.profile_image_url
+      ) AS member
+      FROM users u
+      WHERE u.id::text = ANY(COALESCE(v_company.seated_employee_ids, ARRAY[]::text[]))
+        AND u.deleted_at IS NULL
+      ORDER BY u.created_at ASC
+      LIMIT 8
+    ) sub;
+
+    v_invites := v_invites || jsonb_build_object(
+      'invitation_id', v_invite.invitation_id,
+      'company_id', v_invite.company_id,
+      'company_name', v_company.name,
+      'company_code', v_company.company_code,
+      'company_logo_url', v_company.logo_url,
+      'industries', to_jsonb(COALESCE(v_company.industries, ARRAY[]::text[])),
+      'role_name', v_role_name,
+      'invited_by_name', v_inviter_name,
+      'team_members', v_team_members,
+      'team_size', v_team_size,
+      'expires_at', v_invite.expires_at
+    );
+  END LOOP;
+
+  RETURN v_invites;
+END;
+$function$;
+
+REVOKE EXECUTE ON FUNCTION public.check_pending_invites(text) FROM anon, PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.check_pending_invites(text) TO authenticated;
