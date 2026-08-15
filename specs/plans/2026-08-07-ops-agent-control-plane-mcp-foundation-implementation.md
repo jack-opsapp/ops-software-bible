@@ -25,14 +25,20 @@ Read before implementation:
 
 The design spec wins when this plan is terse. If production schema/code differs from this plan, verify the current state, update the design and plan, and do not guess.
 
-## Local implementation checkpoint — 2026-08-10
+## Local implementation checkpoint — 2026-08-15
 
 - Tasks 1-5 are present in the local branch history through `6f9e387f`.
 - Task 6 is committed locally as `bfb5099b` (`feat(agent-control-plane): normalize source-provenanced evidence`).
 - Task 7 is committed locally as `5f9e4d6a` (`feat(agent-memory): ingest provider-delivered job turns`).
-- Exact local proof for the last two tasks is 214/214 evidence tests plus 492/492 staged delivered-turn/provider tests, green TypeScript and formatting, zero ESLint errors, and a clean fresh adversarial review.
-- The provider-source migration was verified structurally, not executed against PostgreSQL, because no local Supabase/PostgreSQL runtime was available.
-- Nothing in this checkpoint has been pushed, deployed, applied to production, exposed through a public connector, or proven customer-live. Tasks 8 onward remain unimplemented.
+- Task 8's versioned-memory implementation is committed locally through `13407e2c`, with the final redaction, late-turn, exact-input-prefix, conflict-retry, and race hardening committed as `316fb5f6`.
+- Tasks 9-10's actor-scoped job-conversation context, bounded domain result, 101-item evidence boundary, and transport-neutral domain facade are committed locally as `825b0048`.
+- Tasks 11-13 remain explicitly unavailable in the capability manifest; no placeholder result is exposed.
+- Tasks 14-15 are committed locally as `61d65545` (Phase C actor/source proof) and `f630c715` (bounded reply-context shadow and offline quality mechanics). The current Phase C whole-history path remains the sole customer-facing control, and the offline harness is structurally unable to declare production release readiness.
+- The supporting lead-identity, trusted-form provenance, exact field-evidence, automatic address-safety, relationship-continuity, and repair-apply boundaries are committed locally as `e5ce20e8`; the actorless project-conversion jurisdiction/continuity guard is committed locally as `23a232d1`.
+- Final local proof is 1,018/1,018 across the 46-file provider-to-prompt path, 1,465/1,465 across the 28-file email/contact/import/relationship boundary, and 29/29 static actorless-conversion migration-contract assertions. Full TypeScript and lint, scoped formatting, and repository diff checks are green.
+- Independent adversarial reviews returned CLEAN with no P1/P2 for the provider-to-prompt path, the email/contact/import boundary, and the actorless-conversion guard.
+- Provider-source and actorless-conversion migrations were verified structurally, not executed against PostgreSQL; no migration was applied.
+- Nothing in this checkpoint has been pushed, deployed, applied to production, exposed through a public connector, or proven customer-live. Task 16's production shadow sample and context switch remain intentionally unperformed.
 
 ---
 
@@ -418,27 +424,27 @@ git commit -m "feat(agent-memory): ingest delivered job turns"
 - Test: `src/lib/agent-control-plane/memory/__tests__/catch-up-memory.test.ts`
 - Test: `src/lib/agent-control-plane/memory/__tests__/cross-job-seed.test.ts`
 
-- [ ] **Step 1: Freeze the structured memory schema**
+- [x] **Step 1: Freeze the structured memory schema**
 
 Include facts, decisions, commitments, preferences, open questions, contradictions, schedule assertions, financial facts relevant to conversation, excluded assumptions, and evidence IDs. Every claim requires evidence.
 
-- [ ] **Step 2: Write failing generation tests**
+- [x] **Step 2: Write failing generation tests**
 
 Cover optimistic version conflict, model failure, missing evidence, contradiction preservation, replay, high-watermark, no raw prior-job copy, and current-through-required-turn behavior.
 
-- [ ] **Step 3: Implement deterministic input assembly plus structured model output**
+- [x] **Step 3: Implement deterministic input assembly plus structured model output**
 
 Use bounded previous memory, new exact turns, and exact evidence. Validate model output. A failed/invalid output never advances current memory.
 
-- [ ] **Step 4: Implement synchronous catch-up for source-bound drafts**
+- [x] **Step 4: Implement synchronous catch-up for source-bound drafts**
 
 If `required_through_turn_id` is newer than memory, catch up within a bounded deadline. Otherwise return `STALE_CONTEXT`. Never silently use stale memory.
 
-- [ ] **Step 5: Implement minimal cross-job seed**
+- [x] **Step 5: Implement minimal cross-job seed**
 
 Return only prior-job boolean/count/latest visible date/status and one safe continuity marker. Deeper data remains behind explicit history search.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 npm test -- src/lib/agent-control-plane/memory
@@ -453,15 +459,15 @@ git commit -m "feat(agent-memory): add versioned evidence-backed job memory"
 - Create: `src/lib/agent-control-plane/services/get-job-conversation-context.ts`
 - Test: `src/lib/agent-control-plane/services/__tests__/get-job-conversation-context.test.ts`
 
-- [ ] **Step 1: Write contract tests**
+- [x] **Step 1: Write contract tests**
 
 Assert ordering: memory, recent exact turns, triggering evidence, participants, freshness/gaps. Default 20 turns, maximum 50, complete result maximum 60,000 characters. Permission checks apply to every source.
 
-- [ ] **Step 2: Implement service**
+- [x] **Step 2: Implement service**
 
 Return memory version/high-watermark and warnings. Evidence excerpts are exact normalized source, not a second model summary.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 npm test -- src/lib/agent-control-plane/services/__tests__/get-job-conversation-context.test.ts
@@ -482,15 +488,15 @@ git commit -m "feat(agent-control-plane): expose job conversation context"
 - Create: `src/lib/agent-control-plane/services/repositories.ts`
 - Test: `src/lib/agent-control-plane/services/__tests__/domain-service.test.ts`
 
-- [ ] **Step 1: Write adapter-independence test**
+- [x] **Step 1: Write transport-neutral facade test**
 
-The same actor/input must yield the same parsed result through internal, REST, and MCP adapter stubs. No transport type may appear in a domain service signature.
+The same actor/input must yield the same parsed domain result through the typed facade, and no transport type may appear in a domain service signature. This test does not claim that REST or MCP adapters exist.
 
-- [ ] **Step 2: Implement the typed facade**
+- [x] **Step 2: Implement the typed facade**
 
 Wire `getJobConversationContext`; keep unimplemented methods explicit and unavailable in the capability manifest until their tests pass. Do not add placeholder success values.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 npm test -- src/lib/agent-control-plane/services/__tests__/domain-service.test.ts
@@ -606,15 +612,15 @@ git commit -m "feat(agent-control-plane): complete initial read service catalogu
 - Create: `src/lib/agent-control-plane/adapters/internal.ts`
 - Test: `src/lib/agent-control-plane/adapters/__tests__/internal.test.ts`
 
-- [ ] **Step 1: Write context-construction tests**
+- [x] **Step 1: Write context-construction tests**
 
 Internal Phase C calls still require an explicit actor/company context derived from the routed job/mailbox. They do not receive blanket service authority.
 
-- [ ] **Step 2: Implement adapter**
+- [x] **Step 2: Implement adapter**
 
 Translate internal Phase C request metadata only. Parse the result through the same contracts used by MCP.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 npm test -- src/lib/agent-control-plane/adapters/__tests__/internal.test.ts
@@ -632,23 +638,23 @@ git commit -m "feat(agent-control-plane): add internal Phase C adapter"
 - Create: `src/lib/agent-control-plane/evals/lead-reply-quality.ts`
 - Add fixtures under: `src/lib/agent-control-plane/evals/fixtures/`
 
-- [ ] **Step 1: Preserve the current path as control**
+- [x] **Step 1: Preserve the current path as control**
 
 Do not remove `MAX_SOURCE_BOUND_CONVERSATION_MESSAGES=200` or the 120,000-character path yet. Behind a company flag, assemble both contexts; only the current path supplies the customer-facing draft.
 
-- [ ] **Step 2: Build representative eval fixtures**
+- [x] **Step 2: Build representative eval fixtures**
 
 Include long histories, contradictions, reschedules, exact attachments, prior job contamination, participant ambiguity, delivery retries, and malicious instructions in correspondence.
 
-- [ ] **Step 3: Compare outcomes**
+- [x] **Step 3: Compare outcomes**
 
 Score factual correctness, recipient identity, schedule accuracy, commitment continuity, source citation, style, hallucination, context tokens, latency, and safety. Do not score token savings as success if reply quality drops.
 
-- [ ] **Step 4: Verify shadow emits no second draft/send**
+- [x] **Step 4: Verify shadow emits no second draft/send**
 
 Shadow generation must not persist a user-visible draft, create a provider draft, mutate mailbox state, or enter memory.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npm test -- src/lib/agent-control-plane/memory src/lib/agent-control-plane/evals
