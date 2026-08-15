@@ -1,6 +1,6 @@
 # OPS Agent Control Plane and MCP Foundation (2026-08-07)
 
-**Status:** Product direction approved by Jackson on 2026-08-07. Foundation Tasks 1–12 plus the approved dark site-visit manifest increment are implemented in the local OPS-Web branch `feat/ops-agent-control-plane-takeover-20260807` through commit `dc91a349`. Task 11 adds schedule/readiness reads; Task 12 adds current-only job communication context and participant reads. The local manifest is `2026-08-13.capability-manifest.v5`: `get_job_conversation_context`, `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, and `resolve_job_participants` are implemented for internal callers only, while every external exposure remains disabled. The related SQL migrations have not been database-compiled, executed, or applied against local, test, preview, or production Supabase. The branch has not been pushed or deployed. No Phase C consumer, memory worker, REST handler, MCP handler, OAuth facade, or remote MCP server invokes these reads. The site-visit entries remain contracts only: their repositories, handlers, transaction participants, and booking RPCs are unbuilt and unavailable. Nothing here is customer-live.
+**Status:** Product direction approved by Jackson on 2026-08-07. Foundation Tasks 1–13 plus the approved dark site-visit manifest increment are implemented in the local OPS-Web branch `feat/ops-agent-control-plane-takeover-20260807` through commit `d4118344`. Task 11 adds schedule/readiness reads; Task 12 adds current-only job communication context and participant reads; Task 13 adds customer-job listing, job summaries, bounded history search, and exact correspondence-evidence pages. The local manifest is `2026-08-14.capability-manifest.v6`: those four Task 13 reads and the five earlier reads are implemented for internal callers only, while every external exposure remains disabled. The related SQL migrations have not been catalog-compiled, executed, or applied against local, test, preview, or production Supabase. The branch has not been pushed or deployed. No Phase C consumer, memory worker, REST handler, MCP handler, OAuth facade, or remote MCP server invokes these reads. The control-plane site-visit entries remain dark contracts because their read repositories, handlers, and transaction participants are unbuilt; the canonical booking RPCs and site-visit prompt/calendar workers are separately production-live and do not make those control-plane entries available. Nothing in Tasks 1–13 is customer-live.
 
 **Decision:** Build one company- and actor-scoped OPS domain service, then expose it through three adapters: Phase C, the existing OPS API, and a public remote MCP server for Claude, ChatGPT, and other approved hosts. MCP is a transport and discovery layer. It does not own OPS business rules.
 
@@ -55,7 +55,7 @@ The following exist in OPS-Web and/or the production Supabase project:
 The isolated OPS-Web implementation branch now contains:
 
 - the MCP v2/Zod 4 alias boundary, stable v1 contracts, actor/entity authorization context, and governed capability manifest;
-- manifest revision `2026-08-13.capability-manifest.v5`, with `get_job_conversation_context`, `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, and `resolve_job_participants` marked `implementation=available` for internal composition only; every capability remains `externalExposure=disabled`;
+- manifest revision `2026-08-14.capability-manifest.v6`, with `get_job_conversation_context`, `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, `resolve_job_participants`, `list_customer_jobs`, `get_job_summary`, `search_job_history`, and `get_correspondence_evidence` marked `implementation=available` for internal composition only; every capability remains `externalExposure=disabled`;
 - the job-conversation schema migration, bounded evidence normalization, exact provider-delivery source capture, participant/anchor resolution, and immutable delivered-turn ingestion at inbound and provider-accepted outbound chokepoints;
 - a strict evidence-backed running-memory schema, scoped snapshot/commit repository, bounded structured generation, deadline-bound synchronous catch-up, and deliberately minimal same-customer cross-job seed;
 - provider-source-bound turn ingestion that derives content, recipients, attachments, timing, and participant identity inside the guarded database transaction, including fixed prompt-safe projections for rejected source content;
@@ -63,19 +63,20 @@ The isolated OPS-Web implementation branch now contains:
 - a caller-independent `getJobConversationContext` service boundary with nominal authorization proof, a fixed repository, same-statement actor/job/customer/mailbox checks, versioned running memory, whole recent turns, exact bounded evidence excerpts, resolved participant provenance, deliberately minimal prior-job continuity, catch-up/stale semantics, current redactions, and a deterministic 60,000-character result ceiling. Source projections are bounded before collection; claims and their retained proofs are reduced together.
 - fixed, actor-authorized schedule and readiness RPCs, source-stable pagination, current confirmation proof, bounded customer-shareable crew projection, and one TypeScript-owned readiness rule boundary;
 - strict current-only communication/participant contracts, nominal authorization and repository boundaries, same-statement actor/company/job/customer/mailbox/source checks, per-address contactability freshness, evidence-bound participant projections, purpose-minimized communication facts, and deterministic 60,000-character result reducers;
-- a frozen, transport-neutral `OpsAgentDomainService` composition root that accepts only a server-minted `ActorContext` plus canonical typed input, owns manifest parsing and authorization, closes over nominal repository dependencies, normalizes invalid input once, and returns the same domain result for internal, OPS API, and fully scoped MCP actor contexts. It exposes only the five implemented methods listed above; future methods are absent rather than stubbed.
+- strict job-catalog contracts plus four fixed same-statement read RPCs for current customer jobs, selected job-summary sections, bounded one-year history search, and exact job-bound correspondence evidence. Signed cursors, source/history fences, section/collection proofs, explicit source gaps, source-specific sentinels, and deterministic 60,000-character reducers preserve authority and completeness across pages;
+- a frozen, transport-neutral `OpsAgentDomainService` composition root that accepts only a server-minted `ActorContext` plus canonical typed input, owns manifest parsing and authorization, closes over nominal repository dependencies, normalizes invalid input once, and returns the same domain result for internal, OPS API, and fully scoped MCP actor contexts. It exposes only the nine implemented methods listed above; future methods are absent rather than stubbed.
 
-The relevant local commits are `c53b4664`, `99b30cfc`, `2969debe`, `46aedaf2`, `fd9e17c5`, `6f9e387f`, `8af1ee5d`, `1e866814`, `556c514f`, `14969c4c`, `91419970`, `7472219a`, `73712b4f`, `5bba3c5e`, and `dc91a349`. This is source and test evidence only. The Task 9, Task 11, and Task 12 migrations have not been database-compiled or executed; all remain unapplied, and there is no production schema, deployed adapter or consumer, host, or customer-live proof.
+The relevant local commits are `c53b4664`, `99b30cfc`, `2969debe`, `46aedaf2`, `fd9e17c5`, `6f9e387f`, `8af1ee5d`, `1e866814`, `556c514f`, `14969c4c`, `91419970`, `7472219a`, `73712b4f`, `5bba3c5e`, `dc91a349`, and `d4118344`. This is source and test evidence only. The Task 9, Task 11, Task 12, and Task 13 migrations have not been catalog-compiled or executed; all remain unapplied, and there is no production schema, deployed adapter or consumer, host, or customer-live proof.
 
 ### 2.3 Verified gaps
 
 The following do not currently exist as one coherent system:
 
-- The remaining shared domain methods beyond the five implemented internal reads, including customer-job listing, job summary, history search, correspondence evidence lookup, site-visit reads, and write operations.
+- The remaining shared domain methods beyond the nine implemented internal reads, including site-visit reads and all write operations.
 - An OAuth-authenticated actor context that intersects external scopes/grants with the locally implemented OPS permission and entity-assignment context.
-- The Phase C/context adapter and background worker that invoke the locally implemented source-level memory and dark bounded context assembly. The minimal actor-visible cross-job continuity projection exists locally; deliberate general history retrieval remains unbuilt.
+- The Phase C/context adapter and background worker that invoke the locally implemented source-level memory, job-catalog, and bounded context reads. The minimal actor-visible cross-job continuity projection and deliberate history retrieval service exist locally, but no runtime consumer calls them.
 - A general change-set and cryptographic confirmation-receipt engine.
-- Site-visit booking read services, control-plane transaction participants, and the canonical booking/reschedule/cancel RPCs. The manifest definitions exist only as dark contracts. Before any implementation can become available, the booking path must enforce `pipeline.convert`, durable RPC idempotency, locked target-version comparison, bounded active same-company assignees, and all-scope-only access to unlinked visits.
+- Site-visit control-plane read services, handlers, and change-set transaction participants. The canonical booking/reschedule/cancel RPCs and prompt/calendar workers are production-live, but no agent-control-plane adapter invokes them. The manifest definitions remain dark until their read authority, durable receipt/idempotency, locked target-version comparison, bounded active same-company assignees, all-scope-only unlinked access, and post-commit readback are proven end to end.
 - A public remote MCP server, deployed MCP endpoint, or registered host integration. Only the SDK/schema boundary exists locally.
 - An OAuth 2.1 authorization-server facade for external MCP clients, protected-resource discovery, grants, revocation, and MCP audience-bound access tokens.
 - A public connector consent/revocation surface.
@@ -101,6 +102,9 @@ Verified current code boundaries include:
 - communication/participant public contracts: `ops-web/src/lib/agent-control-plane/contracts/communication.ts`
 - current communication and participant services: `ops-web/src/lib/agent-control-plane/services/get-job-communication-context.ts` and `ops-web/src/lib/agent-control-plane/services/resolve-job-participants.ts`
 - communication/participant authorization and fixed repositories: `ops-web/src/lib/agent-control-plane/services/job-communication-authorization.ts`, `ops-web/src/lib/agent-control-plane/services/job-participants-authorization.ts`, `ops-web/src/lib/agent-control-plane/services/job-communication-context-repository.ts`, and `ops-web/src/lib/agent-control-plane/services/job-participants-repository.ts`
+- job-catalog public contract: `ops-web/src/lib/agent-control-plane/contracts/job-catalog.ts`
+- job-catalog services and fixed repositories: `ops-web/src/lib/agent-control-plane/services/list-customer-jobs.ts`, `get-job-summary.ts`, `search-job-history.ts`, `get-correspondence-evidence.ts`, and their capability-specific authorization/repository modules
+- job-catalog fixed RPC source: `ops-web/supabase/migrations/20260814120000_agent_job_catalog_reads.sql`
 
 These are sources to adapt behind the shared service, not MCP handler dependencies to call directly.
 
@@ -436,7 +440,7 @@ Constraints:
 
 - maximum window 90 days;
 - company timezone is authoritative; a valid display timezone changes representation only, never selection or ordering;
-- v1 is deliberately limited to materialized `project_tasks` occurrences. Site visits stay on their separately approved dark capability boundary until `booked_at` exists and Task 13 implements it;
+- v1 is deliberately limited to materialized `project_tasks` occurrences. Site visits stay on their separately approved dark capability boundary until `booked_at` exists and a future site-visit task implements the read path;
 - one task row is one canonical occurrence, never one collapsed project date or a recurrence-template expansion;
 - lifecycle (`active | completed | cancelled`), timing (`upcoming | in_progress | past_due | past`), and confirmation (`confirmed | unconfirmed`) are orthogonal;
 - an all-day occurrence uses company-local calendar dates and an exclusive next-local-midnight end; timed DST gaps/folds are rejected rather than guessed;
@@ -519,6 +523,8 @@ Input:
 
 Output includes job refs, dates, statuses, relationship basis, visibility reason, and summary/version markers. It does not include full correspondence or financial detail unless separately authorized.
 
+Opportunity and project sources are independently permission-, lifecycle-, status-, and date-filtered before reciprocal same-client conversion pairs collapse into one logical job. A visible row whose linked counterpart is filtered or not visible reports a non-leaking `linked_*_not_returned` state rather than inventing a standalone/unconverted claim or exposing the hidden reference.
+
 ### 6.6 `get_job_summary`
 
 Purpose: return a bounded, current operational summary of one job.
@@ -528,7 +534,9 @@ Input:
 - `job_ref`;
 - optional section allowlist: `identity`, `schedule`, `readiness`, `participants`, `financials`, `activity`, `conversation`.
 
-Each section is independently permission-gated. Requesting an unauthorized financial section returns a typed scope failure or omits it with an explicit warning according to caller policy; it never silently leaks.
+Each section is independently permission-gated. The complete requested section set must authorize before the repository reads; an unauthorized financial or other selected section fails the whole call without leaking another section, warning, or source-existence signal.
+
+The implementation authorizes the complete requested section set before the read, then captures one current same-statement summary snapshot. Schedule uses the Task 11 occurrence contract, readiness uses the Task 11 TypeScript rule evaluator over bounded raw facts, and participants use the Task 12 safe identity semantics without contact channels. Activity, conversation, and financial sources are separately bounded and proof-bound; unevaluable selected sections remain present with fixed gaps rather than disappearing.
 
 ### 6.7 `search_job_history`
 
@@ -537,12 +545,14 @@ Purpose: search exact and summarized history when the current job context indica
 Input:
 
 - plain query, maximum 500 characters;
-- optional customer reference and visible job refs;
+- required `scope`: either one customer reference with selected job kinds, or 1–50 explicit visible job refs;
 - date window, maximum one year per call;
 - source types;
 - cursor and limit, default 10, maximum 20.
 
 Output separates exact-source matches from memory-summary matches, includes evidence IDs and relevance reasons, and never searches another tenant. Search text is treated as data, not an instruction.
+
+History is one company/job/customer-authorized same-statement snapshot over immutable correspondence, bounded current memory fragments, task events, status history, and financial sources selected by the exact authorization variants. The default window is the half-open interval ending at the database read time and starting exactly 365 days earlier. Source/query bounds and invalid source data are proof-bound result gaps; prompt-budget reduction is separate result metadata.
 
 ### 6.8 `get_correspondence_evidence`
 
@@ -550,11 +560,14 @@ Purpose: retrieve exact, bounded source evidence by IDs already returned from an
 
 Input:
 
-- up to 20 evidence IDs;
+- required current `job_ref`;
+- 1–20 unique immutable turn evidence IDs;
 - optional excerpt/full-text mode;
 - total character maximum 60,000.
 
-Output includes delivered message/activity/event IDs, sender/recipient identity as permitted, delivered timestamp, normalized exact plain text, content hash, attachment references, and trust markers. Raw MIME, scripts, tracking markup, and hidden HTML are not prompt output.
+Output includes the immutable turn evidence ID and job ref, delivered timestamp, direction, resolution-safe side, subject/content availability or redaction state, original and normalized content hashes, bounded safe attachment metadata, and a delivered-correspondence trust marker. It does not expose provider message/activity/event IDs or sender/recipient addresses. Raw MIME, scripts, tracking markup, and hidden HTML are not prompt output.
+
+The Task 13 page read requires one exact visible job plus 1–20 previously returned turn evidence IDs. Excerpt mode is bounded per item; full-text mode is all-or-error under the 60,000-character public limit. Oversized full text returns a fixed non-retryable invalid-argument result instructing the caller to request fewer items or use excerpt mode. The v6 legacy evidence wrapper validates its new public identity before privately rebinding only the frozen v5 implementation revision; callers cannot use revision translation to bypass the old authority checks.
 
 ### 6.9 `resolve_job_participants`
 

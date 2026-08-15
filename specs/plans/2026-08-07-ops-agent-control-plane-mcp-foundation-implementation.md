@@ -10,7 +10,7 @@
 
 **Design System:** The OAuth consent, connected-app management, and confirmation surfaces use the existing OPS-Web design system at `ops-design-system/project/DESIGN.md`. Use current OPS-Web Tailwind tokens and `lucide-react`; no new visual system, raw values, marketing surface, MCP App widget, or motion language.
 
-**Execution status (2026-08-14):** Tasks 1–12 plus Task 4A are locally committed on `feat/ops-agent-control-plane-takeover-20260807` through `dc91a349`. This includes the SDK/schema boundary, actor scope, capability manifest revision `2026-08-13.capability-manifest.v5`, immutable conversation and memory foundations, the first transport-neutral `OpsAgentDomainService`, schedule/readiness reads, and current-only communication/participant reads. Exactly five capabilities are internally available: `get_job_conversation_context`, `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, and `resolve_job_participants`. Every external exposure remains disabled and every unimplemented method remains absent from the facade rather than stubbed. Task 12 adds purpose-minimized strict contracts, nominal authorization/repository boundaries, fixed same-statement RPC reads, contactability freshness, privacy-safe identity derivation, source-provenanced results, and a 60,000-character claim/proof reducer. The Task 9, Task 11, and Task 12 migrations have not been database-compiled, executed, or applied to local, test, preview, or production Supabase. No Phase C consumer, memory worker, REST/MCP handler, OAuth facade, or remote MCP server invokes the facade. The site-visit read services, change-set participants, booking RPCs, and calendar workers remain unbuilt. Nothing has been pushed or deployed; Tasks 13 onward remain incomplete. Checklist boxes below remain acceptance gates rather than deployment evidence.
+**Execution status (2026-08-14):** Tasks 1–13 plus Task 4A are locally committed on `feat/ops-agent-control-plane-takeover-20260807` through `d4118344`. This includes the SDK/schema boundary, actor scope, capability manifest revision `2026-08-14.capability-manifest.v6`, immutable conversation and memory foundations, the transport-neutral `OpsAgentDomainService`, schedule/readiness reads, current-only communication/participant reads, customer-job listing, selected job summaries, bounded history search, and exact correspondence-evidence pages. Exactly nine capabilities are internally available: `get_job_conversation_context`, `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, `resolve_job_participants`, `list_customer_jobs`, `get_job_summary`, `search_job_history`, and `get_correspondence_evidence`. Every external exposure remains disabled and every unimplemented method remains absent from the facade rather than stubbed. The Task 9, Task 11, Task 12, and Task 13 migrations have not been catalog-compiled, executed, or applied to local, test, preview, or production Supabase. No Phase C consumer, memory worker, REST/MCP handler, OAuth facade, or remote MCP server invokes the facade. The site-visit read services and change-set participants remain unbuilt and dark; the canonical booking RPCs and prompt/calendar workers are separately production-live but are not wired into this control plane. Nothing has been pushed or deployed from this branch; Tasks 14 onward remain incomplete. Checklist boxes below remain acceptance gates rather than deployment evidence.
 
 **Required Skills:** `custom-skills:executing-plans`, `superpowers:using-git-worktrees`, `superpowers:test-driven-development`, `superpowers:systematic-debugging` when a failure appears, `supabase:supabase`, `supabase:supabase-postgres-best-practices`, `openai-docs`, `plugin-dev:mcp-integration`, `ops-design`, `frontend-design:frontend-design`, `custom-skills:interface-design`, `custom-skills:ui-ux-pro-max`, `ops-copywriter:ops-copywriter`, `custom-skills:wizard-audit`, `custom-skills:audit-design-system`, `superpowers:verification-before-completion`, and `superpowers:requesting-code-review`.
 
@@ -325,6 +325,8 @@ git commit -m "feat(agent-control-plane): add dark site visit capabilities"
 Do not flip availability or exposure here. The booking RPC implementation plan must first resolve RPC idempotency, `pipeline.convert`, stale-version comparison, same-company assignee validation, unlinked-read isolation, external calendar reconciliation, and the contradictory reminder-dedupe wording. The only accepted key is `site_visit:<visit_id>:<kind>:<user_id>:<scheduled_at epoch>`.
 
 Implemented locally in `91419970`. The full agent-control-plane source suite passes (22 files, 485 tests), plus TypeScript, focused ESLint, Prettier, diff checks, and independent P0/P1 review. This is manifest/source proof only. Every site-visit entry remains unavailable and externally disabled; no booking RPC, handler, migration, database write, calendar effect, deployment, or customer-live behavior is claimed.
+
+**As-built update (2026-08-14):** The canonical `book_site_visit`, `reschedule_site_visit`, and `cancel_site_visit_booking` RPCs, booking schema, prompt cron, and Google Calendar sync worker were later implemented and are production-live outside this agent-control-plane branch. That does not complete Task 4A's control-plane read services, handlers, change-set participants, receipts, or adapters. Every site-visit manifest entry therefore remains unavailable and externally disabled.
 
 ---
 
@@ -684,37 +686,55 @@ No Supabase branch, local/test/preview/production migration apply, Phase C/REST/
 
 **Files:**
 
+- Create: `src/lib/agent-control-plane/contracts/job-catalog.ts`
 - Create: `src/lib/agent-control-plane/services/list-customer-jobs.ts`
 - Create: `src/lib/agent-control-plane/services/get-job-summary.ts`
 - Create: `src/lib/agent-control-plane/services/search-job-history.ts`
 - Create: `src/lib/agent-control-plane/services/get-correspondence-evidence.ts`
-- Test: corresponding files under `src/lib/agent-control-plane/services/__tests__/`
+- Create: four capability-specific nominal authorization modules and four fixed repository modules
+- Create: `supabase/migrations/20260814120000_agent_job_catalog_reads.sql`
+- Modify: shared domain-service facade/repository bundle, operational cursor, capability manifest, Task 12 manifest compatibility, and legacy correspondence-evidence compatibility wrapper
+- Test: contracts, authorization, repositories, services/reducers, facade parity, manifest compatibility, cursor/proof tampering, SQL/RPC structure, bounds, abort, privacy, and earlier-read regressions
 
-- [ ] **Step 1: Write permission/section tests**
+- [x] **Step 1: Write permission/section tests**
 
 Financial summary requires the exact existing financial permission. Correspondence/history require their scopes. An unauthorized section cannot leak through evidence or warning text.
 
-- [ ] **Step 2: Write search/pagination tests**
+- [x] **Step 2: Write search/pagination tests**
 
 Maximum one-year window, query length 500, result maximum 20, deterministic keyset cursor, exact versus summary match labeling, contradiction preservation, and cross-job relevance.
 
-- [ ] **Step 3: Implement by composing existing domain services**
+- [x] **Step 3: Implement one authorized snapshot per read**
 
-No direct tool-level Supabase queries. Repositories remain company/entity scoped. Each section returns current versions and evidence.
+Do not sequentially compose Task 9, Task 11, and Task 12 repositories: independently timed snapshots can disagree across sections and cannot prove one authorization/source fence. Each Task 13 capability owns one nominal authorization array and one fixed service-role-only RPC. The RPC re-resolves the complete actor, company, permission registry, entity/customer/mailbox/section authority, canonical input, source/history fences, and every retained source row inside one statement. TypeScript revalidates exact projection hashes, ordered claim/proof/evidence coupling, cursor identity, source completeness, and the public 60,000-character boundary.
 
-- [ ] **Step 4: Verify all read services**
-
-```bash
-npm test -- src/lib/agent-control-plane/services
-npm run type-check
-```
-
-- [ ] **Step 5: Commit**
+- [x] **Step 4: Verify all read services**
 
 ```bash
-git add src/lib/agent-control-plane/services
-git commit -m "feat(agent-control-plane): complete initial read service catalogue"
+/Users/jacksonsweet/.nvm/versions/node/v22.22.3/bin/node node_modules/vitest/vitest.mjs run \
+  src/lib/agent-control-plane \
+  tests/unit/supabase/agent-control-plane-actor-authority-migration.test.ts \
+  tests/unit/supabase/agent-job-catalog-reads-migration.test.ts \
+  tests/unit/supabase/agent-memory-schema-reconciliation-migration.test.ts \
+  tests/unit/supabase/agent-provider-delivery-source-migration.test.ts
+/Users/jacksonsweet/.nvm/versions/node/v22.22.3/bin/node --max-old-space-size=8192 \
+  node_modules/typescript/bin/tsc --noEmit --pretty false
+git diff --check
 ```
+
+- [x] **Step 5: Commit**
+
+```bash
+git commit -m "feat(agent-control-plane): add job catalog reads"
+```
+
+Implemented locally in OPS Web commit `d4118344` on 2026-08-14. The final source gate passed 57 files / 1,141 tests, Node 22 TypeScript `--noEmit`, Prettier, and staged/working diff checks. Independent cross-boundary review found no remaining P0/P1 issue. A PostgreSQL 18 ECPG grammar audit parsed all 132 statements in the frozen 7,281-line migration, matched the four RPC arities, and found no generated-schema-column or custom-function-arity conflict. This is structural source evidence, not catalog-bound database-runtime proof.
+
+The four reads use signed source-stable cursors or exact bounded inputs, atomic child and collection/section proofs, explicit source gaps, and one-MiB private wire fences before the public 60,000-character reducers. `list_customer_jobs` filters opportunity/project sources before reciprocal same-client collapse. `get_job_summary` reuses Task 11 schedule/readiness semantics and Task 12 safe participant identity rules. `search_job_history` preserves immutable correspondence selectors and explicit source-bound/data-invalid gaps. `get_correspondence_evidence` is exact-job-bound; full-text mode is all-or-error and returns a fixed non-retryable invalid-argument result when the selected evidence exceeds the public budget.
+
+Migration `20260814120000_agent_job_catalog_reads.sql` remains unapplied and has not been catalog-compiled or executed. It depends on the Task 9, Task 11, and Task 12 migrations and inherits the Task 11 database/runtime timezone-conformance gate for schedule-bearing summaries. After those prerequisites, an isolated Supabase branch must prove ordered apply/rollback, function compilation, grants, RLS/authority behavior, source/history revisions, FTS/index behavior, wrong-company isolation, proof/cursor tampering, source bounds, error mapping, and v6 compatibility wrappers before any adapter or rollout flag is enabled. The platform update and branch costs are not established. No migration copy belongs in the Bible archive until an authorized apply occurs.
+
+No Supabase branch, local/test/preview/production migration apply, Phase C/REST/MCP adapter, push, deployment, external advertisement, or customer-live behavior is claimed.
 
 ---
 
