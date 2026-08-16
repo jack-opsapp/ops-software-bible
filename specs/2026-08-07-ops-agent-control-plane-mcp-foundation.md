@@ -1,6 +1,6 @@
 # OPS Agent Control Plane and MCP Foundation (2026-08-07)
 
-**Status:** Product direction approved by Jackson on 2026-08-07. Foundation Tasks 1–13 plus the approved dark site-visit manifest increment are implemented in the local OPS-Web branch `feat/ops-agent-control-plane-takeover-20260807` through commit `d4118344`. Task 11 adds schedule/readiness reads; Task 12 adds current-only job communication context and participant reads; Task 13 adds customer-job listing, job summaries, bounded history search, and exact correspondence-evidence pages. The local manifest is `2026-08-14.capability-manifest.v6`: those four Task 13 reads and the five earlier reads are implemented for internal callers only, while every external exposure remains disabled. The related SQL migrations have not been catalog-compiled, executed, or applied against local, test, preview, or production Supabase. The branch has not been pushed or deployed. No Phase C consumer, memory worker, REST handler, MCP handler, OAuth facade, or remote MCP server invokes these reads. The control-plane site-visit entries remain dark contracts because their read repositories, handlers, and transaction participants are unbuilt; the canonical booking RPCs and site-visit prompt/calendar workers are separately production-live and do not make those control-plane entries available. Nothing in Tasks 1–13 is customer-live.
+**Status:** Product direction approved by Jackson on 2026-08-07. Two complementary local OPS-Web branches exist and are not yet integrated. `feat/ops-agent-control-plane-takeover-20260807` implements foundation Tasks 1–13 plus the dark site-visit manifest increment through `d4118344`; its manifest `2026-08-14.capability-manifest.v6` makes nine reads available for internal composition only and keeps every external exposure disabled. Separately, `feat/ops-agent-control-plane-20260807` implements the actor/source-scoped Phase C adapter plus metrics-only shadow/evaluation mechanics through `61d65545` and `f630c715`, but that branch still carries the earlier catalogue where Tasks 11–13 are unavailable. No branch currently contains both bodies of work. The related control-plane migrations have not been catalog-compiled, executed, or applied to Supabase. The customer-facing Phase C prompt still uses the whole-history control; production shadow measurement and the context switch are unperformed. Remote MCP transport and OAuth remain unbuilt. The canonical site-visit booking RPCs and prompt/calendar workers are separately production-live, while their control-plane adapters remain dark. Nothing here has been pushed, deployed, or proven customer-live.
 
 **Decision:** Build one company- and actor-scoped OPS domain service, then expose it through three adapters: Phase C, the existing OPS API, and a public remote MCP server for Claude, ChatGPT, and other approved hosts. MCP is a transport and discovery layer. It does not own OPS business rules.
 
@@ -70,11 +70,13 @@ The relevant local commits are `c53b4664`, `99b30cfc`, `2969debe`, `46aedaf2`, `
 
 ### 2.3 Verified gaps
 
-The following do not currently exist as one coherent system:
+The following do not currently exist as one production-applied coherent system:
 
 - The remaining shared domain methods beyond the nine implemented internal reads, including site-visit reads and all write operations.
-- An OAuth-authenticated actor context that intersects external scopes/grants with the locally implemented OPS permission and entity-assignment context.
-- The Phase C/context adapter and background worker that invoke the locally implemented source-level memory, job-catalog, and bounded context reads. The minimal actor-visible cross-job continuity projection and deliberate history retrieval service exist locally, but no runtime consumer calls them.
+- One integrated branch that combines the nine-read v6 catalogue with the Phase C adapter and shadow path. The work exists on two divergent local branches; neither is a release candidate until they are reconciled and reverified together.
+- REST and MCP adapters. The typed facade and Phase C internal adapter exist locally, but no REST/MCP transport consumes them.
+- A production actor context that intersects external OAuth scopes with current OPS permissions and entity assignment. The local Phase C path has actor-, assignment-, mailbox-, provider-source-, and job-scoped authority, but there is no external OAuth authority path.
+- A production-applied job conversation store and versioned running memory. The local schema, immutable delivered-turn ingestion, running-summary generation, catch-up, minimal cross-job continuity seed, bounded scoped-context read, and broader job-catalog reads exist, but their migrations are unapplied and the customer-facing prompt still uses the whole-history control.
 - A general change-set and cryptographic confirmation-receipt engine.
 - Site-visit control-plane read services, handlers, and change-set transaction participants. The canonical booking/reschedule/cancel RPCs and prompt/calendar workers are production-live, but no agent-control-plane adapter invokes them. The manifest definitions remain dark until their read authority, durable receipt/idempotency, locked target-version comparison, bounded active same-company assignees, all-scope-only unlinked access, and post-commit readback are proven end to end.
 - A public remote MCP server, deployed MCP endpoint, or registered host integration. Only the SDK/schema boundary exists locally.
@@ -320,6 +322,7 @@ Stable codes:
 - `FORBIDDEN`
 - `NOT_FOUND` (privacy-safe; does not reveal cross-tenant existence)
 - `INVALID_ARGUMENT`
+- `RESULT_TOO_LARGE`
 - `AMBIGUOUS`
 - `STALE_CONTEXT`
 - `CONFIRMATION_REQUIRED`

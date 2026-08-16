@@ -10,7 +10,7 @@
 
 **Design System:** The OAuth consent, connected-app management, and confirmation surfaces use the existing OPS-Web design system at `ops-design-system/project/DESIGN.md`. Use current OPS-Web Tailwind tokens and `lucide-react`; no new visual system, raw values, marketing surface, MCP App widget, or motion language.
 
-**Execution status (2026-08-14):** Tasks 1–13 plus Task 4A are locally committed on `feat/ops-agent-control-plane-takeover-20260807` through `d4118344`. This includes the SDK/schema boundary, actor scope, capability manifest revision `2026-08-14.capability-manifest.v6`, immutable conversation and memory foundations, the transport-neutral `OpsAgentDomainService`, schedule/readiness reads, current-only communication/participant reads, customer-job listing, selected job summaries, bounded history search, and exact correspondence-evidence pages. Exactly nine capabilities are internally available: `get_job_conversation_context`, `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, `resolve_job_participants`, `list_customer_jobs`, `get_job_summary`, `search_job_history`, and `get_correspondence_evidence`. Every external exposure remains disabled and every unimplemented method remains absent from the facade rather than stubbed. The Task 9, Task 11, Task 12, and Task 13 migrations have not been catalog-compiled, executed, or applied to local, test, preview, or production Supabase. No Phase C consumer, memory worker, REST/MCP handler, OAuth facade, or remote MCP server invokes the facade. The site-visit read services and change-set participants remain unbuilt and dark; the canonical booking RPCs and prompt/calendar workers are separately production-live but are not wired into this control plane. Nothing has been pushed or deployed from this branch; Tasks 14 onward remain incomplete. Checklist boxes below remain acceptance gates rather than deployment evidence.
+**Execution status (2026-08-16):** Tasks 1–13 plus Task 4A are locally committed on `feat/ops-agent-control-plane-takeover-20260807` through `d4118344`. This branch carries manifest revision `2026-08-14.capability-manifest.v6` with nine internally available reads: `get_job_conversation_context`, `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, `resolve_job_participants`, `list_customer_jobs`, `get_job_summary`, `search_job_history`, and `get_correspondence_evidence`; every external exposure remains disabled. Separately, Tasks 14–15 are locally committed on `feat/ops-agent-control-plane-20260807` through `61d65545` and `f630c715`, adding the Phase C actor/source proof plus metrics-only bounded-context shadow and offline evaluation mechanics. That branch still carries the earlier capability catalogue where Tasks 11–13 are unavailable. The two branches have not been integrated or jointly verified. The Task 9, Task 11, Task 12, and Task 13 migrations have not been catalog-compiled, executed, or applied to local, test, preview, or production Supabase. The current Phase C whole-history path remains the sole customer-facing control; production shadow measurement and the context switch remain unperformed. REST/MCP transport, OAuth, and remote server work remain unbuilt. Site-visit control-plane reads/change sets remain dark, while the canonical booking RPCs and prompt/calendar workers are separately production-live. Nothing from either control-plane branch has been pushed or deployed. Checklist boxes below remain acceptance gates rather than deployment evidence.
 
 **Required Skills:** `custom-skills:executing-plans`, `superpowers:using-git-worktrees`, `superpowers:test-driven-development`, `superpowers:systematic-debugging` when a failure appears, `supabase:supabase`, `supabase:supabase-postgres-best-practices`, `openai-docs`, `plugin-dev:mcp-integration`, `ops-design`, `frontend-design:frontend-design`, `custom-skills:interface-design`, `custom-skills:ui-ux-pro-max`, `ops-copywriter:ops-copywriter`, `custom-skills:wizard-audit`, `custom-skills:audit-design-system`, `superpowers:verification-before-completion`, and `superpowers:requesting-code-review`.
 
@@ -27,14 +27,20 @@ Read before implementation:
 
 The design spec wins when this plan is terse. If production schema/code differs from this plan, verify the current state, update the design and plan, and do not guess.
 
-## Local implementation checkpoint — 2026-08-10
+## Local implementation checkpoint — 2026-08-15
 
 - Tasks 1-5 are present in the local branch history through `6f9e387f`.
 - Task 6 is committed locally as `bfb5099b` (`feat(agent-control-plane): normalize source-provenanced evidence`).
 - Task 7 is committed locally as `5f9e4d6a` (`feat(agent-memory): ingest provider-delivered job turns`).
-- Exact local proof for the last two tasks is 214/214 evidence tests plus 492/492 staged delivered-turn/provider tests, green TypeScript and formatting, zero ESLint errors, and a clean fresh adversarial review.
-- The provider-source migration was verified structurally, not executed against PostgreSQL, because no local Supabase/PostgreSQL runtime was available.
-- Nothing in this checkpoint has been pushed, deployed, applied to production, exposed through a public connector, or proven customer-live. Tasks 8 onward remain unimplemented.
+- Task 8's versioned-memory implementation is committed locally through `13407e2c`, with the final redaction, late-turn, exact-input-prefix, conflict-retry, and race hardening committed as `316fb5f6`.
+- Tasks 9-10's actor-scoped job-conversation context, bounded domain result, 101-item evidence boundary, and transport-neutral domain facade are committed locally as `825b0048`.
+- Tasks 11-13 remain explicitly unavailable in the capability manifest; no placeholder result is exposed.
+- Tasks 14-15 are committed locally as `61d65545` (Phase C actor/source proof) and `f630c715` (bounded reply-context shadow and offline quality mechanics). The current Phase C whole-history path remains the sole customer-facing control, and the offline harness is structurally unable to declare production release readiness.
+- The supporting lead-identity, trusted-form provenance, exact field-evidence, automatic address-safety, relationship-continuity, and repair-apply boundaries are committed locally as `e5ce20e8`; the actorless project-conversion jurisdiction/continuity guard is committed locally as `23a232d1`.
+- Final local proof is 1,018/1,018 across the 46-file provider-to-prompt path, 1,465/1,465 across the 28-file email/contact/import/relationship boundary, and 29/29 static actorless-conversion migration-contract assertions. Full TypeScript and lint, scoped formatting, and repository diff checks are green.
+- Independent adversarial reviews returned CLEAN with no P1/P2 for the provider-to-prompt path, the email/contact/import boundary, and the actorless-conversion guard.
+- Provider-source and actorless-conversion migrations were verified structurally, not executed against PostgreSQL; no migration was applied.
+- Nothing in this checkpoint has been pushed, deployed, applied to production, exposed through a public connector, or proven customer-live. Task 16's production shadow sample and context switch remain intentionally unperformed.
 
 ---
 
@@ -560,9 +566,9 @@ Implemented locally in `7472219a`. At the Task 9 checkpoint, the final gate pass
 - Modify: `src/lib/agent-control-plane/registry/__tests__/conversation-context-capability.test.ts`
 - Modify: `src/lib/agent-control-plane/registry/__tests__/manifest.test.ts`
 
-- [x] **Step 1: Write adapter-independence test**
+- [x] **Step 1: Write transport-neutral facade test**
 
-The same actor/input must yield the same parsed result through internal, REST, and MCP adapter stubs. No transport type may appear in a domain service signature.
+The same actor/input must yield the same parsed domain result through the typed facade, and no transport type may appear in a domain service signature. This test does not claim that REST or MCP adapters exist.
 
 - [x] **Step 2: Implement the typed facade**
 
@@ -756,15 +762,15 @@ No Supabase branch, local/test/preview/production migration apply, Phase C/REST/
 - Create: `src/lib/agent-control-plane/adapters/internal.ts`
 - Test: `src/lib/agent-control-plane/adapters/__tests__/internal.test.ts`
 
-- [ ] **Step 1: Write context-construction tests**
+- [x] **Step 1: Write context-construction tests**
 
 Internal Phase C calls still require an explicit actor/company context derived from the routed job/mailbox. They do not receive blanket service authority.
 
-- [ ] **Step 2: Implement adapter**
+- [x] **Step 2: Implement adapter**
 
 Translate internal Phase C request metadata only. Parse the result through the same contracts used by MCP.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 npm test -- src/lib/agent-control-plane/adapters/__tests__/internal.test.ts
@@ -782,23 +788,23 @@ git commit -m "feat(agent-control-plane): add internal Phase C adapter"
 - Create: `src/lib/agent-control-plane/evals/lead-reply-quality.ts`
 - Add fixtures under: `src/lib/agent-control-plane/evals/fixtures/`
 
-- [ ] **Step 1: Preserve the current path as control**
+- [x] **Step 1: Preserve the current path as control**
 
 Do not remove `MAX_SOURCE_BOUND_CONVERSATION_MESSAGES=200` or the 120,000-character path yet. Behind a company flag, assemble both contexts; only the current path supplies the customer-facing draft.
 
-- [ ] **Step 2: Build representative eval fixtures**
+- [x] **Step 2: Build representative eval fixtures**
 
 Include long histories, contradictions, reschedules, exact attachments, prior job contamination, participant ambiguity, delivery retries, and malicious instructions in correspondence.
 
-- [ ] **Step 3: Compare outcomes**
+- [x] **Step 3: Compare outcomes**
 
 Score factual correctness, recipient identity, schedule accuracy, commitment continuity, source citation, style, hallucination, context tokens, latency, and safety. Do not score token savings as success if reply quality drops.
 
-- [ ] **Step 4: Verify shadow emits no second draft/send**
+- [x] **Step 4: Verify shadow emits no second draft/send**
 
 Shadow generation must not persist a user-visible draft, create a provider draft, mutate mailbox state, or enter memory.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npm test -- src/lib/agent-control-plane/memory src/lib/agent-control-plane/evals
