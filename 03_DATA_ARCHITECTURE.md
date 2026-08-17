@@ -4900,7 +4900,7 @@ CREATE TABLE ai_draft_history (
 
 ### Agent job conversation evidence and immutable delivered turns (2026-08-10) — local only, unapplied
 
-The local agent-control-plane branch adds three migrations: `20260807220000_agent_job_conversation_memory.sql`, `20260807223000_agent_correspondence_evidence_read.sql`, and `20260807224500_agent_provider_delivery_sources.sql`. They are committed through `5f9e4d6a` but have not been applied to Supabase.
+The local integrated agent-control-plane branch adds three migrations: `20260807220000_agent_job_conversation_memory.sql`, `20260807223000_agent_correspondence_evidence_read.sql`, and `20260807224500_agent_provider_delivery_sources.sql`. They are committed through `1e866814` but have not been applied to Supabase.
 
 The schema separates provider transport from conversational memory:
 
@@ -5818,5 +5818,72 @@ Durable exactly-once receipts for Payment Review write-offs. The primary key is 
 ### `payment_reminder_generation_claims`
 
 Short-lived service-only claims keyed by `(company_id, source_id)`, where `source_id` is the canonical invoice UUID plus reminder tier. Rows carry an opaque claim token, claim time, and ten-minute expiry. The claim transaction rechecks durable approval actions before acquiring, so concurrent requests do not duplicate paid drafting or queue work. Forced RLS and revoked client grants keep this table outside the browser and iOS data surface. Source migration: `migrations/20260721122000_payment_reminder_delivery_guards.sql`; live version `20260721102146`.
+
+## Agent Operational Schedule and Readiness Foundation (local, unapplied 2026-08-13)
+
+The local Task 11 foundation adds two internal, transport-neutral operational reads over fixed service-role RPCs:
+
+- `read_agent_scheduled_jobs_as_system` returns bounded, actor-authorized `project_tasks` occurrences. It does not read or infer site-visit appointments.
+- `read_agent_job_readiness_issues_as_system` returns bounded raw project/task/photo/customer/address/crew facts. TypeScript owns all five versioned readiness decisions; SQL does not duplicate rule copy or issue/clear semantics.
+
+Migration `20260812120000_agent_operational_schedule_readiness.sql` is the local schema authority. It adds `project_tasks.confirmed_schedule_version`, a company-scoped operational-read source revision, fixed RPC boundaries, and source-revision triggers. A schedule is currently confirmed only when its timestamp is present and `confirmed_schedule_version = schedule_version`; a later schedule mutation clears the complete proof.
+
+Confirmation, explicit unconfirmation, and edits to a currently confirmed schedule persist a purpose-bound dispatch event in `task_schedule_automation_outbox` in the same transaction as the schedule state change. The new event kinds are `schedule_confirmation_dispatch` and `schedule_unconfirmation_dispatch`. The latter records an immutable origin (`explicit_admin` or `schedule_edit`) plus exact before/after schedule projections, so customer communication survives route or worker crashes without granting a structural caller authority. Provider delivery is independently re-authorized by `20260812121000_agent_schedule_confirmation_delivery_guard.sql` immediately before provider ownership.
+
+Operational cursors bind actor, company, permission revision, capability/schema/rule revisions, normalized filters and timezones, the last retained key, and the source revision. Any relevant source mutation returns `STALE_CONTEXT`; it cannot silently duplicate or omit work. Source arrays and text are capped before aggregation or regular-expression work. One signed projection proof covers each returned occurrence or readiness job, keeping source/evidence references within the global bound.
+
+The complete local implementation is recorded in OPS Web commit `5bba3c5e`. The two migration files remain unapplied everywhere: local, test, preview, and production Supabase have not received them. Their install/read gate intentionally rejects the current production PostgreSQL timezone rules: OPS production still resolves post-November-2026 Vancouver with the superseded seasonal offset, while the authoritative BC rule is permanent UTC-7. Supabase/PostgreSQL tzdata must be upgraded and the database/runtime conformance vectors must pass before either migration can be applied. No data backfill is authorized or implied.
+
+## Agent Communication and Participant Read Foundation (local, unapplied 2026-08-14)
+
+Task 12 adds one current-state snapshot boundary for two internal reads:
+
+- `read_agent_job_communication_context_as_system` returns purpose-minimized job/contact facts for `general`, `schedule_notice`, or `photo_request`.
+- `read_agent_job_participants_as_system` returns the current evidence-backed participant graph for `general`, `communication`, `schedule`, or `assignment`.
+
+Migration `20260813120000_agent_job_communication_participants.sql` is the local, unapplied schema source. Both public RPCs are fixed `service_role` entry points over one private implementation. Browser roles and `service_role` itself have no direct grant on the private function or its contactability-fence table. The private statement re-resolves actor membership, permission revision, job/entity access, customer/project/mailbox visibility, purpose-dependent task/photo scopes, and every retained source row before producing a snapshot. Callers cannot supply `as_of`, a projection kind, a repository, or a legacy manifest revision.
+
+The migration adds `private.agent_contactability_address_revisions`, keyed only by `sha256:<normalized-address>` with a safe-integer revision. The table contains no email address or suppression metadata. Global `email_suppressions` changes advance only the affected opaque address fence; the current suppression state is read in the same snapshot statement. A returned email exists only for one confirmed visible owner with a normalized valid address and no active global suppression. Suppressed, duplicate-owned, absent, ambiguous, unavailable, query-bounded, invalid, unresolved, or redacted sources carry fixed states without the address.
+
+Operational-source triggers extend the Task 11 company fence to current sub-clients, opportunities, job conversations/anchors/turns/redactions, provider-delivery authority attestations, and send intents. Every participant claim has one bounded projection proof/evidence atom. A participants collection proof and a communication context proof bind the exact actor, company, job, purpose, permission revision, manifest revision, operational source revision, per-address contactability digest/revision, count completeness, fixed gaps, and ordered participant proof sources. The empty participant graph is still collection-proof-bound. The repository validates projection hashes and cross-field coupling before the domain service may reduce the result.
+
+Source reads are bounded before aggregation: a 251-row recent-turn sentinel for a 250-turn completeness bound, 51 sub-client/participant sentinel rows for a 50-participant public ceiling, 50 schedule occurrences, 100 schedule assignments in aggregate, and bounded photo/legacy sources. Exact counts become explicit lower bounds when a sentinel or another source bound is reached. The private JSON snapshot has a one-MiB bug fence; the TypeScript service retains complete ordered claim/proof/evidence atoms under the public 60,000-character limit. Schedule-bearing purposes also execute the Task 11 database timezone conformance assertion.
+
+The v5 migration privately preserves the earlier v4 conversation, evidence, schedule, and readiness implementations and recreates their public wrappers to accept only manifest `2026-08-13.capability-manifest.v5`; each wrapper supplies the frozen v4 literal internally. This compatibility layer is source-only until the migration is applied.
+
+The complete local Task 12 implementation is OPS Web commit `dc91a349`. The migration has not been database-compiled, executed, applied, rolled back, or runtime-tested on local, test, preview, or production Supabase, so this section does not describe a live table, trigger, function, or grant. It depends on the Task 9/Task 11 schema and both Task 11 migrations. Production PostgreSQL tzdata must satisfy the Task 11 BC permanent-UTC-7 conformance gate before any schedule-bearing Task 12 read can be released. The migration is intentionally absent from the Bible migration archive until an authorized apply occurs.
+
+## Agent Job Catalog Read Foundation (local, unapplied 2026-08-14)
+
+Task 13 adds four fixed internal read boundaries in local migration `20260814120000_agent_job_catalog_reads.sql`:
+
+- `read_agent_customer_jobs_as_system` lists current opportunity/project jobs connected to one authorized current client or sub-client.
+- `read_agent_job_summary_as_system` returns only the selected, jointly authorized current summary sections.
+- `read_agent_job_history_as_system` searches a maximum one-year half-open window across the exact authorized immutable/current history sources.
+- `read_agent_correspondence_evidence_page_as_system` returns 1–20 exact current-redaction-aware turn evidence records for one visible job.
+
+Each public RPC is a fixed `service_role` entry point over private implementation state. Browser roles cannot execute it, and callers cannot supply policy JSON, tenant revisions, clocks, repositories, or arbitrary source selectors. The statement re-resolves the active actor/company membership, complete permission registry and selected variants, entity/customer/mailbox authority, canonical input, operational source revision, history revision, and every retained source row before returning JSON. A mandatory collection or summary proof still binds valid empty results.
+
+The migration adds `private.agent_job_history_revisions`, a per-company safe-integer fence advanced by the current history sources projected by Task 13. It also adds bounded keyset and full-text indexes for customer-job ordering and the permitted conversation, memory, lifecycle, task-event, and estimate history sources. Global result sentinels are applied before aggregation or text search: customer jobs retain at most 50 after a 51-row sentinel; summary occurrences/participants/conversation and each raw source use their own fixed caps; history retains at most 20 after bounded 501-row source candidates; evidence accepts at most 20 requested IDs. Bounded or malformed history sources produce explicit proof-bound `SOURCE_QUERY_BOUND`/`SOURCE_DATA_INVALID` collection gaps; sources that cannot safely return any contract-valid result fail with fixed query-bound/data-invalid errors. Neither path silently truncates into false completeness.
+
+Customer-job opportunity and project rows are filtered independently by current permission, lifecycle, kind-specific status, and created/updated window before reciprocal same-client conversion pairs collapse. When the linked counterpart is filtered or not visible, the qualifying side reports only `linked_project_not_returned` or `linked_opportunity_not_returned`; it does not expose the hidden reference. Project start/end values remain civil dates.
+
+Summary schedule claims use the Task 11 scheduled-occurrence shape and database timezone proof. Readiness returns Task 11 bounded raw sources for TypeScript evaluation. Participant sources use the Task 12 current confirmed/ambiguous/redacted identity boundary without contact channels. Activity, financial, and conversation sources are separately permission- and source-bounded. Conversation counts/timestamps are actor-visible; global memory version/high-watermark are returned only for `inbox.view:all`.
+
+History events each retain one unique projection evidence atom. `correspondence_evidence_ids` are separately hash-bound drill-down selectors for the evidence-page RPC, not aliases for envelope proof IDs. Memory fragments are bounded structured facts with 1–8 current authorized turn selectors; full documents and untrusted free-form memory blobs are not returned. Source query/data gaps are part of the collection proof and remain distinct from service-side prompt-budget omission.
+
+Manifest v6 compatibility wrappers reprove the caller's exact v6 identity before privately rebinding the earlier v5 implementation literals. The legacy `get_correspondence_evidence` bridge is stricter because its public schema revision changed: it validates capability `get_correspondence_evidence`, revision `get_correspondence_evidence:2026-08-14.v1`, and manifest v6 before passing only the frozen `2026-08-07.v1`/v5 literals into the existing private chain.
+
+The complete local Task 13 implementation is OPS Web commit `d4118344`. The 7,281-line migration has not been catalog-compiled, executed, applied, rolled back, or runtime-tested on local, test, preview, or production Supabase. A PostgreSQL 18 ECPG grammar audit parsed all 132 statements and static checks matched the four RPC arities and referenced generated schema/functions, but that does not prove catalog resolution, RLS behavior, query plans, timezone behavior, or runtime correctness. The migration depends on the unapplied Task 9, Task 11, and Task 12 foundations and inherits the Task 11 timezone-conformance gate for schedule-bearing summaries. It is intentionally absent from the Bible migration archive until an authorized apply occurs.
+
+### Phase C routed-source and context fence (local, unapplied 2026-08-16)
+
+Migration `20260814190000_agent_phase_c_source_turn_read.sql` adds three service-role-only read boundaries for the internal Phase C consumer: `read_phase_c_routed_actor_fence_as_system`, `read_phase_c_source_turn_as_system`, and `read_agent_phase_c_job_conversation_context_as_system`. Public, anonymous, and authenticated execution remain revoked.
+
+The source-turn read accepts only one current opportunity route and binds the current assigned actor plus assignment version, active mailbox, OPS/provider thread identity, immutable inbound activity, matching correspondence event, provider-delivery source ID/hash/content identity, and opportunity conversation anchor. Recipient arrays are procedurally bounded before expansion; address normalization and exact provider-source recipient/CC equality are rechecked; the mailbox address must appear in To or CC; and provider-thread identifiers are capped at 512 bytes. BCC-only delivery fails closed because the current provider-source schema has no independently attested BCC field.
+
+The Phase C context wrapper accepts only capability `get_job_conversation_context`, schema revision `get_job_conversation_context:2026-08-07.v1`, manifest `2026-08-14.capability-manifest.v6`, the fixed four read scopes, opportunity jobs, exact turn limit 20, and the fixed `memory`, `recent_turns`, `participants`, `gaps`, `cross_job_seed` section order. One materialized statement proves exactly one requested source turn/conversation, invokes the current v6 job-conversation reader with that turn as the freshness requirement, and rechecks company, permission revision, opportunity, conversation, and returned required-through turn before returning the JSON unchanged.
+
+The complete local implementation is OPS Web commit `77c79996`. The migration has not been catalog-compiled, executed, applied, rolled back, or runtime-tested on local, test, preview, or production Supabase. It depends on the unapplied job-conversation/provider-source foundations and is intentionally absent from the Bible migration archive until an authorized apply occurs. Static migration-contract tests and TypeScript repository/adapter tests are source evidence only; they do not prove catalog resolution, grants, RLS interaction, query plans, runtime concurrency, or production data compatibility.
 
 **End of Data Architecture Documentation**

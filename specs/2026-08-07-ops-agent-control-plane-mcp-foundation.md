@@ -1,6 +1,6 @@
 # OPS Agent Control Plane and MCP Foundation (2026-08-07)
 
-**Status:** Product direction approved by Jackson on 2026-08-07. The local branch `feat/ops-agent-control-plane-20260807` now includes the actor/source-scoped foundation, immutable provider-delivered turns, versioned running job memory with minimal cross-job continuity seeding, the bounded job-context domain read, the Phase C internal adapter, and metrics-only shadow/evaluation mechanics through commits `61d65545` and `f630c715`. Tasks 11-13's broader operational read catalogue, remote MCP transport, OAuth, production shadow measurement, and the Phase C context switch remain unbuilt or unperformed. Nothing has been pushed, deployed, applied to Supabase, or proven customer-live.
+**Status:** Product direction approved by Jackson on 2026-08-07. The local OPS-Web branch `feat/ops-agent-control-plane-takeover-20260807` now integrates foundation Tasks 1–13, the dark site-visit manifest increment, the Phase C actor/source-scoped internal adapter, and the metrics-only reply-context shadow/evaluation path through commits `d4118344`, `77c79996`, and `3da161d3`. Manifest `2026-08-14.capability-manifest.v6` makes nine reads available for internal composition only and keeps every external exposure disabled. The related control-plane migrations have not been catalog-compiled, executed, or applied to Supabase. The customer-facing Phase C prompt still uses the whole-history control; the shadow flag is not enabled in production, its release gate is fixed false, and the context switch is unperformed. Remote MCP transport and OAuth remain unbuilt. The canonical site-visit booking RPCs and prompt/calendar workers are separately production-live, while their control-plane adapters remain dark. Nothing here has been pushed, deployed, or proven customer-live.
 
 **Decision:** Build one company- and actor-scoped OPS domain service, then expose it through three adapters: Phase C, the existing OPS API, and a public remote MCP server for Claude, ChatGPT, and other approved hosts. MCP is a transport and discovery layer. It does not own OPS business rules.
 
@@ -50,22 +50,46 @@ The following exist in OPS-Web and/or the production Supabase project:
 - Existing catalog guided-setup sessions with input revisions, source evidence, live snapshot hashes, proposal hashes, approval hashes, commit operation IDs, commit journals, and post-commit readback.
 - Existing idempotent/guarded patterns in scheduling, email delivery, lifecycle, financial, and catalog services.
 
-### 2.2 Verified gaps
+### 2.2 Local foundation implementation, not deployed
+
+The isolated OPS-Web implementation branch now contains:
+
+- the MCP v2/Zod 4 alias boundary, stable v1 contracts, actor/entity authorization context, and governed capability manifest;
+- manifest revision `2026-08-14.capability-manifest.v6`, with `get_job_conversation_context`, `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, `resolve_job_participants`, `list_customer_jobs`, `get_job_summary`, `search_job_history`, and `get_correspondence_evidence` marked `implementation=available` for internal composition only; every capability remains `externalExposure=disabled`;
+- the job-conversation schema migration, bounded evidence normalization, exact provider-delivery source capture, participant/anchor resolution, and immutable delivered-turn ingestion at inbound and provider-accepted outbound chokepoints;
+- a strict evidence-backed running-memory schema, scoped snapshot/commit repository, bounded structured generation, deadline-bound synchronous catch-up, and deliberately minimal same-customer cross-job seed;
+- provider-source-bound turn ingestion that derives content, recipients, attachments, timing, and participant identity inside the guarded database transaction, including fixed prompt-safe projections for rejected source content;
+- durable provider-accepted approved-action reconciliation, mailbox/reconciliation lease renewal, database-pressure backoff, and forward-only Phase C generation/source/recipient fences.
+- a caller-independent `getJobConversationContext` service boundary with nominal authorization proof, a fixed repository, same-statement actor/job/customer/mailbox checks, versioned running memory, whole recent turns, exact bounded evidence excerpts, resolved participant provenance, deliberately minimal prior-job continuity, catch-up/stale semantics, current redactions, and a deterministic 60,000-character result ceiling. Source projections are bounded before collection; claims and their retained proofs are reduced together.
+- fixed, actor-authorized schedule and readiness RPCs, source-stable pagination, current confirmation proof, bounded customer-shareable crew projection, and one TypeScript-owned readiness rule boundary;
+- strict current-only communication/participant contracts, nominal authorization and repository boundaries, same-statement actor/company/job/customer/mailbox/source checks, per-address contactability freshness, evidence-bound participant projections, purpose-minimized communication facts, and deterministic 60,000-character result reducers;
+- strict job-catalog contracts plus four fixed same-statement read RPCs for current customer jobs, selected job-summary sections, bounded one-year history search, and exact job-bound correspondence evidence. Signed cursors, source/history fences, section/collection proofs, explicit source gaps, source-specific sentinels, and deterministic 60,000-character reducers preserve authority and completeness across pages;
+- a frozen, transport-neutral `OpsAgentDomainService` composition root that accepts only a server-minted `ActorContext` plus canonical typed input, owns manifest parsing and authorization, closes over nominal repository dependencies, normalizes invalid input once, and returns the same domain result for internal, OPS API, and fully scoped MCP actor contexts. It exposes only the nine implemented methods listed above; future methods are absent rather than stubbed.
+- a Phase C internal adapter that re-proves the current routed actor, assignment version, mailbox/thread, immutable inbound activity, correspondence event, provider-delivery source hash, and opportunity conversation anchor before the same statement reads the v6 job-conversation context. Pending memory returns `STALE_CONTEXT`; this path does not perform a second unfenced memory catch-up;
+- a company-flagged, metrics-only reply-context shadow that preserves the current whole-history prompt as the sole customer-facing control. Its ten-second deadline covers feature lookup and context observation, including non-cooperative promises; it cannot generate, persist, draft, send, mutate mailbox state, or feed its result into the live reply;
+- one shared untrusted-JSON prompt serializer for the live prompt and shadow length calculation, plus offline quality fixtures whose schedule assertions require a separate structured verified-schedule source. The evaluation harness cannot set `releaseGatePassed` to true.
+
+The relevant local commits are `c53b4664`, `99b30cfc`, `2969debe`, `46aedaf2`, `fd9e17c5`, `6f9e387f`, `8af1ee5d`, `1e866814`, `556c514f`, `14969c4c`, `91419970`, `7472219a`, `73712b4f`, `5bba3c5e`, `dc91a349`, `d4118344`, `77c79996`, and `3da161d3`. This is source and test evidence only. The Task 9, Task 11, Task 12, Task 13, and Phase C source/context migrations have not been catalog-compiled or executed; all remain unapplied, and there is no production schema, deployed adapter or consumer, host, shadow observation, context switch, or customer-live proof.
+
+### 2.3 Verified gaps
 
 The following do not currently exist as one production-applied coherent system:
 
-- A shared typed `OpsAgentDomainService` used by Phase C, REST, and MCP. The typed facade and Phase C internal adapter exist locally; REST and MCP adapters do not.
+- The remaining shared domain methods beyond the nine implemented internal reads, including site-visit reads and all write operations.
+- REST and MCP adapters. The typed facade and Phase C internal adapter exist locally, but no REST/MCP transport consumes them.
 - A production actor context that intersects external OAuth scopes with current OPS permissions and entity assignment. The local Phase C path has actor-, assignment-, mailbox-, provider-source-, and job-scoped authority, but there is no external OAuth authority path.
-- A production-applied job conversation store and versioned running memory. The local schema, immutable delivered-turn ingestion, running-summary generation, catch-up, minimal cross-job continuity seed, and bounded scoped-context read exist, but their migrations are unapplied and the customer-facing prompt still uses the whole-history control.
+- A production-applied job conversation store and versioned running memory. The local schema, immutable delivered-turn ingestion, running-summary generation, catch-up, minimal cross-job continuity seed, bounded scoped-context read, and broader job-catalog reads exist, but their migrations are unapplied and the customer-facing prompt still uses the whole-history control.
+- A production Phase C shadow sample or context switch. The integrated local path is deliberately metrics-only, bounded to ten seconds, and fixed release-ineligible until the migrations, server-only cursor key, feature-flag rollout, production measurements, and rollback proof are separately completed.
 - A general change-set and cryptographic confirmation-receipt engine.
-- A public remote MCP server. The isolated MCP SDK/Zod dependency boundary exists locally, but no remote transport is deployed.
+- Site-visit control-plane read services, handlers, and change-set transaction participants. The canonical booking/reschedule/cancel RPCs and prompt/calendar workers are production-live, but no agent-control-plane adapter invokes them. The manifest definitions remain dark until their read authority, durable receipt/idempotency, locked target-version comparison, bounded active same-company assignees, all-scope-only unlinked access, and post-commit readback are proven end to end.
+- A public remote MCP server, deployed MCP endpoint, or registered host integration. Only the SDK/schema boundary exists locally.
 - An OAuth 2.1 authorization-server facade for external MCP clients, protected-resource discovery, grants, revocation, and MCP audience-bound access tokens.
 - A public connector consent/revocation surface.
 - MCP-specific audit, rate-limit, schema-version, adversarial-evaluation, and rollout controls.
 
 No remote OPS MCP server was found in the inspected repositories. This design must not be described as an existing integration.
 
-### 2.3 Current implementation references
+### 2.4 Current implementation references
 
 Verified current code boundaries include:
 
@@ -78,6 +102,14 @@ Verified current code boundaries include:
 - Phase C participant/conversation services: `ops-web/src/lib/api/services/conversation-state/`
 - current project/photo/estimate/invoice services: `ops-web/src/lib/api/services/`
 - guided catalog proposal/approval/commit/readback: `ops-web/src/lib/catalog-setup/phase-c/`
+- first shared domain facade: `ops-web/src/lib/agent-control-plane/services/domain-service.ts`
+- domain composition root and repository bundle: `ops-web/src/lib/agent-control-plane/services/create-domain-service.ts` and `ops-web/src/lib/agent-control-plane/services/repositories.ts`
+- communication/participant public contracts: `ops-web/src/lib/agent-control-plane/contracts/communication.ts`
+- current communication and participant services: `ops-web/src/lib/agent-control-plane/services/get-job-communication-context.ts` and `ops-web/src/lib/agent-control-plane/services/resolve-job-participants.ts`
+- communication/participant authorization and fixed repositories: `ops-web/src/lib/agent-control-plane/services/job-communication-authorization.ts`, `ops-web/src/lib/agent-control-plane/services/job-participants-authorization.ts`, `ops-web/src/lib/agent-control-plane/services/job-communication-context-repository.ts`, and `ops-web/src/lib/agent-control-plane/services/job-participants-repository.ts`
+- job-catalog public contract: `ops-web/src/lib/agent-control-plane/contracts/job-catalog.ts`
+- job-catalog services and fixed repositories: `ops-web/src/lib/agent-control-plane/services/list-customer-jobs.ts`, `get-job-summary.ts`, `search-job-history.ts`, `get-correspondence-evidence.ts`, and their capability-specific authorization/repository modules
+- job-catalog fixed RPC source: `ops-web/supabase/migrations/20260814120000_agent_job_catalog_reads.sql`
 
 These are sources to adapt behind the shared service, not MCP handler dependencies to call directly.
 
@@ -159,12 +191,25 @@ The parent Phase C system can depend on this contract before the public MCP adap
 
 ### 4.1 Service shape
 
+The current locally implemented interface is deliberately honest: it contains only the method with a complete source service, authorization path, repository, bounds, and tests.
+
+```ts
+interface OpsAgentDomainService {
+  getJobConversationContext(
+    ctx: ActorContext,
+    input: GetJobConversationContextInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentResult<JobConversationContext>>;
+}
+```
+
+The complete target facade adds the following methods only as their real implementations pass the same gates:
+
 ```ts
 interface OpsAgentDomainService {
   listScheduledJobs(ctx: ActorContext, input: ListScheduledJobsInput): Promise<AgentResult<ScheduledJobPage>>;
   listJobReadinessIssues(ctx: ActorContext, input: ListJobReadinessIssuesInput): Promise<AgentResult<JobReadinessPage>>;
   getJobCommunicationContext(ctx: ActorContext, input: GetJobCommunicationContextInput): Promise<AgentResult<JobCommunicationContext>>;
-  getJobConversationContext(ctx: ActorContext, input: GetJobConversationContextInput): Promise<AgentResult<JobConversationContext>>;
   listCustomerJobs(ctx: ActorContext, input: ListCustomerJobsInput): Promise<AgentResult<CustomerJobPage>>;
   getJobSummary(ctx: ActorContext, input: GetJobSummaryInput): Promise<AgentResult<JobSummary>>;
   searchJobHistory(ctx: ActorContext, input: SearchJobHistoryInput): Promise<AgentResult<JobHistoryPage>>;
@@ -309,7 +354,7 @@ A conversation is anchored to one OPS lead/opportunity/job, never a Gmail provid
 
 The memory model's roles are business-side roles, not the external Claude/ChatGPT chat roles:
 
-- `user`: the client, sub-clients, and evidence-confirmed related contacts;
+- `user`: the client, sub-clients, and related contacts only when a concrete authorized relationship record confirms them;
 - `assistant`: Phase C and OPS users speaking for the company.
 
 Participant classification is evidence-backed and versioned. Unknown or ambiguous participants remain unresolved; they are not guessed into either side.
@@ -395,7 +440,7 @@ All carry `company_id`; all foreign keys and query-path indexes are mandatory; a
 
 ## 6. Initial read-only tool contract
 
-These are the first public MCP tools and the internal Phase C dependency surface. Tool names do not contain a version suffix; incompatible successors receive a new name.
+These contracts define the first public MCP reads, the internal Phase C dependency surface, and approved dark read capabilities. A manifest entry is not available or advertised until its service implementation passes its rollout gates. Tool names do not contain a version suffix; incompatible successors receive a new name.
 
 ### 6.1 `list_scheduled_jobs`
 
@@ -404,17 +449,24 @@ Purpose: return authoritative scheduled job occurrences for a bounded time windo
 Input:
 
 - `from` and `to` RFC 3339 instants;
-- optional status filters;
+- optional task-lifecycle and confirmation-state filters;
+- optional display timezone;
 - optional cursor;
 - `limit`, default 25, maximum 50.
 
 Constraints:
 
 - maximum window 90 days;
-- company timezone is authoritative unless a valid display timezone is requested;
-- task/visit occurrences are canonical, not one collapsed project date;
+- company timezone is authoritative; a valid display timezone changes representation only, never selection or ordering;
+- v1 is deliberately limited to materialized `project_tasks` occurrences. Site visits stay on their separately approved dark capability boundary until `booked_at` exists and a future site-visit task implements the read path;
+- one task row is one canonical occurrence, never one collapsed project date or a recurrence-template expansion;
+- lifecycle (`active | completed | cancelled`), timing (`upcoming | in_progress | past_due | past`), and confirmation (`confirmed | unconfirmed`) are orthogonal;
+- an all-day occurrence uses company-local calendar dates and an exclusive next-local-midnight end; timed DST gaps/folds are rejected rather than guessed;
 - every occurrence includes task schedule version, confirmation/lock state, assignment IDs, and project update/version markers;
-- assignment output includes customer-shareable crew display fields only, never private employee contact/HR data.
+- a confirmation is current only when `confirmed_schedule_version = schedule_version`; lock state is independent;
+- assignment output includes bounded customer-shareable user ID/display-name fields only, never private employee contact/HR data;
+- opaque signed keyset cursors bind the actor, company, permission snapshot, source fence, manifest/schema, normalized filters, timezones, and last retained occurrence. A relevant source change returns `STALE_CONTEXT` and requires restart;
+- every returned occurrence has one bounded authoritative projection proof; claims and proofs are removed together if the 60,000-character prompt budget is reached.
 
 ### 6.2 `list_job_readiness_issues`
 
@@ -430,12 +482,18 @@ Input:
 Initial rule catalogue:
 
 - `SITE_PHOTOS_MISSING`
-- `CUSTOMER_CONTACT_UNRESOLVED`
+- `CUSTOMER_RECORD_UNRESOLVED`
 - `SCHEDULE_UNCONFIRMED`
 - `CREW_UNASSIGNED`
 - `ADDRESS_INCOMPLETE`
 
-Each issue includes rule revision, severity, exact evaluated sources, current entity versions, and a human-readable fact—not an instruction to the model. `SITE_PHOTOS_MISSING` ignores deleted photos and counts only usable project/site-visit photo evidence according to the server rule revision.
+Readiness v1 evaluates distinct current projects that have an active scheduled task in the half-open window. A physical source page contains at most 50 projects, and the service may scan at most five pages under one immutable source fence to fill a logical page, for a hard ceiling of 250 evaluated candidates. The continuation cursor advances from the last evaluated candidate, including clear candidates that were not returned.
+
+The SQL boundary returns bounded, actor-authorized raw facts only. One TypeScript rules module owns derivation, status, severity, revision, and fixed human-readable fact copy, so business rules are not duplicated between SQL, REST, Phase C, and MCP. Each evaluation is `issue`, `clear`, or `not_evaluated`; an inaccessible or truncated fact source is never treated as proof of absence.
+
+`CUSTOMER_RECORD_UNRESOLVED` means the project has no current same-company, nondeleted, unmerged client record. It does not mean missing email/phone, and it does not replace Task 12 contactability or participant resolution. `SITE_PHOTOS_MISSING` ignores deleted and unusable/local assets, counts only approved operational photo categories, and uses the bounded legacy `project_images` fallback only when no structured `project_photos` row—including a tombstone—exists. Customer and photo permissions/scopes are required only when their corresponding rule is selected; all selected rule policies must authorize.
+
+Every job result has one authoritative projection proof covering its exact safe raw facts, evaluated occurrence IDs, selected rule order, actor/company/permission snapshot, source fence, rule revisions, and time boundary. Rules may share that job-level proof, keeping the result below the global source/evidence cap. Source strings remain marked untrusted business data and never become model instructions or tool authority.
 
 ### 6.3 `get_job_communication_context`
 
@@ -443,21 +501,20 @@ Purpose: assemble the facts needed to communicate accurately with a customer abo
 
 Input:
 
-- `job_ref`;
+- current `job_ref`, strictly `{ kind: opportunity | project, id: UUID }`;
 - `purpose: schedule_notice | photo_request | general`;
-- optional `as_of` for replay/audit.
+- no caller-selected `as_of`; v1 is a current-state read whose authoritative `read_at`, source revisions, contactability revision, and proofs are server-produced in the same statement.
 
 Output:
 
-- customer and confirmed related contacts permitted for the actor;
-- contactability, opt-out/suppression, preferred channel, and ambiguity;
-- exact scheduled occurrences and local dates/times;
-- customer-shareable assigned crew names/roles;
-- job address and safe job description;
-- readiness facts relevant to the purpose;
-- evidence and freshness.
+- current primary client and sub-client rows permitted for the actor, plus evidence-backed ambiguous, unresolved, redacted, OPS-delivery, and Phase C identities;
+- email-only contactability for v1. A normalized address is returned only for one confirmed, unsuppressed owner. Global suppression, duplicate visible ownership, absence, invalid source data, unavailable evaluation, and query bounds are distinct non-contactable states and withhold the address;
+- primary-client recipient eligibility only when that identity is confirmed and contactable. A contactable sub-client requires explicit selection. No conversation-only identity is promoted to a related contact, and no preferred channel, phone/SMS consent, or opt-out claim is inferred;
+- `general` returns no schedule or photo block; `schedule_notice` adds the exact bounded current schedule; `photo_request` adds that schedule plus the shared TypeScript-derived `SITE_PHOTOS_MISSING` fact. An unavailable schedule/photo source is `not_evaluated`, never an empty negative fact;
+- customer-shareable assignment names inside schedule occurrences, with no employee email, phone, HR role, or profile data;
+- bounded job address and safe description, fixed gap codes, a mandatory prompt-safety directive, exact freshness/source fences, and claim-linked projection evidence.
 
-This tool returns facts. It does not write or send email.
+Each source snapshot is company-, actor-, permission-, purpose-, and job-bound in one database statement. Claims and their evidence/proofs are retained or removed atomically under the 60,000-character result ceiling; occurrence prefixes are retained before participant prefixes. This tool returns facts only. It does not draft, write, or send email.
 
 ### 6.4 `get_job_conversation_context`
 
@@ -484,6 +541,8 @@ Input:
 
 Output includes job refs, dates, statuses, relationship basis, visibility reason, and summary/version markers. It does not include full correspondence or financial detail unless separately authorized.
 
+Opportunity and project sources are independently permission-, lifecycle-, status-, and date-filtered before reciprocal same-client conversion pairs collapse into one logical job. A visible row whose linked counterpart is filtered or not visible reports a non-leaking `linked_*_not_returned` state rather than inventing a standalone/unconverted claim or exposing the hidden reference.
+
 ### 6.6 `get_job_summary`
 
 Purpose: return a bounded, current operational summary of one job.
@@ -493,7 +552,9 @@ Input:
 - `job_ref`;
 - optional section allowlist: `identity`, `schedule`, `readiness`, `participants`, `financials`, `activity`, `conversation`.
 
-Each section is independently permission-gated. Requesting an unauthorized financial section returns a typed scope failure or omits it with an explicit warning according to caller policy; it never silently leaks.
+Each section is independently permission-gated. The complete requested section set must authorize before the repository reads; an unauthorized financial or other selected section fails the whole call without leaking another section, warning, or source-existence signal.
+
+The implementation authorizes the complete requested section set before the read, then captures one current same-statement summary snapshot. Schedule uses the Task 11 occurrence contract, readiness uses the Task 11 TypeScript rule evaluator over bounded raw facts, and participants use the Task 12 safe identity semantics without contact channels. Activity, conversation, and financial sources are separately bounded and proof-bound; unevaluable selected sections remain present with fixed gaps rather than disappearing.
 
 ### 6.7 `search_job_history`
 
@@ -502,12 +563,14 @@ Purpose: search exact and summarized history when the current job context indica
 Input:
 
 - plain query, maximum 500 characters;
-- optional customer reference and visible job refs;
+- required `scope`: either one customer reference with selected job kinds, or 1–50 explicit visible job refs;
 - date window, maximum one year per call;
 - source types;
 - cursor and limit, default 10, maximum 20.
 
 Output separates exact-source matches from memory-summary matches, includes evidence IDs and relevance reasons, and never searches another tenant. Search text is treated as data, not an instruction.
+
+History is one company/job/customer-authorized same-statement snapshot over immutable correspondence, bounded current memory fragments, task events, status history, and financial sources selected by the exact authorization variants. The default window is the half-open interval ending at the database read time and starting exactly 365 days earlier. Source/query bounds and invalid source data are proof-bound result gaps; prompt-budget reduction is separate result metadata.
 
 ### 6.8 `get_correspondence_evidence`
 
@@ -515,11 +578,14 @@ Purpose: retrieve exact, bounded source evidence by IDs already returned from an
 
 Input:
 
-- up to 20 evidence IDs;
+- required current `job_ref`;
+- 1–20 unique immutable turn evidence IDs;
 - optional excerpt/full-text mode;
 - total character maximum 60,000.
 
-Output includes delivered message/activity/event IDs, sender/recipient identity as permitted, delivered timestamp, normalized exact plain text, content hash, attachment references, and trust markers. Raw MIME, scripts, tracking markup, and hidden HTML are not prompt output.
+Output includes the immutable turn evidence ID and job ref, delivered timestamp, direction, resolution-safe side, subject/content availability or redaction state, original and normalized content hashes, bounded safe attachment metadata, and a delivered-correspondence trust marker. It does not expose provider message/activity/event IDs or sender/recipient addresses. Raw MIME, scripts, tracking markup, and hidden HTML are not prompt output.
+
+The Task 13 page read requires one exact visible job plus 1–20 previously returned turn evidence IDs. Excerpt mode is bounded per item; full-text mode is all-or-error under the 60,000-character public limit. Oversized full text returns a fixed non-retryable invalid-argument result instructing the caller to request fewer items or use excerpt mode. The v6 legacy evidence wrapper validates its new public identity before privately rebinding only the frozen v5 implementation revision; callers cannot use revision translation to bypass the old authority checks.
 
 ### 6.9 `resolve_job_participants`
 
@@ -527,10 +593,41 @@ Purpose: return the evidence-backed participant graph for one job.
 
 Input:
 
-- `job_ref`;
-- optional purpose and `as_of`.
+- current `job_ref`, strictly `{ kind: opportunity | project, id: UUID }`;
+- `purpose: general | communication | schedule | assignment`, default `general`;
+- no caller-selected `as_of`; v1 resolves the current authorized source graph only.
 
-Output includes OPS users, client, sub-clients, confirmed related contacts, unknown participants, role/side, confidence state, evidence IDs, contactability, and safe communication identity. It never auto-confirms an ambiguous related contact.
+Output is bounded to 50 ordered participant claims and distinguishes exact versus lower-bound totals. Current same-company, nondeleted, unmerged primary clients and current authorized sub-clients may use concrete IDs. Ambiguous or unresolved identities use `unknown:sha256:<digest>`; authorization-redacted identities use `redacted:sha256:<digest>`; none exposes an address or conversation side. The `related_contact` result type is reserved for a future concrete related-contact record, but v1 never emits a confirmed related contact from conversation evidence alone. Persisted resolved-but-nonconcrete evidence remains unresolved and produces the fixed `RELATED_CONTACT_UNCONFIRMED` gap.
+
+OPS delivery actors and Phase C are assistant-side. OPS output is limited to a safe display name with a null role and no contact fields; Phase C exposes no private identity fields. Task-assignment users appear only for `schedule` or `assignment`, after purpose-specific task/project authorization, and carry the same safe-name-only boundary. `general` and `communication` cannot pull assignment-only OPS nodes.
+
+Participant contactability is email-only and source-proven. The primary client can be `eligible`; a contactable sub-client is `selection_required`; suppressed, duplicated, absent, ambiguous, unavailable, bounded, invalid, unresolved, or redacted identities are ineligible with a matching fixed reason. Preferred channel is always null in v1. Each public participant references exactly one retained authoritative projection evidence atom. Collection proof binds the actor, company, job, purpose, permission/manifest/source/contactability revisions, count completeness, fixed gaps, and the ordered participant proof sources, including an empty graph.
+
+### 6.10 `list_site_visits` (dark)
+
+Purpose: return either real booked appointments or bounded capture history without treating legacy `scheduled_at` values as appointments.
+
+Input is an explicit discriminated union:
+
+- `view: booked_appointments` requires `from` and `to`; the domain service hard-codes `booked_at IS NOT NULL`, `deleted_at IS NULL`, and a maximum 90-day `scheduled_at` window; status defaults to active appointments (`scheduled`, `in_progress`) so cancelled/completed visits appear only when explicitly requested;
+- `view: visit_history` requires `created_from` and `created_to`; the domain service uses `created_at`, never legacy `scheduled_at`, and permits a maximum 365-day window;
+- both modes accept bounded status, assignee, opportunity, cursor, and limit filters;
+- `include_unlinked` exists only in history mode, defaults false, and adds an all-company `pipeline.view` requirement when true.
+
+Output includes the exact visit ID/version/freshness, booking discriminator, bounded status/timing/assignee facts, and lead identity. A linked address is resolved through the opportunity; `site_visits` has no address column. `calendar.view:own` and assigned pipeline scope are resolved against the actual visit/lead, not accepted from caller claims.
+
+### 6.11 `get_site_visit_context` (dark)
+
+Purpose: return one site visit with lead context, booking facts, checklist completion, artifact counts by kind, bounded authorized artifact evidence, and timeline activity.
+
+Input requires an explicit anchor:
+
+- `anchor: opportunity` plus the expected opportunity reference; the service must privacy-safely reject a visit whose stored anchor does not match;
+- `anchor: unlinked`; this path requires both `pipeline.view:all` and `photos.view:all` because an unlinked visit cannot satisfy assigned entity scope.
+
+Artifact evidence and timeline limits are independently bounded at 20. Counts distinguish total artifacts from those marked `included_in_project_review`. Raw storage-object URLs are never returned directly; any usable link must pass the same bounded, actor-scoped, short-lived evidence authorization layer as correspondence evidence. Every query filters `deleted_at IS NULL` on the visit and its satellites.
+
+These two reads are contract entries only. Their handlers and repositories do not exist, so they remain unavailable and unadvertised until the booking/read implementation and adversarial gates pass.
 
 ---
 
@@ -644,8 +741,29 @@ Planned domain-specific pairs:
 - `prepare_estimate_import` / `commit_estimate_import`
 - `prepare_catalog_service_change` / `commit_catalog_service_change`
 - `prepare_client_message_batch` / `commit_client_message_batch`
+- `prepare_site_visit_booking` / `commit_site_visit_booking`
+- `prepare_site_visit_reschedule` / `commit_site_visit_reschedule`
+- `prepare_site_visit_booking_cancellation` / `commit_site_visit_booking_cancellation`
 
 Catalog tools must adapt the existing guided catalog session, source, capability-manifest, approval-hash, commit-journal, and readback machinery. Imports are a provenance mode of `prepare_catalog_service_change`, not a separate catalog rule engine. The complete catalog design and task sequence are defined in `specs/2026-08-07-phase-c-catalog-authoring-control-plane-integration.md` and its implementation plan.
+
+### 8.7 Site-visit booking boundary
+
+The approved booking design is defined in `specs/2026-08-10-site-visit-booking-calendar-design.md`; its control-plane handoff is `specs/2026-08-10-site-visit-mcp-capability-briefing.md`.
+
+Each commit is a thin, confirmation-gated adapter over one canonical domain transaction participant, which in turn invokes exactly one canonical booking RPC:
+
+- booking → `public.book_site_visit`;
+- reschedule → `public.reschedule_site_visit`;
+- cancellation → `public.cancel_site_visit_booking`.
+
+The participant must never write `site_visits` directly. It locks and compares the versions captured by prepare, re-resolves `pipeline.convert` and entity assignment, verifies that the supplied UTC/local/timezone triple matches the current company timezone, rejects a start older than the RPC's five-minute grace, and validates every assignee as a unique active same-company member. Booking rejects a second `booked_at IS NOT NULL` visit while the existing one remains `scheduled`; reschedule accepts only a booked `scheduled` visit; cancellation changes a booked `scheduled` visit and treats an exact replay against that already-cancelled booking as a no-op success. The participant then delegates all domain side effects—timeline activity, lead-stage nudge, calendar queueing, and reminder arming—to the RPC. The RPC and generic commit share one durable idempotency key/arguments-hash contract so retries from MCP, web, or iOS cannot create a second booking or duplicate side effects.
+
+The canonical reminder dedupe key is `site_visit:<visit_id>:<kind>:<user_id>:<scheduled_at epoch>`. The shorter `site_visit:<id>:<kind>` wording elsewhere in the booking design is superseded because it collides across assignees and prevents a reschedule from re-arming prompts.
+
+All three commits are high-risk, destructive, and `openWorldHint=true`: booking also advances an existing `new_lead` opportunity to `qualifying`, while every commit can enqueue external calendar changes. None may be advertised until the RPCs, transaction participants, post-commit readback, and external reconciliation tests exist.
+
+Starting and completing a visit are permanently outside this control-plane surface. Those transitions belong to the phone's offline-first durable capture queue; a server/MCP start or completion tool could desynchronize the device vault and must not exist.
 
 ---
 
@@ -890,13 +1008,13 @@ These are deployment defaults, not promises. Tune from measured load without rel
 
 ## 14. Full OPS-for-LLMs catalogue
 
-The following catalogue describes useful end-state capabilities. Only the §6 read tools are in the initial external release.
+The following catalogue describes useful end-state capabilities. Only the implemented and explicitly enabled subset of §6 can enter the initial external release; dark site-visit contracts are not launch claims.
 
 ### 14.1 Customer and relationship context
 
 Read:
 
-- search/resolve customers and confirmed related contacts;
+- search/resolve customers and related contacts backed by a concrete authorized relationship record;
 - list customer jobs and relationship history;
 - get contactability and communication preferences;
 - identify duplicate/ambiguous customer records without merging them.
@@ -919,6 +1037,7 @@ Read:
 Confirmed writes:
 
 - prepare/commit schedule changes;
+- prepare/commit lead-attached site-visit booking, reschedule, and cancellation through the canonical booking RPCs;
 - prepare/commit crew assignments;
 - prepare/commit task/status/milestone changes;
 - prepare/commit opportunity-to-project conversion when every mapping is explicit.
@@ -1024,6 +1143,8 @@ Do not expose:
 - silent customer/contact merging or identity confirmation;
 - open-ended bulk send or “send whatever the model composed”;
 - unsupervised external purchasing/order placement;
+- starting or completing a site visit from MCP/server code; capture lifecycle transitions remain device-owned and offline-first;
+- direct `site_visits` row mutation that bypasses the canonical booking RPC side effects;
 - any bypass for confirmation, permissions, contactability, version checks, or audit.
 
 Domain tools exist only when OPS can state the business invariant, evidence contract, permission rule, preview, idempotency, and post-commit proof.
@@ -1062,6 +1183,11 @@ Domain tools exist only when OPS can state the business invariant, evidence cont
 ### 16.4 Schedule/readiness tests
 
 - daylight-saving transitions and company timezone boundaries;
+- booked site visits require `booked_at IS NOT NULL`; legacy/open rows never appear as appointments;
+- site-visit history windows use `created_at`, not historical junk `scheduled_at` values;
+- assigned-scope actors cannot list or retrieve unlinked visits; explicit unlinked reads require all-company pipeline/photo authority;
+- linked context rejects an opportunity reference that does not match the visit;
+- booking/reschedule/cancel enforce one open booking, valid state transitions, bounded active same-company assignees, and canonical side effects exactly once;
 - multiple visits/tasks on one project;
 - unconfirmed/locked/stale schedule versions;
 - deleted, client-hidden, legacy, and site-visit photos;
@@ -1125,10 +1251,27 @@ Success requires correct tool selection, no unauthorized data, complete evidence
 7. **Confirmed commits by domain**
    - Enable one domain at a time after its atomicity, confirmation, readback, and adversarial gates pass.
    - Catalog first because OPS already has the strongest proposal/hash/commit/readback foundation.
+   - Site-visit booking remains dark until the separate booking build has live canonical RPCs with `pipeline.convert`, durable idempotency, stale-version rejection, assignee validation, and calendar reconciliation proof. Start/complete are never candidates for enablement.
 8. **Broad availability**
    - Host review/submission, published privacy/security material, incident runbooks, support path, and measured SLOs.
 
 Each stage has a kill switch by company, client, tool, and capability revision. Read-only fallback remains available if a write domain is disabled.
+
+### 17.1 Mandatory Phase C email cutover order
+
+The Phase 2 email safety migrations are a forward-only application/database cutover, not an ordinary migration followed by an eventually consistent deployment. Migration `20260809183000_phase_c_auto_send_generation_reservations.sql` removes the legacy 28-argument `schedule_phase_c_auto_send_fenced` overload and replaces it with the reservation-bound 30-argument contract. Old application workers and the new database contract must never run concurrently.
+
+When production migration and deployment are separately authorized, operators must use this order:
+
+1. Snapshot the exact pre-cutover settings, then disable new Phase C email generation before pausing traffic: set and read back the company `ai_auto_send` feature override as false for every company and the connection `auto_send_settings.enabled` value as false for every mailbox. The general `phase_c` flag alone is not the auto-send kill switch. Pause `/api/cron/email-sync`, `/api/cron/stale-leads`, `/api/cron/auto-send`, `/api/cron/auto-execute-actions`, and `/api/cron/email-send-reconciliation`; block provider-webhook and user/manual dispatch to `/api/integrations/email/manual-sync`; then drain every in-flight classification/router invocation and mailbox/reconciliation lease before changing the database.
+2. Build the expected-mutation manifest from the exact reviewed SQL and a fresh production preflight. It must include the temporary feature/mailbox setting changes plus every migration-time data write: cancellation of legacy `pending_auto_sends` rows by `20260807213219`, retry-cap normalization and eligible terminalization of `approved_action_email_intents` plus corresponding alert-outbox writes by `20260809180033`, and missing tenant-root inserts for existing source fences by `20260809183000`. Record the exact qualifying keys, per-predicate before counts, and before values needed for readback. If the qualifying set changes before apply or any unlisted data mutation appears, stop.
+3. Apply the reviewed migration sequence in ledger order through `20260809183000`. Do not skip directly to the final file.
+4. Reconcile every changed row against the expected-mutation manifest, including exact changed keys and before/after counts and values, and prove that no unlisted customer data changed. Then read back the migration ledger, functions, signatures, owners, and grants. The 28-argument `schedule_phase_c_auto_send_fenced` overload must be absent. The 30-argument overload plus `reserve_phase_c_auto_send_generation_as_system` and `resolve_phase_c_auto_send_generation_as_system` must exist, and their public/anonymous/authenticated grants must remain revoked. Validate the recovery RPCs and the absence of direct service-role writes to reconciliation intent rows as part of the same gate.
+5. Deploy only application code that reserves generation first and supplies the returned generation token plus arguments hash to the 30-argument scheduling RPC. Keep every paused worker paused until deployed commit and customer alias readback agree.
+6. Run a non-sending canary for a designated internal test company: reserve against exact delivered source evidence, verify the reservation/lease and audit identity, then resolve it as `failed` with a cutover-canary reason. Do not invoke model generation, schedule a send, or call a provider.
+7. Restore the snapshotted `ai_auto_send` and connection settings for one internal/test-company path first, restore its sync dispatch, and verify runtime reservation and reconciliation evidence. Then deliberately restore the remaining pre-cutover values and resume the remaining ingress paths and schedulers. Existing queued sends remain governed by the new delivery fences.
+
+Rollback never restores the 28-argument overload. If any step fails, keep the workers paused and roll the application forward to a compatible reviewed build or apply a reviewed forward database repair. Reintroducing the old overload would recreate the reservation bypass that this migration closes.
 
 ---
 

@@ -10,6 +10,8 @@
 
 **Design System:** The OAuth consent, connected-app management, and confirmation surfaces use the existing OPS-Web design system at `ops-design-system/project/DESIGN.md`. Use current OPS-Web Tailwind tokens and `lucide-react`; no new visual system, raw values, marketing surface, MCP App widget, or motion language.
 
+**Execution status (2026-08-16):** Tasks 1–15 plus Task 4A are locally integrated on `feat/ops-agent-control-plane-takeover-20260807` through `d4118344`, `77c79996`, and `3da161d3`. Manifest revision `2026-08-14.capability-manifest.v6` has nine internally available reads: `get_job_conversation_context`, `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, `resolve_job_participants`, `list_customer_jobs`, `get_job_summary`, `search_job_history`, and `get_correspondence_evidence`; every external exposure remains disabled. The integrated Phase C path re-proves the routed actor and immutable source turn in the same statement as the v6 context read, then measures that bounded result beside the unchanged whole-history control behind a company flag. The Task 9, Task 11, Task 12, Task 13, and Phase C source/context migrations have not been catalog-compiled, executed, or applied to local, test, preview, or production Supabase. The current Phase C whole-history path remains the sole customer-facing control; production shadow measurement and the context switch remain unperformed, and the offline release gate is fixed false. REST/MCP transport, OAuth, and remote server work remain unbuilt. Site-visit control-plane reads/change sets remain dark, while the canonical booking RPCs and prompt/calendar workers are separately production-live. Nothing from this control-plane branch has been pushed or deployed. Checklist boxes below remain acceptance gates rather than deployment evidence.
+
 **Required Skills:** `custom-skills:executing-plans`, `superpowers:using-git-worktrees`, `superpowers:test-driven-development`, `superpowers:systematic-debugging` when a failure appears, `supabase:supabase`, `supabase:supabase-postgres-best-practices`, `openai-docs`, `plugin-dev:mcp-integration`, `ops-design`, `frontend-design:frontend-design`, `custom-skills:interface-design`, `custom-skills:ui-ux-pro-max`, `ops-copywriter:ops-copywriter`, `custom-skills:wizard-audit`, `custom-skills:audit-design-system`, `superpowers:verification-before-completion`, and `superpowers:requesting-code-review`.
 
 ---
@@ -28,16 +30,17 @@ The design spec wins when this plan is terse. If production schema/code differs 
 ## Local implementation checkpoint — 2026-08-15
 
 - Tasks 1-5 are present in the local branch history through `6f9e387f`.
-- Task 6 is committed locally as `bfb5099b` (`feat(agent-control-plane): normalize source-provenanced evidence`).
-- Task 7 is committed locally as `5f9e4d6a` (`feat(agent-memory): ingest provider-delivered job turns`).
-- Task 8's versioned-memory implementation is committed locally through `13407e2c`, with the final redaction, late-turn, exact-input-prefix, conflict-retry, and race hardening committed as `316fb5f6`.
-- Tasks 9-10's actor-scoped job-conversation context, bounded domain result, 101-item evidence boundary, and transport-neutral domain facade are committed locally as `825b0048`.
-- Tasks 11-13 remain explicitly unavailable in the capability manifest; no placeholder result is exposed.
-- Tasks 14-15 are committed locally as `61d65545` (Phase C actor/source proof) and `f630c715` (bounded reply-context shadow and offline quality mechanics). The current Phase C whole-history path remains the sole customer-facing control, and the offline harness is structurally unable to declare production release readiness.
+- Task 6 is committed locally as `8af1ee5d` (`feat(agent-control-plane): normalize source-provenanced evidence`).
+- Task 7 is committed locally as `1e866814` (`feat(agent-memory): ingest provider-delivered job turns`).
+- Task 8's versioned-memory implementation and final redaction, late-turn, exact-input-prefix, conflict-retry, and race hardening are committed locally through `14969c4c`.
+- Tasks 9-10's actor-scoped job-conversation context, bounded domain result, 101-item evidence boundary, and transport-neutral domain facade are committed locally as `7472219a` and `73712b4f`.
+- Tasks 11-13 are committed locally through `d4118344`; their eight additional reads and Task 9's conversation read are available for internal composition only under manifest v6, while every external exposure remains disabled.
+- Tasks 14-15 are integrated on the same branch as `77c79996` (Phase C actor/source proof plus current v6 internal runtime) and `3da161d3` (bounded metrics-only reply-context shadow and offline quality mechanics). The current Phase C whole-history path remains the sole customer-facing control, pending memory fails closed instead of invoking a second unfenced catch-up, and the offline harness is structurally unable to declare production release readiness.
 - The supporting lead-identity, trusted-form provenance, exact field-evidence, automatic address-safety, relationship-continuity, and repair-apply boundaries are committed locally as `e5ce20e8`; the actorless project-conversion jurisdiction/continuity guard is committed locally as `23a232d1`.
 - Final local proof is 1,018/1,018 across the 46-file provider-to-prompt path, 1,465/1,465 across the 28-file email/contact/import/relationship boundary, and 29/29 static actorless-conversion migration-contract assertions. Full TypeScript and lint, scoped formatting, and repository diff checks are green.
 - Independent adversarial reviews returned CLEAN with no P1/P2 for the provider-to-prompt path, the email/contact/import boundary, and the actorless-conversion guard.
 - Provider-source and actorless-conversion migrations were verified structurally, not executed against PostgreSQL; no migration was applied.
+- Final integrated proof includes 61 agent-control-plane files / 1,306 tests, 29 Phase C files / 271 tests, four agent migration-contract files / 69 tests, green Node 22 TypeScript, clean diff hygiene, and independent P0/P1 reviews. A repository-wide rerun passed 12,230 tests and reproduced only the same 82 known pre-existing email/provider fixture failures previously isolated on baseline `73712b4f`.
 - Nothing in this checkpoint has been pushed, deployed, applied to production, exposed through a public connector, or proven customer-live. Task 16's production shadow sample and context switch remain intentionally unperformed.
 
 ---
@@ -285,7 +288,7 @@ Every capability must have unique stable name, schema, risk tier, scopes, OPS pe
 
 - [ ] **Step 2: Implement the server-owned manifest**
 
-Register the nine initial read tools and four dark write pairs from the design. Keep external exposure flags separate from implementation availability.
+Register the nine initial read tools and four dark write pairs from the foundation design. Keep external exposure flags separate from implementation availability. Task 4A owns the later site-visit delta to eleven reads and seven write pairs.
 
 - [ ] **Step 3: Prove annotations are accurate**
 
@@ -298,6 +301,48 @@ npm test -- src/lib/agent-control-plane/registry
 git add src/lib/agent-control-plane/registry
 git commit -m "feat(agent-control-plane): add governed capability manifest"
 ```
+
+### Task 4A: Extend the dark manifest for site-visit booking
+
+**Files:**
+
+- Modify: `src/lib/agent-control-plane/registry/capability-types.ts`
+- Modify: `src/lib/agent-control-plane/registry/capability-manifest.ts`
+- Modify: `src/lib/agent-control-plane/registry/read-tools.ts`
+- Modify: `src/lib/agent-control-plane/registry/write-tools.ts`
+- Modify: `src/lib/agent-control-plane/registry/__tests__/manifest.test.ts`
+- Create: `src/lib/agent-control-plane/registry/__tests__/site-visit-capabilities.test.ts`
+- Modify: `supabase/migrations/20260807223000_agent_correspondence_evidence_read.sql`
+- Modify: `src/lib/agent-control-plane/evidence/__tests__/rpc-contract.test.ts`
+- Modify: `src/lib/agent-control-plane/evidence/__tests__/bounds.test.ts`
+
+- [x] **Step 1: Freeze the domain boundary**
+
+Use `specs/2026-08-10-site-visit-mcp-capability-briefing.md` and its approved companion design. Add two reads plus three prepare/commit booking families. Explicitly prohibit start/complete and direct row-write tools.
+
+- [x] **Step 2: Write the failing manifest tests**
+
+Cover the `booked_at` appointment discriminator, separate `created_at` history window, linked/unlinked authorization, bounded evidence, company-timezone schedule instants, `pipeline.convert`, exact confirmation, accurate MCP annotations, and dark availability.
+
+- [x] **Step 3: Add manifest revision v2**
+
+Advance the global manifest identity to `2026-08-10.capability-manifest.v2`, propagate it through the evidence-read contract, reuse existing OAuth scopes, and keep every site-visit entry unavailable and externally disabled. The definitions do not implement the read services, change-set participants, booking RPCs, migrations, or calendar workers.
+
+- [x] **Step 4: Verify, independently review, and commit**
+
+```bash
+npm test -- src/lib/agent-control-plane/registry src/lib/agent-control-plane/evidence/__tests__/rpc-contract.test.ts src/lib/agent-control-plane/evidence/__tests__/bounds.test.ts
+npm run type-check
+git diff --check
+git add src/lib/agent-control-plane/registry src/lib/agent-control-plane/evidence/__tests__/rpc-contract.test.ts src/lib/agent-control-plane/evidence/__tests__/bounds.test.ts supabase/migrations/20260807223000_agent_correspondence_evidence_read.sql
+git commit -m "feat(agent-control-plane): add dark site visit capabilities"
+```
+
+Do not flip availability or exposure here. The booking RPC implementation plan must first resolve RPC idempotency, `pipeline.convert`, stale-version comparison, same-company assignee validation, unlinked-read isolation, external calendar reconciliation, and the contradictory reminder-dedupe wording. The only accepted key is `site_visit:<visit_id>:<kind>:<user_id>:<scheduled_at epoch>`.
+
+Implemented locally in `91419970`. The full agent-control-plane source suite passes (22 files, 485 tests), plus TypeScript, focused ESLint, Prettier, diff checks, and independent P0/P1 review. This is manifest/source proof only. Every site-visit entry remains unavailable and externally disabled; no booking RPC, handler, migration, database write, calendar effect, deployment, or customer-live behavior is claimed.
+
+**As-built update (2026-08-14):** The canonical `book_site_visit`, `reschedule_site_visit`, and `cancel_site_visit_booking` RPCs, booking schema, prompt cron, and Google Calendar sync worker were later implemented and are production-live outside this agent-control-plane branch. That does not complete Task 4A's control-plane read services, handlers, change-set participants, receipts, or adapters. Every site-visit manifest entry therefore remains unavailable and externally disabled.
 
 ---
 
@@ -397,7 +442,7 @@ Cover inbound/outbound, replay, unsent draft exclusion, send-intent exclusion, d
 
 - [x] **Step 2: Resolve anchors and roles from evidence**
 
-Use opportunity/project conversion links. Preserve one conversation across conversion. Never anchor to provider thread. Client/sub-client/confirmed related contacts map to memory `user`; OPS actor/Phase C maps to memory `assistant`; ambiguous remains unresolved.
+Use opportunity/project conversion links. Preserve one conversation across conversion. Never anchor to provider thread. Current client/sub-client rows map to memory `user`; a related contact does so only when a concrete authorized relationship record confirms it. OPS actor/Phase C maps to memory `assistant`; conversation-only or otherwise ambiguous identity remains unresolved.
 
 - [x] **Step 3: Insert idempotently at delivery chokepoints**
 
@@ -418,11 +463,26 @@ git commit -m "feat(agent-memory): ingest delivered job turns"
 - Create: `src/lib/agent-control-plane/memory/memory-schema.ts`
 - Create: `src/lib/agent-control-plane/memory/build-memory-version.ts`
 - Create: `src/lib/agent-control-plane/memory/memory-repository.ts`
+- Create: `src/lib/agent-control-plane/memory/memory-deadline.ts`
 - Create: `src/lib/agent-control-plane/memory/catch-up-memory.ts`
 - Create: `src/lib/agent-control-plane/memory/cross-job-seed.ts`
+- Modify: `src/lib/agent-control-plane/memory/ingest-delivered-turn.ts`
+- Modify: `src/lib/agent-control-plane/memory/turn-repository.ts`
+- Modify: `src/lib/agent-control-plane/evidence/normalize-correspondence.ts`
+- Modify: `src/lib/api/services/provider-delivery-source-service.ts`
+- Modify: `src/lib/data/company-data-manifest.ts`
+- Modify: `supabase/migrations/20260807220000_agent_job_conversation_memory.sql`
+- Modify: `supabase/migrations/20260807224500_agent_provider_delivery_sources.sql`
 - Test: `src/lib/agent-control-plane/memory/__tests__/build-memory-version.test.ts`
 - Test: `src/lib/agent-control-plane/memory/__tests__/catch-up-memory.test.ts`
 - Test: `src/lib/agent-control-plane/memory/__tests__/cross-job-seed.test.ts`
+- Test: `src/lib/agent-control-plane/memory/__tests__/memory-repository.test.ts`
+- Test: `src/lib/agent-control-plane/memory/__tests__/ingest-delivered-turn.test.ts`
+- Test: `src/lib/agent-control-plane/memory/__tests__/persist-captured-provider-delivery-turn.test.ts`
+- Test: `src/lib/agent-control-plane/memory/__tests__/schema-contract.test.ts`
+- Test: `tests/integration/company-data-manifest.test.ts`
+- Test: `tests/unit/email/provider-delivery-source-service.test.ts`
+- Test: `tests/unit/supabase/agent-provider-delivery-source-migration.test.ts`
 
 - [x] **Step 1: Freeze the structured memory schema**
 
@@ -447,17 +507,30 @@ Return only prior-job boolean/count/latest visible date/status and one safe cont
 - [x] **Step 6: Verify and commit**
 
 ```bash
-npm test -- src/lib/agent-control-plane/memory
-git add src/lib/agent-control-plane/memory
+npm test -- src/lib/agent-control-plane/memory tests/unit/email/provider-delivery-source-service.test.ts tests/unit/email/provider-delivery-source-wiring.test.ts tests/unit/supabase/agent-provider-delivery-source-migration.test.ts tests/integration/company-data-manifest.test.ts
+npm run type-check
+git diff --check
+git add src/lib/agent-control-plane/memory src/lib/agent-control-plane/evidence/normalize-correspondence.ts src/lib/api/services/provider-delivery-source-service.ts src/lib/data/company-data-manifest.ts supabase/migrations/20260807220000_agent_job_conversation_memory.sql supabase/migrations/20260807224500_agent_provider_delivery_sources.sql tests/integration/company-data-manifest.test.ts tests/unit/email/provider-delivery-source-service.test.ts tests/unit/supabase/agent-provider-delivery-source-migration.test.ts
 git commit -m "feat(agent-memory): add versioned evidence-backed job memory"
 ```
+
+Implemented locally in `14969c4c`. Focused source tests, TypeScript, lint, and diff checks pass. The SQL remains unapplied, and no runtime consumer, background worker, deployment, or customer-live behavior is claimed.
 
 ### Task 9: Build `get_job_conversation_context`
 
 **Files:**
 
 - Create: `src/lib/agent-control-plane/services/get-job-conversation-context.ts`
+- Create: `src/lib/agent-control-plane/services/job-conversation-context-authorization.ts`
+- Create: `src/lib/agent-control-plane/services/job-conversation-context-repository.ts`
+- Create: `supabase/migrations/20260811120000_agent_job_conversation_context_read.sql`
+- Modify: `src/lib/agent-control-plane/registry/read-tools.ts`
+- Modify: `src/lib/agent-control-plane/registry/capability-manifest.ts`
+- Modify: `src/lib/agent-control-plane/evidence/repository.ts`
+- Modify: `supabase/migrations/20260807223000_agent_correspondence_evidence_read.sql`
 - Test: `src/lib/agent-control-plane/services/__tests__/get-job-conversation-context.test.ts`
+- Test: `src/lib/agent-control-plane/services/__tests__/job-conversation-context-rpc.test.ts`
+- Test: `src/lib/agent-control-plane/registry/__tests__/conversation-context-capability.test.ts`
 
 - [x] **Step 1: Write contract tests**
 
@@ -470,10 +543,13 @@ Return memory version/high-watermark and warnings. Evidence excerpts are exact n
 - [x] **Step 3: Verify and commit**
 
 ```bash
-npm test -- src/lib/agent-control-plane/services/__tests__/get-job-conversation-context.test.ts
-git add src/lib/agent-control-plane/services/get-job-conversation-context.ts src/lib/agent-control-plane/services/__tests__
+node node_modules/vitest/vitest.mjs run src/lib/agent-control-plane
+node node_modules/typescript/bin/tsc --noEmit
+git diff --check
 git commit -m "feat(agent-control-plane): expose job conversation context"
 ```
+
+Implemented locally in `7472219a`. At the Task 9 checkpoint, the final gate passed 25 agent-control-plane test files / 514 tests, TypeScript, focused lint, formatting, staged diff checks, and three independent P0/P1 reviews. The capability was still dark (`implementation=unavailable`, `externalExposure=disabled`) because no shared facade existed yet. Its SQL remains source-reviewed and structurally tested but has not been executed by PostgreSQL or applied to any Supabase environment. Task 10 below adds the shared facade and advances internal implementation availability only; no Phase C consumer, background worker, OAuth surface, remote MCP transport, push, deployment, or customer-live behavior is claimed.
 
 ---
 
@@ -487,6 +563,9 @@ git commit -m "feat(agent-control-plane): expose job conversation context"
 - Create: `src/lib/agent-control-plane/services/create-domain-service.ts`
 - Create: `src/lib/agent-control-plane/services/repositories.ts`
 - Test: `src/lib/agent-control-plane/services/__tests__/domain-service.test.ts`
+- Modify: `src/lib/agent-control-plane/registry/read-tools.ts`
+- Modify: `src/lib/agent-control-plane/registry/__tests__/conversation-context-capability.test.ts`
+- Modify: `src/lib/agent-control-plane/registry/__tests__/manifest.test.ts`
 
 - [x] **Step 1: Write transport-neutral facade test**
 
@@ -504,102 +583,174 @@ git add src/lib/agent-control-plane/services
 git commit -m "feat(agent-control-plane): add shared domain service facade"
 ```
 
+Implemented locally in `73712b4f`. The runtime interface exposes only `getJobConversationContext`; internal, OPS API, and fully scoped MCP actor contexts produce the same parsed result through test-only forwarders, while strict injected authority/tenant/token fields, missing MCP scopes, cloned actors, and structural repositories fail before a read. Factory dependencies are captured once before validation and never reread from caller-owned getters. Only `get_job_conversation_context` is `implementation=available`; all external exposure remains disabled. The final gate passed 26 agent-control-plane test files / 521 tests, TypeScript, focused ESLint, Prettier, staged and working diff checks, and three independent P0/P1 reviews. No Phase C/REST/MCP adapter, route, OAuth surface, remote server, migration application, push, deployment, or customer-live behavior is claimed.
+
 ### Task 11: Implement schedule and readiness reads
 
 **Files:**
 
+- Create: `src/lib/agent-control-plane/contracts/schedule.ts`
 - Create: `src/lib/agent-control-plane/services/list-scheduled-jobs.ts`
 - Create: `src/lib/agent-control-plane/services/list-job-readiness-issues.ts`
 - Create: `src/lib/agent-control-plane/services/readiness-rules.ts`
-- Reuse/adapt: `src/lib/api/services/project-table-service.ts`
-- Reuse/adapt: `src/lib/api/services/project-table-team-service.ts`
-- Reuse/adapt: `src/lib/api/services/project-photo-service.ts`
-- Test: `src/lib/agent-control-plane/services/__tests__/list-scheduled-jobs.test.ts`
-- Test: `src/lib/agent-control-plane/services/__tests__/list-job-readiness-issues.test.ts`
+- Create: `src/lib/agent-control-plane/services/scheduled-jobs-authorization.ts`
+- Create: `src/lib/agent-control-plane/services/job-readiness-authorization.ts`
+- Create: `src/lib/agent-control-plane/services/scheduled-jobs-repository.ts`
+- Create: `src/lib/agent-control-plane/services/job-readiness-repository.ts`
+- Create: `src/lib/agent-control-plane/services/operational-read-cursor.ts`
+- Create: `src/lib/agent-control-plane/services/operational-read-projection.ts`
+- Create: `supabase/migrations/20260812120000_agent_operational_schedule_readiness.sql`
+- Modify: shared domain-service facade/repository bundle and capability manifest
+- Modify: guarded schedule-confirmation writers and generated database types
+- Test: schedule/readiness contracts, rules, authorization, repositories, reducers, facade parity, cursors, projection hashes, SQL/RPC structure, and confirmation writer contracts
 
-- [ ] **Step 1: Write adversarial schedule tests**
+- [x] **Step 1: Write adversarial schedule tests**
 
 Include DST boundaries, company timezone, multiple task occurrences, stale/versioned schedules, locked/unconfirmed tasks, assignments, reschedule during pagination, and assigned-scope filtering.
 
-- [ ] **Step 2: Write readiness tests**
+- [x] **Step 2: Write readiness tests**
 
 Cover missing/non-missing photos, deleted photos, site-visit photos, legacy fallback, unresolved customer, incomplete address, crew missing, unconfirmed schedule, and rule revision evidence.
 
-- [ ] **Step 3: Implement keyset pagination and hard bounds**
+- [x] **Step 3: Implement fixed source reads, keyset pagination, and hard bounds**
 
-Maximum 90-day window, default 25/maximum 50. Use task-level schedule as canonical. Return safe crew display only.
+Do not adapt the browser project/team/photo services: their caller-supplied tenant IDs, multi-query snapshots, offset pagination, and broad employee/photo payloads cannot satisfy the agent-control-plane authority boundary. Use nominal service-owned authorization proofs and repository brands over two fixed service-role-only RPCs. Each RPC must re-resolve the complete actor permission registry, entity access, scopes, tenant, permission revision, and source fence inside the same SQL statement.
 
-- [ ] **Step 4: Verify and commit**
+Schedule v1 is project-task-only, with maximum 90-day windows, default 25/maximum 50 rows, exact company-local time conversion, orthogonal lifecycle/timing/confirmation state, current-version confirmation proof, safe bounded crew display, and signed source-stable keyset pagination. Site visits remain dark and excluded.
+
+Readiness SQL returns bounded safe raw facts, never rule decisions. `readiness-rules.ts` alone derives the five versioned rules. Conditional manifest variants add photos/customer scopes only when their rule is requested. One read may scan at most five 50-project source pages under one fence, while returned claims/proofs remain under the 60,000-character and 100-evidence limits.
+
+The operational source revision advances for every table that can change selection, ordering, schedule display, assignments, customer resolution, or photo readiness. Cursors bind that revision and all authority/query/schema/rule inputs. Any relevant mutation returns `STALE_CONTEXT`; it never silently duplicates or omits rows.
+
+The manifest advances once to `2026-08-12.capability-manifest.v4`. Existing conversation/evidence reads receive compatibility wrappers so the revision bump does not break the already-available internal conversation capability. Only `get_job_conversation_context`, `list_scheduled_jobs`, and `list_job_readiness_issues` may be internally available after the complete gate; all external exposure remains disabled.
+
+- [x] **Step 4: Verify and commit**
 
 ```bash
-npm test -- src/lib/agent-control-plane/services/__tests__/list-scheduled-jobs.test.ts src/lib/agent-control-plane/services/__tests__/list-job-readiness-issues.test.ts
-git add src/lib/agent-control-plane/services
+npm test -- --run src/lib/agent-control-plane
+npm run type-check
+git diff --check
+git add <Task 11 paths only>
 git commit -m "feat(agent-control-plane): add schedule and readiness reads"
 ```
+
+Implemented locally in OPS Web commit `5bba3c5e` on 2026-08-13. The final Task 11 matrix passed 47 files / 784 tests; the company-data manifest passed 71/71; exact TypeScript, Prettier, and diff checks passed. An independent final review of the frozen SQL and TypeScript boundaries found no P0/P1 issue. The full repository run passed 11,495 tests and retained 82 pre-existing email/provider fixture failures that reproduce unchanged on baseline `73712b4f`; Task 11 adds no deterministic full-suite failure.
+
+Both migrations remain unapplied. No Supabase branch, local/test/preview/production migration apply, push, deployment, MCP/REST adapter, external advertisement, or customer-live behavior is claimed. Production PostgreSQL tzdata must be updated to the current BC permanent-UTC-7 rules and pass the migration's database/runtime conformance vectors before release; platform update cost and downtime remain unknown.
 
 ### Task 12: Implement communication and participant reads
 
 **Files:**
 
+- Create: `src/lib/agent-control-plane/contracts/communication.ts`
+- Create: `src/lib/agent-control-plane/services/communication-participant-snapshot.ts`
 - Create: `src/lib/agent-control-plane/services/get-job-communication-context.ts`
 - Create: `src/lib/agent-control-plane/services/resolve-job-participants.ts`
-- Reuse/adapt: `src/lib/api/services/conversation-state/contact-resolver.ts`
-- Reuse/adapt: `src/lib/api/services/conversation-state/party-classifier.ts`
-- Reuse/adapt: current contactability/suppression services
-- Test: `src/lib/agent-control-plane/services/__tests__/get-job-communication-context.test.ts`
-- Test: `src/lib/agent-control-plane/services/__tests__/resolve-job-participants.test.ts`
+- Create: `src/lib/agent-control-plane/services/job-communication-authorization.ts`
+- Create: `src/lib/agent-control-plane/services/job-participants-authorization.ts`
+- Create: `src/lib/agent-control-plane/services/job-communication-context-repository.ts`
+- Create: `src/lib/agent-control-plane/services/job-participants-repository.ts`
+- Create: `supabase/migrations/20260813120000_agent_job_communication_participants.sql`
+- Modify: shared readiness photo derivation, domain facade/repository bundle, capability manifest, and compatibility RPCs
+- Test: communication contracts; pure derivation/services; authorization; repositories; SQL/RPC structure; manifest/facade parity; proof, freshness, bounds, abort, and privacy invariants
 
-- [ ] **Step 1: Write participant/privacy tests**
+- [x] **Step 1: Write participant/privacy tests**
 
-Cover client, sub-client, confirmed related contact, ambiguous participant, OPS actor, Phase C, opt-out/suppression, private employee contact exclusion, and wrong-company identity collision.
+Cover current primary client and sub-client rows, conversation ambiguity/unresolved/redaction, the deliberate absence of confirmed conversation-only related contacts, OPS delivery actors, Phase C, purpose-bound task assignments, global email suppression, duplicate email ownership, missing/invalid/unavailable contactability, private employee contact/role exclusion, wrong-company identity collisions, malicious source strings, projection tampering, source freshness, abort forwarding, and bounded reduction.
 
-- [ ] **Step 2: Implement purpose-specific context**
+- [x] **Step 2: Implement current-only, purpose-specific context**
 
-Schedule notice and photo request return only facts needed for that purpose, exact schedule occurrence/evidence, contactability, and customer-shareable crew identity.
+Do not adapt the browser contact resolver, party classifier, or broad contactability services: their multi-query/browser trust boundaries cannot prove one current actor-authorized snapshot. Use two nominal service-owned authorization/repository paths over one private strict snapshot schema and two fixed service-role-only RPCs. The private SQL implementation re-resolves the actor, company, permission snapshot, job/customer/project/mailbox visibility, and purpose-dependent task/photo access inside the same statement.
 
-- [ ] **Step 3: Verify and commit**
+Inputs are current-only: neither capability accepts `as_of`. `get_job_communication_context` supports `general`, `schedule_notice`, and `photo_request`; the latter two add only their bounded schedule/photo facts. Photo readiness reuses the Task 11 TypeScript-owned `SITE_PHOTOS_MISSING` rule. `resolve_job_participants` defaults to `general`; only `schedule` and `assignment` may add active same-company assignment users after task/project authorization.
+
+V1 contactability is email-only. Only one confirmed, normalized, unsuppressed address is returned. Suppression, duplicate ownership, absence, ambiguity, unavailable/query-bound/invalid sources, unresolved identity, and redaction withhold the address and produce a matching fixed non-recipient state. Primary client is the only default-eligible recipient; a contactable sub-client requires explicit selection. Preferred channel is always null; phone/SMS consent, preference, and opt-out claims are unavailable. OPS and Phase C stay assistant-side and expose no private contact or employee-role fields.
+
+Concrete IDs require a current confirmed record. Ambiguous/unresolved identities receive `unknown:sha256:<digest>`; redacted identities receive `redacted:sha256:<digest>`. Conversation evidence alone never confirms a related contact. Each participant carries one authoritative projection evidence atom; collection/context proofs bind the actor, tenant, job, purpose, permission/manifest/source/contactability revisions, lower-bound truth, fixed gaps, and ordered claim proofs. The service retains complete claims with evidence/proofs under 60,000 characters, prioritizing schedule occurrences before participant claims for communication context.
+
+Manifest revision `2026-08-13.capability-manifest.v5` makes both capabilities internally available and keeps external exposure disabled. V5 compatibility wrappers accept only the exact v5 revision and privately supply the frozen v4 literal to the earlier conversation, evidence, schedule, and readiness implementations; callers cannot select a legacy revision.
+
+- [x] **Step 3: Verify and commit**
 
 ```bash
-npm test -- src/lib/agent-control-plane/services/__tests__/get-job-communication-context.test.ts src/lib/agent-control-plane/services/__tests__/resolve-job-participants.test.ts
-git add src/lib/agent-control-plane/services src/lib/api/services/conversation-state
-git commit -m "feat(agent-control-plane): add communication and participant context"
+/Users/jacksonsweet/.nvm/versions/node/v22.22.3/bin/node node_modules/vitest/vitest.mjs run \
+  --maxWorkers=4 --minWorkers=1 --testTimeout=60000 \
+  src/lib/agent-control-plane/contracts/__tests__/communication.test.ts \
+  src/lib/agent-control-plane/registry/__tests__/manifest.test.ts \
+  src/lib/agent-control-plane/services/__tests__/communication-participant-authorization.test.ts \
+  src/lib/agent-control-plane/services/__tests__/communication-participant-domain-service.test.ts \
+  src/lib/agent-control-plane/services/__tests__/get-job-communication-context.test.ts \
+  src/lib/agent-control-plane/services/__tests__/job-communication-context-repository.test.ts \
+  src/lib/agent-control-plane/services/__tests__/job-communication-rpc-contract.test.ts \
+  src/lib/agent-control-plane/services/__tests__/job-participants-repository.test.ts \
+  src/lib/agent-control-plane/services/__tests__/job-participants-rpc-contract.test.ts \
+  src/lib/agent-control-plane/services/__tests__/readiness-rules.test.ts \
+  src/lib/agent-control-plane/services/__tests__/resolve-job-participants.test.ts \
+  src/lib/agent-control-plane/services/__tests__/task12-manifest-v5-rpc-compatibility.test.ts
+/Users/jacksonsweet/.nvm/versions/node/v22.22.3/bin/node node_modules/typescript/bin/tsc --noEmit --pretty false
+git diff --check
+git commit -m "feat(agent-control-plane): add communication and participant reads"
 ```
+
+Implemented locally in OPS Web commit `dc91a349` on 2026-08-14. The exact focused Task 12 matrix passed 12 files / 169 tests; Node 22 TypeScript `--noEmit` and `git diff --check` passed; an independent frozen cross-boundary review found no P0/P1 issue. This is local source/test evidence, not database-runtime or deployment proof.
+
+Migration `20260813120000_agent_job_communication_participants.sql` remains unapplied and has not been database-compiled or executed. It requires the Task 9 and Task 11 tables/functions plus both Task 11 migrations in order. Any schedule-bearing Task 12 purpose also invokes the Task 11 timezone conformance gate, so production PostgreSQL tzdata and the pinned Node runtime must first agree with the current BC permanent-UTC-7 rules. After those prerequisites, apply and rollback must be exercised on an isolated Supabase branch, then the fixed RPCs must receive runtime same-statement authority, wrong-company, suppression-change, source-change, bound, proof, and privilege tests before any adapter or rollout flag can be enabled. No migration copy belongs in the Bible archive until it is actually applied.
+
+No Supabase branch, local/test/preview/production migration apply, Phase C/REST/MCP adapter, push, deployment, external advertisement, or customer-live behavior is claimed.
 
 ### Task 13: Implement customer jobs, job summary, history search, and evidence lookup
 
 **Files:**
 
+- Create: `src/lib/agent-control-plane/contracts/job-catalog.ts`
 - Create: `src/lib/agent-control-plane/services/list-customer-jobs.ts`
 - Create: `src/lib/agent-control-plane/services/get-job-summary.ts`
 - Create: `src/lib/agent-control-plane/services/search-job-history.ts`
 - Create: `src/lib/agent-control-plane/services/get-correspondence-evidence.ts`
-- Test: corresponding files under `src/lib/agent-control-plane/services/__tests__/`
+- Create: four capability-specific nominal authorization modules and four fixed repository modules
+- Create: `supabase/migrations/20260814120000_agent_job_catalog_reads.sql`
+- Modify: shared domain-service facade/repository bundle, operational cursor, capability manifest, Task 12 manifest compatibility, and legacy correspondence-evidence compatibility wrapper
+- Test: contracts, authorization, repositories, services/reducers, facade parity, manifest compatibility, cursor/proof tampering, SQL/RPC structure, bounds, abort, privacy, and earlier-read regressions
 
-- [ ] **Step 1: Write permission/section tests**
+- [x] **Step 1: Write permission/section tests**
 
 Financial summary requires the exact existing financial permission. Correspondence/history require their scopes. An unauthorized section cannot leak through evidence or warning text.
 
-- [ ] **Step 2: Write search/pagination tests**
+- [x] **Step 2: Write search/pagination tests**
 
 Maximum one-year window, query length 500, result maximum 20, deterministic keyset cursor, exact versus summary match labeling, contradiction preservation, and cross-job relevance.
 
-- [ ] **Step 3: Implement by composing existing domain services**
+- [x] **Step 3: Implement one authorized snapshot per read**
 
-No direct tool-level Supabase queries. Repositories remain company/entity scoped. Each section returns current versions and evidence.
+Do not sequentially compose Task 9, Task 11, and Task 12 repositories: independently timed snapshots can disagree across sections and cannot prove one authorization/source fence. Each Task 13 capability owns one nominal authorization array and one fixed service-role-only RPC. The RPC re-resolves the complete actor, company, permission registry, entity/customer/mailbox/section authority, canonical input, source/history fences, and every retained source row inside one statement. TypeScript revalidates exact projection hashes, ordered claim/proof/evidence coupling, cursor identity, source completeness, and the public 60,000-character boundary.
 
-- [ ] **Step 4: Verify all read services**
-
-```bash
-npm test -- src/lib/agent-control-plane/services
-npm run type-check
-```
-
-- [ ] **Step 5: Commit**
+- [x] **Step 4: Verify all read services**
 
 ```bash
-git add src/lib/agent-control-plane/services
-git commit -m "feat(agent-control-plane): complete initial read service catalogue"
+/Users/jacksonsweet/.nvm/versions/node/v22.22.3/bin/node node_modules/vitest/vitest.mjs run \
+  src/lib/agent-control-plane \
+  tests/unit/supabase/agent-control-plane-actor-authority-migration.test.ts \
+  tests/unit/supabase/agent-job-catalog-reads-migration.test.ts \
+  tests/unit/supabase/agent-memory-schema-reconciliation-migration.test.ts \
+  tests/unit/supabase/agent-provider-delivery-source-migration.test.ts
+/Users/jacksonsweet/.nvm/versions/node/v22.22.3/bin/node --max-old-space-size=8192 \
+  node_modules/typescript/bin/tsc --noEmit --pretty false
+git diff --check
 ```
+
+- [x] **Step 5: Commit**
+
+```bash
+git commit -m "feat(agent-control-plane): add job catalog reads"
+```
+
+Implemented locally in OPS Web commit `d4118344` on 2026-08-14. The final source gate passed 57 files / 1,141 tests, Node 22 TypeScript `--noEmit`, Prettier, and staged/working diff checks. Independent cross-boundary review found no remaining P0/P1 issue. A PostgreSQL 18 ECPG grammar audit parsed all 132 statements in the frozen 7,281-line migration, matched the four RPC arities, and found no generated-schema-column or custom-function-arity conflict. This is structural source evidence, not catalog-bound database-runtime proof.
+
+The four reads use signed source-stable cursors or exact bounded inputs, atomic child and collection/section proofs, explicit source gaps, and one-MiB private wire fences before the public 60,000-character reducers. `list_customer_jobs` filters opportunity/project sources before reciprocal same-client collapse. `get_job_summary` reuses Task 11 schedule/readiness semantics and Task 12 safe participant identity rules. `search_job_history` preserves immutable correspondence selectors and explicit source-bound/data-invalid gaps. `get_correspondence_evidence` is exact-job-bound; full-text mode is all-or-error and returns a fixed non-retryable invalid-argument result when the selected evidence exceeds the public budget.
+
+Migration `20260814120000_agent_job_catalog_reads.sql` remains unapplied and has not been catalog-compiled or executed. It depends on the Task 9, Task 11, and Task 12 migrations and inherits the Task 11 database/runtime timezone-conformance gate for schedule-bearing summaries. After those prerequisites, an isolated Supabase branch must prove ordered apply/rollback, function compilation, grants, RLS/authority behavior, source/history revisions, FTS/index behavior, wrong-company isolation, proof/cursor tampering, source bounds, error mapping, and v6 compatibility wrappers before any adapter or rollout flag is enabled. The platform update and branch costs are not established. No migration copy belongs in the Bible archive until an authorized apply occurs.
+
+No Supabase branch, local/test/preview/production migration apply, Phase C/REST/MCP adapter, push, deployment, external advertisement, or customer-live behavior is claimed.
 
 ---
 
@@ -627,6 +778,8 @@ npm test -- src/lib/agent-control-plane/adapters/__tests__/internal.test.ts
 git add src/lib/agent-control-plane/adapters
 git commit -m "feat(agent-control-plane): add internal Phase C adapter"
 ```
+
+**As built (2026-08-16):** Commit `77c79996` ports the adapter onto the integrated nine-repository v6 domain runtime and adds migration `20260814190000_agent_phase_c_source_turn_read.sql`. The service-role-only source read binds the current routed actor, opportunity assignment version, mailbox/thread, immutable inbound activity and correspondence event, provider-delivery source hash, and conversation anchor. The Phase C wrapper re-proves that source in the same statement as `read_agent_job_conversation_context_as_system` and accepts only the fixed opportunity purpose, 20-turn limit, section order, capability revision, and manifest v6. The TypeScript adapter requires the exact requested opportunity, conversation, and summarized required-through turn. Pending memory returns `STALE_CONTEXT`; this Phase C path intentionally has no generic catch-up callback.
 
 ### Task 15: Shadow the new memory context against whole-history prompting
 
@@ -661,6 +814,8 @@ npm test -- src/lib/agent-control-plane/memory src/lib/agent-control-plane/evals
 git add src/lib/agent-control-plane src/lib/api/services/ai-draft-service.ts
 git commit -m "test(agent-memory): shadow bounded context against full history"
 ```
+
+**As built (2026-08-16):** Commit `3da161d3` keeps the live whole-history prompt byte-for-byte as the control and adds an opt-in `agent_memory_reply_shadow` observation only. The ten-second deadline starts before feature lookup and outer-races feature and context work, including non-cooperative promises. The bridge creates no model, draft, send, memory write, provider mutation, or customer-visible output. Live prompt construction and shadow size metrics share `serializeUntrustedPromptData`, so escaping and character counts cannot drift. Schedule-quality fixtures consume a separate structured `verifiedSchedule` source instead of trusting prompt text, and every evaluation result has literal `releaseGatePassed: false`. Runtime composition requires the server-only `OPS_AGENT_OPERATIONAL_READ_CURSOR_KEY` as a 32-byte lowercase-hex HMAC key; no key was provisioned or deployed in this checkpoint.
 
 ### Task 16: Gate and switch Phase C to the shared context
 
@@ -1044,7 +1199,7 @@ git commit -m "feat(mcp): validate exact-audience OPS grants"
 
 - [ ] **Step 1: Snapshot tool schemas/descriptions/annotations**
 
-Register exactly the nine initial reads. No resources/prompts/write tools advertised. Descriptions are concise, goal-shaped, data-sensitive, and explicit that source content is untrusted data.
+Register exactly the nine initial launch reads. Do not advertise the two dark site-visit reads until their repositories/handlers and booking-layer gates pass. No resources, prompts, or write tools are advertised. Descriptions are concise, goal-shaped, data-sensitive, and explicit that source content is untrusted data.
 
 - [ ] **Step 2: Implement adapter-only calls**
 
@@ -1285,11 +1440,29 @@ Only if Jackson explicitly authorizes production migrations:
 
 - [ ] Re-fetch production schema and migration ledger immediately before apply.
 - [ ] Confirm migration files exactly match reviewed commits.
+- [ ] Build an expected-mutation manifest from the exact SQL and fresh production preflight before any write. Include the temporary `ai_auto_send`/mailbox-setting changes and every migration-time DML predicate: legacy pending-send cancellation in `20260807213219`, approved-action retry-cap normalization/eligible terminalization plus alert-outbox writes in `20260809180033`, and missing tenant-root inserts for existing source fences in `20260809183000`. Capture exact qualifying keys, per-predicate counts, and the before values required for readback; abort if the qualifying set changes before apply.
 - [ ] Apply one migration at a time through Supabase tooling.
 - [ ] Read back tables, columns, constraints, indexes, RLS, grants, functions, and migration ledger after each apply.
-- [ ] Verify no customer rows were created/changed beyond empty foundation tables.
+- [ ] Reconcile every changed row to the expected-mutation manifest with exact changed keys and before/after counts and values. Verify no unlisted customer row was inserted, updated, or deleted.
 - [ ] Mirror each applied migration into the bible and update numbered chapters in the same session.
 - [ ] If any readback differs, stop; do not continue the sequence.
+
+#### Mandatory Phase 2 email migration/deploy cutover
+
+Migration `20260809183000_phase_c_auto_send_generation_reservations.sql` deliberately drops the already-shipped 28-argument `schedule_phase_c_auto_send_fenced` overload. The replacement takes a generation token and arguments hash, for 30 arguments total. This is a forward-only safety boundary: never leave the legacy overload installed as a compatibility bridge and never restore it during rollback.
+
+Production execution requires separate migration and deployment authorization plus this exact order:
+
+- [ ] Snapshot the exact pre-cutover values, then disable new Phase C email generation: set and read back the company `ai_auto_send` override as false for every company and `auto_send_settings.enabled` as false for every email connection. Do not rely on the general `phase_c` flag alone. Pause `/api/cron/email-sync`, `/api/cron/stale-leads`, `/api/cron/auto-send`, `/api/cron/auto-execute-actions`, and `/api/cron/email-send-reconciliation`; block provider-webhook and user/manual dispatch to `/api/integrations/email/manual-sync`; then wait for in-flight classification/router requests and mailbox/reconciliation leases to drain.
+- [ ] Capture the cutover's expected-mutation manifest and exact qualifying row keys/counts from the now-quiescent database. It must cover cancellation of legacy pending sends, approved-action retry normalization and capped-row terminalization with alert-outbox writes, missing tenant-root backfill, and the temporary settings already changed above. Stop if pre-apply readback no longer matches the captured set.
+- [ ] Apply every reviewed migration in ledger order through `20260809183000`; do not apply the final migration alone.
+- [ ] Reconcile exact changed keys, before/after counts, and relevant values against the manifest; fail closed on any unlisted customer-data change.
+- [ ] Read back the ledger and `pg_proc`/ACL state. Assert the legacy 28-argument scheduling overload is absent; the reservation, resolution, and 30-argument scheduling functions exist; only `service_role` can execute the public system RPCs; and public/anonymous/authenticated execution remains revoked.
+- [ ] Verify reconciliation intent tables grant `service_role` read access only, with mutation available solely through the reviewed security-definer RPCs.
+- [ ] Deploy the compatible application commit while all workers remain paused. Verify exact commit ancestry and customer alias before any runtime invocation.
+- [ ] Run a non-sending internal-company canary: reserve generation from exact delivered source evidence, read back reservation identity/lease/audit fields, and resolve it to `failed` with reason `cutover_canary`. Do not generate text, create a pending send, or contact an email provider.
+- [ ] Restore the snapshotted `ai_auto_send` plus connection settings for one internal/test-company path, restore its sync dispatch, and prove the new reservation and reconciliation runtime records. Then restore only the remaining pre-cutover values and deliberately resume the remaining ingress paths and schedulers.
+- [ ] On any failure, keep workers paused and use a reviewed forward application/database repair. Do not recreate or grant the 28-argument overload.
 
 ### Task 36: Staged production rollout
 
