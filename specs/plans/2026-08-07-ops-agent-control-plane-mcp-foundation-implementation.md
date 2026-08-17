@@ -1508,6 +1508,16 @@ After code and any migrations are real:
 
 ---
 
+## 2026-08-17 integration reconciliation (as-built)
+
+Merging the wave into main against the moved origin surfaced three defect classes; all are fixed on ops-web main `44f6401c` and verified (120 test files / 2,476 tests green; tsc clean):
+
+- **Shadow semantics were not actually shadow in the ingest hot path.** Delivered-source capture and delivered-turn persistence threw on failure, killing 71/95 email→lead pipeline flows. As-built: both are fail-open on the ingest path (structured non-fatal logs; catch-up ingest recovers evidence gaps), capture is bypassed entirely under `providerMutationsDisabled` (exact-recovery must never construct a provider client), and fail-closed behavior is retained exactly where it gates real sends — mailbox-lease checkpoints and accepted-outbound capture. Lifecycle-service database failures escalate to the cron workload contract only on confirmed database pressure (`isDatabasePressureError`); ordinary rejections stay per-connection so cursor-hold repair works as designed.
+- **SQL parse errors in 6 of the 13 migrations.** Postgres rejects `is [not] distinct from case … end` without parentheses; 11 sites fixed (the release twin's partial fix covered only 2 files). Discovered by a real prod parse failure, not by the mocked contract tests — mocked-SQL suites cannot prove migrations parse.
+- **Cross-wave collision.** The 2026-08-17 quoted-photo wave's inline-image quote filter consumed `collectBodyParts` output as a string; this wave made it a structured part. Reconciled with charset-aware inline decode, degrading to keep-all-attachments when the HTML body is attachment-hosted or undecodable.
+
+Cutover status: the 12 remaining migrations are deliberately unapplied. `20260807213219`'s source-fence trigger arms against the live auto-send delivery path at apply time (prod already carries `pending_auto_send_id`), so migration apply and wave deploy must land as one operation per the Phase 10 cutover runbook (workers paused, expected-mutation manifest, object-level verification — the schema_migrations ledger's version strings are not trustworthy — reconciliation, non-sending canary).
+
 ## Final completion proof
 
 The initiative is complete only when the approved rollout scope is implemented and every required distinction is reported accurately:
