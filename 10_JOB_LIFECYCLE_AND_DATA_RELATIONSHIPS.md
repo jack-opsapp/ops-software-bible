@@ -1465,6 +1465,17 @@ For each SiteVisit WHERE siteVisit.opportunityId = opportunity.id:
   Retry resolves the same active row by (company, project, visit, URL)
 ```
 
+### Automation E2: Conversion → Attach Inbound Email Photos (provenance repair 2026-08-17)
+
+A sibling automation projects **customer-emailed images** into the converted project's gallery through the durable `email_conversion_photo_jobs` ledger (a `converted_to_project` event enqueues one `materialize` job per eligible attachment; a leased worker stages the object and `public.complete_email_conversion_photo_job` publishes it as a `project_photos` row).
+
+**Provenance rule (migration `20260811232704_quoted_email_photo_provenance_dedup.sql`, applied 2026-08-17):** an image is eligible only when it is a stored, attributed, **inbound** attachment on an exact-matching email activity, and
+
+1. **not owner-authored** — identical bytes the operator sent earlier in the same provider thread *or* the same opportunity disqualify it, even when Gmail splits the reply into a new thread (the reply envelope is inbound, the photo is still ours); and
+2. **first inbound copy only** — of identical bytes on one opportunity, only the earliest eligible attachment may project; quoted/forwarded re-sends are duplicates.
+
+Eligibility is enforced in three layers so it cannot regress: `private.email_conversion_photo_source_is_eligible` gates enqueue + completion, the `email_attachments` / `activities` triggers re-reconcile jobs whenever attribution or direction changes, and the partial unique index `email_conversion_photo_jobs_active_project_hash_unique (company_id, project_id, source_content_sha256) WHERE operation='materialize'` makes a duplicate active projection structurally impossible. The apply-day sweep revoked 21 mis-attributed jobs (33 → 12 legitimate); revocation hides the mapped photo transactionally and delegates object deletion to the existing retryable cleanup ledger. Source branch: `ops-web` `fix/quoted-email-project-photos-20260811`.
+
 ---
 
 ### Automation F: Project Status Cascades

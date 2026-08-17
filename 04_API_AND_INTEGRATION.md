@@ -210,7 +210,7 @@ The route requires a Firebase bearer token, validates the opportunity UUID, and 
 
 Responses: `200` when the targeted refresh writes or legitimately completes without a write; `202` when Phase C is disabled; `401` for missing/invalid authentication; `400` for malformed opportunity ids; `403`/`404` for denied/missing opportunities; `503` when generation is deferred or unavailable. The iOS activity save is authoritative and never rolls back on a refresh failure; the recurring server refresh remains the recovery boundary.
 
-**Release state:** route and migration are locally committed only. Until OPS-Web is deployed and `20260807123500_authorize_lead_summary_refresh.sql` is applied, released clients do not have this eager path. When enabled, each successful human lead-activity save can add one existing Phase C model invocation, with its normal token cost; no new provider or subscription is introduced.
+**Release state (updated 2026-08-17):** `20260807123500_authorize_lead_summary_refresh.sql` is applied in production and the OPS-Web route ships with the bugfix wave of 2026-08-17 (branch `fix/ios-bug-batch-server-20260807` merged via `release/web-bugfix-wave-20260817`). The iOS caller remains gated on its App Store release. Each successful human lead-activity save can add one existing Phase C model invocation, with its normal token cost; no new provider or subscription is introduced.
 
 ---
 
