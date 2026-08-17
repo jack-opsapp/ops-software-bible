@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: 2026-08-07
+**Last Updated**: 2026-08-04
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -1013,12 +1013,6 @@ class Opportunity: Identifiable {
 
 **Images contract (2026-07-25; public lead-media repair deployed)**: `opportunities.images text[]` stores **full public S3 URLs**, never storage keys. Three producers: the OPS-Web email-extract pipeline (`src/app/api/integrations/email/extract-images/route.ts`, server-side puts under `email-imports/{companyId}/{opportunityId}/…`, capped 10/lead), iOS lead photos (`OPS/Services/LeadImageService.swift`), and the OPS-Web pipeline detail PHOTOS tab (`pipeline-detail-photos-tab.tsx` → `lead-photo-upload.ts` → `/api/uploads/presign` multipart direct-upload mode, gated on `pipeline.manage`). iOS and web lead-photo uploads now share the public project-media namespace `projects/{companyId}/leads/{opportunityId}/…` (`ops-ios` commit `d763e9df`; `ops-web` commit `bba70ea9`). The prior `opportunities/{companyId}/{opportunityId}/…` namespace was outside the bucket's public-read policy: writes and conversion succeeded, but every resulting lead/project URL returned `403`. Both iOS's immediate upload and restart-surviving queue drain derive the folder through the same `LeadImageStoragePath`; web derives it through `leadMediaFolder`, preventing path drift between producers.
 
-**Canonical email-photo projection (iOS 2026-08-07):** durable `email_attachments` bytes remain private and are not copied into `opportunities.images` merely to make a client thumbnail. The sanctioned `get_opportunity_lead_files` descriptor RPC supplies attributed attachment identity/provenance; iOS composes eligible `stored` raster descriptors into `LeadPhotosSection` beside `opportunities.images` and streams bytes through the authenticated attachment endpoint. These pages are read-only evidence. External links, PDFs, SVGs, and generic files remain in the attachment sheet only. Provider MIME plus a legacy filename fallback drives the current client classification; decode failure remains a visible placeholder and never creates or deletes media data.
-
-**Quoted-reply authorship and converted-project deduplication (prepared 2026-08-11; not production-live):** reply-envelope direction is not MIME-part authorship. The deployed conversion path currently treats an attributed attachment on an inbound reply as inbound evidence and keys jobs by attachment row, so an owner-authored inline image repeated in quoted reply history can materialize once per reply copy. OPS-Web commits `24548d2f` and `6c7447f2` prepare both required boundaries: Gmail enumeration omits only inline MIME parts whose normalized `Content-ID` occurs exclusively inside structurally quoted HTML, while retaining newly authored inline images and explicit file attachments; migration `20260811232704_quoted_email_photo_provenance_dedup.sql` makes Postgres authoritative. A stored image is ineligible when identical bytes appeared earlier outbound in the same company and either the same mailbox/provider thread or the same attributed opportunity; the opportunity fallback covers Gmail replies split into a new thread, while the thread path also covers outbound attachments not attributed to an opportunity. Among genuinely inbound copies, only the earliest attachment for a company/opportunity/content hash may materialize, and a partial unique index permits at most one materializing job for a company/project/source hash. Attachment or activity identity changes reconcile all related same-hash sources; existing invalid or duplicate projections are revoked through the durable ledger, which hides mapped `project_photos` transactionally and queues object deletion for retry. The SQL has compiled against production inside a rolled-back transaction and rejects all five known Mark Smith quote copies, but neither this migration nor the Gmail filter is deployed until both OPS-Web commits are explicitly pushed and released.
-
-**One-time Mark Smith recovery (production 2026-08-11):** a locked preflight revalidated exactly five complete materialization jobs, five active `project_photos`, five published object-ledger rows, the single source hash `5d628315…3676e`, and earlier outbound evidence for every copy before mutation. `private.revoke_email_conversion_photo_jobs` moved only those five jobs to generation 2 `revoke/pending`, soft-deleted all five gallery rows, and moved all five objects to `delete_pending`. Independent readback found zero active target photos and zero active photos on the accepted project while preserving both sides of the project/opportunity link. Physical Storage deletion remained queued at that readback; this one-time recovery does not make the prepared prevention guard production-live.
-
 **iOS optimistic photo contract (2026-07-25):** choosing lead photos synchronously reserves their strip positions before decoding begins. The picker payloads decode concurrently, successful siblings retain their selection order when one payload fails, and every viable image is written through `ImageFileManager` plus `pendingLeadImageUploads` before network upload starts. Each staged item carries a stable `displayID` and `batchIndex`, so the reserved tile becomes its local thumbnail without moving. Queue drains reconcile against their starting snapshot instead of replacing current state, preserving photos appended while a network request is in flight. The locally staged thumbnails therefore survive navigation, offline operation, relaunch, and background retry until the remote URLs are confirmed.
 
 The web uploader deliberately does NOT use browser-direct presigned PUTs: `ops-app-files-prod` has no CORS configuration for browser origins, so a cross-origin PUT dies in preflight (verified against the live bucket 2026-07-14; iOS native URLSession and server-side producers never needed CORS). If bucket CORS is ever added, only `uploadOne` in `lead-photo-upload.ts` changes. All writers use the same server-state read-modify-write (iOS `OpportunityRepository.appendImages`/`removeImage`, web `OpportunityService.appendImages`/`removeImage` over pure `mergeImageUrls`/`removeImageUrl` in `src/lib/utils/opportunity-images.ts`: fetch → merge → update) so concurrent producers never clobber each other. On the web, `images` is deliberately excluded from `mapOpportunityToDb` and `CreateOpportunity`; the array is writable only through the RMW methods. iOS offline adds ride a durable local queue (bytes via ImageFileManager, records in UserDefaults, drained on connectivity/retry/appear). At conversion the full URLs copy into `project_photos` (`source='other'`, deduped by URL — see `09_FINANCIAL_SYSTEM.md` § Conversion transaction).
@@ -1496,38 +1490,9 @@ Nullable text column on `products`, CHECK `bundle_pricing_mode IS NULL OR bundle
 
 **Parent contract (`public.site_visits`, existing live table):** `id uuid`; `company_id text`; `opportunity_id uuid?`; legacy `project_id text?` plus canonical `project_ref uuid?`; legacy `client_id text?` plus canonical `client_ref uuid?`; `status site_visit_status` (`scheduled | in_progress | completed | cancelled`); `scheduled_at timestamptz`; `duration_minutes integer`; `assignee_ids text[]?`; completion/notes/measurements/photos/activity/calendar fields; `created_by text`; audit timestamps; `deleted_at timestamptz?`. The iOS `SiteVisit` SwiftData model now round-trips this row through `SiteVisitDTOs.swift`, `SiteVisitRepository.swift`, outbound operations, delta pull, and Realtime.
 
-**Booking columns (production live 2026-08-10, migration `20260810194251_site_visit_booking.sql`).** `booked_at timestamptz?` is the **sole discriminator for "this row is a real appointment."** Non-null means `scheduled_at` is a genuine appointment start, `duration_minutes` its length, and `assignee_ids` who is going. NULL means walk-up capture or legacy: those rows default `scheduled_at` to `created_at`, so the value is junk, and every scheduling surface (both OPS calendars, the prompt cron, the START card, the Google queue, MCP reads) must filter `booked_at IS NOT NULL AND deleted_at IS NULL`. Never trust `status='scheduled'` alone — it means *open*, not *booked*. There is deliberately **no backfill**; the ~20 legacy rows genuinely are not bookings. `reminder_lead_minutes int?` (CHECK null or 0–1440) is the per-booking heads-up override; NULL falls through to `notification_preferences.site_visit_reminder_lead_minutes` (added by the same migration, same CHECK), then to the product default of 30 minutes. Partial index `site_visits_booked_window_idx (company_id, scheduled_at) WHERE booked_at IS NOT NULL AND deleted_at IS NULL` serves every booked-window read.
-
-Both columns are **server-owned** on iOS: `SiteVisit.bookedAt` / `reminderLeadMinutes` are reconciliation slots that converge from the server and are never written by the device (`CreateSiteVisitDTO` omits them; the outbound update allowlist rejects them), because a booking can only ever come into existence through the RPCs in `04_API_AND_INTEGRATION.md` § *Site-visit booking RPCs*. `isBookedAppointment` (= `bookedAt != nil`) is the client-side spelling of the same discriminator. Source: `ops-ios/OPS/Network/Sync/SiteVisitServerMerge.swift`.
-
-**Prompt idempotency index.** `notifications_site_visit_prompt_dedupe_uidx` is UNIQUE on `notifications (dedupe_key) WHERE dedupe_key LIKE 'site_visit:%'`. It is deliberately **scoped, not global**: other producers (`lead_lifecycle:*`, `task-mutation:*`, `project-status-lifecycle:*`) legitimately re-fire the same `dedupe_key` after a row is read or resolved, and every pre-existing unique index on this table is scoped for exactly that reason. Site-visit prompt keys are `site_visit:<visit_id>:<kind>:<user_id>:<epoch(scheduled_at)>` and are unique per prompt forever — a reschedule changes the epoch and re-arms every prompt by construction, with no fired-state columns anywhere.
-
 `ops-ios/OPS/Views/SiteVisits/SiteVisitCaptureView.swift` opens from lead detail, New Lead, or the FAB and creates/reuses an active visit before a project exists. `opportunityId` remains optional so capture is never blocked by client/lead administration. Every local mutation and its `SyncOperation` are committed in one SwiftData transaction by `SiteVisitPersistenceCoordinator`; the queue is a phone-local transport mechanism, not company data. Ordering is parent → child rows → media → `complete_site_visit_guarded`, expressed with durable `dependsOnId` links so a restart cannot complete a visit before its packet exists.
 
 Inbound delta and Realtime subscribe to the parent plus all three children. `SiteVisitServerMerge` preserves dirty local fields, applies authoritative terminal status, and makes an in-progress visit resumable from a second authorized device. `SiteVisitOrphanRecovery` reconstructs a missing legacy parent only from exact same-company, valid, non-conflicting evidence; foreign, malformed, or ambiguous groups are encrypted and quarantined instead of uploaded or deleted.
-
-**`public.meeting_proposals` (web-only, 2026-08-06)** is a second writer into
-`site_visits`. It records the meeting datetime an OPS **outbound** email proposed,
-captured at send time inside `reconcileEmailSend`, so a later customer acceptance
-only has to point at it — no datetime is ever parsed out of inbound mail. Columns:
-`id uuid`; `company_id uuid` / `opportunity_id uuid` / `connection_id uuid` /
-`source_activity_id uuid` (all FK, cascade); `provider_thread_id text`;
-`proposed_start_at timestamptz`; `duration_minutes integer`; `time_zone text`;
-`proposal_text text` (the sentence that proposed it); `proposed_by_user_id uuid`
-FK `users`; `status text` (`pending | accepted | superseded | expired | declined`);
-`accepted_message_id text?`; `accepted_at timestamptz?`; `site_visit_id uuid?`;
-audit timestamps. Unique on `(connection_id, source_activity_id)` so capture is
-idempotent under send retry, and partial-unique on `(connection_id,
-provider_thread_id) where status='pending'` so one thread carries at most one live
-proposal. RLS is company-scoped SELECT only; all writes go through the service
-role or `public.book_proposed_meeting_as_system(proposal_id, accepted_message_id,
-notes)`, which locks the proposal, re-checks every guard, and inserts exactly one
-`site_visits` row — adopting rather than duplicating any visit already within ±2h
-of the proposed instant. Note the tenancy mismatch this bridges: `meeting_proposals.
-company_id` is `uuid` while `site_visits.company_id` is legacy `text`, so the RPC
-casts on insert. Client mirrors are written only when the opportunity's
-`client_id`/`client_ref` pair agrees, matching `resolveGuardedOpportunityClientId`.
-Full behaviour: `07_SPECIALIZED_FEATURES.md` § 19a.
 
 ### 22A. SiteVisitIdentityDraft (cloud-backed snapshot)
 
@@ -1598,25 +1563,11 @@ Deck design capture is gated by the `deck_builder` feature and create/edit permi
 
 The durable visit record remains the per-visit field snapshot, not a live pointer. Selecting a type creates `SiteVisitChecklistAnswer` rows containing the label, kind, requirement, help, and order at that moment. Hidden template fields create no answer row. Editing a template can refresh a current completely blank checklist when Settings closes, but once any answer exists the visit stays immutable; later template edits never rewrite history.
 
-**Release status (2026-08-06):** migration `20260806103000_site_visit_checklist_templates.sql` is tracked in OPS-Web and mirrored here but is **not production-applied**. The iOS Settings/sync implementation is local-build and simulator-test verified, not customer-distributed. Rollout requires the migration first, then a live schema/type/company-data-manifest refresh, then signed device/App Store proof.
+**Release status (2026-08-06):** migration `20260806103000_site_visit_checklist_templates.sql` is production-applied as version `20260806211208`. Production readback confirms the table, validated field document, RLS policies, role grants, full replica identity, and Realtime publication membership. OPS-Web database types, live-derived company-data scope/privilege snapshots, export/account-closure manifest, and focused lifecycle tests were refreshed and deployed from commit `7e41c289`. Verified iOS source is on `main` at `fd6d6e7d` with all eight focused checklist/settings simulator tests passing. Signed device/App Store distribution remains a separate release gate; source publication alone is not customer-device proof.
 
 `public.site_visit_checklist_answers` is the cloud record: `id uuid`; `site_visit_id uuid` FK parent with cascade; `company_id text`; `opportunity_id uuid?`; optional local template id; field id/label/kind/required/help/sort snapshot; bounded `answer_value jsonb`; `created_by text`; timestamps; `deleted_at`. One active answer exists per `(site_visit_id, field_id)`. Reassigning the parent propagates its opportunity binding to every child.
 
-**Checklist logical-identity reconciliation (2026-08-06).** The active logical
-identity is `(site_visit_id, field_id)`; the UUID is the transport identity that
-the server may canonicalize. If an authoritative active server row arrives with
-a different UUID, `SiteVisitServerMerge` migrates the one matching local active
-answer to that canonical UUID and rewrites every unresolved checklist
-`SyncOperation` identity and routing envelope in the same `ModelContext`
-transaction. The merge validates the complete plan before applying it. Multiple
-local or incoming active rows for one logical identity, unresolved work already
-targeting the canonical UUID, an unknown queue lifecycle/type, or malformed
-company/visit/entity routing fail closed and quarantine through the existing
-recovery path; the merge must never guess a winner or overwrite captured field
-evidence. Source: `ops-ios/OPS/Network/Sync/SiteVisitServerMerge.swift` (code
-commit `a6a49da7`).
-
-Capture UX is field-first: note draft text autosaves into one live note/transcript artifact as the operator types or finishes dictation, clearing the text soft-deletes that draft artifact, and there is no separate Save Note command. Once committed, an active note/transcript may be edited in place: the stable artifact id, `capturedAt`, inclusion choice, and local history remain unchanged; `body` and `updatedAt` change, and `needsSync` returns to true. Blank edits fail without mutation. Photo artifacts expose `previewAssetURL` (`renderedAssetURL ?? thumbnailURL ?? localAssetURL`) so capture-packet rows can show thumbnails and open a zoomable preview before markup. Checklist fields can auto-link matching captured evidence: photo fields use active photo/dimensioned-photo artifacts, measurement fields use measurement artifact text, and deck-design fields use the active deck-design artifact. The lead/client panel is part of the same capture console, not a pre-step: inline search suggests local active leads and clients, manual fields autosave into `SiteVisitIdentityDraft`, completed fields get completion treatment, and the operator can create/link the lead from the same panel before project handoff. Reassigning a visit moves the open `SiteVisit` plus all active `SiteVisitCaptureArtifact.opportunityId` and `SiteVisitChecklistAnswer.opportunityId` values to another active lead before project creation. Source: `ops-ios/OPS/Views/SiteVisits/SiteVisitCaptureViewModel.swift` (code commit `c11472a6`).
+Capture UX is field-first: note draft text autosaves into one live note/transcript artifact as the operator types or finishes dictation, clearing the text soft-deletes that draft artifact, and there is no separate Save Note command. Photo artifacts expose `previewAssetURL` (`renderedAssetURL ?? thumbnailURL ?? localAssetURL`) so capture-packet rows can show thumbnails and open a zoomable preview before markup. Checklist fields can auto-link matching captured evidence: photo fields use active photo/dimensioned-photo artifacts, measurement fields use measurement artifact text, and deck-design fields use the active deck-design artifact. The lead/client panel is part of the same capture console, not a pre-step: inline search suggests local active leads and clients, manual fields autosave into `SiteVisitIdentityDraft`, completed fields get completion treatment, and the operator can create/link the lead from the same panel before project handoff. Reassigning a visit moves the open `SiteVisit` plus all active `SiteVisitCaptureArtifact.opportunityId` and `SiteVisitChecklistAnswer.opportunityId` values to another active lead before project creation.
 
 ### 22D. Recovery, tenancy, export, and erasure
 
@@ -1624,8 +1575,8 @@ Capture UX is field-first: note draft text autosaves into one live note/transcri
 - **Logout.** Voluntary logout performs a bounded flush and warns if visit work remains. Forced/token-driven logout encrypts only unsent/quarantined visit bundles and their referenced media with AES-GCM under a dedicated ThisDeviceOnly Keychain key before the shared SwiftData store is wiped. Archives are exact `(user_id, company_id)` scoped; another account cannot list, restore, or discard them. Explicit discard and device-account deletion erase the matching vault data. This phone-local transport/recovery machinery is not part of the server company-data manifest.
 - **Pending Work.** Quarantined packets render as protected, non-retryable entries. They can be exported or explicitly discarded; generic Retry/Retry All cannot send unsafe tenant evidence.
 - **Server tenancy.** Child `company_id` is intentionally `text`, matching legacy `site_visits` and `project_photos`; related opportunity/client/deck ids remain UUID. RLS combines exact company isolation with parent view/edit authorization, while service role retains hard-delete for account closure. Never cast the entire legacy path to UUID by assumption.
-- **Customer data lifecycle.** `site_visits`, `site_visit_artifacts`, `site_visit_checklist_answers`, and `site_visit_identity_drafts` are company-scoped on `company_id text`, soft-deleted, exported, and ordered children-before-parent in `src/lib/data/company-data-manifest.ts`. After the pending template migration is applied, `site_visit_types` joins that manifest as company-owned, soft-deleted/exported settings data; the live-derived scope snapshot must not be hand-edited before the table exists. `activities` remains company-scoped UUID + hard-delete; `project_photos` remains company-scoped text + soft-delete/export. The migration adds no receipt/event/outbox table. Storage erasure deletes the exact company visit prefix separately.
-- **Physical verification requirement.** Simulator tests prove ordering, serialization, merge, logout, and idempotency. Release still requires an authenticated physical-phone offline capture/force-quit/reconnect test, a second-device resume test, live readback proving one activity, export proof, and transactional company-purge rehearsal after the migration is applied.
+- **Customer data lifecycle.** `site_visits`, `site_visit_artifacts`, `site_visit_checklist_answers`, `site_visit_identity_drafts`, and `site_visit_types` are company-scoped on `company_id text`, soft-deleted, exported, and registered in `src/lib/data/company-data-manifest.ts`; visit children remain ordered before their parent. `site_visit_types` is company-owned settings data and is included in the live-derived scope/privilege snapshots. `activities` remains company-scoped UUID + hard-delete; `project_photos` remains company-scoped text + soft-delete/export. The migration adds no receipt/event/outbox table. Storage erasure deletes the exact company visit prefix separately.
+- **Physical verification requirement.** Simulator tests prove ordering, serialization, merge, logout, and idempotency. Signed iOS release still requires an authenticated physical-phone offline capture/force-quit/reconnect test, a second-device resume test, live readback proving one activity, export proof, and transactional company-purge rehearsal.
 
 ---
 
@@ -1895,7 +1846,7 @@ CREATE INDEX idx_project_notes_event_kind
 
 **iOS now reads both columns (2026-07-04, bug burndown I2).** `ProjectNote` gained optional `eventKind` + `contentMetadataJSON` (SwiftData schema **V13**, additive) and the DTO decodes `content_metadata` loosely (`AnyJSON` → raw JSON string). The iOS Activity feed branches on `eventKind`: `status_change` renders as a quiet one-line system row (`FROM → TO` from `{from,to}`), the iOS-authored `site_visit` kind renders as a rich packet card (see below), and any other / unknown `event_kind` falls back to the plain note card. So the "renders as a plain note" caveat above is resolved on iOS ≥ the I2 release.
 
-**iOS writes `event_kind = 'site_visit'`.** The site-visit packet (lead → project conversion) is now one `project_notes` row: `content` keeps the legacy plain-text packet (web + older iOS render it unchanged) and `content_metadata` carries the structured summary the iOS feed card + detail sheet render from — `{ "site_visit_id", "photo_count", "measurements": [{ "label", "value" }], "notes": [...], "checklist": [...], "checklist_items": [{ "field_id", "label", "value", "kind", "artifact_count" }], "address", "contact_name", "company_name", "deck_design_id" }`. The structured `checklist_items[]` array is additive and is written beside the legacy `content` + `checklist[]` representations; it preserves field labels, typed values, and evidence counts without breaking older clients. All keys and item members are optional. A future-shaped or malformed `checklist_items` key is ignored and the reader falls back to `checklist[]`, so one compatibility problem never invalidates the rest of the packet. Photos in the sheet resolve from every matching synced `project_photos` row (`site_visit_id`, else `source = 'site_visit'`), in capture order and never from the capturing device's local artifacts.
+**iOS writes `event_kind = 'site_visit'`.** The site-visit packet (lead → project conversion) is now one `project_notes` row: `content` keeps the legacy plain-text packet (web + older iOS render it unchanged) and `content_metadata` carries the structured summary the iOS feed card + detail sheet render from — `{ "site_visit_id", "photo_count", "measurements": [{ "label", "value" }], "notes": [...], "checklist": [...], "address", "contact_name", "company_name", "deck_design_id" }` (the last four added 2026-07-29 with the SITE VISIT RECORD; all keys optional and additive, so older packets decode unchanged and a missing key simply renders no section). Photos in the sheet resolve from synced `project_photos` rows (`site_visit_id`, else `source = 'site_visit'`), never from the capturing device's local artifacts.
 
 **No currency value is ever written into this blob — this is a hard contract, not a preference.** `content_metadata` syncs, and OPS-Web renders it with no financial gate of its own, so any money-shaped key here is money published past iOS's `finances.view` permission to every viewer of the web activity feed. A first cut of the record shipped `estimated_value` in the packet and was reverted for exactly this reason (2026-07-29). The lead's value is instead resolved at RENDER time from the local `opportunities` row and gated there — permitted viewers with the lead on-device see a `// VALUE` line, everyone else's record simply lacks it. Reading it live also keeps the figure honest: a record opened a month later shows what the lead is worth now, not a number frozen into a note. `OPSTests/SiteVisitPacketNoteTests.testPacketMetadataCarriesNoMoney` enforces the key set as an allowlist, so a future `deck_price` or `quote_total` fails the build rather than leaking. The packet is written through the iOS durable sync queue (`DataController.createProjectNote` → outbound create carrying both columns); the previous direct insert set `needsSync` but recorded no op, and project notes have no `needsSync` sweep, so packets never reached the server.
 
@@ -1915,7 +1866,7 @@ CREATE INDEX idx_project_notes_event_kind
 | `project_created` | `{}` |
 | `project_archived` | `{}` |
 | `task_completed` | `{ "taskId": "<uuid>", "title": "..." }` |
-| `site_visit` (iOS) | `{ "site_visit_id": "<uuid>", "photo_count": 4, "measurements": [{ "label": "Deck width", "value": "14 ft 6 in" }], "notes": ["..."], "checklist": ["..."], "checklist_items": [{ "field_id": "width", "label": "Deck width", "value": "14 ft 6 in", "kind": "measurement", "artifact_count": 1 }], "address": "...", "contact_name": "...", "company_name": "...", "deck_design_id": "<uuid>" }` — **never any currency value**; see the packet contract above |
+| `site_visit` (iOS) | `{ "site_visit_id": "<uuid>", "photo_count": 4, "measurements": [{ "label": "Deck width", "value": "14 ft 6 in" }], "notes": ["..."], "checklist": ["..."], "address": "...", "contact_name": "...", "company_name": "...", "deck_design_id": "<uuid>" }` — **never any currency value**; see the packet contract above |
 
 **Write paths** — `ProjectLifecycleService.onProjectStageChange` writes `status_change` rows with the `{from, to}` payload. The workspace `useProjectMutations` hook writes `project_created`, `project_archived`, and `photo_uploaded` rows. Estimate / invoice / payment / expense writes happen inside their respective services as those features are wired into the workspace timeline (later phases).
 
@@ -1940,15 +1891,6 @@ The security-definer RPC:
 `project_note_mention_events` stores the raw request for exact replay comparison, before/after snapshots, the server-computed new-recipient delta, actor/project copy snapshots, and the committed note timestamp. Clients cannot read or write the table; only service-role notification resolution can select it. A trigger rejects event updates/deletes. Reusing an event UUID with the exact request returns the stored result without mutating a newer note state; reusing it with different input is rejected.
 
 Mention-edit notification rows use the durable key `mention-edit:<event_uuid>`. The partial unique index on `(user_id, company_id, type, dedupe_key)` is intentionally independent of read/resolved state so a retry cannot create a second rail item.
-
-### Manual project-link and eager lead-summary RPCs (2026-08-07, staged)
-
-Two additive public RPC boundaries are tracked in OPS-Web and mirrored here. Neither migration is production-applied.
-
-- `get_manual_project_link_candidates(p_opportunity_id uuid) RETURNS TABLE (...)` derives the actor and company from the authenticated request, requires lead-conversion authority, and returns every non-deleted project the actor may view and link that is unclaimed or already linked to the same lead. `same_address` and `same_client` are ranking metadata only. The paired guarded patch to `convert_opportunity_to_project` bypasses address/status duplicate gates only when an explicit `p_link_to_project_id` is supplied; the nil-target automatic-create path keeps its existing address duplicate protection. Migration: `migrations/20260807123000_manual_project_link_any_address.sql`; code commits: OPS-Web `705d32dc`, iOS `a06fe97f`.
-- `authorize_lead_summary_refresh(p_opportunity_id uuid) RETURNS uuid` derives the actor, resolves the live opportunity company, and requires `private.user_can_edit_opportunity` before returning that company id to the server route. It accepts no caller-supplied actor or company. Migration: `migrations/20260807123500_authorize_lead_summary_refresh.sql`; code commits: OPS-Web `d4c04e0d`, iOS `a087b0c9`.
-
-Both functions are `SECURITY DEFINER`, set a fixed search path, revoke `PUBLIC`, and grant only `authenticated`. Their bodies perform the authorization checks before returning data.
 
 ### `projects.trade` (Migration `20260507140000_projects_trade`)
 
@@ -3143,13 +3085,13 @@ Both are gated by `private.get_user_company_id() = p_company_id`. `EXECUTE` gran
 
 **No update path**: import is INSERT-only. Re-importing the same CSV creates duplicate families. Use Snapshots (kebab Setup → Snapshots) to roll back a bad import.
 
-### Catalog Bulk Variant Expansion (prepared 2026-08-07; web parity 2026-08-12)
+### Catalog Bulk Variant Expansion (prepared 2026-08-07; web production 2026-08-16)
 
 `public.catalog_bulk_expand_variants(p_company_id uuid, p_idempotency_key text, p_payload jsonb) RETURNS jsonb` is the mutation boundary for adding one variant axis across as many as 200 existing stock families in one operation. The behavioral source lives at `ops-ios/OPS/Migrations/2026-08-07-catalog-bulk-variant-expansion.sql` plus `CatalogBulkVariantExpansionPlanner` / `CatalogBulkVariantExpansionService`. The web-compatible migration lives at `ops-web/supabase/migrations/20260812150000_catalog_bulk_variant_expansion.sql`; its browser client builds the same canonical family snapshot in `src/lib/catalog/bulk-variant-expansion.ts` and calls the RPC through `CatalogBulkVariantService`.
 
 The companion `catalog_bulk_variant_requests` table stores `company_id`, the client-generated idempotency key, the exact request payload, and the successful response. `(company_id, idempotency_key)` is unique. RLS permits `authenticated` and Firebase-bridge `anon` callers with `catalog.manage:all` to select and insert receipts only for their own active company. The RPC is `SECURITY INVOKER`, pins its search path, repeats the active-company and granular-permission checks through `private.get_user_company_id()` / `private.current_user_has_permission(...)`, and grants execution only to `anon, authenticated`. It never infers authority from an app role or employee type.
 
-**Deployment status (2026-08-12 read-only verification):** the receipt table and RPC are absent from the live Supabase project. Both clients and the web migration are local source only. Do not describe this capability as customer-live until the reviewed migration is explicitly applied and independently read back.
+**Deployment status (2026-08-16):** migration `20260812150000_catalog_bulk_variant_expansion.sql` is applied and recorded in the live Supabase project. Independent readback confirmed the receipt table, `SECURITY INVOKER` RPC, two normalized uniqueness indexes, RLS policies, and the intended `anon` / `authenticated` grants. The production RPC rejected an unauthenticated probe with `company_forbidden`, and the receipt table remained empty; no customer catalog mutation was used for release verification. OPS-Web `main` commit `a955a973` is deployed through Vercel at `https://app.opsapp.co`.
 
 **Payload contract**:
 
@@ -3291,10 +3233,6 @@ Live schema verified 2026-05-12 in project `ijeekuhbatykdomumfjx`: `deck_designs
 Live data verified 2026-05-20 in project `ijeekuhbatykdomumfjx`: active `deck_designs` rows exist for project-attached designs, and some legacy `drawing_data` payloads omit the top-level `surfaces` key while still carrying valid vertices, edges, footprint, config, levels, and level connections. Active rows also store `drawing_data.footprint.isClosed` as numeric `0`/`1`, not strict JSON booleans. Inbound iOS decoders must treat missing optional/defaulted `DeckDrawingData` fields as empty/default values and tolerate legacy numeric/string/strict boolean values for deck drawing booleans. A single legacy row must not cause the full `[SupabaseDeckDesignDTO]` pull to fail, because a fresh install depends on that inbound pass to repopulate deck designs.
 
 Embedded iOS designer exit-save contract added 2026-07-03: the project DeckBuilder calls `flushBeforeExit()` when the operator closes the designer, when the view disappears, and when the app moves inactive/background. That path persists the current `DeckDrawingData` into SwiftData, queues the `deck_designs` sync operation, and triggers the sync engine immediately. The 2-minute autosave timer is crash-recovery only; it is not the primary save-on-exit mechanism.
-
-Embedded designer interaction/save boundary updated 2026-08-07: drag callbacks mutate only a runtime live-geometry overlay, coalesced at the device display cadence. The committed `DeckDrawingData` changes once on lift through an indexed O(V+E) mutation pass; surface reconciliation, Codable serialization, SwiftData save, and outbound enqueue run after the gesture callback. A pending deferred save remains part of `flushBeforeExit()`, so close/inactive/background preserve the existing synchronous durability guarantee. The save boundary encodes canonical drawing JSON once and passes that same string to `DeckDesign.storeDrawingData(_:json:)` and the sync payload builder. Runtime geometry snapshot caches and the committed drawing revision are not encoded; `deck_designs.drawing_data`, migration state, and inbound/outbound schema remain unchanged. Sources: `ops-ios` commit `435cec12b2edae8150727f14487f77df76d0e04f`.
-
-Exit-save and lead-title contract updated 2026-08-07: closing the embedded iOS designer synchronously persists the drawing and releases the full-screen builder before optional thumbnail rendering/upload begins. Thumbnail work is best-effort follow-up; slow or offline storage must never hold the close action open, and upload failure cannot roll back the already-durable drawing. Every deck created for a lead — blank, template, recent copy, paper scan, AR perimeter, or bound site visit — stores and displays the trimmed lead address as its title, falling back to the existing contact label only when the address is absent.
 
 Phase 1 standalone OPS Decks contract added 2026-06-26: standalone sketches reuse `deck_designs` with `company_id` scoped to the provisioned deck-only company and `project_id = nil`. The OPS Decks app must not create a project shell just to save a deck. If the operator later upgrades into full OPS and creates a project, the existing repair path attaches `project_id` to the saved `DeckDesign` row. `drawing_data` remains additive and backward-decodable; future framing, parcel/zoning, code overlay, rendering, roofing, wall/opening, railing, stair, and material blocks must round-trip even before those systems are active.
 
@@ -4182,21 +4120,6 @@ enum SupabaseDate {
 
 Most models support **soft delete** via `deletedAt: Date?` timestamp.
 
-For `Project`, `Client`, and `ProjectTask`, a tombstone moves the record out of
-normal queries and into the Admin/Office Settings → Trash recovery ledger; it is
-not a permanent-delete promise. Restore sets `deleted_at` to exact JSON `null`
-through a durable update operation. A task with a live parent restores directly;
-a task whose project is also deleted restores only as one explicit combined
-project-first plan; a missing parent makes restore unavailable rather than
-creating an orphan.
-
-The local tombstone mutation and the complete ordered restore outbox are one
-`ModelContext` transaction. Zero, partial, malformed, or failed operation staging
-rolls back both the model mutations and every staged queue row. No restored state
-may become visible locally unless its complete sync ledger committed with it.
-Detailed presentation and transaction rules live in
-`07_SPECIALIZED_FEATURES.md` §35.
-
 ### Default Query Pattern
 
 **Always exclude soft-deleted items** unless explicitly querying for them:
@@ -4897,21 +4820,6 @@ CREATE TABLE ai_draft_history (
 - `edit_distance`: Word-level Levenshtein distance between `original_draft` and `final_version`.
 - `changes_made`: Structured diff — `{ greeting?: {from, to}, closing?: {from, to}, tone?: string }`.
 - When `sent_without_changes` reaches 95% over 20+ drafts, auto-send is suggested to the user.
-
-### Agent job conversation evidence and immutable delivered turns (2026-08-10) — local only, unapplied
-
-The local integrated agent-control-plane branch adds three migrations: `20260807220000_agent_job_conversation_memory.sql`, `20260807223000_agent_correspondence_evidence_read.sql`, and `20260807224500_agent_provider_delivery_sources.sql`. They are committed through `1e866814` but have not been applied to Supabase.
-
-The schema separates provider transport from conversational memory:
-
-- `job_conversations` and `job_conversation_anchors` bind memory to the OPS job/opportunity lifecycle, never to a Gmail or Microsoft thread.
-- `job_conversation_turns` is append-only and accepts only provider-confirmed delivered evidence. Drafts and prepared send intents are not turns.
-- `job_memory_versions`, `job_memory_version_evidence`, and redaction events provide the durable foundation for the later running-summary task; summary generation is not implemented yet.
-- `private.agent_provider_delivery_sources` stores the bounded exact provider-delivered MIME source plus cryptographic source metadata. `private.agent_provider_delivery_turn_sources` seals the first-observation job, actor, event, participant, recipient, and attachment projection used to create a turn.
-
-Gmail must supply raw RFC 822 bytes and Microsoft 365 must supply Graph MIME `$value`. Capture hashes the exact byte stream before parsing, requires complete header/recipient/attachment enumeration, and binds provider type plus immutable company/connection identity. Direct sends additionally bind the prepared provider request tuple before the external call and reauthorize the exact current source/action state at final claim. Legacy ambiguous attempts are reconciliation-only so rollout cannot resend an uncertain message.
-
-Local verification is complete at the application/static-SQL boundary: 214 evidence tests and 492 exact staged delivered-turn/provider tests passed, TypeScript and formatting passed, ESLint had zero errors, and fresh adversarial review found no remaining P1/P2. A live PostgreSQL migration/RLS execution test is still required before any apply or deployment claim.
 
 ### email_send_intents follow-up outcome receipt
 
@@ -5818,72 +5726,5 @@ Durable exactly-once receipts for Payment Review write-offs. The primary key is 
 ### `payment_reminder_generation_claims`
 
 Short-lived service-only claims keyed by `(company_id, source_id)`, where `source_id` is the canonical invoice UUID plus reminder tier. Rows carry an opaque claim token, claim time, and ten-minute expiry. The claim transaction rechecks durable approval actions before acquiring, so concurrent requests do not duplicate paid drafting or queue work. Forced RLS and revoked client grants keep this table outside the browser and iOS data surface. Source migration: `migrations/20260721122000_payment_reminder_delivery_guards.sql`; live version `20260721102146`.
-
-## Agent Operational Schedule and Readiness Foundation (local, unapplied 2026-08-13)
-
-The local Task 11 foundation adds two internal, transport-neutral operational reads over fixed service-role RPCs:
-
-- `read_agent_scheduled_jobs_as_system` returns bounded, actor-authorized `project_tasks` occurrences. It does not read or infer site-visit appointments.
-- `read_agent_job_readiness_issues_as_system` returns bounded raw project/task/photo/customer/address/crew facts. TypeScript owns all five versioned readiness decisions; SQL does not duplicate rule copy or issue/clear semantics.
-
-Migration `20260812120000_agent_operational_schedule_readiness.sql` is the local schema authority. It adds `project_tasks.confirmed_schedule_version`, a company-scoped operational-read source revision, fixed RPC boundaries, and source-revision triggers. A schedule is currently confirmed only when its timestamp is present and `confirmed_schedule_version = schedule_version`; a later schedule mutation clears the complete proof.
-
-Confirmation, explicit unconfirmation, and edits to a currently confirmed schedule persist a purpose-bound dispatch event in `task_schedule_automation_outbox` in the same transaction as the schedule state change. The new event kinds are `schedule_confirmation_dispatch` and `schedule_unconfirmation_dispatch`. The latter records an immutable origin (`explicit_admin` or `schedule_edit`) plus exact before/after schedule projections, so customer communication survives route or worker crashes without granting a structural caller authority. Provider delivery is independently re-authorized by `20260812121000_agent_schedule_confirmation_delivery_guard.sql` immediately before provider ownership.
-
-Operational cursors bind actor, company, permission revision, capability/schema/rule revisions, normalized filters and timezones, the last retained key, and the source revision. Any relevant source mutation returns `STALE_CONTEXT`; it cannot silently duplicate or omit work. Source arrays and text are capped before aggregation or regular-expression work. One signed projection proof covers each returned occurrence or readiness job, keeping source/evidence references within the global bound.
-
-The complete local implementation is recorded in OPS Web commit `5bba3c5e`. The two migration files remain unapplied everywhere: local, test, preview, and production Supabase have not received them. Their install/read gate intentionally rejects the current production PostgreSQL timezone rules: OPS production still resolves post-November-2026 Vancouver with the superseded seasonal offset, while the authoritative BC rule is permanent UTC-7. Supabase/PostgreSQL tzdata must be upgraded and the database/runtime conformance vectors must pass before either migration can be applied. No data backfill is authorized or implied.
-
-## Agent Communication and Participant Read Foundation (local, unapplied 2026-08-14)
-
-Task 12 adds one current-state snapshot boundary for two internal reads:
-
-- `read_agent_job_communication_context_as_system` returns purpose-minimized job/contact facts for `general`, `schedule_notice`, or `photo_request`.
-- `read_agent_job_participants_as_system` returns the current evidence-backed participant graph for `general`, `communication`, `schedule`, or `assignment`.
-
-Migration `20260813120000_agent_job_communication_participants.sql` is the local, unapplied schema source. Both public RPCs are fixed `service_role` entry points over one private implementation. Browser roles and `service_role` itself have no direct grant on the private function or its contactability-fence table. The private statement re-resolves actor membership, permission revision, job/entity access, customer/project/mailbox visibility, purpose-dependent task/photo scopes, and every retained source row before producing a snapshot. Callers cannot supply `as_of`, a projection kind, a repository, or a legacy manifest revision.
-
-The migration adds `private.agent_contactability_address_revisions`, keyed only by `sha256:<normalized-address>` with a safe-integer revision. The table contains no email address or suppression metadata. Global `email_suppressions` changes advance only the affected opaque address fence; the current suppression state is read in the same snapshot statement. A returned email exists only for one confirmed visible owner with a normalized valid address and no active global suppression. Suppressed, duplicate-owned, absent, ambiguous, unavailable, query-bounded, invalid, unresolved, or redacted sources carry fixed states without the address.
-
-Operational-source triggers extend the Task 11 company fence to current sub-clients, opportunities, job conversations/anchors/turns/redactions, provider-delivery authority attestations, and send intents. Every participant claim has one bounded projection proof/evidence atom. A participants collection proof and a communication context proof bind the exact actor, company, job, purpose, permission revision, manifest revision, operational source revision, per-address contactability digest/revision, count completeness, fixed gaps, and ordered participant proof sources. The empty participant graph is still collection-proof-bound. The repository validates projection hashes and cross-field coupling before the domain service may reduce the result.
-
-Source reads are bounded before aggregation: a 251-row recent-turn sentinel for a 250-turn completeness bound, 51 sub-client/participant sentinel rows for a 50-participant public ceiling, 50 schedule occurrences, 100 schedule assignments in aggregate, and bounded photo/legacy sources. Exact counts become explicit lower bounds when a sentinel or another source bound is reached. The private JSON snapshot has a one-MiB bug fence; the TypeScript service retains complete ordered claim/proof/evidence atoms under the public 60,000-character limit. Schedule-bearing purposes also execute the Task 11 database timezone conformance assertion.
-
-The v5 migration privately preserves the earlier v4 conversation, evidence, schedule, and readiness implementations and recreates their public wrappers to accept only manifest `2026-08-13.capability-manifest.v5`; each wrapper supplies the frozen v4 literal internally. This compatibility layer is source-only until the migration is applied.
-
-The complete local Task 12 implementation is OPS Web commit `dc91a349`. The migration has not been database-compiled, executed, applied, rolled back, or runtime-tested on local, test, preview, or production Supabase, so this section does not describe a live table, trigger, function, or grant. It depends on the Task 9/Task 11 schema and both Task 11 migrations. Production PostgreSQL tzdata must satisfy the Task 11 BC permanent-UTC-7 conformance gate before any schedule-bearing Task 12 read can be released. The migration is intentionally absent from the Bible migration archive until an authorized apply occurs.
-
-## Agent Job Catalog Read Foundation (local, unapplied 2026-08-14)
-
-Task 13 adds four fixed internal read boundaries in local migration `20260814120000_agent_job_catalog_reads.sql`:
-
-- `read_agent_customer_jobs_as_system` lists current opportunity/project jobs connected to one authorized current client or sub-client.
-- `read_agent_job_summary_as_system` returns only the selected, jointly authorized current summary sections.
-- `read_agent_job_history_as_system` searches a maximum one-year half-open window across the exact authorized immutable/current history sources.
-- `read_agent_correspondence_evidence_page_as_system` returns 1–20 exact current-redaction-aware turn evidence records for one visible job.
-
-Each public RPC is a fixed `service_role` entry point over private implementation state. Browser roles cannot execute it, and callers cannot supply policy JSON, tenant revisions, clocks, repositories, or arbitrary source selectors. The statement re-resolves the active actor/company membership, complete permission registry and selected variants, entity/customer/mailbox authority, canonical input, operational source revision, history revision, and every retained source row before returning JSON. A mandatory collection or summary proof still binds valid empty results.
-
-The migration adds `private.agent_job_history_revisions`, a per-company safe-integer fence advanced by the current history sources projected by Task 13. It also adds bounded keyset and full-text indexes for customer-job ordering and the permitted conversation, memory, lifecycle, task-event, and estimate history sources. Global result sentinels are applied before aggregation or text search: customer jobs retain at most 50 after a 51-row sentinel; summary occurrences/participants/conversation and each raw source use their own fixed caps; history retains at most 20 after bounded 501-row source candidates; evidence accepts at most 20 requested IDs. Bounded or malformed history sources produce explicit proof-bound `SOURCE_QUERY_BOUND`/`SOURCE_DATA_INVALID` collection gaps; sources that cannot safely return any contract-valid result fail with fixed query-bound/data-invalid errors. Neither path silently truncates into false completeness.
-
-Customer-job opportunity and project rows are filtered independently by current permission, lifecycle, kind-specific status, and created/updated window before reciprocal same-client conversion pairs collapse. When the linked counterpart is filtered or not visible, the qualifying side reports only `linked_project_not_returned` or `linked_opportunity_not_returned`; it does not expose the hidden reference. Project start/end values remain civil dates.
-
-Summary schedule claims use the Task 11 scheduled-occurrence shape and database timezone proof. Readiness returns Task 11 bounded raw sources for TypeScript evaluation. Participant sources use the Task 12 current confirmed/ambiguous/redacted identity boundary without contact channels. Activity, financial, and conversation sources are separately permission- and source-bounded. Conversation counts/timestamps are actor-visible; global memory version/high-watermark are returned only for `inbox.view:all`.
-
-History events each retain one unique projection evidence atom. `correspondence_evidence_ids` are separately hash-bound drill-down selectors for the evidence-page RPC, not aliases for envelope proof IDs. Memory fragments are bounded structured facts with 1–8 current authorized turn selectors; full documents and untrusted free-form memory blobs are not returned. Source query/data gaps are part of the collection proof and remain distinct from service-side prompt-budget omission.
-
-Manifest v6 compatibility wrappers reprove the caller's exact v6 identity before privately rebinding the earlier v5 implementation literals. The legacy `get_correspondence_evidence` bridge is stricter because its public schema revision changed: it validates capability `get_correspondence_evidence`, revision `get_correspondence_evidence:2026-08-14.v1`, and manifest v6 before passing only the frozen `2026-08-07.v1`/v5 literals into the existing private chain.
-
-The complete local Task 13 implementation is OPS Web commit `d4118344`. The 7,281-line migration has not been catalog-compiled, executed, applied, rolled back, or runtime-tested on local, test, preview, or production Supabase. A PostgreSQL 18 ECPG grammar audit parsed all 132 statements and static checks matched the four RPC arities and referenced generated schema/functions, but that does not prove catalog resolution, RLS behavior, query plans, timezone behavior, or runtime correctness. The migration depends on the unapplied Task 9, Task 11, and Task 12 foundations and inherits the Task 11 timezone-conformance gate for schedule-bearing summaries. It is intentionally absent from the Bible migration archive until an authorized apply occurs.
-
-### Phase C routed-source and context fence (local, unapplied 2026-08-16)
-
-Migration `20260814190000_agent_phase_c_source_turn_read.sql` adds three service-role-only read boundaries for the internal Phase C consumer: `read_phase_c_routed_actor_fence_as_system`, `read_phase_c_source_turn_as_system`, and `read_agent_phase_c_job_conversation_context_as_system`. Public, anonymous, and authenticated execution remain revoked.
-
-The source-turn read accepts only one current opportunity route and binds the current assigned actor plus assignment version, active mailbox, OPS/provider thread identity, immutable inbound activity, matching correspondence event, provider-delivery source ID/hash/content identity, and opportunity conversation anchor. Recipient arrays are procedurally bounded before expansion; address normalization and exact provider-source recipient/CC equality are rechecked; the mailbox address must appear in To or CC; and provider-thread identifiers are capped at 512 bytes. BCC-only delivery fails closed because the current provider-source schema has no independently attested BCC field.
-
-The Phase C context wrapper accepts only capability `get_job_conversation_context`, schema revision `get_job_conversation_context:2026-08-07.v1`, manifest `2026-08-14.capability-manifest.v6`, the fixed four read scopes, opportunity jobs, exact turn limit 20, and the fixed `memory`, `recent_turns`, `participants`, `gaps`, `cross_job_seed` section order. One materialized statement proves exactly one requested source turn/conversation, invokes the current v6 job-conversation reader with that turn as the freshness requirement, and rechecks company, permission revision, opportunity, conversation, and returned required-through turn before returning the JSON unchanged.
-
-The complete local implementation is OPS Web commit `77c79996`. The migration has not been catalog-compiled, executed, applied, rolled back, or runtime-tested on local, test, preview, or production Supabase. It depends on the unapplied job-conversation/provider-source foundations and is intentionally absent from the Bible migration archive until an authorized apply occurs. Static migration-contract tests and TypeScript repository/adapter tests are source evidence only; they do not prove catalog resolution, grants, RLS interaction, query plans, runtime concurrency, or production data compatibility.
 
 **End of Data Architecture Documentation**

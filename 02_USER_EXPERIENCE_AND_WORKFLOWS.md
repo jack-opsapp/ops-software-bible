@@ -773,12 +773,6 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 - Admin/Office: See all today's events
 - Field Crew: See only assigned events
 
-### iOS field-surface continuity (2026-08-07)
-
-- **Project Activity keyboard:** `ProjectDetailsView` owns the real vertical scroll container. `ActivityTabView` receives that scroll proxy and moves the compose bar above the keyboard when editing begins; interactive downward scrolling dismisses the keyboard. The Activity composer is a UIKit `UITextView`, so UIKit owns its first-responder lifecycle: SwiftUI state may request and observe focus but cannot resign the live editor when a view transaction briefly republishes `false`. A nested `ScrollViewReader` without a scrollable descendant is invalid because its `scrollTo` calls are no-ops. Sources: `ops-ios/OPS/Views/Components/Project/ProjectDetailsView.swift`, `ops-ios/OPS/Views/Components/Project/Tabs/ActivityTabView.swift`, `ops-ios/OPS/Views/Components/Common/ProjectNoteMentionEditingField.swift` (code commits `ccf2d6e3`, `e120ab0c`).
-- **Billable This Week:** the collapsed Home card is one compact 44pt-minimum scan row containing the label, total, job count, and disclosure. The full multi-line header and job list appear only after expansion, so the persistent collapsed state does not cover map controls or content. Source: `ops-ios/OPS/Views/Home/HomeContentView.swift` (code commit `6e081742`).
-- **Captured site notes:** a committed note/transcript row exposes an Edit action in both the capture packet and review sheet. Saving edits the same artifact in place and returns it to the offline sync queue; blank saves are rejected. Source: `ops-ios/OPS/Views/SiteVisits/SiteVisitCaptureView.swift` (code commit `c11472a6`).
-
 ---
 
 ### Job Board Screen (Redesigned March 2026)
@@ -786,20 +780,6 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 **Purpose:** Role-based operational hub for managing projects, tasks, and pipeline.
 
 The Job Board uses a **role-based section system**. Each role sees a different set of sections and a different default view.
-
-The root header uses two trailing slots: **Review actions** (an overflow menu
-containing unscheduled, task-review, and payment-review entries when available)
-and universal **Search**. Review counts remain on the overflow control and in
-its menu labels; locked review entries still surface their existing unlock
-message. The task-review and payment-review walkthroughs target this menu first.
-
-**Row surface (2026-08-11):** the three scrolling row kinds render on the opaque
-`.glassSurface(.listRow)` L1 variant rather than true glass — same hairline,
-radius, and top-edge gradient, no blur. Founder-approved; the visual change is
-limited to badges now fully covering the text behind them instead of dimming it.
-Nothing else about the screen changed. Tokens: `05_DESIGN_SYSTEM.md` § 20.1;
-the per-row render rules the job board is the reference case for:
-`06_TECHNICAL_ARCHITECTURE.md` § Performance Optimization → "List Row Rendering".
 
 ---
 
@@ -902,25 +882,18 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 1. **Header**
    - Color stripe (status-dependent)
+   - Status badge (top right)
    - Breadcrumb: Company → Client → Project
    - Project title (large)
    - Floating action buttons (Edit, Delete)
-   - iOS does not repeat status in the header; status belongs in the Details document
 
-2. **Details Document** (iOS)
-   - Exactly one `STATUS` row, first in the document
-   - The complete row meets the 44pt touch-target minimum and opens status editing only for an authorized editor; read-only viewers receive a static row
-   - No oversized standalone status control or duplicate header badge
-   - Remaining project facts follow as compact, divider-separated rows
-   - Source: `ops-ios/OPS/Views/Components/Project/Tabs/DetailsTabView.swift` (code commit `8853bf49`)
-
-3. **Location Card**
+2. **Location Card**
    - Map icon
    - "LOCATION" section header
    - Address text
    - "Get Directions" button (primary accent)
 
-4. **Client Info Card**
+3. **Client Info Card**
    - Person icon
    - "CLIENT" section header
    - Client name
@@ -928,22 +901,22 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
    - Phone (tap to call)
    - Address (tap to map)
 
-5. **Notes Card** (iOS) / **Notes Tab** (OPS Web)
+4. **Notes Card** (iOS) / **Notes Tab** (OPS Web)
    - **iOS:** Note icon, "NOTES" section header, Notes text (expandable), "Show more" / "Show less" toggle
    - **OPS Web (Feb 2026 overhaul):** Full threaded notes tab with NoteComposer (text input with @mention autocomplete, Ctrl+Enter submit), NotesList (list of NoteCards with author avatar, time-ago, @mention rendering, photo grid, edit/delete dropdown), legacy migration from Bubble teamNotes on first visit. Notes are project-level only (task-level notes removed). See [07_SPECIALIZED_FEATURES.md](07_SPECIALIZED_FEATURES.md) Section 11 for full details.
 
-6. **Description Card**
+5. **Description Card**
    - Document icon
    - "DESCRIPTION" section header
    - Description text (expandable)
 
-7. **Team Members Card**
+6. **Team Members Card**
    - People icon
    - "TEAM MEMBERS" section header
    - Avatar row with names
    - "+Add" button (Admin/Office)
 
-8. **Tasks Section**
+7. **Tasks Section**
    - Checklist icon
    - "TASKS" section header
    - Task list grouped by status:
@@ -959,14 +932,14 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
      - Swipeable for status change
    - "Add Task" button (Admin/Office)
 
-9. **Images Section**
+8. **Images Section**
    - Camera icon
    - "IMAGES" section header
    - Photo grid (3 columns)
    - Full-screen viewer on tap
    - "Add Photos" button
 
-10. **Previous/Next Navigation Cards**
+9. **Previous/Next Navigation Cards**
    - "Previous Project" card (if exists)
    - "Next Project" card (if exists)
 
@@ -1004,39 +977,6 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 **Role Differences:**
 - Admin/Office: Edit, delete, add tasks, add photos, assign team
 - Field Crew: View only (except status changes for assigned tasks)
-
-#### iOS Site Visit Record
-
-A `project_notes.event_kind = 'site_visit'` entry is a structured field record,
-not one large plain-text comment. The Activity feed shows a compact summary card;
-tapping it opens a full-height record sheet with a centered, width-bounded
-document. Identity, address, measurements, deck, checklist, notes, and permitted
-value sections render only when present. Internal hairlines and separate
-label/answer typography preserve the field hierarchy at compact widths and under
-Dynamic Type.
-
-Checklist presentation prefers additive `checklist_items[]` metadata and falls
-back to the legacy `checklist[]` strings when the structured key is absent,
-future-shaped, or malformed. Compatibility failure must never invalidate the
-rest of the visit packet.
-
-The photo section renders every available visit photo, in capture order, inside
-a bounded horizontal rail with the next item visibly peeking into the viewport;
-the sheet never widens to fit the evidence and never truncates the collection to
-a featured subset. The record-sheet host owns the full-screen
-`PhotoCommentViewer` presentation, so tapping a thumbnail opens the viewer
-immediately above the still-present record instead of waiting for the sheet to
-close. It passes the project id and the complete visit-photo collection so
-project-scoped viewer and comment behavior remain intact.
-
-Currency never travels in the packet. The current linked-opportunity value is
-resolved locally at render time and omitted unless the viewer has
-`finances.view`; see `03_DATA_ARCHITECTURE.md` §
-`project_notes.event_kind + project_notes.content_metadata`.
-Sources: `ops-ios/OPS/DataModels/SiteVisits/SiteVisitPacketMetadata.swift`,
-`ops-ios/OPS/Views/SiteVisits/SiteVisitRecordView.swift`, and
-`ops-ios/OPS/Views/Components/Project/Tabs/SiteVisitPacketEntryView.swift` (code
-commit `8fb04553`).
 
 ---
 
@@ -1113,9 +1053,8 @@ commit `8fb04553`).
 
 1. **AppHeader** (Top)
    - Schedule header type
-   - Two trailing slots: **Schedule actions** overflow + universal **Search**
-   - Schedule actions → Month view calls `viewModel.toggleMonthExpanded()`, Filters opens `CalendarFilterView` with its active count, and My schedule / All team toggles scope
-   - `TODAY · <date>` renders in the first content strip below the 52pt title band
+   - Month icon button → tapping calls `viewModel.toggleMonthExpanded()` to show/hide the full month grid
+   - Filter button → opens CalendarFilterView (badge shows active filter count)
 
 2. **CalendarDaySelector** (Week strip + Month grid)
    - **Week strip** (default): horizontal row of `WeekDayCell`s showing day abbreviation, day number, and up to 4 colored density bars (one per task color). If >4 tasks exist on a day, the fourth bar is replaced by `···`.
@@ -1387,11 +1326,11 @@ in the 2026-04-27 Phase 1+2 rework)
 
 ---
 
-### LEADS Tab — Triage Console (2026-08-05 redesign, round 2 2026-08-06)
+### LEADS Tab — Triage Console (2026-08-05 redesign)
 
-**Purpose:** the owner's chase surface (`.all` view scope; the day-sheet branch for `.assigned` delegates is documented in the next section). Opens on "what needs me," carries browse and manipulation controls inline, and demotes business aggregates to a one-line glance. Spec: `ops-ios/docs/superpowers/specs/2026-08-05-leads-console-redesign-design.md` (round-2 changes in its §14–§15 ADDENDUM); plan: `ops-ios/docs/plans/2026-08-05-leads-console-redesign.md`. Supersedes both the 2026-05-19 PipelineView description and the 2026-06-30 summary-tile layout.
+**Purpose:** the owner's chase surface (`.all` view scope; the day-sheet branch for `.assigned` delegates is documented in the next section). Opens on "what needs me," carries browse and manipulation controls inline, and demotes business aggregates to a one-line glance. Spec: `ops-ios/docs/superpowers/specs/2026-08-05-leads-console-redesign-design.md`; plan: `ops-ios/docs/plans/2026-08-05-leads-console-redesign.md`. Supersedes both the 2026-05-19 PipelineView description and the 2026-06-30 summary-tile layout.
 
-**Source files:** `Views/Leads/LeadsTabView.swift` (composition), `Views/Leads/Components/LeadsQueueBand.swift` (sticky band), `LeadsSearchBar.swift`, `LeadsControlChips.swift` (the single `LeadsFilterControl`), `Views/Leads/Triage/LeadsSummary.swift` (command band), `LeadTriageCard.swift`, `Views/Leads/PipelineStageListView.swift` (stage browser), `Utilities/LeadsQueryEngine.swift` (pure list logic; 73 unit tests in `OPSTests/Utilities/LeadsQueryEngineTests.swift`).
+**Source files:** `Views/Leads/LeadsTabView.swift` (composition), `Views/Leads/Components/LeadsQueueBand.swift` (sticky band), `LeadsSearchBar.swift`, `LeadsControlChips.swift`, `Views/Leads/Triage/LeadsSummary.swift` (command band), `LeadTriageCard.swift`, `Views/Leads/PipelineStageListView.swift` (stage browser), `Utilities/LeadsQueryEngine.swift` (pure list logic; 63 unit tests in `OPSTests/Utilities/LeadsQueryEngineTests.swift`).
 
 **Command band (state-aware, `LeadsQueryEngine.bandState`):**
 - *Working* (`needActionCount > 0`): `N NEED ACTION` hero (Mohave-Light 34; rose while overdue > 0, else tan) + toned breakdown (`2 OVERDUE · 1 DUE TODAY · 1 YOUR MOVE`) + metrics line + stage bar.
@@ -1400,32 +1339,19 @@ in the 2026-04-27 Phase 1+2 rework)
 - Metrics line (replaced the three bordered KPI tiles): `PIPELINE $X · OPEN N · WON <MMM> $Y` — JetBrains Mono 11, WON segment rendered only when > 0.
 - Stage bar: 8pt distribution of open stages; whole row (bar + `BY STAGE ▸`) is one 44pt button pushing the stage browser at its largest stage. The old `LeadsByStageRow` tile strip is deleted.
 
-**Sticky band (pins under the header):** a full-width search field + ONE trailing filter control on the first row, above the unchanged `TacticalChipRow` bucket chips (ALL / OVERDUE / DUE TODAY / YOUR MOVE / FRESH / WAITING with raw counts). Round 1 shipped two menu chips (`URGENCY ▾` / `CREW ▾`); round 2 collapsed them (addendum §15.1).
-- **Search** (`LeadsSearchBar`): persistent, per-keystroke, in-memory. Matches folded case/diacritics across contact name, title, description, address, email, source, last-6 id; tokens AND; a ≥3-digit token also digit-matches phone. Population while searching = all open leads + unconverted wins (terminal lost/discarded live only in the stage browser). Gaining focus scrolls the sticky band to the top of the scroll view (`ScrollViewReader` + `onFocusChange`), so the command band goes away and the field sits under the header with maximum queue visible; losing focus never moves the operator.
-- **Filter control** (`LeadsFilterControl`): 40pt, matches the field's height/radius. **At rest** it is the `line.3.horizontal.decrease` glyph alone in a square — the field is genuinely full-width in the common case. **Holding any non-default value** it becomes glyph + the active selections joined by `·` (`NEWEST`, `DANA W`, `NEWEST · DANA W`) with the active chip treatment (`text`@0.10 fill, `text`@0.20 border), and the field yields the width. One `Menu` behind it, two sections: **SORT** (URGENCY / NEWEST / VALUE) and **CREW**, checkmark on the current row in each.
-- **Search suspends browse filters:** bucket chips **and the filter control** stop constraining and dim to 40% / lose hit-testing — sort is suspended with them from round 2, because sort now lives inside the suspended control and a control that still worked while visibly standing down is a worse lie than one that plainly waits. Results render flat under `// MATCHES ─── N`; zero hits → `0` + `// NO MATCHES` + `[ CLEAR SEARCH ]`. Clearing restores prior chip/sort/crew state.
+**Sticky band (pins under the header):** search field + `URGENCY ▾` sort chip + `CREW ▾` crew chip on one row, above the unchanged `TacticalChipRow` bucket chips (ALL / OVERDUE / DUE TODAY / YOUR MOVE / FRESH / WAITING with raw counts).
+- **Search** (`LeadsSearchBar`): persistent, per-keystroke, in-memory. Matches folded case/diacritics across contact name, title, description, address, email, source, last-6 id; tokens AND; a ≥3-digit token also digit-matches phone. Population while searching = all open leads + unconverted wins (terminal lost/discarded live only in the stage browser).
+- **Search suspends browse filters:** bucket chip + crew filter stop constraining and dim to 40% / lose hit-testing; sort stays live; results render flat under `// MATCHES ─── N`; zero hits → `0` + `// NO MATCHES` + `[ CLEAR SEARCH ]`. Clearing restores prior chip/crew state.
 - **Sort:** URGENCY (default; grouped queue) / NEWEST (`createdAt` desc, flat) / VALUE (`estimatedValue` desc, unpriced last, ties newest). Session-state only — remount resets to URGENCY.
-- **Crew filter:** ALL CREW / MINE / UNASSIGNED / per-member, **each row carrying a count** (`ALL CREW · 12`, `MINE · 4`, `UNASSIGNED · 2`, `DANA W · 5`) from `LeadsQueryEngine.crewCounts(buckets:currentUserId:roster:)`. Counted over ALL open leads (`TriageBuckets.all`), never the active bucket, so the numbers are a stable roster read; won-but-unconverted is excluded; every roster member keeps a row at zero; a lead assigned to an id the roster cannot name counts under ALL and nowhere else (never folded into UNASSIGNED). ANDs into buckets when not searching. Roster = active company users (`deletedAt == nil`, `isActive != false`) ∪ lead-referenced assignees resolvable to a `User` row; ids fold to lowercase (uppercase-UUID gotcha). **Gate:** all assignment chrome (the menu's CREW section + card assignee tokens) renders only when roster > 1 — a solo operator gets a sort-only menu and never sees assignment.
+- **Crew filter:** ALL CREW / MINE / UNASSIGNED / per-member. ANDs into buckets when not searching. Roster = active company users (`deletedAt == nil`, `isActive != false`) ∪ lead-referenced assignees resolvable to a `User` row; ids fold to lowercase (uppercase-UUID gotcha). **Gate:** all assignment chrome (crew chip + card assignee tokens) renders only when roster > 1 — a solo operator never sees it.
 
-**Card** (`LeadTriageCard`, compressed by addendum §14 — **250pt → 198pt**, measured by pixel-scanning the same lead in the round-1 and round-2 proof PNGs): four bands — stage chip + value / contact name + `assigneeLabel · source` / chase strip / action row. The 6-segment stage progress bar is **deleted** (it was the card's only accent and duplicated the stage chip's words), as is the job subtitle (Jackson 2026-08-06 — the queue is scanned by who and what's due; the job is one tap away in the dossier). The value slot is **omitted entirely**, not dashed, when `estimatedValue` is nil/0.
-- **Assignee token** (`LeadTriageCard.assigneeLabel`, defaulted nil): trailing cluster on the NAME row, `JASON W · REFERRAL` — first name + last initial uppercased, `UNASSIGNED` (muted) for nil/blank, `UNKNOWN` for unresolvable ids. The name takes `layoutPriority(1)`; the meta cluster truncates first. Day-sheet rows don't pass it; console and stage browser do.
-- **VISIT action** (`LeadTriageCard.onStartSiteVisit`, defaulted nil): fourth chip in the action row — `CALL · TEXT · EMAIL · VISIT` + the log glyph. Gated `canConvert && !isTerminal` (verbatim `LeadDetailView`'s START SITE VISIT gate), **hidden rather than disabled**, and off entirely when a call site passes no handler. Both `LeadsTabView` and `PipelineStageListView` route it to the tab's single `activeSiteVisitLead` full-screen cover — the same `SiteVisitCaptureView` + convert hand-off the detail screen, day sheet, FAB and add-lead sheet already drive.
+**Card assignee token** (`LeadTriageCard.assigneeLabel`, defaulted nil): meta-row trailing cluster `JASON W · REFERRAL` — first name + last initial uppercased, `UNASSIGNED` (muted) for nil/blank, `UNKNOWN` for unresolvable ids. Day-sheet rows don't pass it; console and stage browser do.
 
 **Stage browser** (`PipelineStageListView`): pushed from the stage bar (or deep code paths that previously fed `footerStage`). In-place scrolling stage tabs (`LABEL · n`, white 2pt underline, never accent) across all six open stages **plus WON and LOST** — first browse path for terminal leads on iOS. Entry stage = `LeadsQueryEngine.entryStage` (max open count, ties → pipeline order). Won/Lost sort by close date desc.
 
 **Unchanged by the redesign:** TriageBucket engine + bucketize rules, chase strip / HANDLED / follow-up send, swipe-to-stage grammar, won-convert nudge, pull-to-refresh + realtime + foreground refresh listeners, deep links, all sheets, and the entire day-sheet branch.
 
-**Proof pack:** `ops-ios/docs/artifacts/leads-console-redesign/` (eight PNGs, re-rendered for round 2: working band, quiet band, search matches, no matches, newest sort with assignee tokens, stage browser WON tab, the compressed card with its VISIT action, and the filter control holding `NEWEST · DANA W`).
-
----
-
-### Lead Detail Dossier — iOS Chrome and Media (2026-08-07)
-
-`LeadDetailView` is one pure-black scrolling dossier. Its pinned identity keeps an opaque black title foundation and ends in the canonical `headerFade`, so records disappear under the header without tinting the page or exposing moving text behind the lead name. The prior stage-colored atmosphere is absent. The bottom edit/won controls float over the document with the single sanctioned mobile CTA elevation; no gradient floor or transparent strip extends beneath them.
-
-The fixed DETAILS document order is CLIENT → ADDRESS → PROJECT → optional LAST WORD → optional DECK → PHOTOS → FILES. ADDRESS uses the opportunity's existing address only: a populated value is one minimum-44pt directions action and a blank value is `—`. PHOTOS composes queued local uploads, public manual lead photos, and attributed `stored` raster email attachments. Email-backed pages stream through the authenticated attachment proxy and are immutable correspondence evidence, so the shared viewer never exposes DELETE for them.
-
-FILES keeps estimates actionable but collapses all email attachments to one `1 attachment` / `N attachments` row. That row opens a medium/large black sheet with a fixed thumbnail slot, filename, sender/date metadata, and one full-row action per attachment. Stored raster files load a downsampled cached thumbnail, stored PDFs render their first page, and unsupported or external files use the canonical document glyph without auto-fetching sender-controlled URLs. The strip is lazy and authenticated attachment transfer is capped at two concurrent files plus the canonical 25 MiB per-file ceiling. Selecting a stored file keeps the list visible with progress on that row while authenticated bytes load, then dismisses the list and continues into the existing file opener; the operator never has to close the sheet manually. Logout cancels and generation-invalidates private attachment bytes and decoded previews before auth teardown.
+**Proof pack:** `ops-ios/docs/artifacts/leads-console-redesign/` (six PNGs: working band, quiet band, search matches, no matches, newest sort with assignee tokens, stage browser WON tab).
 
 ---
 
@@ -1650,7 +1576,7 @@ FILES keeps estimates actionable but collapses all email attachments to one `1 a
 - ProductDetailView (Product detail — view + light edits; options/modifiers/recipe read-only)
 - ProductQuickAddSheet (3-field FAB flow for barebones Products)
 
-**Web sibling (updated 2026-08-12):** `OPS-Web` ships a matching `/catalog` surface (`src/components/catalog/`) with the same PRODUCTS / STOCK segments. It is the variant-aware replacement for the retired `/products` + `/inventory` pages (Direction D "Workbench"): a 3-tile supply strip (STOCK HEALTH / ON-HAND / PRODUCTS), inline quantity editing that writes audited `inventory_deductions` rows keyed by `catalog_variant_id`, a stock detail drawer (quick-adjust + unit-cost + threshold-cascade sources + used-in + adjustment ledger), and a full product editor at `/catalog/products/[id]` (base fields + options + modifiers + recipe) — which is the 308 redirect target of the iOS `ProductDetailView` "VIEW ON WEB →" link (`https://app.ops.dev/products/{id}` → `/catalog/products/{id}`, `ProductDetailView.swift:1054`). Unlike iOS, web authors the configurable layer (options/modifiers/recipe) fully. Its STOCK kebab also exposes the permission-gated Bulk Add Variants workflow described above. Web has no ORDERS surface (`catalog_orders` is consumed nowhere on web) — the buy-run exit is a filter pivot + COPY LIST/PRINT, not a restock order. Threshold status uses the canonical 3-level cascade (variant → family → category); legacy tag thresholds are not consulted (web/iOS agree). Threshold-less variants render as `UNTRACKED`, never `OK`.
+**Web sibling (updated 2026-08-16):** `OPS-Web` ships a matching `/catalog` surface (`src/components/catalog/`) with the same PRODUCTS / STOCK segments. It is the variant-aware replacement for the retired `/products` + `/inventory` pages (Direction D "Workbench"): a 3-tile supply strip (STOCK HEALTH / ON-HAND / PRODUCTS), inline quantity editing that writes audited `inventory_deductions` rows keyed by `catalog_variant_id`, a stock detail drawer (quick-adjust + unit-cost + threshold-cascade sources + used-in + adjustment ledger), and a full product editor at `/catalog/products/[id]` (base fields + options + modifiers + recipe) — which is the 308 redirect target of the iOS `ProductDetailView` "VIEW ON WEB →" link (`https://app.ops.dev/products/{id}` → `/catalog/products/{id}`, `ProductDetailView.swift:1054`). Unlike iOS, web authors the configurable layer (options/modifiers/recipe) fully. Its STOCK kebab also exposes the permission-gated Bulk Add Variants workflow described above. Web has no ORDERS surface (`catalog_orders` is consumed nowhere on web) — the buy-run exit is a filter pivot + COPY LIST/PRINT, not a restock order. Threshold status uses the canonical 3-level cascade (variant → family → category); legacy tag thresholds are not consulted (web/iOS agree). Threshold-less variants render as `UNTRACKED`, never `OK`.
 
 ---
 
@@ -1778,23 +1704,17 @@ FILES keeps estimates actionable but collapses all email attachments to one `1 a
    - "Upgrade" button (if not on highest tier)
    - Trial countdown (if in trial)
 
-5. **Data Section**
-   - "Pending Work" row with live count
-   - "Photos" row
-   - "Trash" row for Admin/Office users → recoverable Projects, Clients, and Tasks
-
-6. **Help & Support Section**
+5. **Help & Support Section**
    - "Tutorial" row with chevron
-   - Visible `REPORT A BUG` row
    - "Help Center" row with chevron (future)
    - "Contact Support" row with chevron (future)
 
-7. **About Section**
+6. **About Section**
    - App version
    - "Terms of Service" row
    - "Privacy Policy" row
 
-8. **Logout Button** (Bottom)
+7. **Logout Button** (Bottom)
    - Red destructive button
    - "Log Out"
 
@@ -1804,8 +1724,6 @@ FILES keeps estimates actionable but collapses all email attachments to one `1 a
 - Tap PIN Management → PIN setup/change
 - Tap Upgrade → Stripe payment portal
 - Tap Tutorial → Restart tutorial
-- Tap REPORT A BUG → Open the guarded bug-report overlay without dismissing the current presenter or keyboard
-- Tap Trash → Open the Admin/Office recovery ledger for deleted projects, clients, and tasks
 - Tap Log Out → Confirmation dialog → Logout
 
 ---

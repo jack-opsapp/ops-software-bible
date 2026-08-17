@@ -1618,6 +1618,12 @@ Company checklist managers use `Settings → Operations → Site Visit Types`. T
 
 The Site Visit type chooser places `EDIT TYPES` immediately after the available type options for users with `settings.company`. Their first Site Visit open also shows a user-scoped pointer to this Settings location with `NOT NOW` and `NEVER SHOW AGAIN`; opening Settings suppresses the guide. Crew without the permission see and use company templates but are never sent into an editor they cannot use.
 
+### Checklist Administration
+
+Company checklist managers use `Settings → Operations → Site Visit Types`. They can create a visit type, choose the company default, add/reorder form fields, select each field's input kind, mark it required, and toggle whether it is shown. Built-in types keep their product-owned identity and canonical field kinds, while company choices for visibility, requirement, order, and added fields are preserved across app upgrades. Custom types can be renamed or soft-deleted. All edits apply to future/blank checklists; answered visit records stay unchanged.
+
+The Site Visit type chooser places `EDIT TYPES` immediately after the available type options for users with `settings.company`. Their first Site Visit open also shows a user-scoped pointer to this Settings location with `NOT NOW` and `NEVER SHOW AGAIN`; opening Settings suppresses the guide. Crew without the permission see and use company templates but are never sent into an editor they cannot use.
+
 ### On-Site Experience (Mobile)
 
 **When a booked visit comes due**, prompts arrive in this order (full contract in `07_SPECIALIZED_FEATURES.md` § 14.3.7). All are per-assignee:
@@ -3130,7 +3136,7 @@ The list below was originally written as "tables needed." A live audit on 2026-0
 -- site_visit_artifacts            EXISTS IN PROD (company_id text; Realtime; RLS)
 -- site_visit_checklist_answers    EXISTS IN PROD (company_id text; Realtime; RLS)
 -- site_visit_identity_drafts      EXISTS IN PROD (company_id text; Realtime; RLS)
--- site_visit_types                TRACKED, NOT PROD-APPLIED 2026-08-06 (company_id text; Realtime; RLS)
+-- site_visit_types                EXISTS IN PROD 2026-08-06 (migration 20260806211208; company_id text; Realtime; RLS)
 -- project_photos                  EXISTS IN PROD — see schema below
 -- email_connections               (renamed from gmail_connections, status TBD)
 -- opportunity_email_threads       (status TBD)
