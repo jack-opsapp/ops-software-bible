@@ -4900,7 +4900,7 @@ CREATE TABLE ai_draft_history (
 
 ### Agent job conversation evidence and immutable delivered turns (2026-08-10) — local only, unapplied
 
-The local agent-control-plane branch adds three migrations: `20260807220000_agent_job_conversation_memory.sql`, `20260807223000_agent_correspondence_evidence_read.sql`, and `20260807224500_agent_provider_delivery_sources.sql`. They are committed through `5f9e4d6a` but have not been applied to Supabase.
+The local integrated agent-control-plane branch adds three migrations: `20260807220000_agent_job_conversation_memory.sql`, `20260807223000_agent_correspondence_evidence_read.sql`, and `20260807224500_agent_provider_delivery_sources.sql`. They are committed through `1e866814` but have not been applied to Supabase.
 
 The schema separates provider transport from conversational memory:
 
@@ -5875,5 +5875,15 @@ History events each retain one unique projection evidence atom. `correspondence_
 Manifest v6 compatibility wrappers reprove the caller's exact v6 identity before privately rebinding the earlier v5 implementation literals. The legacy `get_correspondence_evidence` bridge is stricter because its public schema revision changed: it validates capability `get_correspondence_evidence`, revision `get_correspondence_evidence:2026-08-14.v1`, and manifest v6 before passing only the frozen `2026-08-07.v1`/v5 literals into the existing private chain.
 
 The complete local Task 13 implementation is OPS Web commit `d4118344`. The 7,281-line migration has not been catalog-compiled, executed, applied, rolled back, or runtime-tested on local, test, preview, or production Supabase. A PostgreSQL 18 ECPG grammar audit parsed all 132 statements and static checks matched the four RPC arities and referenced generated schema/functions, but that does not prove catalog resolution, RLS behavior, query plans, timezone behavior, or runtime correctness. The migration depends on the unapplied Task 9, Task 11, and Task 12 foundations and inherits the Task 11 timezone-conformance gate for schedule-bearing summaries. It is intentionally absent from the Bible migration archive until an authorized apply occurs.
+
+### Phase C routed-source and context fence (local, unapplied 2026-08-16)
+
+Migration `20260814190000_agent_phase_c_source_turn_read.sql` adds three service-role-only read boundaries for the internal Phase C consumer: `read_phase_c_routed_actor_fence_as_system`, `read_phase_c_source_turn_as_system`, and `read_agent_phase_c_job_conversation_context_as_system`. Public, anonymous, and authenticated execution remain revoked.
+
+The source-turn read accepts only one current opportunity route and binds the current assigned actor plus assignment version, active mailbox, OPS/provider thread identity, immutable inbound activity, matching correspondence event, provider-delivery source ID/hash/content identity, and opportunity conversation anchor. Recipient arrays are procedurally bounded before expansion; address normalization and exact provider-source recipient/CC equality are rechecked; the mailbox address must appear in To or CC; and provider-thread identifiers are capped at 512 bytes. BCC-only delivery fails closed because the current provider-source schema has no independently attested BCC field.
+
+The Phase C context wrapper accepts only capability `get_job_conversation_context`, schema revision `get_job_conversation_context:2026-08-07.v1`, manifest `2026-08-14.capability-manifest.v6`, the fixed four read scopes, opportunity jobs, exact turn limit 20, and the fixed `memory`, `recent_turns`, `participants`, `gaps`, `cross_job_seed` section order. One materialized statement proves exactly one requested source turn/conversation, invokes the current v6 job-conversation reader with that turn as the freshness requirement, and rechecks company, permission revision, opportunity, conversation, and returned required-through turn before returning the JSON unchanged.
+
+The complete local implementation is OPS Web commit `77c79996`. The migration has not been catalog-compiled, executed, applied, rolled back, or runtime-tested on local, test, preview, or production Supabase. It depends on the unapplied job-conversation/provider-source foundations and is intentionally absent from the Bible migration archive until an authorized apply occurs. Static migration-contract tests and TypeScript repository/adapter tests are source evidence only; they do not prove catalog resolution, grants, RLS interaction, query plans, runtime concurrency, or production data compatibility.
 
 **End of Data Architecture Documentation**
