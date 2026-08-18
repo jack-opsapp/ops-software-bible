@@ -78,6 +78,12 @@ verify them by object, never by version key.
   mutate the link contract, so an ordinary project status write stops raising `access_denied` for crew.
   Company isolation, link integrity, the `service_role` bypass and the `stage='won'` activation block are all
   preserved unchanged. See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § project ↔ opportunity link.
+- `20260818184300_revoke_legacy_convert_lead_to_project.sql` — H10 dead-code cleanup. Revokes EXECUTE on the
+  legacy `public.convert_lead_to_project` shim, the only entry point into the convert transaction that skips
+  the `p_expected_stage` / `p_expected_assignment_version` guards and silently discards `p_address`. Revoked
+  rather than dropped so a stale client fails loudly (42501) instead of quietly bypassing the guards. Zero
+  callers: the shim stamps `legacy_shim` into `opportunity_dispositions.evidence` on every call and none of
+  the 26 conversions recorded since 2026-06-02 carries it.
 
 ## Legacy files whose content differs from the applied text
 
