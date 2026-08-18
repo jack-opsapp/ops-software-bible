@@ -6886,6 +6886,69 @@ role, so every client insert of a custom checklist type failed with
 allowlist is `notes` / `measurements` / `photos` / `internal_notes` only, and
 it never touches `opportunity_id`.
 
+### 19f. Deleted-Parent Settlement (iOS, 2026-08-17)
+
+What happens when the office deletes a site visit in OPS while a phone still
+holds unsent work for it. Diagnosed on the founder's device (visit `2091c595`,
+"Charles Krusekopf"): the visit was completed server-side 2026-08-06, soft-
+deleted 2026-08-13, and the phone's queued completion then died forever on
+`complete_site_visit_guarded`'s deliberate raise
+`cannot_complete_deleted_site_visit` (errcode `55000`) — 14+ retries, with 10
+child operations (identity drafts, checklist answers, artifact update, media
+upload) pending behind it and PENDING WORK stuck at 11.
+
+**Why the whole chain is un-landable once the parent is deleted:** child
+inserts/updates on `site_visit_artifacts` / `site_visit_checklist_answers` /
+`site_visit_identity_drafts` are RLS-gated by
+`private.current_user_can_access_site_visit_child(...)`, which requires the
+parent's `deleted_at IS NULL`. A released child would fail `42501`, which the
+site-visit error contract routes to re-authentication — a worse wedge, not a
+recovery.
+
+**The iOS fix (all in `ops-ios`, no server changes):**
+
+1. **Classifier** (`SyncErrorClassifier`): SQLSTATE class `55` joined the
+   permanent classes — every `55000` in this schema is a deliberate SECURITY
+   DEFINER precondition raise, so it parks immediately instead of burning the
+   20-retry budget. `55P03` (lock_not_available) keeps its transient carve-out.
+2. **Settlement sweep** (`SiteVisitDeletedParentSettlement`, MainActor): finds
+   settleable (`pending`/`failed`/`parked`) completion ops whose stored
+   `lastError` carries the raise NAME (`cannot_complete_deleted_site_visit` —
+   the errcode alone is ambiguous; 55000 is used schema-wide), then per visit:
+   records a `SiteVisitRecoveryVault` quarantine packet (new reason
+   `parent_deleted`) — encrypted copies of the visit, children, operations,
+   and all phone-local media — BEFORE any mutation, then in one transaction
+   marks every same-visit settleable op `quarantined` and clears the models'
+   `needsSync` so the orphan-writes sweep can't re-enqueue doomed work.
+   `inProgress` ops are left for the next pass. Runs pre-drain
+   (`SyncEngine.pushPending` → `settleDeletedParentSiteVisitChains()`) and at
+   login recovery (`DataController.recoverProtectedSiteVisitWork`).
+3. **Completion-barrier deadlock fix** (`SiteVisitOutboundSync.isReady`): the
+   completion's live queue barrier now ignores candidates whose own
+   `dependsOnId` chain reaches the completion — such children are sequenced
+   after it and previously produced a mutual block (children waiting on the
+   completion via dependency, completion waiting on the children via the
+   barrier; nothing ever attempted — the exact on-device state).
+4. **Vault custody survives logins** (`SiteVisitRecoveryVault.restore`): only
+   forced-logout entries (reason nil) rehydrate; quarantine entries stay in
+   the vault, since `parent_deleted` cannot be re-derived locally after a
+   restore dissolves the entry.
+5. **Operator surface:** the packet renders in PENDING WORK · NOT LINKED as
+   "Site visit recovery / Deleted in OPS — kept on this phone"
+   (`SyncStatusCopy.PendingWork.quarantineRow(for:)`), with EXPORT and an
+   explicit destructive DELETE. EXPORT (`PendingWorkExport`) now ships the
+   visit's phone-local artifact media files (e.g. a rendered markup whose
+   upload never landed — bytes that exist nowhere else) plus the visit's own
+   notes, alongside the summary. Nothing is ever silently dropped: media
+   leaves the phone only through the operator's explicit vault-packet DELETE.
+
+**Known gap (accepted):** a deleted-parent chain with NO completion op has no
+typed signal to sweep on; its child writes still fail through the pre-existing
+RLS/auth path. Tests: `SiteVisitDeletedParentSettlementTests`,
+`SyncErrorClassifierTests` (class-55 rows), `SiteVisitOutboundSyncTests`
+(barrier cycle exclusion), `SiteVisitRecoveryVaultTests` (restore skip),
+`PendingWorkQuarantinedExportTests`.
+
 ## 20. Mobile Wizard System
 
 Cross-platform reference for the in-app guided wizard system. Both iOS and Android implementations conform to this dock.
