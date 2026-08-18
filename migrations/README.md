@@ -65,6 +65,20 @@ real ledger version like any other migration.
   (`20260818053040`, `20260818053050`) are already applied, so nothing is half-shipped while it waits.
   See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § project_photos.
 
+### Authored here, awaiting approval (NOT YET APPLIED)
+
+Fix SQL authored directly in this directory because it targets prod objects rather than riding an `ops-web`
+deploy. Each filename carries an **authoring** timestamp, not a ledger version. On apply, read the stamped
+version back out of `supabase_migrations.schema_migrations` and rename the file to
+`<ledger_version>_<ledger_name>.sql` like any other mirror. Until applied these have no ledger row at all —
+verify them by object, never by version key.
+
+- `20260818184224_project_opportunity_link_crew_status_unblock.sql` — H2 crew unblock. Narrows the
+  `pipeline.manage @ all` requirement in `public.enforce_project_opportunity_link()` to writes that actually
+  mutate the link contract, so an ordinary project status write stops raising `access_denied` for crew.
+  Company isolation, link integrity, the `service_role` bypass and the `stage='won'` activation block are all
+  preserved unchanged. See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § project ↔ opportunity link.
+
 ## Legacy files whose content differs from the applied text
 
 Session-written mirrors sometimes drifted from what was actually applied: a prepended doc header, a stray blank
