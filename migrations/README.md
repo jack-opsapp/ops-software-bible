@@ -50,6 +50,10 @@ One row was applied via `supabase db push`, which split the file into 14 ledger 
 - `20260807123500_authorize_lead_summary_refresh.sql`
 - `20260811232704_quoted_email_photo_provenance_dedup.sql`
 - `20260818052155_restore_claim_email_send_provider_delivery_grant.sql`
+- `20260818224814_repair_web_onboarded_owner_role_rows.sql` — data repair (no DDL). Seeds the
+  missing Owner `user_roles` row, `role`/`user_type`, and `company_code` for the 5 web-onboarded
+  account holders of bug `bb4775c1-07a5-444c-a9b2-952e9b9b2f0e`. Re-running it is a no-op: its
+  precondition block requires all 5 to still match the broken signature and aborts otherwise.
 
 ## Staged migrations (authored, deliberately NOT applied)
 

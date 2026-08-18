@@ -108,10 +108,37 @@ Onboarding completion is server-authoritative across OPS-Web, ops-site handoff p
 
 | Route | Purpose | Contract |
 |-------|---------|----------|
-| `POST /api/setup/progress` | Persist web setup drafts and partial progress | Idempotent per step. **Company step calls the shared `create_company_for_owner` RPC** (replacing its former bespoke insert + client-side code generation), so web owners get the identical `users.role='owner'` + `user_roles` Owner record iOS produces. Company creation/updates are limited to company users who are owner/admin-capable. `initialize_company_defaults(company_id)` runs inside the RPC. |
+| `POST /api/setup/progress` | Persist web setup drafts and partial progress | Idempotent per step. The company step performs its **own** insert — it runs on the service-role client, and `create_company_for_owner` identifies its caller via `auth.jwt() ->> 'sub'` and raises `NO_JWT` under service-role, so the RPC is not reachable from this route. Since 2026-08-18 that insert reaches the same final state the RPC produces: it mints a `company_code` (same alphabet, length and retry bound as the RPC), writes the Owner `user_roles` row, then sets `company_id`, `is_company_admin`, `role='owner'`, `user_type='company'`. **Write order is load-bearing** — see the note below. A failed role write is fatal (500). `initialize_company_defaults(company_id)` runs from the route. |
 | `POST /api/setup/complete` | Complete owner/company web setup | Requires a company-attached owner/admin-capable user. Rejects employee users. Merges `onboarding_completed.web=true`; clients must not mark web onboarding complete locally until this response succeeds. |
 | `POST /api/auth/join-company` | Join an existing company by code | Calls `join_user_to_company(p_user_id, p_company_id, p_company_code)` and must pass the normalized company-code proof. **The route's own admin-rail notification fan-out was removed (2026-06, ops-web commit `bc61f062`)** — the per-admin rail rows are now written inside the RPC. The route **keeps** its OneSignal push fan-out. |
 | `POST /api/onboarding/complete` | Complete iOS onboarding through the web API gateway | Accepts Firebase `idToken`/`token` plus `platform:"ios"`, verifies the OPS user, requires `company_id` and `user_type`, rejects non-admin company users when completing company-owner onboarding, merges `onboarding_completed.ios=true`, and records `setup_progress.steps.ios_onboarding=true`. |
+
+#### Owner role seeding — write order is load-bearing (2026-08-18)
+
+`public.user_roles` carries the deferrable constraint trigger
+`trg_user_roles_final_state` → `private.guard_user_roles_final_state()`, which rejects any
+direct write whose target is already a company admin (`target_is_admin`, SQLSTATE `42501`).
+It decides admin-ness via `private.permission_user_is_admin(u.id, u.company_id)`, whose body
+compares `u.company_id = p_company_id`. When `users.company_id` is NULL that comparison is
+NULL, so the user reads as a non-admin and the write is permitted. Two consequences:
+
+- **`/api/setup/progress` must write the Owner `user_roles` row *before* the update that sets
+  `company_id` + `is_company_admin`.** Reversing the order raises `target_is_admin`. Regression
+  cover: `tests/integration/setup-progress-owner-role.test.ts` (ops-web).
+- **`create_company_for_owner` reaches the same state from the other side** — it clears
+  `company_id`/`is_company_admin`, wraps its insert in
+  `set constraints trg_user_roles_final_state immediate` … `deferred` so the guard evaluates
+  while the user is detached, then restores the final owner state.
+
+Repairing an *existing* admin therefore cannot be done with a plain INSERT; it requires the
+RPC's detach → immediate-check → restore sequence in a single transaction. See
+`migrations/20260818224814_repair_web_onboarded_owner_role_rows.sql`.
+
+**Incident (bug `bb4775c1-07a5-444c-a9b2-952e9b9b2f0e`).** Until 2026-08-18 the company step
+wrote the company and linked the user but never wrote a `user_roles` row, never set
+`role`/`user_type`, and never minted a `company_code`. Every one of the 5 web-onboarded
+account holders was affected; 0 of the iOS-onboarded ones were. All five were repaired by the
+migration above, which also back-filled their missing join codes.
 | `POST /api/auth/sync-user` | Provision/repair the `users` row from the verified Firebase token | Verifies the Firebase `idToken`, looks up by `auth_id` → `firebase_uid` → `email`. **Sets `users.firebase_uid` from the verified token at row creation** (gated to Firebase-issued tokens) and backfills/repairs legacy rows. This guarantees `firebase_uid` is present for the JWT-`sub`-keyed identity lookup used by `create_company_for_owner` and `join_user_to_company`. **CRIT-3 application-layer hardening (staged 2026-07-07, ops-web `fix/auth-identity-hardening`, pending prod deploy):** the email fallback resolves on the VERIFIED TOKEN email — never the caller-supplied body email; an unverified email-only match against a row already bound to a *different* identity (`auth_id`/`firebase_uid` ≠ this token's sub) is refused with `403` instead of being rewritten or handed back; the 23505 insert-race recovery re-queries by `auth_id` first, then `firebase_uid`, so a Supabase-token race row (whose `firebase_uid` is null) is still recovered. |
 | `POST /api/auth/send-verification` | Send the OPS-branded Firebase email-verification message | **Staged 2026-07-07 (CRIT-3 Phase B), pending prod deploy.** Verifies the Firebase `idToken`, no-ops when `email_verified` is already true, generates the verification action link via the Admin SDK (no send), rebuilds the URL through OPS's own `/auth/action?mode=verifyEmail` handler so the branded SendGrid template is used, and sanitizes auth errors to a generic `401`. Best-effort/soft UX — the user is never gated on deliverability. Wires the previously-dormant verification stack so `email_verified` can eventually be trusted by the identity model. |
 
