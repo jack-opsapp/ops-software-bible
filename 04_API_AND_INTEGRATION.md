@@ -3697,6 +3697,24 @@ Both repairs are guarded transformations of the live definitions: each site must
 
 Two TypeScript contracts were also wrong against production reality (commit `eca40f47`): the job-catalog lifecycle refinement demanded stage `discarded` for an archived opportunity, but `opportunities.archived_at` is a dimension independent of stage — an archived `new_lead` failed the entire `list_customer_jobs` read; and the job-history repository's not-found matcher expected a message the shipped RPC never raises, downgrading privacy-safe `NOT_FOUND` answers to `TEMPORARILY_UNAVAILABLE`.
 
+### Evidence redaction defect found after the mount went live (fixed 2026-08-18)
+
+`get_job_conversation_context` and `get_correspondence_evidence` returned correct structure, provenance and participants but no readable subject or body for HTML email. Bug `6504b27b-ded1-4560-95c0-1934eb367164`.
+
+The cause was at **ingest, not read**. The visibility guard in `src/lib/agent-control-plane/evidence/normalize-correspondence.ts` rejected any element carrying a `dir` attribute, without inspecting the direction value. The intent was sound — `dir="rtl"` reorders neutral characters, so a reviewer can read a different string than the characters actually say, which is a real spoofing and prompt-injection vector — but `dir="auto"` is the Apple Mail default on every message body and `dir="ltr"` is common from other clients. `normalizeCorrespondence` threw, `provider-delivery-source-service.ts` caught it, and `private.agent_provider_delivery_sources` stored `[SUBJECT OMITTED: UNSAFE SOURCE]` / `[CONTENT OMITTED: UNSAFE SOURCE]` with `normalization_status = 'rejected'`. The read path faithfully returned those placeholders.
+
+The guard now resolves direction instead of detecting its presence: `ltr` is accepted, `rtl` is rejected, and `auto` resolves per the HTML directionality algorithm — the first strong directional character in the element's own text, skipping descendants that carry their own `dir` and subtrees that render no text — and is rejected only when it actually resolves RTL. An unrecognised `dir` value stays rejected, because mail clients disagree on that fallback. `bdi`, `bdo`, `unicode-bidi`, the `direction` CSS property and every other entry in the guard are unchanged.
+
+The same blunt-value comparison existed a second time in `renderedSeparator`, which walked ancestors reading raw `dir` strings and tested `=== "rtl"`. That was unreachable while the guard rejected every `dir`, but narrowing the guard would have opened it: a `dir="auto"` table or flex container resolving RTL would have passed. Both sites now share one memoized resolver.
+
+Second defect, fixed with it: the catch site in `provider-delivery-source-service.ts` was bare, so in production every rejection looked identical and its cause was unrecoverable. It now emits one structured `console.warn` with company, connection, provider message id, media type, content byte count, and the thrown reason — identifiers and reason only, never message content.
+
+**The `dir` guard was not the only cause of HTML rejection.** Measured against the six `text/html` sources in production on 2026-08-18: one (1,303 bytes) was blocked by `dir` alone and recovers; three carry Outlook conditional markup (`<!--[if …]>`); and two more carry CSS declarations outside the supported set (`text-transform`, `letter-spacing`, `text-decoration`). Those are independent, intentional guards with their own test coverage and were deliberately left alone. All three `text/plain` sources normalized correctly throughout. Any backfill estimate must start from this breakdown, not from the raw rejected count.
+
+Coverage: `src/lib/agent-control-plane/evidence/__tests__/normalize-correspondence.test.ts` gains a direction block — `ltr` accepted; `auto` with Latin text accepted; `auto` resolving RTL from Arabic and from Hebrew rejected; `auto` resolving RTL past a directed descendant rejected; `rtl` in any letter case rejected; inherited direction in both directions; a weak Arabic-Indic digit correctly not treated as strong; `bdi`/`bdo` still rejected under an accepted direction; and a realistic Apple Mail body read end to end. 231 evidence tests, 1,756 agent-control-plane tests, `tsc --noEmit` exit 0, eslint clean.
+
+Already-ingested rows keep their stored placeholders. Recovering them means re-normalizing from the retained `content_value` bytes — a separate backfill decision, Jackson's call, because it reprocesses real customer email.
+
 ### Jackson-gated steps (none taken)
 
 1. Provision `OPS_AGENT_OPERATIONAL_READ_CURSOR_KEY` in Vercel production — 32 bytes as 64 lowercase hex. The mount answers 503 without it, by design: signed keyset cursors are part of the read contract, and serving page one of a read whose page two cannot exist would be a silent partial capability.
