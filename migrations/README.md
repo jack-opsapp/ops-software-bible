@@ -49,6 +49,7 @@ One row was applied via `supabase db push`, which split the file into 14 ledger 
 - `20260807123000_manual_project_link_any_address.sql`
 - `20260807123500_authorize_lead_summary_refresh.sql`
 - `20260811232704_quoted_email_photo_provenance_dedup.sql`
+- `20260818052155_restore_claim_email_send_provider_delivery_grant.sql`
 
 ## Legacy files whose content differs from the applied text
 
