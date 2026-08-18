@@ -5762,4 +5762,24 @@ Schema landed by the wave:
 
 **Timezone deviation (temporary):** `private.agent_assert_operational_timezone_rules()` — asserted at apply time by `20260812120000` and at runtime by the schedule-read RPCs — is date-gated: it raises a WARNING instead of erroring until `2026-09-15 00:00:00+00`, because the Supabase platform image (17.6.1.063) predates tzdata 2026c and returns pre-permanent-DST offsets for November 2026 instants. Booking horizons keep the damage window empty until ~mid-September. A Supabase support ticket is open; when the platform probe returns 04:30/05:30/11:30 for the canonical November instant, the strict assert must be restored by a follow-up migration the same day. Debt row: `bug_reports` `212987a4` (high).
 
+## MCP OAuth Authorization Server Schema (applied 2026-08-18 UTC)
+
+Ledger `20260818155813_mcp_oauth_authorization_server` (mirrored byte-exact in `migrations/`). Storage for the Claude-first MCP mount — see `04_API_AND_INTEGRATION.md` § "OPS Remote MCP Server — P1 Mount". Applied to production and live; the routes that consume it are built but undeployed.
+
+**Every table lives in `private` with ALL privileges revoked from `public`, `anon`, `authenticated`, and `service_role`.** The only access paths are the eleven owner-executed `SECURITY DEFINER` RPCs below, each gated on `auth.role() = 'service_role'` (raising `42501 access_denied` otherwise) with a pinned `search_path`. PostgREST never sees the tables. Verified live: 5 tables, 11 RPCs, zero table grants to any role, service_role-only EXECUTE, and the non-service gate live-fired against production.
+
+| Table | Purpose |
+|-------|---------|
+| `private.mcp_oauth_clients` | Dynamically registered public clients. `token_endpoint_auth_method` CHECK-constrained to `'none'` — no confidential client, no secret, ever. |
+| `private.mcp_oauth_authorization_codes` | Single-use codes keyed by SHA-256 digest. Carries the PKCE challenge (method CHECK-constrained to `S256`), redirect URI, RFC 8707 resource, and `minted_grant_id` — the last enabling RFC 6749 §4.1.2 replay defense. |
+| `private.mcp_oauth_grants` | One grant per `(user, company, client)`, enforced by a unique partial index on live rows, so re-consent rotates rather than accumulates. |
+| `private.mcp_oauth_tokens` | Access and refresh tokens as SHA-256 digests, with `family_id` for reuse detection and `rotated_to_hash` for the rotation chain. |
+| `private.mcp_request_audit` | Append-only. Its single writer is `append_mcp_request_audit_as_system`; no role holds UPDATE or DELETE. |
+
+**No plaintext credential ever reaches a table** — codes and tokens are stored only as digests.
+
+Key behaviors implemented in the RPCs rather than the application: presenting a consumed authorization code revokes the grant it minted and all of that grant's tokens; presenting an already-rotated refresh token revokes the entire token family and its grant; minting a grant revokes any prior live grant for the same binding; and `revoke_mcp_oauth_token_as_system` follows RFC 7009 by returning true even for an unknown token. All were exercised live during the mount's E2E.
+
+**Legacy identifier note.** The repair of the Task 13 read RPCs (ledger `20260818174706`, `20260818175549`) added `private.agent_uuid_from_legacy_text(text)` — a shape-guarded immutable cast. It exists because `public.projects.id` is `uuid` while eleven child tables (`activities`, `estimates`, `project_notes`, `project_photos`, `project_team_members`, `site_visits`, and others) store `project_id` as `TEXT`, and `projects.opportunity_id` is `TEXT` alongside the `uuid` `projects.opportunity_ref`. Any new SQL joining these columns must cast explicitly; the wave's Task 13 reads did not, and failed at runtime the first time they executed.
+
 **End of Data Architecture Documentation**

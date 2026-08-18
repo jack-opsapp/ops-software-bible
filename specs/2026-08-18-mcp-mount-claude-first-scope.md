@@ -1,6 +1,10 @@
 # MCP Mount — Claude First (2026-08-18)
 
-**Status:** Scoped. Jackson ruled on 2026-08-18 that Claude is the first external host to connect to the OPS agent control plane. This document scopes the mounting initiative; the build session produces the implementation plan.
+**Status:** **BUILT AND VERIFIED 2026-08-18 — awaiting Jackson's three gates.** Every P1 requirement below is implemented on ops-web branch `feat/mcp-mount-claude-first-20260818` and proven by 37/37 live end-to-end checks against MAVERICK PROJECTS LTD, including all nine reads returning real data and seven tenant-isolation probes returning privacy-safe sentinels. The OAuth schema is applied to production (ledger `20260818155813`); the routes are not deployed. Remaining: provision the cursor key in Vercel, push `main`, add the connector in claude.ai. Plan: `specs/plans/2026-08-18-mcp-mount-claude-first-P1-plan.md`. Full record: `04_API_AND_INTEGRATION.md` § "OPS Remote MCP Server — P1 Mount, Claude First".
+
+The build also found and repaired four production defects in the Task 13 job-catalog read RPCs — its E2E was their first-ever production execution, and plpgsql's lazy validation had hidden them behind the wave's parse verification. See the API chapter section above for the four defect classes and ledgers `20260818174706` / `20260818175549`.
+
+**Original scoping (2026-08-18):** Jackson ruled that Claude is the first external host to connect to the OPS agent control plane. This document scopes the mounting initiative; the build session produces the implementation plan.
 
 **Parent design:** `specs/2026-08-07-ops-agent-control-plane-mcp-foundation.md` (+ its status updates). The control plane's database and code halves are live in production as of 2026-08-18 — see `04_API_AND_INTEGRATION.md` § "Agent Control Plane Cutover — Applied and Deployed (2026-08-18)".
 

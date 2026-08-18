@@ -3601,6 +3601,81 @@ The release prerequisites above were satisfied and executed on 2026-08-18 (UTC).
 - **Outbound posture:** auto-send remains OFF (`INBOX_AUTO_SEND_ENABLED` unset — the cron no-ops); `public.claim_email_send_provider_delivery(uuid)` EXECUTE was re-granted to `service_role` after deploy verification (out-of-ledger; `migrations/20260818052155_restore_claim_email_send_provider_delivery_grant.sql`), closing the last deliberately-held outbound revoke. The MCP transport remains unmounted and dark — no route imports `agent-control-plane`; mounting is the next initiative and awaits Jackson's connect-first decision.
 - **Deferred verification pass (Maverick Projects, 2026-08-18):** the pass immediately caught one wave defect — the stale July version-gate twin on `task_schedule_automation_outbox` aborting confirm/unconfirm on `schedule_version = 0` tasks (`23514`) — fixed by ledger `20260818052612` before the first new-code `auto-confirm-schedules` cron firing (schedule `39 * * * *`; zero customer impact; see `03_DATA_ARCHITECTURE.md`). After the fix: full schedule-confirm round-trip green through the new RPC path on a Maverick task under service-role claims (`confirm_project_task_schedule_as_system` → `newly_confirmed: true`, row proof bound, one `schedule_confirmation_dispatch` outbox row; `unconfirm_project_task_schedule_as_system` → `newly_unconfirmed: true`, proof cleared). Phase-10 canary validation layers re-proven live: reserve without service claims → `42501 access_denied`; reserve with malformed hashes → `22023 PHASE_C_AUTO_SEND_SOURCE_FENCE_INVALID`; resolve of unknown reservation → `23505 PHASE_C_AUTO_SEND_IDEMPOTENCY_CONFLICT`. No `email_connections` rows were created and nothing was sent (Maverick has zero connections). All test rows removed: both pending dispatch outbox rows, the temporary `phase_c` feature override, zero reservation residue; the test task restored to its exact pre-test state.
 
+## OPS Remote MCP Server — P1 Mount, Claude First (built 2026-08-18)
+
+Supersedes the "MCP transport remains unmounted and dark" statements above. The mount is **built and verified end-to-end against production data, but not yet deployed** — it reaches customers only when Jackson authorizes the push (see § Jackson-gated steps). Scope: `specs/2026-08-18-mcp-mount-claude-first-scope.md`; plan: `specs/plans/2026-08-18-mcp-mount-claude-first-P1-plan.md`. Branch `feat/mcp-mount-claude-first-20260818` in ops-web.
+
+### Topology
+
+| Role | Value |
+|------|-------|
+| Protected resource | `https://app.opsapp.co/api/mcp` |
+| Authorization-server issuer | `https://app.opsapp.co` |
+| Transport | Streamable HTTP, stateless, via `@modelcontextprotocol/server@2.0.0` `createMcpHandler` |
+| Protocol eras | 2026-07-28 native + 2025-era legacy (`2024-10-07`…`2025-11-25`) from one factory |
+
+The dedicated `mcp.opsapp.co` hostname from the foundation design is deliberately deferred: a new audience forces re-consent, which is free while exactly one connection exists. No DNS or Vercel domain change in P1.
+
+**Claude-side facts verified live on 2026-08-18** (Anthropic docs, not cached knowledge): Claude clients still speak the 2025-era handshake (they send `initialize`); 2026-07-28 is announced but not confirmed shipped in any Claude surface. Claude sends RFC 8707 `resource` on authorize and token requests and requires PKCE S256 on every request. Connector callback: `https://claude.ai/api/mcp/auth_callback`. Discovery documents are cached ~5 minutes globally. Tool results cap at ~150,000 characters (our contract's 60,000-char ceiling sits inside it); tool calls time out at 300s. On Team/Enterprise plans only an Owner may add a connector, and there is no staging surface — connector testing happens against production claude.ai.
+
+### Routes
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/mcp` | POST | The MCP endpoint. GET/DELETE pass the same auth gate, then answer 405. |
+| `/.well-known/oauth-protected-resource/api/mcp` | GET | RFC 9728 metadata (Claude's first probe location) |
+| `/.well-known/oauth-protected-resource` | GET | RFC 9728 root fallback, identical document |
+| `/.well-known/oauth-authorization-server` | GET | RFC 8414 metadata. CIMD deliberately **not** advertised. |
+| `/api/mcp/oauth/register` | POST | RFC 7591 dynamic registration, 10/hour/IP |
+| `/api/mcp/oauth/token` | POST | `authorization_code` + `refresh_token`, form-encoded, 60/min/IP |
+| `/api/mcp/oauth/revoke` | POST | RFC 7009, always 200 |
+| `/oauth/authorize` | GET | Firebase-authenticated consent panel |
+| `/api/mcp/oauth/authorize/context` | POST | Consent-panel data (client, company, scope labels) |
+| `/api/mcp/oauth/authorize/decision` | POST | Mints the authorization code after approval |
+| `/api/mcp/oauth/grants` | GET/DELETE | Operator's own grants; powers Settings → Integrations → CONNECTED AGENTS |
+
+### Token model
+
+Opaque 256-bit credentials, stored only as SHA-256 digests, never signed. The authorization server and resource server are the same deployment sharing one database, so every claim resolves from the grant row on presentation — which is exactly what the foundation design requires ("the access token does not contain a trusted permission snapshot; current OPS authorization is reloaded on every call"). A signature would add key management without adding security, and revocation must bind on the next call regardless. Access tokens live 600s; refresh tokens rotate on every use with family reuse detection. Authorization codes are single-use, PKCE-S256-bound, redirect-bound, resource-bound, 300s.
+
+### Authority
+
+`/api/mcp` resolves the bearer to its grant, mints a `ValidatedMcpPrincipal` through the existing branded boundary (`createMcpPrincipalFromValidatedGrant`), and re-resolves actor authority per call via `resolve_agent_actor_authority_as_system`. **Company scope derives from the grant, never from tool arguments.** A removed role, lost membership, or revoked grant takes effect on the next call regardless of token expiry. The MCP layer invents no authority — it is the third adapter onto the same `OpsAgentDomainService` the Phase C internal adapter uses.
+
+### Capability surface
+
+The transport registers exactly the manifest entries with `implementation = available` **and** `externalExposure = enabled`. All nine v6 reads are now flipped; every write family and the two dark site-visit contracts remain disabled. The manifest constant is the rollout control — nothing in the transport can widen past it. Results and error envelopes both pass through `serializeUntrustedPromptData` before entering any model context.
+
+### Safety rails
+
+- **Rate limits** (foundation § 13.3): `lightweight_read` 120/min/grant + 600/min/company; `evidence_search` 30/min/grant + 120/min/company; plus a coarse 300/min/grant transport ceiling. Backed by the shared limiter — Vercel KV is **not** provisioned, so enforcement degrades to per-instance in-memory (documented, accepted at current scale).
+- **Audit**: every tool call including denials appends to `private.mcp_request_audit` — actor, company, grant, client, tool, protocol era, outcome, error code, SHA-256 input digest, result bytes, latency. Never raw input, never tokens, never message bodies.
+- **Dark to unauthenticated traffic**: the bearer gate answers before any JSON-RPC parsing (Claude's OAuth is triggered only by a transport-level 401 — a 200 with `isError` never triggers it). Missing bearer → 401 + `WWW-Authenticate: Bearer resource_metadata="…", scope="…"`; invalid bearer adds `error="invalid_token"`. Response bytes on these paths are asserted free of every capability name.
+- **Auto-send posture untouched**: nothing in the mount reads or writes `INBOX_AUTO_SEND_ENABLED` or any outbound surface.
+
+### Verification (2026-08-18, Maverick Projects `ddee107c-33cd-483e-8278-0f8d8a180181`)
+
+37/37 live end-to-end checks against a local server bound to production Supabase: dynamic registration; consent context resolving "MAVERICK PROJECTS LTD"; approve and deny; token exchange; authorization-code replay revoking the grant it minted; refresh rotation; refresh reuse killing the token family; legacy-era `initialize`; `tools/list` returning exactly the nine; **all nine reads exercised against real Maverick data**; **seven tenant-isolation probes with another company's identifiers, every one returning a privacy-safe `NOT_FOUND` sentinel and no data**; unauthenticated and malformed-bearer rejection with zero capability disclosure; settings revoke followed by a 401 on the next call. All OAuth test rows were deleted afterward — zero residue. Suites: 71 files / 1787 tests green; `tsc --noEmit` exit 0; eslint clean.
+
+### Four production defects this work found and fixed
+
+The mount's E2E was the **first production execution of the Task 13 job-catalog read RPCs**. PostgreSQL validates plpgsql statement semantics lazily, so the wave's parse verification could not have caught these; each was invisible until a real call ran. Repaired by ledger `20260818174706` and `20260818175549` (both mirrored byte-exact in `migrations/`):
+
+1. **uuid/legacy-TEXT mixing** between `projects.opportunity_ref` (uuid) and `projects.opportunity_id` (TEXT) in `read_agent_customer_jobs_as_system`, `read_agent_job_history_as_system`, `read_agent_correspondence_evidence_page_as_system`, and `read_agent_job_summary_as_system` — `42804`/`42883` at runtime. Repaired with `private.agent_uuid_from_legacy_text(text)`, a shape-guarded immutable cast: a non-uuid legacy value reads as "no linked opportunity" in fallbacks and as a mirror conflict when a real `opportunity_ref` disagrees.
+2. **`estimates.project_id` is TEXT** against a uuid job id in summary and history (`42883`), repaired by casting the uuid side — the pattern the wave already used correctly for `project_photos`.
+3. **`read_agent_job_summary_as_system` rejected every request** that omitted `readiness_rule_codes` or `financial_components` (`22023`): its scope-coupling block evaluated `NULL && array[...]` and `'X' = any(NULL)` to NULL, and `NULL IS DISTINCT FROM false` is true. An identity-only summary could never succeed for any caller through any adapter.
+4. **`read_agent_customer_jobs_as_system` left a UNION arm expression unaliased** (`42703`), so `source_data_invalid` materialized as `?column?` and every downstream reference failed.
+
+Both repairs are guarded transformations of the live definitions: each site must occur an asserted number of times or the migration aborts without changing anything. Round 1 was proven byte-equivalent to a reviewed whole-body corrective on a local PostgreSQL 17 cluster before being applied.
+
+Two TypeScript contracts were also wrong against production reality (commit `eca40f47`): the job-catalog lifecycle refinement demanded stage `discarded` for an archived opportunity, but `opportunities.archived_at` is a dimension independent of stage — an archived `new_lead` failed the entire `list_customer_jobs` read; and the job-history repository's not-found matcher expected a message the shipped RPC never raises, downgrading privacy-safe `NOT_FOUND` answers to `TEMPORARILY_UNAVAILABLE`.
+
+### Jackson-gated steps (none taken)
+
+1. Provision `OPS_AGENT_OPERATIONAL_READ_CURSOR_KEY` in Vercel production — 32 bytes as 64 lowercase hex. The mount answers 503 without it, by design: signed keyset cursors are part of the read contract, and serving page one of a read whose page two cannot exist would be a silent partial capability.
+2. Push `main` — this auto-deploys to customers.
+3. Add the connector at `https://app.opsapp.co/api/mcp` in his claude.ai account and complete OAuth in his browser.
+
 **End of Document**
 
 This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, email pipeline integration, and error management with full fidelity to the current implementation.
