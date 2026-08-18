@@ -108,7 +108,7 @@ Onboarding completion is server-authoritative across OPS-Web, ops-site handoff p
 
 | Route | Purpose | Contract |
 |-------|---------|----------|
-| `POST /api/setup/progress` | Persist web setup drafts and partial progress | Idempotent per step. The company step performs its **own** insert — it runs on the service-role client, and `create_company_for_owner` identifies its caller via `auth.jwt() ->> 'sub'` and raises `NO_JWT` under service-role, so the RPC is not reachable from this route. Since 2026-08-18 that insert reaches the same final state the RPC produces: it mints a `company_code` (same alphabet, length and retry bound as the RPC), writes the Owner `user_roles` row, then sets `company_id`, `is_company_admin`, `role='owner'`, `user_type='company'`. **Write order is load-bearing** — see the note below. A failed role write is fatal (500). `initialize_company_defaults(company_id)` runs from the route. |
+| `POST /api/setup/progress` | Persist web setup drafts and partial progress | Idempotent per step. The company step calls **`create_company_for_owner_by_id`** (service-role only) so the company, its `company_code`, the Owner `user_roles` row, the owner labels (`company_id`, `is_company_admin`, `role='owner'`, `user_type='company'`) and `initialize_company_defaults` all commit in **one transaction**. `create_company_for_owner` is not reachable from this route — it identifies its caller via `auth.jwt() ->> 'sub'` and raises `NO_JWT` under the service-role client — hence the by-id twin. The RPC **adopts** an existing unlinked company held by the same `account_holder_id` rather than inserting a second one, which is what makes a retry after a partial failure safe. Typed errors map to status: `NO_USER_ROW`/`ALREADY_IN_COMPANY` → 409, `INVALID_NAME` → 400, `USER_INACTIVE` → 403, anything else → 500. |
 | `POST /api/setup/complete` | Complete owner/company web setup | Requires a company-attached owner/admin-capable user. Rejects employee users. Merges `onboarding_completed.web=true`; clients must not mark web onboarding complete locally until this response succeeds. |
 | `POST /api/auth/join-company` | Join an existing company by code | Calls `join_user_to_company(p_user_id, p_company_id, p_company_code)` and must pass the normalized company-code proof. **The route's own admin-rail notification fan-out was removed (2026-06, ops-web commit `bc61f062`)** — the per-admin rail rows are now written inside the RPC. The route **keeps** its OneSignal push fan-out. |
 | `POST /api/onboarding/complete` | Complete iOS onboarding through the web API gateway | Accepts Firebase `idToken`/`token` plus `platform:"ios"`, verifies the OPS user, requires `company_id` and `user_type`, rejects non-admin company users when completing company-owner onboarding, merges `onboarding_completed.ios=true`, and records `setup_progress.steps.ios_onboarding=true`. |
@@ -122,9 +122,11 @@ It decides admin-ness via `private.permission_user_is_admin(u.id, u.company_id)`
 compares `u.company_id = p_company_id`. When `users.company_id` is NULL that comparison is
 NULL, so the user reads as a non-admin and the write is permitted. Two consequences:
 
-- **`/api/setup/progress` must write the Owner `user_roles` row *before* the update that sets
-  `company_id` + `is_company_admin`.** Reversing the order raises `target_is_admin`. Regression
-  cover: `tests/integration/setup-progress-owner-role.test.ts` (ops-web).
+- **The Owner `user_roles` row must be written *before* the update that sets `company_id` +
+  `is_company_admin`.** Reversing the order raises `target_is_admin`. The web route no longer does
+  this ordering itself — since 2026-08-18 `create_company_for_owner_by_id` owns it, using the same
+  detach → immediate-check → restore sequence. Regression cover:
+  `tests/integration/setup-progress-owner-role.test.ts` (ops-web).
 - **`create_company_for_owner` reaches the same state from the other side** — it clears
   `company_id`/`is_company_admin`, wraps its insert in
   `set constraints trg_user_roles_final_state immediate` … `deferred` so the guard evaluates
@@ -139,6 +141,17 @@ wrote the company and linked the user but never wrote a `user_roles` row, never 
 `role`/`user_type`, and never minted a `company_code`. Every one of the 5 web-onboarded
 account holders was affected; 0 of the iOS-onboarded ones were. All five were repaired by the
 migration above, which also back-filled their missing join codes.
+
+**Incident 2 — orphan companies (same route, 2026-08-18).** Closing the role-write hole left a
+second gap: the company step still spanned four autocommit statements (insert `companies` →
+`initialize_company_defaults` → upsert `user_roles` → update `users`). A failure in the last two
+returned 500 with the company already committed and `users.company_id` still NULL — and the retry
+re-entered the create branch and inserted **another** company. One production account holder
+(`johndanielkilpatrick@gmail.com`) accumulated five orphan companies in 33 seconds on 2026-06-29
+and never reached the product. Closed by `create_company_for_owner_by_id` (one transaction +
+adopt-on-retry). The 9 real orphan companies in prod — all holding zero operator-authored data —
+were retired by `migrations/20260818233813_retire_orphan_signup_companies.sql`; the two
+`TOCTOU RACE …` fixtures are synthetic and deliberately kept.
 | `POST /api/auth/sync-user` | Provision/repair the `users` row from the verified Firebase token | Verifies the Firebase `idToken`, looks up by `auth_id` → `firebase_uid` → `email`. **Sets `users.firebase_uid` from the verified token at row creation** (gated to Firebase-issued tokens) and backfills/repairs legacy rows. This guarantees `firebase_uid` is present for the JWT-`sub`-keyed identity lookup used by `create_company_for_owner` and `join_user_to_company`. **CRIT-3 application-layer hardening (staged 2026-07-07, ops-web `fix/auth-identity-hardening`, pending prod deploy):** the email fallback resolves on the VERIFIED TOKEN email — never the caller-supplied body email; an unverified email-only match against a row already bound to a *different* identity (`auth_id`/`firebase_uid` ≠ this token's sub) is refused with `403` instead of being rewritten or handed back; the 23505 insert-race recovery re-queries by `auth_id` first, then `firebase_uid`, so a Supabase-token race row (whose `firebase_uid` is null) is still recovered. |
 | `POST /api/auth/send-verification` | Send the OPS-branded Firebase email-verification message | **Staged 2026-07-07 (CRIT-3 Phase B), pending prod deploy.** Verifies the Firebase `idToken`, no-ops when `email_verified` is already true, generates the verification action link via the Admin SDK (no send), rebuilds the URL through OPS's own `/auth/action?mode=verifyEmail` handler so the branded SendGrid template is used, and sanitizes auth errors to a generic `401`. Best-effort/soft UX — the user is never gated on deliverability. Wires the previously-dormant verification stack so `email_verified` can eventually be trusted by the identity model. |
 
@@ -160,6 +173,28 @@ create_company_for_owner(
 - **Idempotent:** if the caller already owns a company, returns the existing company + its real stored code with `already_existed=true` (kills client/server code divergence). A concurrency guard serializes per-caller via an advisory lock; a member of another live company is rejected with `ALREADY_IN_COMPANY`.
 - **Typed errors (raised as exception tokens, surfaced by the iOS `CreateCompanyError` mapper):** `NO_JWT`, `NO_USER_ROW`, `ALREADY_IN_COMPANY`, `INVALID_NAME`, `OWNER_ROLE_MISSING`, `CODE_GENERATION_EXHAUSTED`.
 - Granted to `authenticated`; revoked from `anon`. Called via each platform's Supabase client (`supabase-swift` / `supabase-js`) over the existing Firebase-bridged session, exactly like `join_user_to_company`.
+
+**Database RPC: `create_company_for_owner_by_id` (service-role twin, 2026-08-18).** Reaches the same final state as `create_company_for_owner`, but the owner is named explicitly instead of derived from the JWT — which is what makes it usable from `/api/setup/progress`, a service-role route.
+
+```
+create_company_for_owner_by_id(
+  p_user_id uuid,
+  p_name text,
+  p_industries text[] default null,
+  p_company_size text default null,
+  p_company_age text default null,
+  p_weather_dependent boolean default null,
+  p_referral_method text default null
+) returns jsonb  -- { company_id uuid, company_code text, already_existed boolean }
+```
+
+- **Granted to `service_role` ONLY** (`revoke … from public, anon, authenticated`), backed by an in-body `NOT_SERVICE_ROLE` (42501) check. Because the caller names the owner, granting it to `authenticated` would let any signed-in user bootstrap a company onto an arbitrary user id.
+- **Writes (one transaction):** `companies` (name, industries, the web-only profile fields `company_size`/`company_age`/`weather_dependent`/`referral_method`, `company_code`, `admin_ids=[owner]`, `account_holder_id`); the Owner `user_roles` row; `users` (`company_id`, `role='owner'`, `is_company_admin=true`, `user_type='company'`); then `initialize_company_defaults`. Trial fields are pinned by the `initialize_company_trial` trigger, not by the RPC.
+- **Adopts rather than duplicates:** when an unlinked, non-deleted company already carries this `account_holder_id`, it is claimed and completed (profile updated, missing join code minted) and `already_existed=true` is returned. This is the property that makes a retry after a partial failure safe.
+- **Join-code entropy is `extensions.gen_random_bytes` (pgcrypto CSPRNG), not `random()`** — the code is a bearer credential. Alphabet, length, and retry bound match `create_company_for_owner`; 256 is an exact multiple of 32, so byte→symbol carries no modulo bias.
+- Serializes on the **same** advisory-lock key as `create_company_for_owner` (`hashtext('create_company_for_owner')`, `hashtext(user_id)`), so a concurrent web and iOS attempt for one owner cannot interleave.
+- **Typed errors:** `NOT_SERVICE_ROLE`, `NO_USER_ROW`, `USER_INACTIVE`, `ALREADY_IN_COMPANY`, `INVALID_NAME`, `OWNER_ROLE_MISSING`, `CODE_GENERATION_EXHAUSTED`.
+- Applied as `migrations/20260818233110_create_company_for_owner_by_id_service_role.sql`.
 
 **Database RPC hardening: `join_user_to_company`.** Takes `(p_user_id uuid, p_company_id uuid, p_company_code text default null)`. For authenticated (non-service-role) callers, identity is matched by JWT `email`/`sub` against `users.email`/`firebase_uid`/`auth_id` (never `auth.uid()`, since the Firebase `sub` is not a UUID); `p_company_code` proof must match the locked `companies.company_code` when supplied. Service-role callers may still perform controlled server-side joins. **2026-06 amendment (shared with the iOS rebuild):**
 - Sets `user_type='employee'` and `is_company_admin=false` on the joining user **atomically inside the RPC** (removing the iOS client's former fire-and-forget post-RPC writes), with an **owner/admin non-demotion guard** — a re-join by the company's owner/admin never overwrites their pinned `user_type='company'`/`is_company_admin=true`.
