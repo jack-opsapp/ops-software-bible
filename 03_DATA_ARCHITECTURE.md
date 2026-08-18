@@ -2290,6 +2290,22 @@ $$;
 
 **Context**: Bug G9 (2026-04-20). Source of truth: `docs/superpowers/plans/2026-04-20-mention-based-project-access.md`.
 
+### project_tasks read policy — row-based RETURNING fix (2026-08-17)
+
+Migration `20260818014340_project_tasks_returning_visibility.sql` (applied to prod + mirrored in `migrations/`, bug `06810537`).
+
+**The defect.** `project_tasks.role_scope_read` (RESTRICTIVE · SELECT) called `private.current_user_can_view_task(id)` → `private.user_can_view_task(actor, id)`, which **re-fetches the task row by id**. Postgres evaluates SELECT policies against the NEW row on `INSERT .. RETURNING`, and a STABLE (or any) function's inner query runs under the statement's snapshot — where the row being inserted does not exist yet. `not found` → `false` → `42501 new row violates row-level security policy "role_scope_read"`, rolling back the whole insert. Every PostgREST task insert with `Prefer: return=representation` failed this way for every actor — including the account owner with `tasks.view all` — because the not-found gate fires before any permission arm. Proven by rolled-back probe: the identical insert succeeds without RETURNING, and the very next command's SELECT passes the same policy for the same row.
+
+**The fix.** The policy now judges the candidate row's own column values — no re-fetch:
+
+- `private.user_can_view_task_columns(p_actor_user_id, p_company_id, p_project_id, p_team_member_ids, p_deleted_at)` — mirrors `user_can_view_task` exactly: soft-deleted rows invisible; requires a live same-company project and an active same-company actor; `tasks.view all` → true; `tasks.view assigned` → team membership or `private.user_can_view_project`. `SECURITY DEFINER`, postgres-only ACL.
+- `private.current_user_can_view_task_row(company_id, project_id, team_member_ids, deleted_at)` — actor-resolving wrapper, EXECUTE granted to `anon` + `authenticated` (the policy's caller roles).
+- `role_scope_read` USING is now `private.current_user_can_view_task_row(company_id, project_id, team_member_ids, deleted_at)`.
+
+**Parity evidence.** 1,383 task × user comparisons on live data (account owner + two crew members; every task of the operator company including soft-deleted rows, plus 300 foreign-company rows): 0 verdict mismatches between the by-id and row-based functions, re-run green post-apply. Live probes: the failing insert echoes its row; soft-deleted tasks remain invisible; owner-visible live rows unchanged.
+
+**Kept / unchanged.** The by-id functions remain for their existing callers (`persist_task_mutation_notification_as_system`, `private.agent_user_can_access_entity`). Shipped-client audit: iOS task updates and soft-deletes are minimal-returning (no RETURNING evaluation), and web does not write `project_tasks` via PostgREST — so the row-based `deleted_at IS NULL` arm cannot regress any live request. A future UPDATE that sets `deleted_at` AND requests representation will (correctly) refuse to echo a row the actor can no longer see — use minimal returning for soft-deletes.
+
 ### Auth ID Resolution
 
 **Critical**: `users.id` (the application UUID) differs from the auth identity. The

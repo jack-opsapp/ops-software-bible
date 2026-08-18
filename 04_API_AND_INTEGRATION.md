@@ -1499,6 +1499,22 @@ Clients map these to presentable errors rather than parsing message text. `ops-w
 | `22023` | `site_visit_time_in_past`, `site_visit_duration_out_of_range`, `site_visit_reminder_out_of_range`, `site_visit_assignees_invalid` | Argument failed validation |
 | `55000` | `site_visit_already_booked`, `site_visit_not_a_booking`, `site_visit_not_reschedulable`, `site_visit_already_started`, `cannot_cancel_completed_site_visit`, `cannot_cancel_deleted_site_visit`, `cannot_reschedule_deleted_site_visit` | State rule violated |
 
+## Review-stack rail RPC + task INSERT..RETURNING fix (2026-08-17)
+
+Two prod contract changes landed together (migrations `20260818014340_project_tasks_returning_visibility.sql`, `20260818014657_review_stack_notification_rpc.sql` — archived in `migrations/`, byte-exact against the ledger).
+
+### `public.sync_review_stack_notification(p_stack text, p_count integer) → text`
+
+The **only** creation path for the three iOS review-stack rail notifications (`task_review_stack`, `payment_review_stack`, `unscheduled_review_stack`) — the notification-creation hardening (§14, `07_SPECIALIZED_FEATURES.md`) revoked app-role INSERT on `notifications`, and the legacy client-side insert in `ReviewThresholdService` died `42501` on every launch from 2026-07-17 until this fix (bug `88a0a1e3`).
+
+`security definer`, pinned `search_path`, granted to `anon` + `authenticated`. Narrow by construction: recipient is always the resolved actor (self-notification only), company derives from the actor's row, copy is a fixed server-side template per stack kind (the clamped non-negative count is the only caller data that reaches the row), `type` is constrained to the three stack kinds, and rows carry `deep_link_type` only (`taskReview` / `paymentReview` / `unscheduledReview`) — `action_url` stays NULL because these are phone-workflow surfaces and the `notification_action_url_internal` CHECK forbids the legacy `ops://` scheme anyway.
+
+Semantics (all server-owned; threshold = 5): count ≥ 5 → insert one persistent unread row unless one already stands (`created` / `kept`, at-most-one-unread dedupe under a per-user+stack advisory xact lock); count < 5 → mark unread rows of that stack read (`cleared` / `noop`) so the rail clears without user action. Raises `42501` (no actor), `22023` (unknown stack). iOS caller: `NotificationRepository.syncReviewStack(stack:count:)` from `ReviewThresholdService.evaluate` after each sync, reporting honest counts including zero.
+
+### `project_tasks` INSERT..RETURNING no longer self-voids
+
+`role_scope_read` (RESTRICTIVE SELECT) used to call `private.current_user_can_view_task(id)`, which re-fetches the task row by id — invisible under the statement snapshot during the INSERT's own RETURNING evaluation, so **every** PostgREST task insert with `Prefer: return=representation` (iOS `TaskRepository.create` = `.insert().select().single()`) failed `42501` regardless of permissions, rolling back the just-created task (bug `06810537`). The policy now evaluates the candidate row's own columns via `private.current_user_can_view_task_row(company_id, project_id, team_member_ids, deleted_at)`; semantics are proven identical on live data (1,383 task × user parity comparisons, 0 mismatches). Full detail: `03_DATA_ARCHITECTURE.md` § "project_tasks read policy".
+
 ## Guarded Sync-Recovery RPCs (2026-07-22)
 
 Two prod contract changes landed with the SYNC RECOVERY initiative (migrations
