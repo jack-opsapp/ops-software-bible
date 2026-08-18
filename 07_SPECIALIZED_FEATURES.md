@@ -3287,6 +3287,57 @@ deleted; `VinylTaskFilter` detection stays). The `VINYL` pill presents
   write otherwise (config-carried color still recorded). Partial failures
   collect into an `n MARKED · m FAILED` banner whose RETRY reruns only the
   failed subset.
+
+### VINYL ORDER RECORD (2026-08-18)
+
+What the operator actually ordered — or pulled from the shop — is the record.
+The calculation is only the starting point it is seeded from.
+
+- **Source is a disposition of one act.** `VinylOrderDisposition` is `supplier`
+  (an order was placed) or `shop` (material came off the rack). Both end with
+  the job handled and off the board. The confirm sheet leads with SOURCE because
+  it governs every quantity below it; choosing FROM SHOP zeroes the form (the
+  requested zeroing, in the situation it was requested for) and swaps the commit
+  button to `USE SHOP MATERIAL`. Lines stay editable after zeroing so a partial
+  pull records honestly.
+- **Persistence.** `disposition` + `sharedConsumables` are additive Codable
+  fields on `DeckMaterialsSnapshot` (inside `DeckDrawingData` JSON, decode
+  fallbacks, no SwiftData `@Model` touched). `projects.vinyl_source` carries the
+  disposition remotely for web/reporting — **migration written, NOT YET
+  APPLIED**. `vinyl_order_status` stays `ordered` for both dispositions; see
+  03 § projects for why a third status value is unsafe.
+- **Shared consumables.** Tubes and buckets are bought once per bulk run. Each
+  participating job records the count AS BOUGHT plus `sharedWith` (the other
+  jobs' titles) — never a per-job fraction, because 0.75 of a tube is a quantity
+  nobody ordered. Rendered as `3 tubes 90 flash (shared with 12 Oak St)`.
+- **Bulk wizard.** The per-job `CUTS` panel became `ORDER`: SOURCE plus an
+  editable vinyl quantity (rolls or sq ft) seeded from the calculation. Cut
+  lines remain read-only below as the on-site cutting guide. The send page's
+  consumable counts are attributed back to every job that shared them — they
+  previously reached the supplier text and were then discarded. A `shop` job is
+  excluded from both the supplier message and the consumables aggregate.
+- **Activity entry.** Every mark writes a `project_notes` row with
+  `event_kind = 'vinyl_order'` (the mechanism site-visit packets already use —
+  `event_kind` and `content_metadata` exist, so no schema change). `content` is
+  the plain-text record (`Vinyl ordered:` / `Vinyl pulled from shop:` then one
+  `- ` line per purchased item); `content_metadata` mirrors it structured for
+  `VinylOrderEntryView`. Built from the frozen snapshot at every entry point, so
+  the feed and the ordered card cannot disagree. Written on the act of marking,
+  not on EDIT ORDER. Local-first with `needsSync`, so an offline mark still
+  lands its entry.
+- **Where it shows.** Details tab `VINYL` card is state-aware: unhandled it is a
+  one-action entry point; handled it is the record (disposition, date, PO,
+  colour, quantities, shared lines) with `CLEAR ORDERED` moved behind an
+  overflow control. The Deck tab MATERIALS ordered card gains the disposition
+  line and a `// PURCHASED` block for shared lines.
+- **Pure logic (unit-tested, `OPSTests/DeckBuilder/VinylOrderRecordTests.swift`):**
+  `VinylOrderActivityNote`, `VinylSharedConsumable`,
+  `VinylBulkMarkItem.confirmation(from:)`,
+  `DeckMaterialsOrderConfirmation.zeroed()`,
+  `DeckMaterialsOrderService.markerFields`.
+- **House control:** `OPSCounterRow` (`OPS/Styles/Components/`) replaced the
+  stock `Stepper` across the confirm sheet, bulk wizard, and materials presets
+  (MOBILE.md §13 ban; 44pt targets, mono value, disabled ends).
 - **Bulk ORDER wizard** (deck_builder feature + `deck_builder.view` +
   `projects.edit`): one review page per job. Progress + project title live in
   the navigation header; one floating action group owns BACK + CONFIRM. `// COLOR`

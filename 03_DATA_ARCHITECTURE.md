@@ -204,6 +204,7 @@ final class Project: Identifiable {
     // vinyl_ordered_by   UUID FK → public.users(id) ON DELETE SET NULL, NULL — who marked vinyl ordered (retargeted 2026-07-04 from an auth.users default; see note).
     // vinyl_color        TEXT NULL — ordered vinyl color record (added 2026-07-16, VINYL ORDERS board; migration add_projects_vinyl_color_po).
     // vinyl_po           TEXT NULL — supplier PO reference for the vinyl order (added 2026-07-16, same migration).
+    // vinyl_source       TEXT NULL CHECK ∈ {supplier, shop} — where the material came from (VINYL ORDER RECORD, 2026-08-18; migration add_projects_vinyl_source). **PENDING: written but NOT YET APPLIED — the iOS build that writes it must not ship first.** NULL = not recorded, read as `supplier`. vinyl_order_status stays 'ordered' for BOTH dispositions: its CHECK admits only not_ordered/ordered and every shipped iOS build decodes an unknown status as `.notOrdered`, which would re-surface a handled job on the VINYL ORDERS board. Deliberately NOT projected onto `ProjectVinylOrderMarker` — the authoritative record is the frozen design snapshot, so no SwiftData schema version was spent on it.
 }
 ```
 
@@ -252,6 +253,22 @@ status trio; `clearOrdered` nulls all five. Pure logic:
 `VinylBulkMarkService` (all unit-tested). iOS projection
 `ProjectVinylOrderMarker` gained `vinylColor`/`vinylPO` behind SwiftData schema
 V17 (V7–V16 marker shape frozen as `OPSSchemaLegacyVinylOrderV16`).
+
+**VINYL ORDER RECORD (2026-08-18)**: what the operator ACTUALLY ordered is now
+the record, not what the calculator produced. Every MARK ORDERED path freezes a
+`DeckMaterialsOrderConfirmation` carrying the operator's confirmed quantities, a
+`VinylOrderDisposition` (`supplier` | `shop` — "use material at shop" is a
+sibling outcome of the same act, and zeroing the form is how the shop path
+expresses itself), and `[VinylSharedConsumable]` for tubes/buckets bought once
+across a batch. Shared lines store the count AS BOUGHT plus the other jobs it
+was split with — never a per-job fraction. The bulk ORDER wizard previously
+committed the calculated list and discarded both the per-job quantity edits and
+the send-page consumable counts; it now records them. A job marked `shop` drops
+out of the supplier message and the consumables aggregate but still commits as
+handled. Snapshot additions (`disposition`, `sharedConsumables`) are additive
+Codable inside `DeckDrawingData` JSON with decode fallbacks — **no SwiftData
+`@Model` was touched**. Every mark also writes a `project_notes` row with
+`event_kind = 'vinyl_order'` (see 07 § VINYL ORDERS).
 
 **Key Computed Properties**:
 
