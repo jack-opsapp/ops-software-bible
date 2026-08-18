@@ -1121,8 +1121,15 @@ CREATE TRIGGER update_project_photos_timestamp
 `project_photos` columns: `id` (uuid), `project_id` (text), `company_id` (text),
 `url` (text), `thumbnail_url`, `rendered_url`, `source` (`photo_source` enum),
 `site_visit_id` (uuid), `uploaded_by` (text), `taken_at`, `caption`, `deleted_at`,
-`created_at`, `updated_at`, `is_client_visible` (bool). RLS is company-wide read
+`created_at`, `updated_at`, `is_client_visible` (bool),
+`email_attachment_id` (uuid → `email_attachments`, nullable),
+`origin_sender_email` (text, nullable). RLS is company-wide read
 (`company_isolation`), so every teammate can read all rows.
+
+The last two are email-pipeline provenance (added 2026-08-18, ledger
+`20260818053050`) and are written only by
+`complete_email_conversion_photo_job` — never by a manual upload. See
+`10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Automation E2.
 
 **Client write permissions (2026-07-29, SYSTEMS REPAIR W1-4 — bug `1154fe67`).**
 Until this date `anon`/`authenticated` held only `INSERT` and `SELECT` on the
@@ -8525,7 +8532,7 @@ Every other LiDAR measurement app forces a full room scan (Magicplan, Polycam), 
 
 - New `dimensions jsonb` column on `project_photo_annotations` (additive, NULL on legacy rows). Schema in spec §4.1.
 - New `project_photos.rendered_url` and `project_photo_annotations.rendered_photo_url` text columns hold the derived 2048-long-edge PNG deliverable. `project_photos.url` and `project_photo_annotations.photo_url` remain the source HEIC/photo pointers.
-- New `'measurement'` value in `photo_source` enum.
+- New `'measurement'` value in `photo_source` enum. (Enum history: `site_visit`, `in_progress`, `completion`, `other` are original; `'measurement'` added here 2026-05-10; `'deck_design'` for the iOS deck builder; `'email'` added 2026-08-18 for the email→project photo pipeline — ledger `20260818053040`.)
 - SwiftData `PhotoAnnotation` extended with `dimensionsData: Data?` and `renderedPhotoURL: String?` (synced) + `localDepthMapPath`, `localSidecarPath`, `localCaptureFinishedAt` (local-only working state).
 - `dimensions.calibration` now persists optional `planeNormal` and `planeOffset` for reference-object calibration. Visual/manual measurements depend on this plane and are valid only for points on the calibrated surface.
 

@@ -1476,6 +1476,20 @@ A sibling automation projects **customer-emailed images** into the converted pro
 
 Eligibility is enforced in three layers so it cannot regress: `private.email_conversion_photo_source_is_eligible` gates enqueue + completion, the `email_attachments` / `activities` triggers re-reconcile jobs whenever attribution or direction changes, and the partial unique index `email_conversion_photo_jobs_active_project_hash_unique (company_id, project_id, source_content_sha256) WHERE operation='materialize'` makes a duplicate active projection structurally impossible. The apply-day sweep revoked 21 mis-attributed jobs (33 → 12 legitimate); revocation hides the mapped photo transactionally and delegates object deletion to the existing retryable cleanup ledger. Source branch: `ops-web` `fix/quoted-email-project-photos-20260811`.
 
+**Source attribution (2026-08-17 — partially staged).** Photos this automation publishes were indistinguishable from manual uploads: `complete_email_conversion_photo_job` hardcoded `source = 'other'` on both its insert and its adopt/update path, so nothing recorded that the image arrived by email or who sent it. Three migrations close that gap, deliberately split by risk:
+
+| Migration | Ledger version | State |
+|---|---|---|
+| `photo_source_email_enum` — adds enum value `'email'` | `20260818053040` | **applied 2026-08-18** |
+| `project_photo_email_provenance` — adds `project_photos.email_attachment_id` + `origin_sender_email` + partial index | `20260818053050` | **applied 2026-08-18** |
+| `20260817_STAGED_email_photo_source_attribution` — rewrites the completion function to write `source='email'` + provenance, and backfills the 12 already-imported photos | — | **STAGED — NOT APPLIED** |
+
+The first two are pure-additive and invisible to every deployed client (web narrows unknown sources out of its gallery groups; iOS decodes `source` as a plain string). The third is held in `ops-web/supabase/migrations/staged/` until the ops-web `main` push GO, and must be applied **in the same action as the push**: the deployed gallery silently drops photos whose `source` it does not recognise, so flipping the rows before the new bundle is live would hide those 12 photos from the gallery. Until then the pipeline keeps writing `'other'` — current behaviour, no regression.
+
+The staged function reads the sender from the `email_attachments` row it has already loaded and validated (`attachment.from_email`), normalised as `nullif(btrim(coalesce(...,'')),'')`, so a blank sender stores NULL rather than an empty string. Its body is otherwise byte-identical to the live definition.
+
+**Open item before that GO:** the agent readiness RPCs (`read_agent_job_summary_as_system`, `private.read_agent_job_participant_snapshot_v5_impl`, `private.read_agent_job_readiness_issues_v4_impl`) bucket project photos by an exhaustive six-value source list and count anything outside it as `malformed_or_local_count`. They do **not** filter rows out, so nothing disappears — but `deriveSitePhotoReadinessFact` (`ops-web/src/lib/agent-control-plane/services/readiness-rules.ts`) sums only the named buckets into `usable_photo_count`. Once the flip lands, email-sourced photos stop counting toward `SITE_PHOTOS_MISSING`, so a project whose only photos arrived by email would read as having none. Widening those RPCs plus the `ActiveRemotePhotosBySourceSchema` zod shape is the paired fix; it belongs to the agent wave, not to this change.
+
 ---
 
 ### Automation F: Project Status Cascades
@@ -3167,7 +3181,7 @@ The list below was originally written as "tables needed." A live audit on 2026-0
 | `company_id` | text | NO | — |
 | `url` | text | NO | — |
 | `thumbnail_url` | text | YES | — |
-| `source` | enum `photo_source` (`site_visit`, `in_progress`, `completion`, `other`, `measurement`, `deck_design`) | NO | `'other'` |
+| `source` | enum `photo_source` (`site_visit`, `in_progress`, `completion`, `other`, `measurement`, `deck_design`, `email`) | NO | `'other'` |
 | `site_visit_id` | uuid | YES | — |
 | `uploaded_by` | text | NO | — |
 | `taken_at` | timestamptz | YES | — |
@@ -3175,8 +3189,12 @@ The list below was originally written as "tables needed." A live audit on 2026-0
 | `is_client_visible` | boolean | NO | `false` |
 | `created_at` | timestamptz | YES | `now()` |
 | `deleted_at` | timestamptz | YES | — |
+| `email_attachment_id` | uuid → `email_attachments(id)` `on delete set null` | YES | — |
+| `origin_sender_email` | text | YES | — |
 
 `source = 'measurement'` is used by LiDAR Dimensioned Photo Capture (see §07 Section 23) — added 2026-05-10 alongside the spec. `source = 'deck_design'` remains accepted for iOS deck builder thumbnails and photo overlay captures.
+
+`source = 'email'` (enum value added 2026-08-18, ledger `20260818053040`) marks photos published by the email→project conversion pipeline. The two provenance columns (ledger `20260818053050`, indexed by `project_photos_email_attachment_idx` where non-null) are written **only** by that pipeline — never by a manual upload, on any surface. Both are nullable and additive, so deployed iOS builds and the deployed web bundle ignore them. Nothing writes `source='email'` yet: the completion-function flip and the 12-row backfill are staged until the ops-web `main` push GO (see Automation E2 above).
 
 ### Projects Table V2 Phase 1 Schema Foundation (added 2026-05-12)
 

@@ -51,6 +51,20 @@ One row was applied via `supabase db push`, which split the file into 14 ledger 
 - `20260811232704_quoted_email_photo_provenance_dedup.sql`
 - `20260818052155_restore_claim_email_send_provider_delivery_grant.sql`
 
+## Staged migrations (authored, deliberately NOT applied)
+
+SQL that is written, reviewed, and committed in `ops-web` but held out of the auto-applied
+`supabase/migrations/` path because applying it early would break a currently deployed client. It has no ledger
+row and no file in this directory until it is actually applied — at which point it is mirrored here under its
+real ledger version like any other migration.
+
+- `ops-web/supabase/migrations/staged/20260817_STAGED_email_photo_source_attribution.sql` — flips the
+  email→project photo pipeline to `source = 'email'` (+ provenance) and backfills the 12 photos already imported
+  as `'other'`. **GO condition: the ops-web `main` push GO — apply it and push in the same action**, because the
+  deployed gallery silently drops photos whose `source` it does not recognise. Its two additive prerequisites
+  (`20260818053040`, `20260818053050`) are already applied, so nothing is half-shipped while it waits.
+  See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § project_photos.
+
 ## Legacy files whose content differs from the applied text
 
 Session-written mirrors sometimes drifted from what was actually applied: a prepended doc header, a stray blank
