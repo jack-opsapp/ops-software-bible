@@ -632,6 +632,10 @@ compatibility wrapper, and `QuickActionSheetHeader` all delegate to it.
 - Root-only metadata does not sit inside the title row: Home company/subscription
   status and Schedule date context render in the first content strip below the
   band. Sheet headers remain sheets, retaining their divider and save semantics.
+- Every root tab is on the band, CATALOG included (2026-08-18, bug `f6bf6b38`).
+  `CatalogView` was the last holdout with a hand-rolled title row; because
+  `MainTabView` offsets the sync/status band by the canonical band height, its
+  short header also left that band floating clear of the chrome beneath it.
 
 ### Shadows
 
