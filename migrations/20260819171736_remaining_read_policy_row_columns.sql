@@ -1,5 +1,17 @@
 -- ============================================================================
--- NOT YET APPLIED. Do not run this against production without review.
+-- APPLIED to production 2026-08-19, ledger version 20260819171736.
+--
+-- Verified BY OBJECT after apply (recipe below), never by version key:
+--   * all five policies now point at the row-shaped predicates
+--   * grants match the applied sibling pair: *_row -> anon+authenticated,
+--     except job_conversation_row -> authenticated only (its policy is TO
+--     authenticated); *_columns functions stay owner-only
+--   * behaviour, as the company owner, inside a rolled-back transaction:
+--       INSERT .. RETURNING into calendar_user_events -> ACCEPTED (was 42501)
+--       zero probe rows left behind
+--   * authorization did NOT widen: a crew account (no admin/pipeline rights)
+--     still sees 37 sub_clients and 0 calendar_events / 0 calendar_user_events /
+--     0 opportunities / 0 job_conversations -- its prior scoped view exactly
 -- Apply, then verify BY OBJECT using the recipe at the bottom — never by
 -- ledger version key. (Verify-by-object recipe covers all five tables.)
 --
