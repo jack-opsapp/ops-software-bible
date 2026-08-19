@@ -1,10 +1,16 @@
 -- ============================================================================
--- NOT YET APPLIED — authored, verified on a local replica, awaiting approval.
+-- APPLIED to production 2026-08-19, ledger version 20260819152448.
 --
--- This file has NO ledger row. Verify it BY OBJECT (recipe at the bottom),
--- never by version key. On apply, read the stamped version back out of
--- supabase_migrations.schema_migrations and rename this file to
--- <ledger_version>_<ledger_name>.sql like any other mirror.
+-- Verified BY OBJECT after apply (recipe at the bottom), never by version key:
+--   * both role_scope_read policies now point at the row-shaped predicates
+--   * neither *_columns function re-reads its own table
+--   * grants match the sibling pair (*_row → anon/authenticated, *_columns → owner only)
+--   * behaviour, as the company owner, inside a rolled-back transaction:
+--       INSERT .. RETURNING into clients  → ACCEPTED (was 42501)
+--       INSERT .. RETURNING into projects → ACCEPTED (was 42501)
+--       zero probe rows left behind in either table
+--   * authorization did NOT widen: a crew account (no pipeline/admin rights)
+--     still sees 45 of 541 clients and 55 of 349 projects — its prior scoped view
 -- ============================================================================
 --
 -- WHAT BREAKS TODAY
