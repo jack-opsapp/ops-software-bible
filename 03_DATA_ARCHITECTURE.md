@@ -2325,7 +2325,7 @@ Migration `20260818014340_project_tasks_returning_visibility.sql` (applied to pr
 
 ### clients + projects read policies — same row-based RETURNING fix (2026-08-19)
 
-Migration `migrations/20260819044939_client_project_read_policy_row_columns.sql` — **authored, verified on a local replica, NOT YET APPLIED.** Verify by object, never by version key (it has no ledger row until it is applied).
+Migration `migrations/20260819152448_client_project_read_policy_row_columns.sql` — **APPLIED to production 2026-08-19, ledger version `20260819152448`.** Verify by object, never by version key.
 
 **The defect is the one above, on two more tables.** The `project_tasks` repair (2026-08-17) fixed one member of a class and left the rest. `public.clients.role_scope_read` resolved its row through `private.current_user_can_view_client(id)` → `private.user_can_view_client(actor, company, client_id)`, whose first gate re-reads `public.clients` by id; `public.projects.role_scope_read` did the same through `private.current_user_can_view_project_scoped(id)` → `private.user_can_view_project(actor, project_id)`, whose first statement reads `public.projects` by id. Postgres applies SELECT policies to an `INSERT … RETURNING` row as an INSERT check, evaluated in `ExecInsert` **before** the tuple is written, so the self-lookup can never find it. The admin arm sits below the existence gate in both, so being the account owner does not help.
 
@@ -2342,19 +2342,33 @@ Migration `migrations/20260819044939_client_project_read_policy_row_columns.sql`
 
 **Kept / unchanged.** The by-id functions stay for their many other callers — `user_can_view_sub_client`, `current_user_can_view_activity`, `current_user_can_view_deck_design`, `current_user_can_view_site_visit`, `current_user_can_view_duplicate_review`, `user_can_view_calendar_event`, `user_can_view_task_columns`, `current_user_can_view_job_conversation` — where the lookup targets a table OTHER than the one being written and is correct.
 
-**Still carrying the same shape (audited 2026-08-19, NOT yet fixed).** Every restrictive SELECT policy whose predicate re-reads its own table, in recommended repair order:
+### Remaining read policies — class sweep completed (2026-08-19)
 
-| Table | Policy predicate | Self-reads | Client insert-with-representation today |
-|-------|------------------|-----------|------------------------------------------|
-| `sub_clients` | `current_user_can_view_sub_client(id)` → `user_can_view_sub_client` | `public.sub_clients` | **Yes** — `ClientRepository.createSubClient` (representation IS consumed, so this one needs the server fix) |
-| `calendar_user_events` | `current_user_can_view_calendar_user_event(id)` | `public.calendar_user_events` | **Yes** — `CalendarUserEventRepository.create` (consumes `result.id`) |
-| `calendar_events` | `current_user_can_view_calendar_event(id)` | `public.calendar_events` | No iOS insert path found |
-| `opportunities` | `current_user_can_view_opportunity(id)` → `user_can_view_opportunity` | `public.opportunities` | No direct iOS insert (leads are created via RPC) |
-| `job_conversations` | `current_user_can_view_job_conversation(id)` | `public.job_conversations` (+ requires an anchor row that cannot exist yet) | Server-side only |
+Migration `migrations/20260819163000_remaining_read_policy_row_columns.sql` — **authored, verified on a local replica, NOT YET APPLIED.** Verify by object, never by version key (it has no ledger row until it is applied). This closes the class: a catalog scan of every RESTRICTIVE SELECT policy in `public` confirms these five were the complete remaining set.
 
-Every other restrictive SELECT policy either takes the row's own columns or resolves a **parent** table, and is therefore snapshot-safe on insert.
+**ACL_SELECT, not `RETURNING`, is the real trigger.** The earlier write-ups framed this as an `INSERT … RETURNING` problem. Proven on the replica, the guard also fires for **`INSERT … ON CONFLICT DO UPDATE` carrying no `RETURNING` clause at all** — `rowsecurity.c` attaches SELECT/ALL policies as `WCO_RLS_INSERT_CHECK` whenever the target RTE requires `ACL_SELECT`, and an upsert requires it to resolve the conflicting row. Sending `Prefer: return=minimal` does **not** make an upsert safe from this.
 
-**Doc drift found while auditing.** The policy table below records `opportunities.role_scope_read` as `current_user_has_permission('pipeline.view','all')`. Prod is `current_user_can_view_opportunity(id) AND (merged_into_opportunity_id IS NULL OR current_user_can_view_opportunity(merged_into_opportunity_id))`. Prod is truth.
+| Table | Policy | Old predicate (self-reads) | New row-shaped predicate |
+|-------|--------|----------------------------|--------------------------|
+| `sub_clients` | `role_scope_read` | `current_user_can_view_sub_client(id)` → `user_can_view_sub_client` | `current_user_can_view_sub_client_row(client_id, company_id, deleted_at)` |
+| `calendar_events` | `calendar_event_read_scope_guard` | `current_user_can_view_calendar_event(id)` | `current_user_can_view_calendar_event_row(company_id, project_id, team_member_ids, deleted_at)` |
+| `calendar_user_events` | `calendar_user_event_read_scope_guard` | `current_user_can_view_calendar_user_event(id)` | `current_user_can_view_calendar_user_event_row(user_id, company_id, type, team_member_ids, deleted_at)` |
+| `opportunities` | `role_scope_read` (first conjunct only) | `current_user_can_view_opportunity(id)` → `user_can_view_opportunity` | `current_user_can_view_opportunity_row(company_id, assigned_to, deleted_at)` |
+| `job_conversations` | `job_conversations_job_scope_select` | `current_user_can_view_job_conversation(id)` | `current_user_can_view_job_conversation_row(id, company_id)` |
+
+**Client reality, corrected against the iOS source (supersedes the earlier audit's read).**
+
+- `sub_clients` — genuinely broken, on exactly one path. `ClientRepository.createSubClient` (`ops-ios/OPS/Network/Supabase/Repositories/ClientRepository.swift:177`) does `.insert(payload).select().single()` and `LeadDetailViewModel.addContactToClient` appends the decoded DTO to its published `subClients` array, so `.select()` cannot simply be dropped — this is the "add contact to client" action. The durable-queue path (`DataActor.genericTablePush`, `DataActor.swift:5652`) is **not** affected: it calls `.insert(payload)` with no `returning:` argument, and supabase-swift's `insert(_:returning:count:)` defaults that to `nil` and emits **no** `Prefer` header, leaving PostgREST on its own `return=minimal` default. Only `.select()` sets `Prefer: return=representation` (`PostgrestTransformBuilder.swift:29`), and `upsert` is the one that defaults to `.representation`.
+- `calendar_user_events` — broken, but **not** via `CalendarUserEventRepository.create` as previously recorded. That function's only caller, `PersonalEventSheet`, is unreachable at runtime (superseded by `UserEventSheet`). The live path is `CalendarUserEventRepository.upsertEvent` (`:157`), an upsert sent with `returning: .minimal` — which the ON CONFLICT rule above shows is refused anyway. Prod corroborates: 2 rows total, 0 in 30 days, newest 2026-05-01.
+- `calendar_events` — no iOS write path exists at all (the app writes `calendar_user_events` instead). Prod: 0 rows, ever.
+- `opportunities` — no direct iOS insert; leads are created through the SECURITY DEFINER RPC `create_opportunity_guarded`, which bypasses RLS. Prod: 75 inserted in 30 days.
+- `job_conversations` — `authenticated` holds **SELECT only** (no INSERT grant), so a client insert is refused on privileges before RLS is consulted. The self-lookup is dropped for hygiene and read cost, not to enable a write.
+
+**The `job_conversations` anchor gate is deliberate and is left alone.** Its predicate's second `exists` requires a matching `job_conversation_anchors` row, which by construction cannot exist at the instant the conversation row is inserted. That is an authorization rule, not the class defect; widening it would widen authorization. Writes stay on service-role / SECURITY DEFINER paths.
+
+**Replica proof** (PostgreSQL 17.11, prod function and policy bodies loaded verbatim; clean rebuild, before → migration → after). Before: `sub_clients`, `calendar_events`, `calendar_user_events` and `opportunities` all rejected admin `INSERT … RETURNING` with `42501` naming their own guard, and the `calendar_user_events` upsert-without-RETURNING was rejected too; the same `sub_clients` insert *without* RETURNING was accepted, isolating `ACL_SELECT` as the trigger. After: all five accepted. `job_conversations` is refused identically in both runs (`permission denied for table`, a grant check — not RLS). Authorization surface byte-identical across the runs: 25 visibility cells (5 personas — company admin, scope `all`, scope `assigned`, deactivated member, foreign-company admin — × 5 tables) match exactly, and cross-tenant inserts (A→B and B→A), born-deleted-row inserts, deactivated-member inserts, and `assigned`-scope inserts of rows the actor could not then read (sub-client under an unlinked client, opportunity with `assigned_to` NULL, calendar event with empty team and no project) are all still refused. Zero probe rows persisted.
+
+**Kept / unchanged.** All nine by-id functions stay, for callers where the lookup targets a different table and is correct: `follow_ups`, `stage_transitions` and the `opportunities` merge-target conjunct call `current_user_can_view_opportunity`; `job_conversation_anchors`, `job_conversation_turns`, `job_conversation_redaction_events`, `job_memory_versions` and `job_memory_version_evidence` all call `current_user_can_view_job_conversation(conversation_id)`.
 
 ### Auth ID Resolution
 
@@ -2425,7 +2439,7 @@ Two migrations closed the gap, both replacing the old policies with the layered 
 | Table | Policy | Type / Cmd | Predicate |
 |-------|--------|------------|-----------|
 | `payments` | `role_scope_read` | RESTRICTIVE · SELECT | `current_user_has_permission('invoices.view','all')` |
-| `opportunities` | `role_scope_read` | RESTRICTIVE · SELECT | `current_user_has_permission('pipeline.view','all')` |
+| `opportunities` | `role_scope_read` | RESTRICTIVE · SELECT | `current_user_can_view_opportunity(id) AND (merged_into_opportunity_id IS NULL OR current_user_can_view_opportunity(merged_into_opportunity_id))` — corrected 2026-08-19 from a long-stale `current_user_has_permission('pipeline.view','all')`; verified against prod. Pending `20260819163000`, the first conjunct becomes `current_user_can_view_opportunity_row(company_id, assigned_to, deleted_at)` |
 
 **Verification (2026-05-31)**: executed as the anon role, all five tables now return 0 rows; an `own`-scope user sees only expenses where `submitted_by` matches their own user id. Migration SQL is mirrored in `migrations/` and the per-table contracts are echoed in `09_FINANCIAL_SYSTEM.md` (Expense Tracking System, Supabase Schema Reference).
 

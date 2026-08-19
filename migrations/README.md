@@ -82,15 +82,21 @@ verify them by object, never by version key.
   mutate the link contract, so an ordinary project status write stops raising `access_denied` for crew.
   Company isolation, link integrity, the `service_role` bypass and the `stage='won'` activation block are all
   preserved unchanged. See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § project ↔ opportunity link.
-- `20260819044939_client_project_read_policy_row_columns.sql` — client/project insert data loss. Repoints
-  `role_scope_read` on `public.clients` and `public.projects` at row-column predicates
-  (`private.current_user_can_view_client_row` / `..._project_row`) so the policy stops re-reading its own
-  table. Postgres applies SELECT policies to an `INSERT … RETURNING` row before the tuple is written, so the
-  self-lookup always failed and every create requesting a representation was rejected 42501 — a real customer
-  was lost that way (company `a612edc0`, 2026-08-19). Same shape as the `project_tasks` repair of
-  `20260818014340`. Authorization ladder preserved exactly; proven on a local PostgreSQL 17.11 replica loaded
-  with the prod bodies (before = rejected, after = accepted, read surface unchanged, cross-tenant still
-  refused). See `03_DATA_ARCHITECTURE.md` § clients + projects read policies.
+- `20260819163000_remaining_read_policy_row_columns.sql` — finishes the self-lookup read-policy class. The
+  `project_tasks` repair (`20260818014340`) fixed one table; the clients/projects repair shipped as ledger
+  `20260819152448`; this repoints the last five — `sub_clients.role_scope_read`,
+  `calendar_events.calendar_event_read_scope_guard`,
+  `calendar_user_events.calendar_user_event_read_scope_guard`, `opportunities.role_scope_read` (first conjunct
+  only, merge-target conjunct preserved verbatim) and `job_conversations.job_conversations_job_scope_select` —
+  at row-column predicates so no policy re-reads its own table. A catalog scan confirms these were the complete
+  remaining set. Note the trigger is `ACL_SELECT`, not `RETURNING` specifically: an `INSERT … ON CONFLICT DO
+  UPDATE` with **no** RETURNING is refused too, which is what has kept `calendar_user_events` at 0 inserts in
+  30 days despite the client sending `return=minimal`. Authorization ladders preserved exactly; all nine by-id
+  functions left in place for their other callers. Proven on a local PostgreSQL 17.11 replica loaded with the
+  prod bodies (before = rejected naming each guard, after = accepted, 25/25 visibility cells byte-identical
+  across five personas, cross-tenant / born-deleted / deactivated / out-of-scope inserts still refused).
+  `job_conversations` is hygiene only — `authenticated` has no INSERT grant there, and its anchor gate is a
+  deliberate authorization rule left untouched. See `03_DATA_ARCHITECTURE.md` § Remaining read policies.
 - `20260818184300_revoke_legacy_convert_lead_to_project.sql` — H10 dead-code cleanup. Revokes EXECUTE on the
   legacy `public.convert_lead_to_project` shim, the only entry point into the convert transaction that skips
   the `p_expected_stage` / `p_expected_assignment_version` guards and silently discards `p_address`. Revoked
