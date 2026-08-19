@@ -2323,6 +2323,39 @@ Migration `20260818014340_project_tasks_returning_visibility.sql` (applied to pr
 
 **Kept / unchanged.** The by-id functions remain for their existing callers (`persist_task_mutation_notification_as_system`, `private.agent_user_can_access_entity`). Shipped-client audit: iOS task updates and soft-deletes are minimal-returning (no RETURNING evaluation), and web does not write `project_tasks` via PostgREST — so the row-based `deleted_at IS NULL` arm cannot regress any live request. A future UPDATE that sets `deleted_at` AND requests representation will (correctly) refuse to echo a row the actor can no longer see — use minimal returning for soft-deletes.
 
+### clients + projects read policies — same row-based RETURNING fix (2026-08-19)
+
+Migration `migrations/20260819044939_client_project_read_policy_row_columns.sql` — **authored, verified on a local replica, NOT YET APPLIED.** Verify by object, never by version key (it has no ledger row until it is applied).
+
+**The defect is the one above, on two more tables.** The `project_tasks` repair (2026-08-17) fixed one member of a class and left the rest. `public.clients.role_scope_read` resolved its row through `private.current_user_can_view_client(id)` → `private.user_can_view_client(actor, company, client_id)`, whose first gate re-reads `public.clients` by id; `public.projects.role_scope_read` did the same through `private.current_user_can_view_project_scoped(id)` → `private.user_can_view_project(actor, project_id)`, whose first statement reads `public.projects` by id. Postgres applies SELECT policies to an `INSERT … RETURNING` row as an INSERT check, evaluated in `ExecInsert` **before** the tuple is written, so the self-lookup can never find it. The admin arm sits below the existence gate in both, so being the account owner does not help.
+
+**Live impact.** `analytics_events` `sync_parked`, company `a612edc0-5c18-4c4d-af97-55b9410dd077`, 2026-08-19 02:54:40Z: entity `client`, operation `create`, `retry_count 0`, `new row violates row-level security policy "role_scope_read" for table "clients"`. The customer ("Peter athlone Dr") never reached the server and existed only on the founder's phone. iOS `ClientRepository.create` and `ProjectRepository.create` both used `.insert(dto).select().single()` — `.select()` is what appends `Prefer: return=representation`.
+
+**The fix.** Same shape as `current_user_can_view_task_row`, ladder preserved exactly, self-lookup dropped:
+
+- `private.user_can_view_client_columns(p_actor_user_id, p_actor_company_id, p_client_id, p_company_id, p_deleted_at)` — soft-deleted invisible; row's `company_id` must equal the actor's; active company member; admin → true; `clients.view all` → true; `clients.view assigned` → on a task of a project of this client (still deliberately team-assignment-only, no note-mention grant). `SECURITY DEFINER`, postgres-only ACL.
+- `private.current_user_can_view_client_row(p_client_id, p_company_id, p_deleted_at)` — actor-resolving wrapper, EXECUTE to `anon` + `authenticated`.
+- `private.user_can_view_project_columns(p_actor_user_id, p_project_id, p_company_id, p_deleted_at)` + `private.current_user_can_view_project_row(...)` — same treatment; no explicit admin arm, matching the original (`public.has_permission` short-circuits for admins).
+- `role_scope_read` USING becomes `current_user_can_view_client_row(id, company_id, deleted_at)` / `current_user_can_view_project_row(id, company_id, deleted_at)`.
+
+**Replica proof** (PostgreSQL 17.11, prod function + policy bodies loaded verbatim). Before: admin `INSERT … RETURNING` on both tables → `42501 role_scope_read`; the same insert without RETURNING → accepted. After: both accepted. Authorization surface byte-identical across the two runs — admin and `clients.view all` see the same two rows, `clients.view assigned` sees only its linked customer, a foreign-company admin sees only its own company's row, a deactivated member sees nothing, soft-deleted rows stay invisible; cross-tenant `INSERT … RETURNING`, a deactivated member's insert, and an insert of a born-deleted row are all still refused.
+
+**Kept / unchanged.** The by-id functions stay for their many other callers — `user_can_view_sub_client`, `current_user_can_view_activity`, `current_user_can_view_deck_design`, `current_user_can_view_site_visit`, `current_user_can_view_duplicate_review`, `user_can_view_calendar_event`, `user_can_view_task_columns`, `current_user_can_view_job_conversation` — where the lookup targets a table OTHER than the one being written and is correct.
+
+**Still carrying the same shape (audited 2026-08-19, NOT yet fixed).** Every restrictive SELECT policy whose predicate re-reads its own table, in recommended repair order:
+
+| Table | Policy predicate | Self-reads | Client insert-with-representation today |
+|-------|------------------|-----------|------------------------------------------|
+| `sub_clients` | `current_user_can_view_sub_client(id)` → `user_can_view_sub_client` | `public.sub_clients` | **Yes** — `ClientRepository.createSubClient` (representation IS consumed, so this one needs the server fix) |
+| `calendar_user_events` | `current_user_can_view_calendar_user_event(id)` | `public.calendar_user_events` | **Yes** — `CalendarUserEventRepository.create` (consumes `result.id`) |
+| `calendar_events` | `current_user_can_view_calendar_event(id)` | `public.calendar_events` | No iOS insert path found |
+| `opportunities` | `current_user_can_view_opportunity(id)` → `user_can_view_opportunity` | `public.opportunities` | No direct iOS insert (leads are created via RPC) |
+| `job_conversations` | `current_user_can_view_job_conversation(id)` | `public.job_conversations` (+ requires an anchor row that cannot exist yet) | Server-side only |
+
+Every other restrictive SELECT policy either takes the row's own columns or resolves a **parent** table, and is therefore snapshot-safe on insert.
+
+**Doc drift found while auditing.** The policy table below records `opportunities.role_scope_read` as `current_user_has_permission('pipeline.view','all')`. Prod is `current_user_can_view_opportunity(id) AND (merged_into_opportunity_id IS NULL OR current_user_can_view_opportunity(merged_into_opportunity_id))`. Prod is truth.
+
 ### Auth ID Resolution
 
 **Critical**: `users.id` (the application UUID) differs from the auth identity. The

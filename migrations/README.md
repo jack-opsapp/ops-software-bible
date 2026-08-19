@@ -82,6 +82,15 @@ verify them by object, never by version key.
   mutate the link contract, so an ordinary project status write stops raising `access_denied` for crew.
   Company isolation, link integrity, the `service_role` bypass and the `stage='won'` activation block are all
   preserved unchanged. See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § project ↔ opportunity link.
+- `20260819044939_client_project_read_policy_row_columns.sql` — client/project insert data loss. Repoints
+  `role_scope_read` on `public.clients` and `public.projects` at row-column predicates
+  (`private.current_user_can_view_client_row` / `..._project_row`) so the policy stops re-reading its own
+  table. Postgres applies SELECT policies to an `INSERT … RETURNING` row before the tuple is written, so the
+  self-lookup always failed and every create requesting a representation was rejected 42501 — a real customer
+  was lost that way (company `a612edc0`, 2026-08-19). Same shape as the `project_tasks` repair of
+  `20260818014340`. Authorization ladder preserved exactly; proven on a local PostgreSQL 17.11 replica loaded
+  with the prod bodies (before = rejected, after = accepted, read surface unchanged, cross-tenant still
+  refused). See `03_DATA_ARCHITECTURE.md` § clients + projects read policies.
 - `20260818184300_revoke_legacy_convert_lead_to_project.sql` — H10 dead-code cleanup. Revokes EXECUTE on the
   legacy `public.convert_lead_to_project` shim, the only entry point into the convert transaction that skips
   the `p_expected_stage` / `p_expected_assignment_version` guards and silently discards `p_address`. Revoked
