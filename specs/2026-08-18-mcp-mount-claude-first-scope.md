@@ -1,6 +1,6 @@
 # MCP Mount — Claude First (2026-08-18)
 
-**Status:** **BUILT AND VERIFIED 2026-08-18 — awaiting Jackson's three gates.** Every P1 requirement below is implemented on ops-web branch `feat/mcp-mount-claude-first-20260818` and proven by 37/37 live end-to-end checks against MAVERICK PROJECTS LTD, including all nine reads returning real data and seven tenant-isolation probes returning privacy-safe sentinels. The OAuth schema is applied to production (ledger `20260818155813`); the routes are not deployed. Remaining: provision the cursor key in Vercel, push `main`, add the connector in claude.ai. Plan: `specs/plans/2026-08-18-mcp-mount-claude-first-P1-plan.md`. Full record: `04_API_AND_INTEGRATION.md` § "OPS Remote MCP Server — P1 Mount, Claude First".
+**Status:** **PRODUCTION-LIVE AND OPERATIONAL — reverified 2026-08-20.** The MCP mount is merged into ops-web `main`, deployed at `https://app.opsapp.co/api/mcp`, and backed by production ledger `20260818155813`. The cursor key is provisioned. Claude is dynamically registered with one active OPS OAuth grant, last used on 2026-08-20, and the immutable audit records 11 successful production tool calls. Exactly nine read tools are exposed; every write and site-visit capability remains disabled. Plan: `specs/plans/2026-08-18-mcp-mount-claude-first-P1-plan.md`. Full record: `04_API_AND_INTEGRATION.md` § "OPS Remote MCP Server — P1 Mount, Claude First".
 
 The build also found and repaired four production defects in the Task 13 job-catalog read RPCs — its E2E was their first-ever production execution, and plpgsql's lazy validation had hidden them behind the wave's parse verification. See the API chapter section above for the four defect classes and ledgers `20260818174706` / `20260818175549`.
 
@@ -8,7 +8,9 @@ The build also found and repaired four production defects in the Task 13 job-cat
 
 **Parent design:** `specs/2026-08-07-ops-agent-control-plane-mcp-foundation.md` (+ its status updates). The control plane's database and code halves are live in production as of 2026-08-18 — see `04_API_AND_INTEGRATION.md` § "Agent Control Plane Cutover — Applied and Deployed (2026-08-18)".
 
-## Starting state (verified 2026-08-18)
+## Historical starting state (verified before implementation on 2026-08-18)
+
+The bullets in this section are retained as the build baseline. They are not current production status; the status block above records the completed rollout.
 
 - The MCP surface is deliberately dark: `/api/mcp` returns 404; no route under `src/app/` imports `agent-control-plane`. The only MCP artifact is `src/lib/agent-control-plane/mcp/sdk.ts`, unmounted.
 - Capability manifest `2026-08-14.capability-manifest.v6`: nine reads are `implementation=available` for internal composition only; every `externalExposure` is `disabled`.
@@ -41,8 +43,8 @@ Deliver an OPS remote MCP server that a claude.ai / Claude Desktop user can add 
 - Tenant-isolation probes: an actor bound to one company must receive sentinel errors, not data, for any other company's identifiers.
 - The dark-until-now guarantee holds for unauthenticated traffic: unauthenticated `/api/mcp` requests are rejected without capability disclosure.
 
-## Jackson-gated steps (flag when reached, not before)
+## Jackson-gated steps — completed 2026-08-20
 
-- Provisioning the production cursor-key env var.
-- Adding the connector to his claude.ai account (OAuth consent happens in his browser).
-- The push/deploy that makes the mount live.
+- Production cursor-key environment variable provisioned and accepted by the live runtime.
+- Connector added to Claude and OAuth consent completed.
+- MCP mount merged to `main` and deployed to `app.opsapp.co`.

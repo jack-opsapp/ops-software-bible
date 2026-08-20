@@ -258,6 +258,7 @@ Every design decision reflects real-world field experience:
 - Floating window system (draggable, minimizable create forms)
 - **Project Notes system:** first-class threaded notes with @mentions, author attribution, photo attachments, legacy migration from Bubble teamNotes
 - **Calendar/Schedule system:** 5-view calendar (month, week, day, team timeline, agenda) with drag-and-drop scheduling, event resize, click-to-create, detail panel, multi-filter sidebar, conflict detection, keyboard shortcuts, responsive (mobile/tablet/desktop)
+- **Claude MCP connector:** production-live, read-only access to nine actor-, company-, permission-, and source-scoped job tools through `https://app.opsapp.co/api/mcp`. OAuth consent and revocation are OPS-owned; no write or site-visit capability is exposed. See `04_API_AND_INTEGRATION.md` § “OPS Remote MCP Server — P1 Mount, Claude First.”
 
 **Ecosystem Apps:**
 - **ops-site** — Marketing website (Next.js)

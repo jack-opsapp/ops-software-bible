@@ -2,6 +2,8 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use `custom-skills:executing-plans` to implement this plan task-by-task.
 
+**Execution status (2026-08-20): COMPLETE AND PRODUCTION-LIVE.** The implementation is merged to ops-web `main`, deployed at `https://app.opsapp.co/api/mcp`, configured with the server-only cursor key, and connected to Claude through an active OPS OAuth grant. Production audit records prove successful calls across the read surface. The “starting state” and task instructions below are retained as implementation provenance, not current rollout status.
+
 **Goal:** Mount the OPS agent control plane as a remote MCP server that Jackson can add to claude.ai as a custom connector — streamable HTTP at `/api/mcp`, OAuth 2.1 binding each connection to one OPS user, the nine v6 reads only, read-only, dark to unauthenticated traffic.
 
 **Architecture:** A new OAuth 2.1 authorization-server facade (DB-backed, opaque hashed tokens, Firebase as the human identity step) mints grants bound to one OPS user + company. The existing `/api/mcp` route wraps `createMcpHandler` from `@modelcontextprotocol/server@2.0.0` (stateless, both protocol eras); every request resolves the bearer token to a grant, mints a `ValidatedMcpPrincipal` through the existing branded boundary, re-resolves actor authority via `resolve_agent_actor_authority_as_system`, and dispatches to the already-shipped `OpsAgentDomainService`. The MCP layer never invents authority; company scope derives from the grant, never tool arguments.

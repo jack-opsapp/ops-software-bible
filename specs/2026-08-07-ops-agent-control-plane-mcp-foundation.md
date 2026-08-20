@@ -1,10 +1,12 @@
 # OPS Agent Control Plane and MCP Foundation (2026-08-07)
 
-**Status:** Product direction approved by Jackson on 2026-08-07. The local OPS-Web branch `feat/ops-agent-control-plane-takeover-20260807` now integrates foundation Tasks 1–13, the dark site-visit manifest increment, the Phase C actor/source-scoped internal adapter, and the metrics-only reply-context shadow/evaluation path through commits `d4118344`, `77c79996`, and `3da161d3`. Manifest `2026-08-14.capability-manifest.v6` makes nine reads available for internal composition only and keeps every external exposure disabled. The related control-plane migrations have not been catalog-compiled, executed, or applied to Supabase. The customer-facing Phase C prompt still uses the whole-history control; the shadow flag is not enabled in production, its release gate is fixed false, and the context switch is unperformed. Remote MCP transport and OAuth remain unbuilt. The canonical site-visit booking RPCs and prompt/calendar workers are separately production-live, while their control-plane adapters remain dark. Nothing here has been pushed, deployed, or proven customer-live.
+**Status:** Product direction approved by Jackson on 2026-08-07; the Claude-first read-only slice is production-live as of 2026-08-18 and was independently reverified on 2026-08-20. The twelve control-plane migrations and MCP OAuth migration are applied. The remote endpoint is deployed at `https://app.opsapp.co/api/mcp`; Claude is dynamically registered through an active OPS OAuth grant; and production audit records prove successful use of the read surface. Manifest `2026-08-14.capability-manifest.v6` externally exposes exactly nine reads. Every write family and both site-visit control-plane capabilities remain disabled. The Phase C context switch remains a separate rollout decision and is not implied by MCP availability.
 
 **Status update (2026-08-18):** The database and code halves of this design are live in production. All twelve gated wave migrations applied to prod atomically on 2026-08-18 UTC (after reshape `20260818011925` cleared the divergent release-lineage applies) and are mirrored byte-exact in `migrations/`; ops-web `main` `9103efcf` is pushed and deployed via Vercel. Two deviations from the frozen files: the operational-timezone assert is date-gated to WARN until 2026-09-15 (platform tzdb predates 2026c; restore duty `bug_reports` `212987a4`), and SQL parse repairs (fifteen unparenthesized array slices, one unterminated `case`) shipped in `9103efcf`. Auto-send remains env-gated OFF. The MCP transport remains unmounted and dark; mounting is the next initiative and Jackson ruled on 2026-08-18 that **Claude connects first** — scope in `specs/2026-08-18-mcp-mount-claude-first-scope.md`. See `04_API_AND_INTEGRATION.md` § "Agent Control Plane Cutover — Applied and Deployed (2026-08-18)" and `03_DATA_ARCHITECTURE.md` § "Agent Control Plane Schema (applied 2026-08-18 UTC)".
 
 **Status update (2026-08-18, later same day):** The remote MCP adapter this design anticipated is **built and verified**, closing the "A public remote MCP server, deployed MCP endpoint, or registered host integration" and "An OAuth 2.1 authorization-server facade" gaps in § 2.3 — pending deployment only. P1 mounts the nine v6 reads read-only over stateless streamable HTTP with an OAuth 2.1 authorization-server facade whose grants bind one OPS user to one company; company scope derives from the grant, never from tool arguments, and authority is re-resolved per call through the same actor layer Phase C uses. Two deliberate P1 deviations from this document: the resource identifier is `https://app.opsapp.co/api/mcp` rather than a dedicated `mcp.opsapp.co` hostname (a new audience forces re-consent, which is free while one connection exists), and access tokens are opaque and DB-resolved rather than signed (the AS and RS are one deployment sharing one database, and § 12.3 already requires reloading current authorization on every call). CIMD is not advertised, so Claude falls back to DCR as documented. Scope: `specs/2026-08-18-mcp-mount-claude-first-scope.md`; record: `04_API_AND_INTEGRATION.md` § "OPS Remote MCP Server — P1 Mount, Claude First".
+
+**Status update (2026-08-20):** The pending deployment gates above are complete. The MCP merge is in the ancestry of the current READY Vercel production deployment on `app.opsapp.co`; OAuth discovery and the protected-resource challenge are live; the production cursor key is accepted; and Claude has one unrevoked grant whose refresh flow was used on 2026-08-20. The immutable audit contains 11 successful tool calls plus expected privacy-safe error probes. This resolves the original remote-transport, OAuth, consent/revocation, registered-host, audit, and external-actor-authority gaps for the nine read tools only.
 
 **Decision:** Build one company- and actor-scoped OPS domain service, then expose it through three adapters: Phase C, the existing OPS API, and a public remote MCP server for Claude, ChatGPT, and other approved hosts. MCP is a transport and discovery layer. It does not own OPS business rules.
 
@@ -54,9 +56,11 @@ The following exist in OPS-Web and/or the production Supabase project:
 - Existing catalog guided-setup sessions with input revisions, source evidence, live snapshot hashes, proposal hashes, approval hashes, commit operation IDs, commit journals, and post-commit readback.
 - Existing idempotent/guarded patterns in scheduling, email delivery, lifecycle, financial, and catalog services.
 
-### 2.2 Local foundation implementation, not deployed
+### 2.2 Pre-release foundation implementation record (superseded)
 
-The isolated OPS-Web implementation branch now contains:
+This section preserves the final local checkpoint before the 2026-08-18 production cutover. Its “internal only,” “unapplied,” and “not deployed” statements are historical and are superseded by the status blocks above and the production record in `04_API_AND_INTEGRATION.md`.
+
+At that checkpoint, the isolated OPS-Web implementation branch contained:
 
 - the MCP v2/Zod 4 alias boundary, stable v1 contracts, actor/entity authorization context, and governed capability manifest;
 - manifest revision `2026-08-14.capability-manifest.v6`, with `get_job_conversation_context`, `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, `resolve_job_participants`, `list_customer_jobs`, `get_job_summary`, `search_job_history`, and `get_correspondence_evidence` marked `implementation=available` for internal composition only; every capability remains `externalExposure=disabled`;
@@ -73,25 +77,19 @@ The isolated OPS-Web implementation branch now contains:
 - a company-flagged, metrics-only reply-context shadow that preserves the current whole-history prompt as the sole customer-facing control. Its ten-second deadline covers feature lookup and context observation, including non-cooperative promises; it cannot generate, persist, draft, send, mutate mailbox state, or feed its result into the live reply;
 - one shared untrusted-JSON prompt serializer for the live prompt and shadow length calculation, plus offline quality fixtures whose schedule assertions require a separate structured verified-schedule source. The evaluation harness cannot set `releaseGatePassed` to true.
 
-The relevant local commits are `c53b4664`, `99b30cfc`, `2969debe`, `46aedaf2`, `fd9e17c5`, `6f9e387f`, `8af1ee5d`, `1e866814`, `556c514f`, `14969c4c`, `91419970`, `7472219a`, `73712b4f`, `5bba3c5e`, `dc91a349`, `d4118344`, `77c79996`, and `3da161d3`. This is source and test evidence only. The Task 9, Task 11, Task 12, Task 13, and Phase C source/context migrations have not been catalog-compiled or executed; all remain unapplied, and there is no production schema, deployed adapter or consumer, host, shadow observation, context switch, or customer-live proof.
+The relevant local commits were `c53b4664`, `99b30cfc`, `2969debe`, `46aedaf2`, `fd9e17c5`, `6f9e387f`, `8af1ee5d`, `1e866814`, `556c514f`, `14969c4c`, `91419970`, `7472219a`, `73712b4f`, `5bba3c5e`, `dc91a349`, `d4118344`, `77c79996`, and `3da161d3`. At that checkpoint this was source and test evidence only. The migrations and adapters described here were subsequently merged, applied, and deployed as recorded in the current status above.
 
-### 2.3 Verified gaps
+### 2.3 Current remaining gaps (revised 2026-08-20)
 
-The following do not currently exist as one production-applied coherent system:
+The Claude-first read-only MCP slice is coherent and production-live. The remaining gaps are deliberately outside that P1 surface:
 
-- The remaining shared domain methods beyond the nine implemented internal reads, including site-visit reads and all write operations.
-- REST and MCP adapters. The typed facade and Phase C internal adapter exist locally, but no REST/MCP transport consumes them.
-- A production actor context that intersects external OAuth scopes with current OPS permissions and entity assignment. The local Phase C path has actor-, assignment-, mailbox-, provider-source-, and job-scoped authority, but there is no external OAuth authority path.
-- A production-applied job conversation store and versioned running memory. The local schema, immutable delivered-turn ingestion, running-summary generation, catch-up, minimal cross-job continuity seed, bounded scoped-context read, and broader job-catalog reads exist, but their migrations are unapplied and the customer-facing prompt still uses the whole-history control.
-- A production Phase C shadow sample or context switch. The integrated local path is deliberately metrics-only, bounded to ten seconds, and fixed release-ineligible until the migrations, server-only cursor key, feature-flag rollout, production measurements, and rollback proof are separately completed.
-- A general change-set and cryptographic confirmation-receipt engine.
-- Site-visit control-plane read services, handlers, and change-set transaction participants. The canonical booking/reschedule/cancel RPCs and prompt/calendar workers are production-live, but no agent-control-plane adapter invokes them. The manifest definitions remain dark until their read authority, durable receipt/idempotency, locked target-version comparison, bounded active same-company assignees, all-scope-only unlinked access, and post-commit readback are proven end to end.
-- A public remote MCP server, deployed MCP endpoint, or registered host integration. Only the SDK/schema boundary exists locally.
-- An OAuth 2.1 authorization-server facade for external MCP clients, protected-resource discovery, grants, revocation, and MCP audience-bound access tokens.
-- A public connector consent/revocation surface.
-- MCP-specific audit, rate-limit, schema-version, adversarial-evaluation, and rollout controls.
+- Shared domain methods beyond the nine reads, including every write operation, remain unavailable externally.
+- The two site-visit control-plane capabilities remain dark. The canonical booking/reschedule/cancel RPCs and prompt/calendar workers are production-live, but no externally exposed agent-control-plane tool invokes them.
+- A general change-set and cryptographic confirmation-receipt engine for safe external writes does not yet exist as a complete production surface.
+- The Phase C customer-facing context switch remains separate. MCP availability does not prove its shadow-quality threshold, rollback gate, or customer-facing cutover.
+- No second external host connection is recorded. Claude is the proven P1 host; ChatGPT and other hosts require their own connector-compatibility and consent verification before being called supported.
 
-No remote OPS MCP server was found in the inspected repositories. This design must not be described as an existing integration.
+Resolved for the nine reads: public remote transport, OAuth authorization-server discovery, dynamic registration, consent, opaque audience-bound tokens, revocation, external actor/permission intersection, audit, rate limits, deployed endpoint, and a real Claude host connection.
 
 ### 2.4 Current implementation references
 
@@ -127,7 +125,7 @@ The first memory boundary is implemented locally and independently reviewed:
 - Direct sends bind provider, connection, recovery identity, thread expectation, request revision, and request hash before the provider call. Final claim rechecks current authorization and source state; ambiguous legacy attempts are quarantined for reconciliation rather than resent.
 - Only provider-confirmed inbound persistence and outbound delivery/reconciliation can create an immutable job turn. Draft generation and send intent creation cannot become memory.
 
-Local proof: 214/214 evidence tests and 492/492 exact staged delivered-turn/provider tests passed; TypeScript and formatting passed; ESLint reported zero errors; and a fresh adversarial review found no remaining P1/P2. SQL migration verification is structural only because no local PostgreSQL/Supabase runtime was available. The migrations remain unapplied.
+Local proof at that checkpoint: 214/214 evidence tests and 492/492 exact staged delivered-turn/provider tests passed; TypeScript and formatting passed; ESLint reported zero errors; and a fresh adversarial review found no remaining P1/P2. SQL migration verification was structural only because no local PostgreSQL/Supabase runtime was available, and the migrations were still unapplied.
 
 ---
 

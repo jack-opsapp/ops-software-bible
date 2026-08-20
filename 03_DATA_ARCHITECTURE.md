@@ -5871,7 +5871,7 @@ Schema landed by the wave:
 
 ## MCP OAuth Authorization Server Schema (applied 2026-08-18 UTC)
 
-Ledger `20260818155813_mcp_oauth_authorization_server` (mirrored byte-exact in `migrations/`). Storage for the Claude-first MCP mount — see `04_API_AND_INTEGRATION.md` § "OPS Remote MCP Server — P1 Mount". Applied to production and live; the routes that consume it are built but undeployed.
+Ledger `20260818155813_mcp_oauth_authorization_server` (mirrored byte-exact in `migrations/`). Storage for the Claude-first MCP mount — see `04_API_AND_INTEGRATION.md` § "OPS Remote MCP Server — P1 Mount". Applied to production and live. The consuming routes are deployed at `https://app.opsapp.co/api/mcp`; a dynamically registered Claude client and one unrevoked grant were verified in production on 2026-08-20.
 
 **Every table lives in `private` with ALL privileges revoked from `public`, `anon`, `authenticated`, and `service_role`.** The only access paths are the eleven owner-executed `SECURITY DEFINER` RPCs below, each gated on `auth.role() = 'service_role'` (raising `42501 access_denied` otherwise) with a pinned `search_path`. PostgREST never sees the tables. Verified live: 5 tables, 11 RPCs, zero table grants to any role, service_role-only EXECUTE, and the non-service gate live-fired against production.
 

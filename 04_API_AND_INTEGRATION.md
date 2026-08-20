@@ -3675,12 +3675,12 @@ The release prerequisites above were satisfied and executed on 2026-08-18 (UTC).
 - **Code:** ops-web `main` `9103efcf` pushed to origin (history: gated `44f6401c` + origin test-fix merge `5a36192e` + reserved-word alias fix `c2e6a49c` + tzdata date-gate `3b231f91` + SQL parse repairs `9103efcf`), auto-deployed to Vercel production. Gate on the pushed tree: `tsc --noEmit` clean; `email-opportunity-title-live-pattern`, `email-opportunity-title-sync-engine`, and `email-projection-stuck-check-cron` suites 107/107 (the stuck-check timing assertion flaked once under concurrent load — 59 ms drift against a 50 ms budget — and passed 12/12 in isolation).
 - **Parse repairs shipped in `9103efcf`:** fifteen `coalesce(...)[1:100]` array slices lacked the parentheses PostgreSQL requires around a function call before subscripting (`20260812120000`, `20260813120000`, `20260814120000`), and `private.read_agent_job_participant_snapshot`'s `context_raw` projection opened a `case` on `p_projection_kind` that was never closed. Found by the failed first prod apply plus a full local PostgreSQL 17.11 parse sweep of all twelve files (transaction wrappers stripped so every statement validates independently; composite-type stubs so every plpgsql body compiles). The applied ledger rows contain the repaired text.
 - **Timezone date-gate:** `private.agent_assert_operational_timezone_rules()` WARNs instead of failing until 2026-09-15 (platform tzdb predates 2026c; Supabase ticket open; restore duty tracked as `bug_reports` `212987a4`). The apply emitted the expected WARNING and committed.
-- **Outbound posture:** auto-send remains OFF (`INBOX_AUTO_SEND_ENABLED` unset — the cron no-ops); `public.claim_email_send_provider_delivery(uuid)` EXECUTE was re-granted to `service_role` after deploy verification (out-of-ledger; `migrations/20260818052155_restore_claim_email_send_provider_delivery_grant.sql`), closing the last deliberately-held outbound revoke. The MCP transport remains unmounted and dark — no route imports `agent-control-plane`; mounting is the next initiative and awaits Jackson's connect-first decision.
+- **Outbound posture at the control-plane cutover checkpoint:** auto-send remained OFF (`INBOX_AUTO_SEND_ENABLED` unset — the cron no-ops); `public.claim_email_send_provider_delivery(uuid)` EXECUTE was re-granted to `service_role` after deploy verification (out-of-ledger; `migrations/20260818052155_restore_claim_email_send_provider_delivery_grant.sql`), closing the last deliberately-held outbound revoke. MCP was still unmounted at this checkpoint; the production mount described immediately below superseded that state later the same day.
 - **Deferred verification pass (Maverick Projects, 2026-08-18):** the pass immediately caught one wave defect — the stale July version-gate twin on `task_schedule_automation_outbox` aborting confirm/unconfirm on `schedule_version = 0` tasks (`23514`) — fixed by ledger `20260818052612` before the first new-code `auto-confirm-schedules` cron firing (schedule `39 * * * *`; zero customer impact; see `03_DATA_ARCHITECTURE.md`). After the fix: full schedule-confirm round-trip green through the new RPC path on a Maverick task under service-role claims (`confirm_project_task_schedule_as_system` → `newly_confirmed: true`, row proof bound, one `schedule_confirmation_dispatch` outbox row; `unconfirm_project_task_schedule_as_system` → `newly_unconfirmed: true`, proof cleared). Phase-10 canary validation layers re-proven live: reserve without service claims → `42501 access_denied`; reserve with malformed hashes → `22023 PHASE_C_AUTO_SEND_SOURCE_FENCE_INVALID`; resolve of unknown reservation → `23505 PHASE_C_AUTO_SEND_IDEMPOTENCY_CONFLICT`. No `email_connections` rows were created and nothing was sent (Maverick has zero connections). All test rows removed: both pending dispatch outbox rows, the temporary `phase_c` feature override, zero reservation residue; the test task restored to its exact pre-test state.
 
-## OPS Remote MCP Server — P1 Mount, Claude First (built 2026-08-18)
+## OPS Remote MCP Server — P1 Mount, Claude First (production-live 2026-08-18; reverified 2026-08-20)
 
-Supersedes the "MCP transport remains unmounted and dark" statements above. The mount is **built and verified end-to-end against production data, but not yet deployed** — it reaches customers only when Jackson authorizes the push (see § Jackson-gated steps). Scope: `specs/2026-08-18-mcp-mount-claude-first-scope.md`; plan: `specs/plans/2026-08-18-mcp-mount-claude-first-P1-plan.md`. Branch `feat/mcp-mount-claude-first-20260818` in ops-web.
+Supersedes the "MCP transport remains unmounted and dark" statements above. The mount is **deployed and operational in production**. The MCP merge `a860f5ee` is in the ancestry of the current READY Vercel production deployment, which serves `app.opsapp.co`. Claude completed dynamic registration and OAuth consent against the live endpoint. Scope: `specs/2026-08-18-mcp-mount-claude-first-scope.md`; plan: `specs/plans/2026-08-18-mcp-mount-claude-first-P1-plan.md`.
 
 ### Topology
 
@@ -3734,6 +3734,15 @@ The transport registers exactly the manifest entries with `implementation = avai
 
 37/37 live end-to-end checks against a local server bound to production Supabase: dynamic registration; consent context resolving "MAVERICK PROJECTS LTD"; approve and deny; token exchange; authorization-code replay revoking the grant it minted; refresh rotation; refresh reuse killing the token family; legacy-era `initialize`; `tools/list` returning exactly the nine; **all nine reads exercised against real Maverick data**; **seven tenant-isolation probes with another company's identifiers, every one returning a privacy-safe `NOT_FOUND` sentinel and no data**; unauthenticated and malformed-bearer rejection with zero capability disclosure; settings revoke followed by a 401 on the next call. All OAuth test rows were deleted afterward — zero residue. Suites: 71 files / 1787 tests green; `tsc --noEmit` exit 0; eslint clean.
 
+### Production deployment and host proof (reverified 2026-08-20)
+
+- **Deployment:** Vercel production deployment `dpl_6NLRbVXSjKsAHPEhcjXAbtnLnJGx` is READY on ops-web commit `f6f7f5c8440e5c20caad9539d522cab9ccb03caf`, with `app.opsapp.co` attached and no alias error. The transport, external-exposure, and OAuth commits are ancestors of that deployed revision.
+- **Live route:** `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/api/mcp` return 200 with issuer/resource `https://app.opsapp.co` / `https://app.opsapp.co/api/mcp`. An unauthenticated request to `/api/mcp` returns the required 401 bearer challenge and protected-resource metadata pointer.
+- **Database:** production contains ledger `20260818155813_mcp_oauth_authorization_server`, all five private MCP tables, all eleven service-role RPCs, and the nine fixed read RPCs.
+- **Claude connection:** one dynamically registered client named `Claude` has one unrevoked full-read grant. The grant and its rotating refresh credential were used on 2026-08-20; the current refresh family remains valid through 2026-09-19.
+- **Real tool use:** the immutable audit contains 16 requests: 11 successful tool calls, three privacy-safe domain errors, and two rejected invalid-token probes. Successful modern-protocol calls cover schedules, readiness, customer jobs, participants, job history, communication context, conversation context, and job summaries. The evidence read was also exercised and correctly returned `NOT_FOUND` for the supplied absent selector.
+- **Surface:** exactly nine read capabilities are externally enabled. Every write family and both site-visit capabilities remain disabled.
+
 ### Four production defects this work found and fixed
 
 The mount's E2E was the **first production execution of the Task 13 job-catalog read RPCs**. PostgreSQL validates plpgsql statement semantics lazily, so the wave's parse verification could not have caught these; each was invisible until a real call ran. Repaired by ledger `20260818174706` and `20260818175549` (both mirrored byte-exact in `migrations/`):
@@ -3765,11 +3774,13 @@ Coverage: `src/lib/agent-control-plane/evidence/__tests__/normalize-corresponden
 
 Already-ingested rows keep their stored placeholders. Recovering them means re-normalizing from the retained `content_value` bytes — a separate backfill decision, Jackson's call, because it reprocesses real customer email.
 
-### Jackson-gated steps (none taken)
+### P1 release gates — complete (verified 2026-08-20)
 
-1. Provision `OPS_AGENT_OPERATIONAL_READ_CURSOR_KEY` in Vercel production — 32 bytes as 64 lowercase hex. The mount answers 503 without it, by design: signed keyset cursors are part of the read contract, and serving page one of a read whose page two cannot exist would be a silent partial capability.
-2. Push `main` — this auto-deploys to customers.
-3. Add the connector at `https://app.opsapp.co/api/mcp` in his claude.ai account and complete OAuth in his browser.
+1. `OPS_AGENT_OPERATIONAL_READ_CURSOR_KEY` is provisioned in Vercel production. Its value was not read or exposed; successful authenticated paged reads prove the runtime accepted it.
+2. The MCP mount is merged to `main` and deployed at `https://app.opsapp.co/api/mcp`.
+3. Claude is dynamically registered and connected through an active OPS OAuth grant.
+
+No further release gate remains for the Claude-first read-only P1. Expanding to another host, enabling site-visit tools, adding any write capability, or changing the Phase C customer-facing context path is a separate initiative with its own authorization and proof gates.
 
 **End of Document**
 
