@@ -2248,6 +2248,29 @@ Permission tables have their own RLS policies:
    - Rows whose `company_id` ≠ the user's current company are ignored (stale).
 3. **Role** — widest scope among the user's role's `role_permissions` (`all` > `assigned` > `own`).
 
+**iOS account-admin parity (2026-08-18 — bug `bb4775c1`).** iOS previously
+entered the role branch first and threw `noRoleAssigned` when an account holder
+had no `user_roles` row. `PermissionStore` then loaded an empty cache and every
+gate failed closed, even though the database and web correctly treated the same
+account as an admin. `PermissionService.fetchPermissions` now resolves
+`AdminAuthority` first from the canonical `users` and `companies` rows, using the
+same exact-text predicates as `private.current_user_is_admin()`:
+`users.is_company_admin`, `companies.account_holder_id`, or
+`companies.admin_ids`, with soft-deleted users excluded. An admin receives every
+registered client permission at scope `all` without consulting role or override
+rows; feature flags still outrank that authority. A failed admin probe is
+`unknown`, not `false`, so an initialized store preserves its last-known answer;
+an empty cache and an explicit non-admin result continue to fail closed. Sources:
+`ops-ios/OPS/Utilities/AdminAuthority.swift`,
+`ops-ios/OPS/Network/Supabase/PermissionService.swift`, and
+`ops-ios/OPS/Utilities/PermissionStore.swift`; implementation commit `aa40d4a5`,
+focused regression cover in `OPSTests/Utilities/AdminAuthorityTests.swift`.
+Production's five broken owner rows were independently repaired by
+`20260818224814_repair_web_onboarded_owner_role_rows.sql`; a 2026-08-20 live
+read found zero active account admins/account holders without a `user_roles`
+row. The iOS defense remains required because account authority must not depend
+on denormalized role-row completeness.
+
 **Functions changed** (`CREATE OR REPLACE`, signatures unchanged): `public.has_permission(uuid,text,text)` and `private.current_user_scope_for(text)` fold in the override lookup between the admin bypass and the role lookup. `private.current_user_has_permission` composes the latter and needed no edit.
 
 **Read policies added** (permissive, `TO public` — the app executes as anon): `user_roles` SELECT for same-company members; `role_permissions` SELECT for preset-or-same-company roles. These un-break the Team roster + Roles editor + the member access view with **no app release** (iOS reads benefit too).

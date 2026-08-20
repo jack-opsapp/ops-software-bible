@@ -1155,9 +1155,41 @@ RESTRICTIVE `project table photos delete denied` policy; tenancy remains on
 migration: it required `private.current_user_can_edit_project()`, which real
 crew members fail (they resolve to a NULL `projects.edit` scope), so leaving it
 would have nullified the decided company-wide visibility toggle. The matching
-iOS change — scoping the delete affordance to own photos for non-admins — ships
-with the next app build (task W2-3); until then iOS may still offer delete on
-another user's photo and the server will correctly reject it.
+iOS change scopes the delete affordance to own photos for non-admins, while a
+`projects.edit` grant at scope `all` retains admin-any deletion. UUID casing and
+whitespace are normalized before comparing; empty, malformed, or server-only
+uploaders such as `system` never match a crew user. Sources:
+`OPS/DataModels/ProjectPhoto+DeleteAuthorization.swift` and
+`OPSTests/DataModels/ProjectPhotoDeleteAuthorizationTests.swift`; commits
+`e468976b` and `9dd75e55`, merged into local iOS `main`. App Store distribution
+of that client behavior remains a separate, unverified release gate; the live
+server guard rejects any older-client affordance that exceeds this contract.
+
+**Parent-create ordering barrier (2026-08-18 — bug `ca26fd7a`).** The restrictive
+INSERT policy was not the defect. The report fired at `2026-08-19 03:05:23Z`,
+while its destination project `7e4d418e-6a0c-4ec6-865b-bef70bc57fe6` did not
+reach `public.projects` until `2026-08-19 18:59:16Z`. The policy correctly denied
+the child row because `private.current_user_can_view_project(...)` cannot
+authorize a parent that does not exist. The legacy `projects.project_images`
+PATCH simultaneously matched zero rows and PostgREST returned success with an
+empty body, so the app cleared sync state after writing nothing. Weakening RLS
+would permit orphan photo rows and is explicitly not the repair.
+
+Both direct photo rails now consult the outbound queue's existing parent barrier:
+`ImageSyncManager` and `ShareUploadCoordinator` call
+`SyncCrossEntityDependency.hasUnresolvedCreate(entityType: .project, ...)` before
+any project-scoped REST write. A pending, in-progress, failed, parked, or
+quarantined project create holds the bytes locally without consuming an attempt
+or retry budget; completion releases them on the next drain. IDs compare
+case-insensitively, and queue reads are predicate-free to avoid the known empty
+`SyncOperation` SwiftData trap. The in-app legacy PATCH now requests its affected
+row and passes the response through `SupabaseWriteGuard`; a genuine zero-row
+result becomes `serverRowMissing`, skips the certain-to-fail `project_photos`
+insert, keeps sync pending, files `PROJECT_ROW_MISSING`, and leaves a visible
+failed tile stating that the bytes remain on the phone. Source commit
+`6dc71ec0`; regression cover:
+`OPSTests/Sync/SharePhotoCreateBarrierTests.swift`. This is an iOS ordering fix,
+not a database migration; the live INSERT policy remains unchanged.
 
 ### Capture UI — one standardized camera (iOS)
 
