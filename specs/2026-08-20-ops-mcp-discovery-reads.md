@@ -215,7 +215,8 @@ The job result contains `matches`, `returned_match_count`, `result_budget_omitte
 
 ### 4.3 Bounds and completeness
 
-- Database source candidates use a 26th-row sentinel; no unbounded exact total is computed.
+- The ordered authorized candidate set is hard-capped with a 501st-row sentinel; no unbounded exact total is computed and the sentinel produces a fixed query-bound state.
+- Each page uses `limit + 1` (at most 26 rows) to prove whether another page exists.
 - At most 25 matches are returned.
 - At most 26 projection source versions/evidence atoms are retained: 25 children plus one collection proof.
 - The public serialized result is at most 60,000 characters.
@@ -236,7 +237,9 @@ Ranking is deterministic and versioned, not a confidence score:
 5. normalized display value under bytewise `C` collation;
 6. UUID under bytewise ordering.
 
-For jobs, title precedes address at the same textual tier. Filter-only results order by the selected date field descending, then kind and UUID.
+The all-token-contains tier is eligible only when every query token is at least three characters. Two-character queries remain useful through exact and normalized-prefix matching, which the bytewise prefix index can prove without a tenant-wide scan. One-character tokens are rejected. This is a performance and enumeration boundary, not silent query reinterpretation.
+
+For jobs, title precedes address at the same textual tier. Filter-only results order by the selected date field descending, then kind and UUID. SQL assigns the final ordered, actor-visible candidate set a stable `rank_ordinal` only after applying a hard 501-candidate materialized gate. A 501st candidate produces the fixed query-bound state instead of false pagination completeness.
 
 Phase 1 deliberately excludes typo similarity, phonetic matching, stemming, synonym expansion, embeddings, LLM ranking, and caller-selected weights. Those techniques can silently reinterpret customer identity and require separate evidence.
 
@@ -248,10 +251,10 @@ Extend the existing nominal operational cursor with customer-discovery and job-d
 - actor, company, permission snapshot, and source revision;
 - canonical cursor-free input hash;
 - read-as-of database time;
-- the exact last retained rank/key tuple;
+- the exact last retained `rank_ordinal` plus source kind and UUID identity guard;
 - issued/expiry times under the existing maximum one-hour TTL.
 
-A changed query, actor, company, permission snapshot, source revision, ranking revision, or result order invalidates the cursor. Permission drift produces the existing stale-permission error rather than a generic parse error.
+A changed query, actor, company, permission snapshot, source revision, ranking revision, or result order invalidates the cursor. The next page recomputes the bounded ranking only under the unchanged source revision/read time and resumes after the stored ordinal. This avoids placing an arbitrarily long customer/title/address value in the 512-character cursor. Permission drift produces the existing stale-permission error rather than a generic parse error.
 
 ## 6. Authority and privacy
 
