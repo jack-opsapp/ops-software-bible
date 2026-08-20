@@ -3319,16 +3319,22 @@ Phase 1 standalone OPS Decks contract added 2026-06-26: standalone sketches reus
 Lead attachment added 2026-07-14 (migration `add_deck_designs_opportunity_id`): `deck_designs.opportunity_id uuid NULL REFERENCES opportunities(id)` + partial index on non-null values. A deck drawn on a LEAD — the lead detail's START DECK DESIGN entry (`OPS/Views/Leads/Components/LeadDeckSection.swift` → `CreationPickerView(opportunityId:)`) or a site-visit sketch for a bound lead (`SiteVisitCaptureView.startDeckDesign`) — carries `opportunity_id`. iOS ships the link on deck create/update sync ops under the same non-nil-only rule as `project_id` (an explicit null from a stale device must never unlink), merges it inbound via `DeckDesign.serverMergeFields`, and the lead detail performs the same targeted `fetchForOpportunity` self-heal the project Deck tab does. At conversion, `convert_opportunity_to_project` re-parents unparented lead decks (`project_id IS NULL`) onto the project and KEEPS `opportunity_id` as provenance — the lead keeps showing its deck after WON, and the iOS site-visit handoff's client-side `project_id` stamp remains as an idempotent second writer. OPS-Web gained a **read-only lead surface** the same day: the pipeline detail's OVERVIEW tab renders a state-aware `// DECK DESIGN` section between Location and Linked (nothing renders when the lead has no deck) via `DeckDesignService.fetchForOpportunity` (`deck-design-service.ts` — selects card columns plus `drawing_data->vertices`/`->edges` JSON paths only, never the full blob; RLS `company_isolation` scopes the read). Each row opens a view-only portaled viewer (`deck-design-viewer.tsx`): raster `thumbnail_url` when present, else a hairline SVG wireframe built from vertices/edges (`src/lib/utils/deck-wireframe.ts` — legacy-tolerant: malformed geometry degrades to `null`/icon, never throws, matching the inbound-decode doctrine above). Decks are still authored exclusively on iOS; the web neither creates nor edits `deck_designs`.
 
 Lead/project deck viewer invalidation contract added 2026-08-19 (`ops-ios`
-commit `968a0d06`): `DeckTabView` owns one owner-scoped local fetch and receives
-SwiftData save identifiers. It refreshes for the current design's update/delete
-and for a possible new candidate insert; unrelated design updates/deletes do
-not mutate view state. Insert handling uses a scoped fetch rather than
-`ModelContext.model(for:)`, because an insert/delete batch can invalidate the
-fault before the main-queue notification is delivered. `LeadDeckScreen`
-receives the resolved model from `DeckTabView` for fullscreen instead of
-mounting a second query. This boundary prevents company-wide `DeckDesign`
-Realtime traffic from repeatedly rebuilding the lead deck SwiftUI graph on the
-main thread while preserving newly created, updated, and deleted local state.
+commits `968a0d06` and `2c30a8c9`): `DeckTabView` owns one owner-scoped local
+fetch and receives SwiftData save identifiers. Local main-context saves are
+filtered by their context; background `DataActor` consumers observe
+`dataActorMainContextDidRefresh`, which `MainContextRefreshBridge` posts only
+after the iOS 17.6–25 inserted-identifier visibility workaround has completed.
+The view re-evaluates any `DeckDesign` insert or update because an existing
+design can be reassigned into or away from the visible owner, but it writes
+state only when the selected persistent identity changes. A current-model
+delete clears the selection directly. Fetch handling never dereferences a save
+identifier with `ModelContext.model(for:)`, because an insert/delete batch can
+invalidate that fault before the main-queue notification is delivered.
+`LeadDeckScreen` receives the resolved model from `DeckTabView` for fullscreen
+instead of mounting a second query. This boundary prevents company-wide
+`DeckDesign` Realtime traffic from repeatedly rebuilding the lead deck SwiftUI
+graph on the main thread while preserving creation, reassignment, update, and
+deletion correctness.
 
 Visit continuation invariant (2026-07-14, same day): the site visit's DECK action CONTINUES an existing design instead of forking — `SiteVisitDeckDesignResolver` opens the visit's own newest active deck-artifact design first, then the lead's display candidate (identical selection rule to the lead page, so both surfaces always open the SAME record), and only creates a fresh canvas when neither exists. `SiteVisitCaptureViewModel.attachDeckDesign` is idempotent per design id (reopening never stacks duplicate DECK artifacts or double-hands the design to conversion). Pre-fix behavior forked a new design on every tap — including the checklist row's EDIT button, which silently re-linked the answer to the new copy.
 
