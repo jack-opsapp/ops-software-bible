@@ -62,6 +62,17 @@ SQL that is written, reviewed, and committed in `ops-web` but held out of the au
 row and no file in this directory until it is actually applied — at which point it is mirrored here under its
 real ledger version like any other migration.
 
+A bounded repair may also be committed to **local-only** OPS-Web `main` while push/deploy/migration approval is
+withheld. That source likewise has no production ledger row and no archive mirror until an approved apply is
+read back. Current local-only repair:
+
+- `ops-web/supabase/migrations/20260820172857_fix_related_attachment_record_shadowing.sql` — bug
+  `4501a2dc-2b1a-427a-9c8c-04bd6fcdad74`, OPS-Web commit `8c24e50d`. Replaces only
+  `private.reconcile_related_email_conversion_photo_sources(uuid, uuid, uuid, text, text)` to remove a
+  PL/pgSQL record/relation alias collision and no-op before a valid SHA-256 exists. Merged into local OPS-Web
+  `main` on 2026-08-20; **not pushed, deployed, or applied**. On approval, apply from OPS-Web and mirror the
+  exact ledger-stamped SQL here after readback.
+
 - `ops-web/supabase/migrations/staged/20260817_STAGED_email_photo_source_attribution.sql` — flips the
   email→project photo pipeline to `source = 'email'` (+ provenance) and backfills the 12 photos already imported
   as `'other'`. **GO condition: the ops-web `main` push GO — apply it and push in the same action**, because the
