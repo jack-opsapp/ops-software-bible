@@ -1131,6 +1131,19 @@ The last two are email-pipeline provenance (added 2026-08-18, ledger
 `complete_email_conversion_photo_job` — never by a manual upload. See
 `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Automation E2.
 
+**Lead activity/photo provenance boundary (reconciled 2026-08-20).** Canonical
+email attachment rows retain their exact `activity_id`, and
+`refresh_email_activity_attachments` projects each URL only onto that exact
+activity. Conversion-photo eligibility joins through the same activity and
+requires `activities.direction = 'inbound'`; outbound images cannot enter Lead
+Photos. The remaining gap is presentation-only: the current web pipeline photo
+tab flattens image URLs across email activities instead of preserving the
+activity/direction group, and iOS does not yet surface this email provenance.
+A later authorized presentation patch must group by exact activity id, expose
+direction/provenance where appropriate, and filter Lead Photos to inbound. It
+must not change the server attribution or materialization contract and is not
+part of the P1-16 Phase C runtime release.
+
 **Client write permissions (2026-07-29, SYSTEMS REPAIR W1-4 — bug `1154fe67`).**
 Until this date `anon`/`authenticated` held only `INSERT` and `SELECT` on the
 table, so **every** iOS UPDATE failed `42501` in silence: both soft-delete paths
@@ -6569,6 +6582,49 @@ All gating flows through `inboxModule` in `src/lib/types/permissions.ts`:
 | `src/lib/api/services/phase-c-learning-service.ts` | Apply corrections to similar threads |
 | `src/lib/hooks/use-inbox-threads.ts` | TanStack Query hooks (list, detail, actions, unread count) |
 | `src/lib/types/email-thread.ts` | TypeScript types + DB mapper |
+
+#### P1-16 durable lead intelligence (2026-08-20 — local only)
+
+Every meaningful linked correspondence event now owns one durable opportunity
+high-water workload. The existing email-sync cron drains summary refresh,
+active-stage evaluation, deterministic commercial outcome, and bilateral-event
+handoff as independently acknowledged components. Model refusal, malformed
+output, crash, lease loss, or provider outage retains the exact dirty marker
+with component errors and backoff; later correspondence supersedes the leased
+snapshot without allowing the old worker to clear it.
+
+Lifecycle judgments are auditable before mutation. The immutable receipt
+records proposed stage/outcome, confidence, exact correspondence-event and
+provider-message evidence, and reason. Ambiguous authority, identity, or
+acceptance writes durable `review` instead of converting. Unequivocal,
+authorized customer acceptance reuses the existing
+`ProjectConversionService` / `convert_opportunity_to_project` path, including
+its assignment snapshot, exact-message evidence, existing-project adoption,
+and exactly-once opportunity/project guards.
+
+Administrative and non-customer mail is excluded before customer lifecycle
+interpretation. Exact primary-client, opportunity-contact, and persisted
+sub-client/co-owner email can establish relationship identity; a name, shared
+surname, forwarded header, locality, or administrative mailbox cannot. A
+conflict remains unlinked/reviewable rather than being forced onto a lead.
+
+For scheduling, Phase C evaluates the complete exact-opportunity history after
+quoted text is removed. It may persist `ready` only when distinct authorized
+parties explicitly proposed and accepted the same resolved event, with owner,
+title, start/end, timezone, location when known, and both operator/customer
+attendee roles. Missing authority, bilateral acceptance, owner, attendee,
+date/time, or timezone produces `review`; unrelated calendar-like inbound text
+does nothing. The result is only a `phase_c_bilateral_event_handoffs` envelope.
+P1-17 owns duplicate/conflict/permission checks, one canonical OPS event or
+site visit, envelope consumption, and connected-provider synchronization.
+
+Crystal Elton regression contract: the 2026-08-20 reply requesting a call to
+discuss moving forward with the quote is material correspondence. It must
+refresh the summary and advance `quoted` to `negotiation`; it is neither clear
+deal acceptance nor bilateral appointment confirmation, so it must not create
+a project or a ready booking handoff. The local implementation encodes that
+boundary; production remains on the prior runtime until an approved migration
+and OPS-Web deployment occur.
 
 ### What replaced the old §19
 

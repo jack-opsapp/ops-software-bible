@@ -276,6 +276,45 @@ Responses: `200` when the targeted refresh writes or legitimately completes with
 
 **Release state (updated 2026-08-17):** `20260807123500_authorize_lead_summary_refresh.sql` is applied in production and the OPS-Web route ships with the bugfix wave of 2026-08-17 (branch `fix/ios-bug-batch-server-20260807` merged via `release/web-bugfix-wave-20260817`). The iOS caller remains gated on its App Store release. Each successful human lead-activity save can add one existing Phase C model invocation, with its normal token cost; no new provider or subscription is introduced.
 
+### Durable Phase C lead intelligence drain (2026-08-20 — local only)
+
+The existing `GET /api/cron/email-sync` route now drains at most two
+`opportunity_phase_c_work` rows under the existing mailbox-sync execution
+boundary after ingestion and pending lead-scan recovery. Source:
+`ops-web/src/lib/api/services/phase-c-lead-intelligence-work-service.ts`,
+`phase-c-lead-intelligence-work-runtime.ts`, and OPS-Web commit `8c86394e`.
+
+The response includes `leadIntelligence` counts for claimed, completed,
+superseded, retrying, failed, component-applied/reviewed/skipped, plus bounded
+errors, and `leadIntelligenceError` for a top-level worker failure. Retained or
+failed work contributes to the route's existing HTTP 503 health signal; it is
+not reduced to a log-only warning. No new route, scheduler, provider, or
+subscription is introduced.
+
+The local migration exposes service-role-only RPCs:
+
+| RPC | Contract |
+|---|---|
+| `claim_opportunity_phase_c_work` | Leases due high-water rows with bounded batch/lease values and skip-locked concurrency. |
+| `acknowledge_opportunity_phase_c_component` | Acknowledges one committed component only when company, opportunity, leased worker, and exact required event still match. |
+| `fail_opportunity_phase_c_work` | Persists component errors, releases the lease, and schedules bounded retry without clearing the marker. |
+| `record_opportunity_lifecycle_decision` | Creates or replays one immutable proposed/review decision receipt; conflicting evidence is rejected. |
+| `settle_opportunity_lifecycle_decision` | Settles only the recorded receipt after the guarded effect returns. |
+| `apply_phase_c_opportunity_stage_decision` | Applies an allowed active-stage advance under stage, assignment-version, decision, and manual-evidence-boundary guards. |
+| `record_phase_c_bilateral_event_handoff` | Persists one immutable ready/review envelope for P1-17; it creates no OPS or provider calendar event. |
+
+Component order is summary, lifecycle, deterministic commercial outcome, then
+bilateral-event handoff. Components settle independently: a model refusal or
+outage keeps summary/lifecycle due but does not block the guarded commercial or
+event evaluator from recording its result. Already acknowledged components do
+not replay on retry. Phase C disabled is an explicit durable skip for all four
+components.
+
+This code and migration are local only. They have not been pushed, deployed,
+or applied to production. Runtime cost remains the existing Phase C model
+usage plus retry invocations for unresolved work; there is no new fixed vendor
+cost. Exact incremental model spend depends on message volume and token count.
+
 ---
 
 ## Supabase Repositories
