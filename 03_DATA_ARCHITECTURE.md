@@ -5684,6 +5684,62 @@ Attribution begins only from `(company_id, email_connection_id, email_message_id
 
 **Related-photo reconciliation repair (2026-08-20 — local only, not released).** Production attachment discovery can create the canonical descriptor before `content_sha256` exists. The deployed `private.reconcile_related_email_conversion_photo_sources(uuid, uuid, uuid, text, text)` reused `related_attachment` as both its PL/pgSQL loop record and the `email_attachments` relation alias, so PostgreSQL resolved the unassigned record first and aborted the insert with `record "related_attachment" is not assigned yet`. OPS-Web commit `8c24e50d` adds forward migration `20260820172857_fix_related_attachment_record_shadowing.sql`: it uses a scalar attachment ID and a distinct relation alias, deliberately returns while the hash is NULL or not lowercase 64-character hex, and otherwise preserves the existing company/hash + opportunity-or-thread match and `(occurred_at, id)` order. The signature, `SECURITY DEFINER` boundary, fixed `search_path`, and API-role revokes are unchanged. The migration is merged into **local** OPS-Web `main` only; it has not been pushed, deployed, or applied to production and therefore has no Supabase ledger row or Bible migration mirror yet. Bug: `4501a2dc-2b1a-427a-9c8c-04bd6fcdad74`.
 
+## Phase C Lead Intelligence Workload (2026-08-20 — local only, not released)
+
+OPS-Web migration `20260820204454_phase_c_lead_intelligence_workload.sql`
+(commits `b293d1dd` through `8c86394e`) adds three server-authoritative tables.
+The migration is not applied to production, has no Supabase ledger row, and is
+not mirrored into the Bible migration archive until it is actually applied.
+
+### `opportunity_phase_c_work`
+
+One row per opportunity is the durable high-water mark for meaningful,
+successfully projected correspondence. The correspondence-event trigger moves
+`required_event_id` forward only by `(occurred_at, id)`, clears stale component
+errors, and makes the row due again. Four independent event-fenced completion
+columns cover `summary`, `lifecycle`, `commercial`, and `event_handoff`.
+`component_outcomes` and `component_errors` preserve component-level truth;
+one model failure cannot erase the dirty marker or prevent deterministic later
+components from committing. Claims use bounded leases and `FOR UPDATE SKIP
+LOCKED`; failure records an error and exponential backoff, while an
+acknowledgement can clear only the exact event snapshot it leased. A newer
+event supersedes the worker without losing work.
+
+### `opportunity_lifecycle_decisions`
+
+Append-only decision evidence precedes every lifecycle mutation. Each receipt
+stores company, opportunity, exact source event, decision kind/key, proposed
+stage or outcome, confidence, evidence event IDs, evidence provider-message
+IDs, reason, initial disposition, and review reason. The evidence columns are
+immutable; only settlement fields may move a decision from `proposed` to
+`applied`, `skipped`, `review`, or `failed`. The uniqueness key is
+`(opportunity_id, source_event_id, decision_kind, decision_key)`, so replay is
+idempotent and a conflicting replay fails closed.
+
+### Manual stage correction boundary
+
+`opportunities.stage_manual_boundary_event_id`,
+`stage_manual_boundary_at`, and `stage_manual_corrected_at` replace the old
+permanent meaning of `stage_manually_set` for active stages. A human stage edit
+captures the newest meaningful correspondence as its evidence boundary. Phase
+C may advance an active stage only from strictly newer evidence, and the
+guarded apply RPC rechecks stage, assignment version, decision receipt, and
+boundary under the opportunity row lock. Terminal manual truth remains inert;
+an automated apply clears `stage_manually_set` only after it proves newer
+evidence and commits the allowed monotonic transition.
+
+### `phase_c_bilateral_event_handoffs`
+
+This is the provider-agnostic P1-16 to P1-17 envelope. A row binds one
+idempotency key to the opportunity, immutable lifecycle decision, distinct
+proposal and acceptance events, requested OPS owner, event kind/title,
+resolved start/end/timezone, location, attendees, and either `ready` or
+`review`. A `ready` row structurally requires bilateral evidence, a resolved
+owner, time interval, timezone, and both evidence events. `canonical_event_kind`,
+`canonical_event_id`, and `consumed_at` are reserved for P1-17's guarded OPS
+event/site-visit creation. This table does not create or synchronize a provider
+calendar event.
+
 ## Lead Intake Identity and Commercial Guards (live 2026-07-29)
 
 These migrations are applied to production and mirrored in `migrations/`:

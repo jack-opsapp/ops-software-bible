@@ -1766,6 +1766,49 @@ Core principles:
 - **Phase C is optional**: the core lifecycle must remain correct with Phase C off. Phase C improves extraction, matching, drafting, and learning when enabled, but is not required for basic lifecycle correctness.
 - **Drafts are auditable**: every draft stores its origin, generated text, final sent text, linked opportunity/thread/message context, edit history, and final disposition.
 
+#### P1-16 Phase C lifecycle convergence (2026-08-20 — local only)
+
+OPS-Web commits `b293d1dd` through `8c86394e` make meaningful projected
+correspondence a durable four-component workload rather than a best-effort
+side effect of cursor advancement. Summary, active-stage, commercial, and
+event-handoff completion are acknowledged against the exact correspondence
+high-water event. A failure retains the marker and its component error for
+retry; already committed components are not repeated; a newer event cannot be
+cleared by the older lease.
+
+Active-stage changes follow this precedence contract:
+
+1. Record immutable proposed stage, confidence, exact event/message evidence,
+   and reason before attempting the change.
+2. Recheck expected stage, assignment version, allowed transition, and manual
+   evidence boundary under the opportunity row lock.
+3. Preserve a human correction against all correspondence at or before its
+   captured boundary. Strictly newer correspondence may advance active stages
+   such as `quoted → negotiation`; successful Phase C application then clears
+   the obsolete manual flag. Terminal manual `lost`, `won`, or `discarded`
+   truth is not reopened by this worker.
+4. Settle the decision as `applied`, `skipped`, or `review` with the guard
+   reason. Replays resolve the existing receipt rather than inventing another
+   judgment.
+
+Commercial Won remains deterministic. Complete opportunity-wide evidence is
+resolved through exact correspondence events and activities, quoted history is
+excluded, and the decisive inbound author must be in the persisted customer
+relationship. Clear acceptance records its decision before invoking the
+existing guarded opportunity-to-project conversion, which adopts only one
+provably unique existing project and otherwise creates exactly one. Ambiguous
+identity, sender authority, acceptance, or project adoption records durable
+review and leaves stage/project state unchanged.
+
+The same workload can produce a provider-agnostic event envelope only after
+distinct authorized parties agree to one resolved event. It never creates an
+OPS event, site visit, or provider calendar object. Those apply-time checks and
+effects are the P1-17 lifecycle boundary.
+
+Migration `20260820204454_phase_c_lead_intelligence_workload.sql` is local and
+unapplied; production therefore still has the earlier best-effort Phase C
+summary/stage behavior. No production rows were rewritten by this work.
+
 #### Lead intake terminality and reactivation contract (prepared 2026-07-31)
 
 The owner-fenced nonterminal checkpoint is live. Production migration record
