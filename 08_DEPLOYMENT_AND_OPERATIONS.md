@@ -99,13 +99,18 @@ This document covers all operational aspects of deploying and maintaining the OP
 // Package.swift equivalent
 dependencies: [
     .package(url: "https://github.com/firebase/firebase-ios-sdk", from: "12.6.0"),
-    .package(url: "https://github.com/supabase/supabase-swift", from: "2.41.1"),
+    .package(url: "https://github.com/supabase/supabase-swift", from: "2.54.1"),
     .package(url: "https://github.com/stripe/stripe-ios", from: "23.0.0"),
     .package(url: "https://github.com/google/GoogleSignIn-iOS", from: "7.0.0"),
     .package(url: "https://github.com/OneSignal/OneSignal-iOS-SDK", from: "5.0.0"),
     .package(url: "https://github.com/aws-amplify/aws-sdk-ios-spm", from: "2.36.0")
 ]
 ```
+
+**Supabase floor (2026-08-19):** iOS must not resolve `supabase-swift` below
+2.54.1. Version 2.54.1 contains the upstream Realtime cancellation deadlock
+repair required by `RealtimeProcessor.stopListening()`; OPS pins both the Xcode
+package floor and `Package.resolved` (`ops-ios` commit `968a0d06`).
 
 **Firebase Products:**
 - FirebaseCore

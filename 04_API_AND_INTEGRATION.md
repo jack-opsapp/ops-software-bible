@@ -753,6 +753,19 @@ func startListening() async
 func stopListening() async
 ```
 
+### Realtime cancellation watchdog safety (2026-08-19)
+
+The iOS dependency floor is `supabase-swift` 2.54.1. Earlier resolved version
+2.41.1 can deadlock while cancelling the socket-status `AsyncStream`: one path
+resumes a continuation while holding the subject lock while cancellation holds
+the Swift task-status lock and re-enters the subject. Because
+`RealtimeProcessor`, `SyncEngine.stopRealtime()`, and the app lifecycle stop
+path are main-actor isolated, that lock inversion becomes a foreground
+`0x8BADF00D` scene-update watchdog rather than a recoverable socket failure.
+Supabase 2.54.1 resumes continuations outside the lock and removes the affected
+subject implementation. OPS enforces the version in
+`OPS.xcodeproj/project.pbxproj` and `Package.resolved` (commit `968a0d06`).
+
 ### Subscribed Tables (9 entity tables)
 
 All subscriptions are scoped to a single Supabase channel named `"company-{companyId}"`, with each table filtered by `company_id=eq.{companyId}` (except `companies` which filters on `id=eq.{companyId}`).
