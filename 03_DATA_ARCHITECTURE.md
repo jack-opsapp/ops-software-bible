@@ -155,6 +155,7 @@ final class Project: Identifiable {
     var notes: String?
     var companyId: String
     var clientId: String?
+    var primarySubClientId: String? // Explicit project contact from client.subClients
     var opportunityId: String?       // Supabase Opportunity UUID
     var allDay: Bool
     var projectDescription: String?
@@ -199,6 +200,7 @@ final class Project: Identifiable {
     // created_at       TIMESTAMPTZ — auto-populated by Supabase default
     // created_by       UUID FK → auth.users(id) — populated by iOS on insert; index idx_projects_created_by_created_at (created_by, created_at DESC) WHERE deleted_at IS NULL speeds the recency strip query.
     // updated_at       TIMESTAMPTZ — auto-maintained by Supabase trigger; read-only from iOS, drives the JobBoard "latest edited" sort (see OPS/Views/JobBoard/JobBoardProjectListView.swift `recencyStamp(for:)`).
+    // primary_sub_client_id UUID NULL FK → sub_clients(id) ON DELETE SET NULL — explicit project contact; NULL uses the parent client.
     // vinyl_order_status TEXT DEFAULT 'not_ordered' CHECK ∈ {not_ordered, ordered} — Deck Builder marker-only vinyl status.
     // vinyl_ordered_at   TIMESTAMPTZ NULL — when project vinyl was marked ordered.
     // vinyl_ordered_by   UUID FK → public.users(id) ON DELETE SET NULL, NULL — who marked vinyl ordered (retargeted 2026-07-04 from an auth.users default; see note).
@@ -207,6 +209,29 @@ final class Project: Identifiable {
     // vinyl_source       TEXT NULL CHECK ∈ {supplier, shop} — where the material came from (VINYL ORDER RECORD, 2026-08-18; migration add_projects_vinyl_source). **PENDING: written but NOT YET APPLIED — the iOS build that writes it must not ship first.** NULL = not recorded, read as `supplier`. vinyl_order_status stays 'ordered' for BOTH dispositions: its CHECK admits only not_ordered/ordered and every shipped iOS build decodes an unknown status as `.notOrdered`, which would re-surface a handled job on the VINYL ORDERS board. Deliberately NOT projected onto `ProjectVinylOrderMarker` — the authoritative record is the frozen design snapshot, so no SwiftData schema version was spent on it.
 }
 ```
+
+**Primary project contact contract (staged locally 2026-08-21; not applied or
+customer-live):** migration `20260821185843_project_primary_sub_client.sql`
+adds nullable `projects.primary_sub_client_id` plus a partial index. A private,
+search-path-hardened validation trigger accepts only an active `sub_clients` row
+that belongs to the project's current `client_id` and `company_id`. Changing the
+project's client through an older caller clears an inherited selection rather
+than carrying the wrong person forward; deleting or re-parenting the selected
+sub-client also clears affected projects. Existing projects remain NULL and no
+customer rows are rewritten by the migration.
+
+iOS persists the nullable id on `Project` and round-trips it through
+`SupabaseProjectDTO`, delta pull, realtime/cache merge, local generic updates,
+and field-level write protection. `primaryProjectContact` rejects stale,
+deleted, and re-parented local relationships. The explicit contact supplies the
+project's email, phone, and `effectiveProjectContactName`; without a selection,
+OPS uses only the parent client and never chooses an arbitrary first
+sub-contact. `effectiveClientName` remains the parent client/company label. An
+assignment commits the local selection and its `SyncOperation` in one SwiftData
+transaction; failure leaves the prior choice visible and queued state unchanged.
+The outbound cross-entity barrier maps `primary_sub_client_id` to `subClient`,
+so an assignment to an offline-created contact waits for that contact's create
+instead of parking on the server validation trigger.
 
 **Deck Builder Vinyl Marker (2026-05-21)**: `projects.vinyl_order_status`,
 `projects.vinyl_ordered_at`, and `projects.vinyl_ordered_by` are a
@@ -276,8 +301,10 @@ Codable inside `DeckDrawingData` JSON with decode fallbacks — **no SwiftData
 var computedStartDate: Date? { tasks.compactMap { $0.startDate }.min() }
 var computedEndDate: Date? { tasks.compactMap { $0.endDate }.max() }
 var effectiveClientName: String { client?.name ?? "" }
-var effectiveClientEmail: String? { ... }   // Cascades to sub-clients
-var effectiveClientPhone: String? { ... }   // Cascades to sub-clients
+var primaryProjectContact: SubClient? { ... } // Explicit active same-client selection
+var effectiveProjectContactName: String { ... }
+var effectiveClientEmail: String? { ... }   // Explicit contact, then parent client
+var effectiveClientPhone: String? { ... }   // Explicit contact, then parent client
 var coordinate: CLLocationCoordinate2D? { ... }  // Validates ranges, rejects 0,0
 var computedStatus: Status { ... }          // Derives from task statuses
 var hasTasks: Bool { !tasks.isEmpty }

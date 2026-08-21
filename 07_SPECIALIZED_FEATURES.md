@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** August 6, 2026
+**Last Updated:** August 21, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -43,6 +43,7 @@
 33. [Lead Assignment and Scoped Lead Access](#33-lead-assignment-and-scoped-lead-access-backend--web-production-2026-07-17-ios-implementation-staged)
 34. [PENDING WORK — Sync Recovery Surface](#34-pending-work--sync-recovery-surface-ios-2026-07-22)
 35. [Trash — Recovery Ledger](#35-trash--recovery-ledger-ios-2026-08-06)
+36. [Overdue Review](#36-overdue-review-ios-staged-2026-08-21)
 
 ---
 
@@ -9288,7 +9289,10 @@ fall back to type symbols when no image exists. Project rows include client or
 address, status, deletion age, and task count; client rows include contact and
 project count; task rows always name their project and status. Tapping a row
 opens a quick-view sheet with the full recovery facts and the one valid restore
-action. Trash exposes recovery, not hard delete.
+action. The quick-view sheet reuses that exact representative thumbnail at the
+larger inspection size, so the record cannot lose its photo—or silently show a
+different photo—between the ledger and detail sheet. Trash exposes recovery,
+not hard delete.
 
 ### Restore eligibility
 
@@ -9338,6 +9342,35 @@ ledger) and `39afa7c4` (shared atomic transaction).
 
 This implementation is source-verified in the iOS bug-batch branch; it is not
 customer-distributed until the signed-device/App Store release gate is complete.
+
+---
+
+## 36. Overdue Review (iOS, staged 2026-08-21)
+
+The app-open overdue prompt is a single vertical recovery ledger for tasks that
+are assigned to the current operator, past their end date, and still active.
+Each row presents project, task, and due state as separate scan levels. The
+project/task title is the explicit open-details action; `MARK DONE` is the
+separate status action. There is no horizontal gesture or horizontal scrolling
+contract. At accessibility Dynamic Type sizes, due state and the completion
+control stack vertically and text wraps instead of compressing off-screen. All
+actions retain the mobile 44-point minimum target.
+
+Completion removes a row optimistically while the local-first status write is
+pending, but a pending final row cannot dismiss the review. Success removes the
+pending marker only after `updateTaskStatus` commits the task state and its
+outbox record together in one SwiftData transaction. A thrown save, encoding,
+or outbox-staging failure rolls that transaction back and restores the row with
+`// COULD NOT MARK DONE`, the
+plain-language recovery message, and `TRY AGAIN`; the prompt therefore never
+reports a failed final action as an empty successful review. The operator may
+still choose `Later`, which preserves the existing 24-hour snooze contract.
+
+Primary implementation:
+`ops-ios/OPS/Views/Components/OverdueTasksPromptView.swift`. Pure presentation
+and final-row dismissal coverage lives in
+`OPSTests/Views/OverdueTasksPromptTests.swift`. This redesign is local source
+only until it is merged, pushed, signed, and released through the iOS gate.
 
 ---
 
