@@ -1,10 +1,12 @@
 # OPS MCP Discovery Reads — Customer and Job Resolution
 
-**Status:** Approved product contract; implementation authorized on 2026-08-20. Local build, database migration, production exposure, and runtime acceptance remain separate gates. No write capability is introduced by this specification.
+**Status:** Local implementation complete and independently reviewed on 2026-08-21. The isolated OPS-Web branch carries manifest v7, both discovery reads, and the unapplied migration; the two capabilities are locally `available` but externally `disabled`. Nothing has been pushed, applied, deployed, or exposed, so production remains the existing nine-read MCP surface. No write capability is introduced by this specification.
 
 **Parent architecture:** `specs/2026-08-07-ops-agent-control-plane-mcp-foundation.md`
 
 **Production baseline:** The remote OPS MCP endpoint is live at `https://app.opsapp.co/api/mcp` with nine read-only capabilities. Those reads are exact-reference or bounded-list tools. They do not let an operator begin with ordinary language such as “find Acme” or “the Cedar Street job.”
+
+**Local implementation checkpoint:** OPS-Web branch `feat/mcp-discovery-reads`, commits `133c33e8` through `cbca923f`. Migration `20260820220000_agent_discovery_reads.sql` is frozen at SHA-256 `92416045d100971f9ce4b890de57881e421bf05c8867b11a5aebab5b7afda72d`. Fresh local proof: 78 files / 1,946 tests green, Node 22 TypeScript green, all changed files Prettier-clean, PostgreSQL 17 compile green, 143/143 ECPG statements parsed, and 38/38 custom plus forced-generic query-plan cases green with no executed source sequential scan. Independent review found no remaining P0/P1 issue. This is build evidence, not a production apply or runtime acceptance claim.
 
 ## 1. Decision
 

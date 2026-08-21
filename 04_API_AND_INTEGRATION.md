@@ -3862,6 +3862,14 @@ Opaque 256-bit credentials, stored only as SHA-256 digests, never signed. The au
 
 The transport registers exactly the manifest entries with `implementation = available` **and** `externalExposure = enabled`. All nine v6 reads are now flipped; every write family and the two dark site-visit contracts remain disabled. The manifest constant is the rollout control — nothing in the transport can widen past it. Results and error envelopes both pass through `serializeUntrustedPromptData` before entering any model context.
 
+#### Customer and job discovery expansion (local only, 2026-08-21)
+
+The isolated OPS-Web branch `feat/mcp-discovery-reads` now implements `search_customers` and `search_jobs` end to end under capability-manifest v7. `search_customers` resolves visible clients/sub-clients by canonical name or an exact permission-gated email/NANP phone selector; contact selectors never appear in results, evidence, cursors, warnings, or errors. `search_jobs` resolves visible opportunities/projects by safe title, address, lifecycle, status, and created/updated windows, preserving current reciprocal conversion identity and non-leaking linked-side states. Existing UUID-bound reads remain the only detail surface.
+
+Both new manifest entries are locally `implementation = available` and `externalExposure = disabled`. The trusted internal domain owns all eleven repositories/methods, while MCP registration still returns the production nine because external exposure is a separate gate. The migration remains unapplied and the branch remains unpushed/undeployed; no production tool, grant, route, or customer workflow changed.
+
+Local release proof: 78 files / 1,946 tests, Node 22 TypeScript, and formatting/diff hygiene are green. The frozen migration SHA-256 is `92416045d100971f9ce4b890de57881e421bf05c8867b11a5aebab5b7afda72d`; PostgreSQL 17 compile, 143-statement parse, catalog/ACL/index checks, and 38/38 adversarial query plans are green, with no executed source sequential scan and every broad source path bounded at 501. Independent P0/P1 review returned none. Production apply/readback, internal canary, external manifest promotion, push/deploy, and a real Claude workflow remain separately authorized gates.
+
 ### Safety rails
 
 - **Rate limits** (foundation § 13.3): `lightweight_read` 120/min/grant + 600/min/company; `evidence_search` 30/min/grant + 120/min/company; plus a coarse 300/min/grant transport ceiling. Backed by the shared limiter — Vercel KV is **not** provisioned, so enforcement degrades to per-instance in-memory (documented, accepted at current scale).
