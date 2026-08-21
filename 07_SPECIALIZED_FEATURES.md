@@ -9314,8 +9314,10 @@ actions retain the mobile 44-point minimum target.
 
 Completion removes a row optimistically while the local-first status write is
 pending, but a pending final row cannot dismiss the review. Success removes the
-pending marker only after `updateTaskStatus` accepts the durable local/outbox
-write. A thrown failure restores the row with `// COULD NOT MARK DONE`, the
+pending marker only after `updateTaskStatus` commits the task state and its
+outbox record together in one SwiftData transaction. A thrown save, encoding,
+or outbox-staging failure rolls that transaction back and restores the row with
+`// COULD NOT MARK DONE`, the
 plain-language recovery message, and `TRY AGAIN`; the prompt therefore never
 reports a failed final action as an empty successful review. The operator may
 still choose `Later`, which preserves the existing 24-hour snooze contract.

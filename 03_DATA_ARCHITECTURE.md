@@ -226,7 +226,12 @@ and field-level write protection. `primaryProjectContact` rejects stale,
 deleted, and re-parented local relationships. The explicit contact supplies the
 project's email, phone, and `effectiveProjectContactName`; without a selection,
 OPS uses only the parent client and never chooses an arbitrary first
-sub-contact. `effectiveClientName` remains the parent client/company label.
+sub-contact. `effectiveClientName` remains the parent client/company label. An
+assignment commits the local selection and its `SyncOperation` in one SwiftData
+transaction; failure leaves the prior choice visible and queued state unchanged.
+The outbound cross-entity barrier maps `primary_sub_client_id` to `subClient`,
+so an assignment to an offline-created contact waits for that contact's create
+instead of parking on the server validation trigger.
 
 **Deck Builder Vinyl Marker (2026-05-21)**: `projects.vinyl_order_status`,
 `projects.vinyl_ordered_at`, and `projects.vinyl_ordered_by` are a
