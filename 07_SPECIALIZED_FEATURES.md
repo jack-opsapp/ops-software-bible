@@ -6307,12 +6307,24 @@ sheet. A reason tap completes immediately—there is no second confirmation—an
 an optional 280-character context field is available behind progressive
 disclosure. The result message offers a six-second `UNDO`. Disabled companies
 keep the existing discard explainer/confirmation, but the write still uses the
-same authoritative RPC with a neutral legacy reason. Spam, applicants, vendor
-sales, internal mail, platform notifications, and test traffic discard;
-`NOT A FIT` moves the genuine inquiry to lost/disqualified; duplicate and
-`OTHER` remain held for review rather than being falsely discarded. The client
-applies the complete server receipt locally and never invents a lifecycle
-result.
+same authoritative RPC with a neutral legacy reason. Every visible reason now
+discards: spam, applicants, vendor sales, internal mail, platform notifications,
+test traffic, duplicate, not a fit, created by error, and other. Only the first
+six carry negative classifier polarity; the remaining business/record-quality
+reasons are neutral. The client applies the complete server receipt locally and
+never invents a lifecycle result. This corrected contract is live in Supabase
+under migration
+`20260820223332_lead_conversion_photo_selection_and_disposition_repair`; the
+matching iOS/web source remains subject to its normal app/deployment release.
+
+**Not-now commercial deferral.** The guarded budget/timing disposition path is
+an archive decision, not a loss. It preserves the active stage, archives the
+lead, records disposition `archived` with reason `not_now`, and retains the
+evidence-bound follow-up date. The detector recognizes explicit save-and-return
+language such as “hold on this year and save up” in addition to the earlier
+delay/postpone vocabulary. Kayla Creighton's exact thread was independently
+re-read and remediated through this guarded path on 2026-08-20: it remains
+`follow_up`, is archived with reason `not_now`, and has an April 2027 follow-up.
 
 **Bounded ingestion prior.**
 `LeadFeedbackPriorService` loads only active, Phase C-enabled, company-scoped

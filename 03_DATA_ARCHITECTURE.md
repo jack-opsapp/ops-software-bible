@@ -5269,10 +5269,39 @@ Canonical reason mapping:
 | Structured reason | Lifecycle outcome | Learning polarity |
 |---|---|---|
 | spam, job applicant, vendor sales, internal, platform notification, test traffic | `discarded` | negative |
-| not a fit | `lost` with `disqualified` disposition | positive genuine-inquiry evidence |
-| duplicate | no lifecycle rewrite; duplicate review | neutral |
-| other | no lifecycle rewrite; human review | neutral |
+| duplicate, not a fit, created by error, other | `discarded` | neutral |
 | legacy unspecified (Phase C disabled only) | existing `discarded` behavior | neutral |
+
+The mapping was corrected in production on 2026-08-20 by migration
+`20260820223332_lead_conversion_photo_selection_and_disposition_repair`.
+Every reason offered by a discard surface now performs a discard. In
+particular, `not_a_fit` is an unqualified lead and never contributes to Lost;
+duplicate, other, and created-by-error cannot leave the lead on the board.
+
+Follow-up migration
+`20260821033538_lead_conversion_rpc_permission_hardening` revokes conversion
+candidate execution from `public` and `anon`; only `authenticated` may invoke
+the project and photo candidate RPCs. Both functions remain `SECURITY DEFINER`
+intentionally because they repeat active-user, company, opportunity, and
+conversion-permission checks before returning company-scoped rows.
+
+The same migration adds `archived` to the durable opportunity-disposition
+vocabulary. Evidence-bound budget/timing deferrals now preserve the active
+pipeline stage, set `opportunities.archived_at`, retain a guarded follow-up,
+and write disposition `archived` / reason `not_now`. They do not write Lost
+fields, close dates, win probability, or a Lost stage transition.
+
+**Won conversion photo selection.**
+`get_opportunity_conversion_photo_candidates(opportunity_id)` returns the exact
+manual lead URLs and provenance-eligible inbound email attachments available
+to the current converter. New clients submit `selected_lead_photo_urls` and
+`selected_email_attachment_ids` in conversion evidence. A BEFORE-event guard
+locks the opportunity, rejects malformed, duplicate, foreign, or stale keys,
+and binds the arrays into the immutable conversion event. The event projection
+removes only unselected manual photo rows created by that same transaction and
+enqueues only selected email attachments; later attachment reconciliation
+honors the same immutable selection. An omitted key remains select-all for
+backward compatibility. Existing project media is never pruned.
 
 Source evidence is conservative. The RPC prefers the opportunity's exact
 provider thread key. Without one, it records an email-thread identity only
