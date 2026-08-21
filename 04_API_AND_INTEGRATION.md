@@ -294,8 +294,11 @@ All 15 repository classes follow the same pattern: each takes a `companyId` on i
 `primary_sub_client_id UUID NULL REFERENCES sub_clients(id) ON DELETE SET NULL`
 selects one explicit active contact from the project's current client. Generic
 `updateFields` writes it as a UUID string or JSON null in the same durable
-project outbox used by other project edits. The existing `projects.edit` row
-policy remains the write authority. A private validation trigger rejects a
+project outbox used by other project edits. The assignment-specific iOS writer
+commits the local choice and outbox row atomically, and the cross-entity queue
+barrier holds that project update behind any unresolved local create for the
+selected sub-client. The existing `projects.edit` row policy remains the write
+authority. A private validation trigger rejects a
 deleted, cross-client, or cross-company selection (`23514`), while compatibility
 and cleanup triggers clear a selection when the project client changes through
 an older caller or the chosen contact is deleted/re-parented. The iOS build that
