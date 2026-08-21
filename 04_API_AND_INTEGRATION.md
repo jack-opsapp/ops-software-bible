@@ -354,6 +354,17 @@ All 15 repository classes follow the same pattern: each takes a `companyId` on i
 **Init**: `ProjectRepository(companyId:)`
 **Audit Columns** (2026-05-10, bug 9d5c2535): `created_at` (TIMESTAMPTZ, Supabase default `now()`) and `created_by` (UUID FK → `auth.users.id`, populated by iOS on insert, immutable). Both are round-tripped through `SupabaseProjectDTO`. The combined index `idx_projects_created_by_created_at (created_by, created_at DESC) WHERE deleted_at IS NULL` powers the "start from recent" suggestions strip on the project form.
 **Vinyl Order Marker Columns** (2026-05-21; extended 2026-07-16): `vinyl_order_status` (`not_ordered` / `ordered`, default `not_ordered`), `vinyl_ordered_at` (TIMESTAMPTZ), `vinyl_ordered_by` (UUID FK → `public.users.id`, retargeted 2026-07-04), plus `vinyl_color` (TEXT NULL) and `vinyl_po` (TEXT NULL) — the ordered color + supplier PO record written by the VINYL ORDERS board and every MARK ORDERED path (migration `add_projects_vinyl_color_po`). All five are marker-only project fields for Deck Builder companies, round-tripped through `SupabaseProjectDTO`, written in one atomic `updateProjectFields` payload, and nulled together by CLEAR ORDERED; they do not create catalog orders, inventory deductions, or task materials.
+**Primary Project Contact (staged locally 2026-08-21; migration not applied):**
+`primary_sub_client_id UUID NULL REFERENCES sub_clients(id) ON DELETE SET NULL`
+selects one explicit active contact from the project's current client. Generic
+`updateFields` writes it as a UUID string or JSON null in the same durable
+project outbox used by other project edits. The existing `projects.edit` row
+policy remains the write authority. A private validation trigger rejects a
+deleted, cross-client, or cross-company selection (`23514`), while compatibility
+and cleanup triggers clear a selection when the project client changes through
+an older caller or the chosen contact is deleted/re-parented. The iOS build that
+writes this field must not ship before migration
+`20260821185843_project_primary_sub_client.sql` is applied and verified.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
