@@ -1809,6 +1809,30 @@ Migration `20260820204454_phase_c_lead_intelligence_workload.sql` is local and
 unapplied; production therefore still has the earlier best-effort Phase C
 summary/stage behavior. No production rows were rewritten by this work.
 
+#### P1-17 confirmed-appointment convergence (2026-08-20 — local only)
+
+The P1-16 bilateral envelope becomes a booking only through one
+server-authoritative consumer. A ready envelope must still identify the exact
+company, opportunity, active owner, customer and operator attendees, resolved
+timezone, title, location, start/end, `calendar.create` authority, and a
+conflict-free slot at apply time. Missing, stale, cancelled, conflicting, or
+ambiguous evidence becomes an operator-review outcome; it does not change the
+lead or schedule.
+
+The canonical record is a booked `site_visits` row with
+`appointment_handoff_id`, `appointment_kind`, `appointment_title`,
+`appointment_location`, and the immutable attendee evidence. That preserves
+the existing Schedule, assignee, activity, lead-stage, Google queue, and iOS
+EventKit behavior instead of introducing a competing event model. The unique
+handoff link and leased transaction make duplicate messages, worker retries,
+and readback retries converge on the same visit. Provider outages retain the
+OPS record and retry the existing provider queue; provider calendar content is
+never treated as permission to mutate a lead.
+
+P1-17 is local only. Its database migration, OPS-Web consumer, and iOS schema
+V24/EventKit metadata have not been pushed, deployed, released, or applied to
+production, and no customer row was changed.
+
 #### Lead intake terminality and reactivation contract (prepared 2026-07-31)
 
 The owner-fenced nonterminal checkpoint is live. Production migration record

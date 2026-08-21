@@ -4185,9 +4185,17 @@ Placement-only routing differs from the live path in exactly two ways, both deli
 
 When a task's schedule changes, assigned crew are notified on **both** clients — and the push is fired **server-side (ops-web → OneSignal REST)**, so it reaches a backgrounded/locked teammate independent of the Realtime socket (which iOS tears down ~30s after backgrounding). This is the background-delivery counterpart to the live foreground repaint (ops-ios `deafa95f`).
 
-**iOS-originated** — `DataController.updateTaskSchedule(task:startDate:endDate:manualEdit:)`:
-1. On a real date change of a **non-terminal** task, inserts one `notifications` row per assigned member **except the editor** (`memberId != currentUserId`) via `NotificationRepository.createNotification` → web rail.
-2. Calls `OneSignalService.notifyScheduleChange(...)` → `POST {apiBaseURL}/api/notifications/send` (Firebase bearer) → `sendOneSignalPush` → OneSignal REST `include_aliases:{external_id}`, `target_channel:"push"`. Push `data:{type:"scheduleChange", taskId, projectId, screen:"taskDetails"}`.
+**iOS-originated — P1-17 repair (2026-08-20, local only).**
+`NotificationRepository` now submits proof only — the canonical task/project id
+and event kind — to authenticated `POST /api/notifications/dispatch`. It does
+not submit recipient ids, copy, or navigation. The dispatcher invokes the
+existing narrow actor-authorized RPC first, so the rail remains durable, then
+the service resolver re-reads the task/project and renders canonical push copy.
+The repository returns an empty legacy recipient list after dispatch so old
+`DataController` / project-form OneSignal wrappers cannot double-send through
+the retired body-trusted route. This applies to task completion/reschedule/
+assignment, project completion/assignment, dependency-ready, and schedule-run
+summary.
 
 **Web-originated** — `useUpdateTask` → `dispatchScheduleChange` → `POST /api/notifications/dispatch`:
 - Fires on start/end **date, time, or all-day** change of a non-terminal task; recipients = union(prior, new `team_member_ids`).
@@ -4198,6 +4206,15 @@ When a task's schedule changes, assigned crew are notified on **both** clients �
 **Editor self-exclusion + terminal skip (2026-06-09):**
 - `/api/notifications/dispatch` now excludes a client-supplied `actorUserId` (the actor's `users.id`, stamped centrally in `notification-dispatch.ts` from `useAuthStore`), with the token uid kept as a backstop. Previously it filtered only on `user.uid` (the Firebase `sub`), which never matched the `users.id` recipients — so a crew member rescheduling their own task on web self-notified.
 - Both clients now **skip terminal tasks** (`completed`/`cancelled`) for the schedule-change ping (iOS `TaskStatus.isTerminal`; web case-insensitive status check).
+
+**Quiet-hours invariant — P1-17 repair (2026-08-20, local only).** The narrow
+RPC creates eligible recipients' in-app rows independently of channel
+preferences. Only after that rail write does the dispatcher call
+`resolveNotificationPreferences`: per-type preference, global push setting,
+and each recipient's timezone-aware quiet-hours window filter the OneSignal
+targets. Quiet hours therefore suppress push only; they never erase or delay
+the in-app notification. All recipients and copy remain server-derived from
+the recorded entity state.
 
 **Deprecated:** the `send-push-notification` Edge Function (project `ijeekuhbatykdomumfjx`) is **orphaned** — zero callers, legacy `include_external_user_ids`/`users.device_token` targeting, inserts no rail row. Superseded by `/api/notifications/send` (iOS) and `/api/notifications/dispatch` (web). Safe to delete.
 
@@ -6657,6 +6674,30 @@ deal acceptance nor bilateral appointment confirmation, so it must not create
 a project or a ready booking handoff. The local implementation encodes that
 boundary; production remains on the prior runtime until an approved migration
 and OPS-Web deployment occur.
+
+#### P1-17 bilateral appointment consumer (2026-08-20 — local only)
+
+The P1-16 handoff is consumed by a bounded, leased worker in the existing
+email-sync cron. The apply RPC repeats every authority and identity check under
+the booking transaction: exact live opportunity and company, active owner,
+operator/customer attendee roles, `calendar.create`, IANA timezone, resolved
+future interval, location, cancellation state, and conflicts with booked site
+visits, calendar-user events, and scheduled project tasks. A failed check is a
+durable review outcome, never a partial or silent booking.
+
+One `ready` handoff creates one booked `site_visits` record and one scheduled
+activity, preserves the assigned owner in `assignee_ids`, and advances only a
+`new_lead` to `qualifying`. The handoff-to-visit unique link, lease fencing,
+atomic consume, readback, and notification acknowledgement make duplicate
+provider messages and worker retries exactly once. Canonical appointment title
+and location flow to Google Calendar and the iOS EventKit mirror; legacy/manual
+visits keep the lead-derived fallback. Google uses the existing durable
+outbound queue. Apple, Google, and Microsoft device calendars remain writable
+EventKit destinations when configured on iOS. No provider event is ingested as
+lead truth, and provider failure cannot roll back the OPS visit.
+
+The migration, worker, and iOS schema V24 bindings are local and unapplied; no
+customer data or provider calendar was mutated during verification.
 
 ### What replaced the old §19
 
