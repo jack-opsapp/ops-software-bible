@@ -315,6 +315,31 @@ or applied to production. Runtime cost remains the existing Phase C model
 usage plus retry invocations for unresolved work; there is no new fixed vendor
 cost. Exact incremental model spend depends on message volume and token count.
 
+### Phase C bilateral appointment consumption (2026-08-20 — local only)
+
+P1-17 adds a bounded consumer after the P1-16 lead-intelligence drain in the
+existing email-sync cron. The server claims only due `ready` or already
+`consumed` handoffs through service-role RPCs. It rechecks cancellation,
+company/opportunity identity, active assignee identity, operator and customer
+attendees, `calendar.create`, timezone, title, location, future time, duration,
+conflicts, and the handoff lease before an effect. Any absent or ambiguous
+authority settles the handoff to durable `review`; it never books silently.
+
+`consume_phase_c_bilateral_event_handoff` is the one atomic booking boundary.
+It inserts exactly one booked `site_visits` row keyed by the handoff, records
+the scheduled activity, nudges only `new_lead` to `qualifying`, and marks the
+handoff consumed in the same transaction. Retries read the same visit back;
+notification acknowledgement and retry/failure state are fenced by the same
+lease owner. Provider synchronization remains downstream of canonical
+`site_visits`: the existing Google queue trigger/drain handles a connected
+Google calendar, while the iOS EventKit mirror presents the canonical title
+and location to any writable Apple, Google, or Microsoft calendar configured
+on that device. Arbitrary inbound provider events are not imported into OPS.
+
+Migration `20260820222016_phase_c_bilateral_event_consumption.sql`, the worker,
+and the OPS-Web/iOS bindings are local and unapplied. They have not been pushed,
+deployed, released, or exercised against customer rows.
+
 ---
 
 ## Supabase Repositories
