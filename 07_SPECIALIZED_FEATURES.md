@@ -7034,7 +7034,28 @@ recovery.
    visit's phone-local artifact media files (e.g. a rendered markup whose
    upload never landed — bytes that exist nowhere else) plus the visit's own
    notes, alongside the summary. Nothing is ever silently dropped: media
-   leaves the phone only through the operator's explicit vault-packet DELETE.
+   leaves the phone only through the operator's explicit vault-packet DELETE;
+   an ordinary restored-parent release preserves every local row and media file.
+6. **Restored-parent release** (code commit `b3795976`, 2026-08-20): a
+   `parent_deleted` vault packet returns to the durable queue only after a newer
+   authoritative inbound merge proves the exact same user/company identity,
+   exact visit id, active parent (`deletedAt == nil`), no unsent parent write,
+   and `lastSyncedAt` at or after the archived rejection. Only same-company,
+   same-visit operations already marked `quarantined` are requeued; the local
+   visit, children, and media stay in place. The exact encrypted entry is
+   removed only after the local transaction succeeds. `SyncEngine` runs this
+   gate before a push and again after pull; a release after pull drains in that
+   same cycle.
+
+**Live recovery proof (2026-08-20):** visit
+`2091c595-eabf-4158-8a56-ec3a6bb86302` was restored with a guarded exact-id,
+exact-company, known-status/known-completion/known-deletion precondition that
+cleared only `deleted_at`. Independent readback preserved the completion state
+and showed two active artifacts plus four active substantive checklist answers.
+The founder's phone then independently pulled the parent as active. Its older
+installed build still holds the completion packet quarantined; distributing the
+client containing `b3795976` is the remaining gate before that phone can run the
+release and retry the packet.
 
 **Known gap (accepted):** a deleted-parent chain with NO completion op has no
 typed signal to sweep on; its child writes still fail through the pre-existing
@@ -9040,6 +9061,14 @@ indefinitely; there is no age-based expiry, pruning, or deletion. At age
 and 31 days all remain in the inventory; the boundary changes presentation, not
 custody. This policy is unrelated to the API's separate job-history retention
 of 30 days (`AppConfiguration.Sync.jobHistoryDays`).
+
+One deterministic no-op shape may retire without operator action (code commit
+`b3795976`): a parked `projectTask` **update** carrying the stable
+`serverRowMissing` marker, where the phone also holds that exact task as a
+same-company soft-delete tombstone. It completes locally with no
+`serverConfirmedAt`, because both sides already agree the task is deleted. An
+active task, absent local task, company mismatch, different entity/operation,
+different error, or any non-parked lifecycle remains visible and untouched.
 
 **Capability-safe DELETE:** a row exposes the trailing DELETE swipe and detail
 action only when `RecoveryItem.discardPolicy` proves that exact work unit safe.

@@ -1700,6 +1700,15 @@ classification. The 2026-07-22 outage motivated the split: a permanent 400
 (auto-lead `source_thread_key` rejection, RC1) previously burned the same 20-retry
 budget as a transient 504, then sat invisible.
 
+**Provably obsolete task updates settle locally (2026-08-20, code commit
+`b3795976`).** `DeletedProjectTaskOperationSettlement` runs before orphan
+recovery and recognizes only a `projectTask` update already `parked` with the
+stable `serverRowMissing` marker plus an exact same-company local soft-delete
+tombstone. That operation becomes `completed` with `serverConfirmedAt = nil`:
+the server has no row and the phone no longer intends one. Every other entity,
+operation type, status, error, company, and local-row state remains untouched
+for operator review.
+
 **Payload-build failures park (2026-08-13, bug 70db7ed6).** A DTO that cannot be
 built from its local row (`SiteVisitPayloadError`) never reached the server, and
 rebuilding it from the same row fails identically — so a retry can only burn the
