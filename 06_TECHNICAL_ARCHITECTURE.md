@@ -1700,6 +1700,31 @@ classification. The 2026-07-22 outage motivated the split: a permanent 400
 (auto-lead `source_thread_key` rejection, RC1) previously burned the same 20-retry
 budget as a transient 504, then sat invisible.
 
+**Provably obsolete task updates settle locally (2026-08-20, code commit
+`b3795976`).** `DeletedProjectTaskOperationSettlement` runs before orphan
+recovery and recognizes only a `projectTask` update already `parked` with the
+stable `serverRowMissing` marker plus an exact same-company local soft-delete
+tombstone. That operation becomes `completed` with `serverConfirmedAt = nil`:
+the server has no row and the phone no longer intends one. Every other entity,
+operation type, status, error, company, and local-row state remains untouched
+for operator review.
+
+**The five pre-incident unlinked visits have an approval-only historical
+settlement path (2026-08-21, code commit `59f14bd8`).**
+`HistoricalSiteVisitSettlementPolicy` carries the exact five-row manifest and
+permits only two outcomes. Four active/scheduled visits may recover their
+`opportunity_id` only when the retained phone packet, complete unresolved queue,
+fresh server bundle, exact server version, same-company target, and current
+row-scoped capability all agree. Execution uses one compare-and-set server row,
+validates the full relationship readback, and re-arms only the captured packet.
+The completed visit is immutable: it requires an exact phone/server content
+fingerprint and settles rejected device relationship intent plus the exact queue
+operations locally, with no repository mutation and no false server-confirmed
+timestamp. Deterministic approval digests and file-protected prepared/applied
+receipts make replay idempotent and leave an audit trail. The coordinator is
+intentionally absent from `SyncEngine`, recovery sweeps, timers, and bulk retry;
+unknown or conflicting evidence fails closed.
+
 **Payload-build failures park (2026-08-13, bug 70db7ed6).** A DTO that cannot be
 built from its local row (`SiteVisitPayloadError`) never reached the server, and
 rebuilding it from the same row fails identically — so a retry can only burn the

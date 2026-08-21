@@ -1568,7 +1568,7 @@ If the visit has an opportunity, client, or project parent, the transaction inse
 
 Site-visit media uses the existing authenticated presign endpoint with a closed target contract:
 
-- request: canonical lowercase `siteVisitId` and `artifactId`, `variant` in `original | rendered | thumbnail`, approved image MIME type, and `fileSize` from 1 byte through the endpoint maximum;
+- request: canonical lowercase `siteVisitId` and `artifactId`, `variant` in `original | rendered | thumbnail`, approved image MIME type, and `fileSize` from 1 byte through the exact 10 MiB endpoint maximum;
 - the request cannot supply `folder`; the server resolves the Firebase bridge identity, rate-limits the actor, requires a canonical UUID company id, and reads the active visit through the user's scoped Supabase client with exact `(id, company_id)` equality;
 - unauthorized lookup failures are non-revealing (`403` authorization failure or `404` unavailable); the phone never receives another tenant's path;
 - derived key: `site-visits/{company_uuid}/{site_visit_uuid}/{artifact_uuid}/{variant}.{ext}`;
@@ -1579,6 +1579,58 @@ Account deletion invokes `eraseSiteVisitPrefix(companyId)` after the transaction
 ### Mobile transport and reconciliation
 
 `SiteVisitPersistenceCoordinator` commits local model mutations and their `SyncOperation` rows atomically. Dependencies enforce parent → artifacts/checklist/identity → media → completion. `SiteVisitOutboundSync` maps each operation to `SiteVisitRepository`; `InboundProcessor` and `RealtimeProcessor` fetch/subscribe to all four tables; `SiteVisitServerMerge` preserves unsent dirty fields while accepting authoritative server state. The local queue is retry machinery only and is encrypted into `SiteVisitRecoveryVault` during forced logout; it is not a Supabase company-data table.
+
+The iOS outbound media boundary (code commit `b3795976`) matches the route's
+10 MiB limit without altering durable source evidence. Files already within the
+limit upload byte-for-byte. Only an oversized raster is decoded into an
+ephemeral outbound JPEG, capped to a 2,048 px longest edge and stepped down
+until it is at most 10 MiB; the phone-local original is never overwritten.
+Newly rendered annotation composites use the same bounded JPEG policy before
+being saved for upload. If preparation cannot prove a compliant image, the
+operation fails visibly while the original remains on the phone.
+
+For a non-2xx presign response, iOS accepts operator-facing detail only from an
+exact JSON `{ "error": string }` envelope. It collapses whitespace and limits
+the detail to 240 characters; HTML and other arbitrary response bodies are not
+surfaced or persisted as error text.
+
+### Approval-controlled historical site-visit settlement (local source only, 2026-08-21)
+
+Code commit `59f14bd8` adds a deliberately non-automatic recovery boundary for
+the five audited, pre-incident, server-unlinked visits. It is not wired into
+`SyncEngine`, launch/reconnect sweeps, the retry timer, or PENDING WORK's RETRY
+ALL action. The exact immutable manifest is:
+
+| Visit | Expected server status | Permitted outcome |
+|---|---|---|
+| `984c6847-2ac6-4bf3-a56e-9eb08f120fdf` | `in_progress` | Recover active link |
+| `b1e9cea3-4c1a-4247-8a1f-c21aa721bbe2` | `in_progress` | Recover active link |
+| `0de1fc17-61d8-4b23-8534-27f7a529b1ce` | `in_progress` | Recover active link |
+| `4e73b982-c7ad-4303-9f1f-680b26edc10e` | `scheduled` | Recover active link |
+| `df4016c4-6269-49d1-aec2-76e7934600c2` | `completed` | Settle device history only |
+
+`HistoricalSiteVisitSettlementEvidence` derives the target opportunity only
+from the retained phone visit and the complete matching unresolved queue
+envelopes, then requires exact visit/company/relationship identity, active
+same-company target, row-scoped edit capability, no in-flight operation, and a
+fresh server bundle at the manifest's exact status/version. Any missing,
+foreign, extra, duplicate, already-linked, deleted, stale, or conflicting
+evidence fails closed. `prepare` binds those facts and the exact operation ids
+into a deterministic approval digest; `execute` accepts only an approval that
+repeats every immutable plan identity.
+
+For the three in-progress visits and one scheduled visit, execution performs a
+single-row compare-and-set of `site_visits.opportunity_id` only, filtered by the
+exact id, company, status, `updated_at`, `deleted_at IS NULL`, and
+`opportunity_id IS NULL`. A full server relationship readback must agree before
+only the captured phone operations are re-armed. The completed visit never
+enters a server mutation path: fresh server content must fingerprint exactly
+against the retained phone packet, after which only rejected local relationship
+intent and the exact queue operations are accounted as locally settled with
+`serverConfirmedAt = nil`. File-protected prepared/applied receipts make both
+paths auditable and idempotent. This mechanism has not been executed against
+the five live visits; customer settlement remains a separately approved,
+one-visit-at-a-time operation.
 
 Checklist answers reconcile by active logical identity
 `(site_visit_id, field_id)`, not UUID alone. When Supabase returns the same
@@ -1769,7 +1821,7 @@ enum SyncError: Error {
 enum UploadError: LocalizedError {
     case invalidResponse
     case invalidURL
-    case presignError(statusCode: Int)
+    case presignError(statusCode: Int, message: String?)
     case s3Error(statusCode: Int)
 }
 

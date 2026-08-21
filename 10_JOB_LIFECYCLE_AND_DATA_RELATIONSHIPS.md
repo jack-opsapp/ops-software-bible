@@ -1231,6 +1231,9 @@ ON-SITE (staff opens visit on mobile/web)
   → Photo, measurement, and deck-design checklist fields can use the matching captured evidence already in the packet
   → Operator can add ad-hoc checklist questions during the visit
   → Original/rendered/thumbnail media upload to a server-derived visit object key
+      Assets at or below 10 MiB pass byte-for-byte
+      Oversized rasters use an ephemeral outbound JPEG capped at 2,048 px and 10 MiB
+      Durable originals remain unchanged on the phone
   → Another authorized device can pull and resume the in-progress packet
 
 MARK COMPLETE
@@ -1267,7 +1270,7 @@ JOB WON (opportunity converts to project)
 - `fetchSiteVisitsForOpportunity(opportunityId)` — all visits for a lead
 - `fetchSiteVisitsForProject(projectId)` — all visits for a project
 
-**Failure/recovery rules:** the phone drains parent → children → media → completion and safely retries every step. A missing legacy parent is reconstructed only from exact same-company, valid, non-conflicting child evidence. Unsafe evidence is encrypted and shown as protected Pending Work with no generic Retry. Voluntary logout waits briefly for a real server ACK and asks before discard; forced logout encrypts unsent packets/media for the exact user+company before wiping shared SwiftData. Another signed-in account cannot see or delete that vault.
+**Failure/recovery rules:** the phone drains parent → children → media → completion and safely retries every step. A missing legacy parent is reconstructed only from exact same-company, valid, non-conflicting child evidence. Unsafe evidence is encrypted and shown as protected Pending Work with no generic Retry. If the server later restores an exact deleted parent, a newer authoritative same-company inbound merge may release only that visit's quarantined operations; the rows and media stay in place and the same sync cycle retries them. Voluntary logout waits briefly for a real server ACK and asks before discard; forced logout encrypts unsent packets/media for the exact user+company before wiping shared SwiftData. Another signed-in account cannot see or delete that vault.
 
 ---
 
@@ -3441,10 +3444,11 @@ Built iOS files:
 | `Network/Supabase/Repositories/SiteVisitRepository.swift` | Company-scoped CRUD, bundle fetch, sparse parent updates, and guarded completion RPC |
 | `Services/SiteVisitPersistenceCoordinator.swift` | One local transaction for state + parent-first durable operation chain |
 | `Network/Sync/SiteVisitOutboundSync.swift` | Typed operation dispatcher and server ACK reconciliation |
-| `Network/Sync/SiteVisitMediaSyncManager.swift` | Restart-safe original/rendered/thumbnail upload through the visit-authorized presign contract |
+| `Network/Sync/SiteVisitMediaSyncManager.swift` | Restart-safe original/rendered/thumbnail upload through the visit-authorized presign contract; oversized-only outbound preparation enforces the 10 MiB / 2,048 px boundary without overwriting originals |
 | `Network/Sync/SiteVisitServerMerge.swift` | Dirty-field-preserving inbound merge and authoritative terminal-state reconciliation |
 | `Network/Sync/SiteVisitOrphanRecovery.swift` | Same-company legacy parent reconstruction; foreign/malformed/ambiguous quarantine |
-| `Network/Sync/SiteVisitRecoveryVault.swift` | AES-GCM, exact-account, phone-local custody across forced logout |
+| `Network/Sync/SiteVisitRecoveryVault.swift` | AES-GCM, exact-account, phone-local custody across forced logout and guarded requeue after authoritative restored-parent proof |
+| `Network/Sync/DeletedProjectTaskOperationSettlement.swift` | Retires only a parked server-row-missing task update whose exact same-company local row is already a soft-delete tombstone |
 
 The site-visit measure-photo action now uses the real dimensioned capture/annotation screen when `feature.measurement.dimensioned_capture` and device capability allow it. Simulator and no-AR devices still cannot validate LiDAR hardware capture; physical-device QA is required before claiming the scanner is field-proven.
 
