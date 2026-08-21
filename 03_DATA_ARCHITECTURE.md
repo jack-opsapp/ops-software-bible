@@ -210,8 +210,8 @@ final class Project: Identifiable {
 }
 ```
 
-**Primary project contact contract (staged locally 2026-08-21; not applied or
-customer-live):** migration `20260821185843_project_primary_sub_client.sql`
+**Primary project contact contract (production schema live 2026-08-21; iOS
+distribution pending):** migration `20260821185843_project_primary_sub_client.sql`
 adds nullable `projects.primary_sub_client_id` plus a partial index. A private,
 search-path-hardened validation trigger accepts only an active `sub_clients` row
 that belongs to the project's current `client_id` and `company_id`. Changing the
@@ -232,6 +232,14 @@ transaction; failure leaves the prior choice visible and queued state unchanged.
 The outbound cross-entity barrier maps `primary_sub_client_id` to `subClient`,
 so an assignment to an offline-created contact waits for that contact's create
 instead of parking on the server validation trigger.
+
+The migration is applied in production under ledger name
+`project_primary_sub_client_20260821185843`. Independent readback confirmed the
+column, foreign key, partial index, validation/compatibility triggers, enabled
+project RLS, and zero automatic assignments across existing projects. The web
+contract is customer-live in OPS-Web production commit `6b69551a`; the iOS
+implementation is merged and pushed on `main` commit `677850ee`, ready for a
+signed device build but not distributed through Apple by this rollout.
 
 **Deck Builder Vinyl Marker (2026-05-21)**: `projects.vinyl_order_status`,
 `projects.vinyl_ordered_at`, and `projects.vinyl_ordered_by` are a
@@ -5744,12 +5752,19 @@ Attribution begins only from `(company_id, email_connection_id, email_message_id
 
 **Related-photo reconciliation repair (2026-08-20; applied 2026-08-21).** Production attachment discovery can create the canonical descriptor before `content_sha256` exists. The prior `private.reconcile_related_email_conversion_photo_sources(uuid, uuid, uuid, text, text)` reused `related_attachment` as both its PL/pgSQL loop record and the `email_attachments` relation alias, so PostgreSQL resolved the unassigned record first and aborted the insert with `record "related_attachment" is not assigned yet`. OPS-Web commit `8c24e50d` adds forward migration `20260820172857_fix_related_attachment_record_shadowing.sql`: it uses a scalar attachment ID and a distinct relation alias, deliberately returns while the hash is NULL or not lowercase 64-character hex, and otherwise preserves the existing company/hash + opportunity-or-thread match and `(occurred_at, id)` order. The signature, `SECURITY DEFINER` boundary, fixed `search_path`, and API-role revokes are unchanged. The exact SQL was applied to production as ledger row `20260821202539_fix_related_attachment_record_shadowing` and is mirrored at `migrations/20260821202539_fix_related_attachment_record_shadowing.sql`. Independent readback at `2026-08-21T20:26:08Z` confirmed the scalar loop, NULL guard, distinct relation alias, deterministic order, no old record/alias collision, and no execute privilege for `anon`, `authenticated`, or `service_role`; all six `email_attachments` triggers remained enabled. No OPS-Web push or Vercel deployment occurred, so the source migration remains local-only even though the database repair is production-live. Previously dropped attachment descriptors are not backfilled by this DDL and require separately approved recovery. Bug: `4501a2dc-2b1a-427a-9c8c-04bd6fcdad74`.
 
-## Phase C Lead Intelligence Workload (2026-08-20 — local only, not released)
+## Phase C Lead Intelligence Workload (production live 2026-08-21)
 
 OPS-Web migration `20260820204454_phase_c_lead_intelligence_workload.sql`
 (commits `b293d1dd` through `8c86394e`) adds three server-authoritative tables.
-The migration is not applied to production, has no Supabase ledger row, and is
-not mirrored into the Bible migration archive until it is actually applied.
+It is applied in production under ledger name
+`phase_c_lead_intelligence_workload_20260820204454` (version
+`20260821201943`). Companion production migrations
+`phase_c_workload_fk_indexes_20260821202230` and
+`phase_c_handoff_opportunity_fk_index_20260821202400` cover every introduced
+foreign key. Independent readback found 114 existing opportunities fenced at
+their manual correction boundary, zero queued workload rows, forced RLS, and
+service-role-only worker capability. No opportunity, customer, appointment, or
+calendar row was mutated as deployment proof.
 
 ### `opportunity_phase_c_work`
 

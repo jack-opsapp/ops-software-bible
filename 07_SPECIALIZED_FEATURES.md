@@ -43,7 +43,7 @@
 33. [Lead Assignment and Scoped Lead Access](#33-lead-assignment-and-scoped-lead-access-backend--web-production-2026-07-17-ios-implementation-staged)
 34. [PENDING WORK — Sync Recovery Surface](#34-pending-work--sync-recovery-surface-ios-2026-07-22)
 35. [Trash — Recovery Ledger](#35-trash--recovery-ledger-ios-2026-08-06)
-36. [Overdue Review](#36-overdue-review-ios-staged-2026-08-21)
+36. [Overdue Review](#36-overdue-review-ios-main-2026-08-21-signed-distribution-pending)
 
 ---
 
@@ -4186,7 +4186,7 @@ Placement-only routing differs from the live path in exactly two ways, both deli
 
 When a task's schedule changes, assigned crew are notified on **both** clients — and the push is fired **server-side (ops-web → OneSignal REST)**, so it reaches a backgrounded/locked teammate independent of the Realtime socket (which iOS tears down ~30s after backgrounding). This is the background-delivery counterpart to the live foreground repaint (ops-ios `deafa95f`).
 
-**iOS-originated — P1-17 repair (2026-08-20, local only).**
+**iOS-originated — P1-17 repair (pushed to iOS main 2026-08-21; signed distribution pending).**
 `NotificationRepository` now submits proof only — the canonical task/project id
 and event kind — to authenticated `POST /api/notifications/dispatch`. It does
 not submit recipient ids, copy, or navigation. The dispatcher invokes the
@@ -4208,7 +4208,7 @@ summary.
 - `/api/notifications/dispatch` now excludes a client-supplied `actorUserId` (the actor's `users.id`, stamped centrally in `notification-dispatch.ts` from `useAuthStore`), with the token uid kept as a backstop. Previously it filtered only on `user.uid` (the Firebase `sub`), which never matched the `users.id` recipients — so a crew member rescheduling their own task on web self-notified.
 - Both clients now **skip terminal tasks** (`completed`/`cancelled`) for the schedule-change ping (iOS `TaskStatus.isTerminal`; web case-insensitive status check).
 
-**Quiet-hours invariant — P1-17 repair (2026-08-20, local only).** The narrow
+**Quiet-hours invariant — P1-17 repair (web production and iOS main 2026-08-21; signed iOS distribution pending).** The narrow
 RPC creates eligible recipients' in-app rows independently of channel
 preferences. Only after that rail write does the dispatcher call
 `resolveNotificationPreferences`: per-type preference, global push setting,
@@ -4216,6 +4216,11 @@ and each recipient's timezone-aware quiet-hours window filter the OneSignal
 targets. Quiet hours therefore suppress push only; they never erase or delay
 the in-app notification. All recipients and copy remain server-derived from
 the recorded entity state.
+
+The server dispatch and preference enforcement are customer-live in OPS-Web
+production commit `6b69551a`. The matching iOS proof-only dispatch bindings are
+merged and pushed on `main` commit `677850ee`; phone/App Store distribution is
+Jackson's separate signed-build step.
 
 **Deprecated:** the `send-push-notification` Edge Function (project `ijeekuhbatykdomumfjx`) is **orphaned** — zero callers, legacy `include_external_user_ids`/`users.device_token` targeting, inserts no rail row. Superseded by `/api/notifications/send` (iOS) and `/api/notifications/dispatch` (web). Safe to delete.
 
@@ -6645,7 +6650,7 @@ All gating flows through `inboxModule` in `src/lib/types/permissions.ts`:
 | `src/lib/hooks/use-inbox-threads.ts` | TanStack Query hooks (list, detail, actions, unread count) |
 | `src/lib/types/email-thread.ts` | TypeScript types + DB mapper |
 
-#### P1-16 durable lead intelligence (2026-08-20 — local only)
+#### P1-16 durable lead intelligence (production 2026-08-21)
 
 Every meaningful linked correspondence event now owns one durable opportunity
 high-water workload. The existing email-sync cron drains summary refresh,
@@ -6684,11 +6689,12 @@ Crystal Elton regression contract: the 2026-08-20 reply requesting a call to
 discuss moving forward with the quote is material correspondence. It must
 refresh the summary and advance `quoted` to `negotiation`; it is neither clear
 deal acceptance nor bilateral appointment confirmation, so it must not create
-a project or a ready booking handoff. The local implementation encodes that
-boundary; production remains on the prior runtime until an approved migration
-and OPS-Web deployment occur.
+a project or a ready booking handoff. The production implementation encodes
+that boundary in OPS-Web commit `6b69551a`. Its database workload, evidence,
+and handoff contracts are live; deployment verification created no customer
+lifecycle mutation.
 
-#### P1-17 bilateral appointment consumer (2026-08-20 — local only)
+#### P1-17 bilateral appointment consumer (production 2026-08-21)
 
 The P1-16 handoff is consumed by a bounded, leased worker in the existing
 email-sync cron. The apply RPC repeats every authority and identity check under
@@ -6709,8 +6715,12 @@ outbound queue. Apple, Google, and Microsoft device calendars remain writable
 EventKit destinations when configured on iOS. No provider event is ingested as
 lead truth, and provider failure cannot roll back the OPS visit.
 
-The migration, worker, and iOS schema V24 bindings are local and unapplied; no
-customer data or provider calendar was mutated during verification.
+The migration and worker are production-live in OPS-Web commit `6b69551a`.
+Independent release readback found zero existing handoffs and zero linked site
+visits, so no customer data or provider calendar was mutated during
+verification. The iOS schema V24 bindings are merged and pushed on `main`
+commit `677850ee`; device/App Store distribution remains a separate signed
+build.
 
 ### What replaced the old §19
 
@@ -9190,6 +9200,11 @@ opportunity link; the completed visit receives local accounting only and never a
 server rewrite. Until an individually approved execution succeeds and its
 readback/receipt proves settlement, the work remains retained indefinitely.
 
+The mechanism is merged and pushed on iOS `main` commit `677850ee`. It is not
+an automatic production repair: all five audited live visits remained unchanged
+at release readback, and each settlement still requires Jackson's separate
+exact-plan approval on the retained phone.
+
 **Capability-safe DELETE:** a row exposes the trailing DELETE swipe and detail
 action only when `RecoveryItem.discardPolicy` proves that exact work unit safe.
 Full-swipe execution is disabled. Both entry points show confirmation copy
@@ -9340,12 +9355,13 @@ zero/partial staging and missing-record failures and proves exact tombstone,
 `OPSTests/Views/TrashRecoveryTests.swift`. Code commits: `f89764bc` (recovery
 ledger) and `39afa7c4` (shared atomic transaction).
 
-This implementation is source-verified in the iOS bug-batch branch; it is not
-customer-distributed until the signed-device/App Store release gate is complete.
+This implementation is source-verified, merged, and pushed on iOS `main`
+commit `677850ee`; it is not customer-distributed until the signed-device/App
+Store release gate is complete.
 
 ---
 
-## 36. Overdue Review (iOS, staged 2026-08-21)
+## 36. Overdue Review (iOS main 2026-08-21; signed distribution pending)
 
 The app-open overdue prompt is a single vertical recovery ledger for tasks that
 are assigned to the current operator, past their end date, and still active.
@@ -9369,8 +9385,11 @@ still choose `Later`, which preserves the existing 24-hour snooze contract.
 Primary implementation:
 `ops-ios/OPS/Views/Components/OverdueTasksPromptView.swift`. Pure presentation
 and final-row dismissal coverage lives in
-`OPSTests/Views/OverdueTasksPromptTests.swift`. This redesign is local source
-only until it is merged, pushed, signed, and released through the iOS gate.
+`OPSTests/Views/OverdueTasksPromptTests.swift`. This redesign is merged and
+pushed on iOS `main` commit `677850ee`. The candidate passed 58/58 focused
+P1-18 tests with zero failures before main integration. It becomes
+customer-distributed only after Jackson runs the signed device/App Store
+release gate.
 
 ---
 

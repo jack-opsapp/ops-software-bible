@@ -276,7 +276,7 @@ Responses: `200` when the targeted refresh writes or legitimately completes with
 
 **Release state (updated 2026-08-17):** `20260807123500_authorize_lead_summary_refresh.sql` is applied in production and the OPS-Web route ships with the bugfix wave of 2026-08-17 (branch `fix/ios-bug-batch-server-20260807` merged via `release/web-bugfix-wave-20260817`). The iOS caller remains gated on its App Store release. Each successful human lead-activity save can add one existing Phase C model invocation, with its normal token cost; no new provider or subscription is introduced.
 
-### Durable Phase C lead intelligence drain (2026-08-20 — local only)
+### Durable Phase C lead intelligence drain (production 2026-08-21)
 
 The existing `GET /api/cron/email-sync` route now drains at most two
 `opportunity_phase_c_work` rows under the existing mailbox-sync execution
@@ -291,7 +291,7 @@ failed work contributes to the route's existing HTTP 503 health signal; it is
 not reduced to a log-only warning. No new route, scheduler, provider, or
 subscription is introduced.
 
-The local migration exposes service-role-only RPCs:
+The production migration exposes service-role-only RPCs:
 
 | RPC | Contract |
 |---|---|
@@ -310,12 +310,15 @@ event evaluator from recording its result. Already acknowledged components do
 not replay on retry. Phase C disabled is an explicit durable skip for all four
 components.
 
-This code and migration are local only. They have not been pushed, deployed,
-or applied to production. Runtime cost remains the existing Phase C model
-usage plus retry invocations for unresolved work; there is no new fixed vendor
-cost. Exact incremental model spend depends on message volume and token count.
+**Release state (2026-08-21):** the migration and its two foreign-key index
+follow-ups are applied and verified in production. OPS-Web commit `6b69551a` is
+deployed READY at `https://app.opsapp.co`; the deployment returned HTTP 200 and
+no runtime errors in the release window. Runtime cost remains the existing
+Phase C model usage plus retry invocations for unresolved work; there is no new
+fixed vendor cost. Exact incremental model spend depends on message volume and
+token count.
 
-### Phase C bilateral appointment consumption (2026-08-20 — local only)
+### Phase C bilateral appointment consumption (production 2026-08-21)
 
 P1-17 adds a bounded consumer after the P1-16 lead-intelligence drain in the
 existing email-sync cron. The server claims only due `ready` or already
@@ -336,9 +339,14 @@ Google calendar, while the iOS EventKit mirror presents the canonical title
 and location to any writable Apple, Google, or Microsoft calendar configured
 on that device. Arbitrary inbound provider events are not imported into OPS.
 
-Migration `20260820222016_phase_c_bilateral_event_consumption.sql`, the worker,
-and the OPS-Web/iOS bindings are local and unapplied. They have not been pushed,
-deployed, released, or exercised against customer rows.
+Migration `20260820222016_phase_c_bilateral_event_consumption.sql` is applied
+in production under ledger name
+`phase_c_bilateral_event_consumption_20260820222016` (version
+`20260821202009`). The worker is customer-live in OPS-Web production commit
+`6b69551a`. Release readback confirmed zero existing handoff rows and zero
+handoff-linked visits, so deployment created no appointment or provider event.
+The iOS bindings are merged and pushed on `main` commit `677850ee`; Apple/device
+distribution remains Jackson's separate signed-build step.
 
 ---
 
@@ -354,7 +362,7 @@ All 15 repository classes follow the same pattern: each takes a `companyId` on i
 **Init**: `ProjectRepository(companyId:)`
 **Audit Columns** (2026-05-10, bug 9d5c2535): `created_at` (TIMESTAMPTZ, Supabase default `now()`) and `created_by` (UUID FK → `auth.users.id`, populated by iOS on insert, immutable). Both are round-tripped through `SupabaseProjectDTO`. The combined index `idx_projects_created_by_created_at (created_by, created_at DESC) WHERE deleted_at IS NULL` powers the "start from recent" suggestions strip on the project form.
 **Vinyl Order Marker Columns** (2026-05-21; extended 2026-07-16): `vinyl_order_status` (`not_ordered` / `ordered`, default `not_ordered`), `vinyl_ordered_at` (TIMESTAMPTZ), `vinyl_ordered_by` (UUID FK → `public.users.id`, retargeted 2026-07-04), plus `vinyl_color` (TEXT NULL) and `vinyl_po` (TEXT NULL) — the ordered color + supplier PO record written by the VINYL ORDERS board and every MARK ORDERED path (migration `add_projects_vinyl_color_po`). All five are marker-only project fields for Deck Builder companies, round-tripped through `SupabaseProjectDTO`, written in one atomic `updateProjectFields` payload, and nulled together by CLEAR ORDERED; they do not create catalog orders, inventory deductions, or task materials.
-**Primary Project Contact (staged locally 2026-08-21; migration not applied):**
+**Primary Project Contact (production schema live 2026-08-21; iOS distribution pending):**
 `primary_sub_client_id UUID NULL REFERENCES sub_clients(id) ON DELETE SET NULL`
 selects one explicit active contact from the project's current client. Generic
 `updateFields` writes it as a UUID string or JSON null in the same durable
@@ -365,9 +373,10 @@ selected sub-client. The existing `projects.edit` row policy remains the write
 authority. A private validation trigger rejects a
 deleted, cross-client, or cross-company selection (`23514`), while compatibility
 and cleanup triggers clear a selection when the project client changes through
-an older caller or the chosen contact is deleted/re-parented. The iOS build that
-writes this field must not ship before migration
-`20260821185843_project_primary_sub_client.sql` is applied and verified.
+an older caller or the chosen contact is deleted/re-parented. Migration
+`20260821185843_project_primary_sub_client.sql` is applied and verified, so the
+database-first release gate is satisfied. The iOS writer is merged and pushed
+on `main` commit `677850ee`; it is not Apple-distributed by this rollout.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
