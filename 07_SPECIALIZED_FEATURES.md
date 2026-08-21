@@ -1131,6 +1131,19 @@ The last two are email-pipeline provenance (added 2026-08-18, ledger
 `complete_email_conversion_photo_job` — never by a manual upload. See
 `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Automation E2.
 
+**Lead activity/photo provenance boundary (reconciled 2026-08-20).** Canonical
+email attachment rows retain their exact `activity_id`, and
+`refresh_email_activity_attachments` projects each URL only onto that exact
+activity. Conversion-photo eligibility joins through the same activity and
+requires `activities.direction = 'inbound'`; outbound images cannot enter Lead
+Photos. The remaining gap is presentation-only: the current web pipeline photo
+tab flattens image URLs across email activities instead of preserving the
+activity/direction group, and iOS does not yet surface this email provenance.
+A later authorized presentation patch must group by exact activity id, expose
+direction/provenance where appropriate, and filter Lead Photos to inbound. It
+must not change the server attribution or materialization contract and is not
+part of the P1-16 Phase C runtime release.
+
 **Client write permissions (2026-07-29, SYSTEMS REPAIR W1-4 — bug `1154fe67`).**
 Until this date `anon`/`authenticated` held only `INSERT` and `SELECT` on the
 table, so **every** iOS UPDATE failed `42501` in silence: both soft-delete paths
@@ -4172,9 +4185,17 @@ Placement-only routing differs from the live path in exactly two ways, both deli
 
 When a task's schedule changes, assigned crew are notified on **both** clients — and the push is fired **server-side (ops-web → OneSignal REST)**, so it reaches a backgrounded/locked teammate independent of the Realtime socket (which iOS tears down ~30s after backgrounding). This is the background-delivery counterpart to the live foreground repaint (ops-ios `deafa95f`).
 
-**iOS-originated** — `DataController.updateTaskSchedule(task:startDate:endDate:manualEdit:)`:
-1. On a real date change of a **non-terminal** task, inserts one `notifications` row per assigned member **except the editor** (`memberId != currentUserId`) via `NotificationRepository.createNotification` → web rail.
-2. Calls `OneSignalService.notifyScheduleChange(...)` → `POST {apiBaseURL}/api/notifications/send` (Firebase bearer) → `sendOneSignalPush` → OneSignal REST `include_aliases:{external_id}`, `target_channel:"push"`. Push `data:{type:"scheduleChange", taskId, projectId, screen:"taskDetails"}`.
+**iOS-originated — P1-17 repair (2026-08-20, local only).**
+`NotificationRepository` now submits proof only — the canonical task/project id
+and event kind — to authenticated `POST /api/notifications/dispatch`. It does
+not submit recipient ids, copy, or navigation. The dispatcher invokes the
+existing narrow actor-authorized RPC first, so the rail remains durable, then
+the service resolver re-reads the task/project and renders canonical push copy.
+The repository returns an empty legacy recipient list after dispatch so old
+`DataController` / project-form OneSignal wrappers cannot double-send through
+the retired body-trusted route. This applies to task completion/reschedule/
+assignment, project completion/assignment, dependency-ready, and schedule-run
+summary.
 
 **Web-originated** — `useUpdateTask` → `dispatchScheduleChange` → `POST /api/notifications/dispatch`:
 - Fires on start/end **date, time, or all-day** change of a non-terminal task; recipients = union(prior, new `team_member_ids`).
@@ -4185,6 +4206,15 @@ When a task's schedule changes, assigned crew are notified on **both** clients �
 **Editor self-exclusion + terminal skip (2026-06-09):**
 - `/api/notifications/dispatch` now excludes a client-supplied `actorUserId` (the actor's `users.id`, stamped centrally in `notification-dispatch.ts` from `useAuthStore`), with the token uid kept as a backstop. Previously it filtered only on `user.uid` (the Firebase `sub`), which never matched the `users.id` recipients — so a crew member rescheduling their own task on web self-notified.
 - Both clients now **skip terminal tasks** (`completed`/`cancelled`) for the schedule-change ping (iOS `TaskStatus.isTerminal`; web case-insensitive status check).
+
+**Quiet-hours invariant — P1-17 repair (2026-08-20, local only).** The narrow
+RPC creates eligible recipients' in-app rows independently of channel
+preferences. Only after that rail write does the dispatcher call
+`resolveNotificationPreferences`: per-type preference, global push setting,
+and each recipient's timezone-aware quiet-hours window filter the OneSignal
+targets. Quiet hours therefore suppress push only; they never erase or delay
+the in-app notification. All recipients and copy remain server-derived from
+the recorded entity state.
 
 **Deprecated:** the `send-push-notification` Edge Function (project `ijeekuhbatykdomumfjx`) is **orphaned** — zero callers, legacy `include_external_user_ids`/`users.device_token` targeting, inserts no rail row. Superseded by `/api/notifications/send` (iOS) and `/api/notifications/dispatch` (web). Safe to delete.
 
@@ -6613,6 +6643,73 @@ All gating flows through `inboxModule` in `src/lib/types/permissions.ts`:
 | `src/lib/api/services/phase-c-learning-service.ts` | Apply corrections to similar threads |
 | `src/lib/hooks/use-inbox-threads.ts` | TanStack Query hooks (list, detail, actions, unread count) |
 | `src/lib/types/email-thread.ts` | TypeScript types + DB mapper |
+
+#### P1-16 durable lead intelligence (2026-08-20 — local only)
+
+Every meaningful linked correspondence event now owns one durable opportunity
+high-water workload. The existing email-sync cron drains summary refresh,
+active-stage evaluation, deterministic commercial outcome, and bilateral-event
+handoff as independently acknowledged components. Model refusal, malformed
+output, crash, lease loss, or provider outage retains the exact dirty marker
+with component errors and backoff; later correspondence supersedes the leased
+snapshot without allowing the old worker to clear it.
+
+Lifecycle judgments are auditable before mutation. The immutable receipt
+records proposed stage/outcome, confidence, exact correspondence-event and
+provider-message evidence, and reason. Ambiguous authority, identity, or
+acceptance writes durable `review` instead of converting. Unequivocal,
+authorized customer acceptance reuses the existing
+`ProjectConversionService` / `convert_opportunity_to_project` path, including
+its assignment snapshot, exact-message evidence, existing-project adoption,
+and exactly-once opportunity/project guards.
+
+Administrative and non-customer mail is excluded before customer lifecycle
+interpretation. Exact primary-client, opportunity-contact, and persisted
+sub-client/co-owner email can establish relationship identity; a name, shared
+surname, forwarded header, locality, or administrative mailbox cannot. A
+conflict remains unlinked/reviewable rather than being forced onto a lead.
+
+For scheduling, Phase C evaluates the complete exact-opportunity history after
+quoted text is removed. It may persist `ready` only when distinct authorized
+parties explicitly proposed and accepted the same resolved event, with owner,
+title, start/end, timezone, location when known, and both operator/customer
+attendee roles. Missing authority, bilateral acceptance, owner, attendee,
+date/time, or timezone produces `review`; unrelated calendar-like inbound text
+does nothing. The result is only a `phase_c_bilateral_event_handoffs` envelope.
+P1-17 owns duplicate/conflict/permission checks, one canonical OPS event or
+site visit, envelope consumption, and connected-provider synchronization.
+
+Crystal Elton regression contract: the 2026-08-20 reply requesting a call to
+discuss moving forward with the quote is material correspondence. It must
+refresh the summary and advance `quoted` to `negotiation`; it is neither clear
+deal acceptance nor bilateral appointment confirmation, so it must not create
+a project or a ready booking handoff. The local implementation encodes that
+boundary; production remains on the prior runtime until an approved migration
+and OPS-Web deployment occur.
+
+#### P1-17 bilateral appointment consumer (2026-08-20 — local only)
+
+The P1-16 handoff is consumed by a bounded, leased worker in the existing
+email-sync cron. The apply RPC repeats every authority and identity check under
+the booking transaction: exact live opportunity and company, active owner,
+operator/customer attendee roles, `calendar.create`, IANA timezone, resolved
+future interval, location, cancellation state, and conflicts with booked site
+visits, calendar-user events, and scheduled project tasks. A failed check is a
+durable review outcome, never a partial or silent booking.
+
+One `ready` handoff creates one booked `site_visits` record and one scheduled
+activity, preserves the assigned owner in `assignee_ids`, and advances only a
+`new_lead` to `qualifying`. The handoff-to-visit unique link, lease fencing,
+atomic consume, readback, and notification acknowledgement make duplicate
+provider messages and worker retries exactly once. Canonical appointment title
+and location flow to Google Calendar and the iOS EventKit mirror; legacy/manual
+visits keep the lead-derived fallback. Google uses the existing durable
+outbound queue. Apple, Google, and Microsoft device calendars remain writable
+EventKit destinations when configured on iOS. No provider event is ingested as
+lead truth, and provider failure cannot roll back the OPS visit.
+
+The migration, worker, and iOS schema V24 bindings are local and unapplied; no
+customer data or provider calendar was mutated during verification.
 
 ### What replaced the old §19
 

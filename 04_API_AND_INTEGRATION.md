@@ -276,6 +276,70 @@ Responses: `200` when the targeted refresh writes or legitimately completes with
 
 **Release state (updated 2026-08-17):** `20260807123500_authorize_lead_summary_refresh.sql` is applied in production and the OPS-Web route ships with the bugfix wave of 2026-08-17 (branch `fix/ios-bug-batch-server-20260807` merged via `release/web-bugfix-wave-20260817`). The iOS caller remains gated on its App Store release. Each successful human lead-activity save can add one existing Phase C model invocation, with its normal token cost; no new provider or subscription is introduced.
 
+### Durable Phase C lead intelligence drain (2026-08-20 — local only)
+
+The existing `GET /api/cron/email-sync` route now drains at most two
+`opportunity_phase_c_work` rows under the existing mailbox-sync execution
+boundary after ingestion and pending lead-scan recovery. Source:
+`ops-web/src/lib/api/services/phase-c-lead-intelligence-work-service.ts`,
+`phase-c-lead-intelligence-work-runtime.ts`, and OPS-Web commit `8c86394e`.
+
+The response includes `leadIntelligence` counts for claimed, completed,
+superseded, retrying, failed, component-applied/reviewed/skipped, plus bounded
+errors, and `leadIntelligenceError` for a top-level worker failure. Retained or
+failed work contributes to the route's existing HTTP 503 health signal; it is
+not reduced to a log-only warning. No new route, scheduler, provider, or
+subscription is introduced.
+
+The local migration exposes service-role-only RPCs:
+
+| RPC | Contract |
+|---|---|
+| `claim_opportunity_phase_c_work` | Leases due high-water rows with bounded batch/lease values and skip-locked concurrency. |
+| `acknowledge_opportunity_phase_c_component` | Acknowledges one committed component only when company, opportunity, leased worker, and exact required event still match. |
+| `fail_opportunity_phase_c_work` | Persists component errors, releases the lease, and schedules bounded retry without clearing the marker. |
+| `record_opportunity_lifecycle_decision` | Creates or replays one immutable proposed/review decision receipt; conflicting evidence is rejected. |
+| `settle_opportunity_lifecycle_decision` | Settles only the recorded receipt after the guarded effect returns. |
+| `apply_phase_c_opportunity_stage_decision` | Applies an allowed active-stage advance under stage, assignment-version, decision, and manual-evidence-boundary guards. |
+| `record_phase_c_bilateral_event_handoff` | Persists one immutable ready/review envelope for P1-17; it creates no OPS or provider calendar event. |
+
+Component order is summary, lifecycle, deterministic commercial outcome, then
+bilateral-event handoff. Components settle independently: a model refusal or
+outage keeps summary/lifecycle due but does not block the guarded commercial or
+event evaluator from recording its result. Already acknowledged components do
+not replay on retry. Phase C disabled is an explicit durable skip for all four
+components.
+
+This code and migration are local only. They have not been pushed, deployed,
+or applied to production. Runtime cost remains the existing Phase C model
+usage plus retry invocations for unresolved work; there is no new fixed vendor
+cost. Exact incremental model spend depends on message volume and token count.
+
+### Phase C bilateral appointment consumption (2026-08-20 — local only)
+
+P1-17 adds a bounded consumer after the P1-16 lead-intelligence drain in the
+existing email-sync cron. The server claims only due `ready` or already
+`consumed` handoffs through service-role RPCs. It rechecks cancellation,
+company/opportunity identity, active assignee identity, operator and customer
+attendees, `calendar.create`, timezone, title, location, future time, duration,
+conflicts, and the handoff lease before an effect. Any absent or ambiguous
+authority settles the handoff to durable `review`; it never books silently.
+
+`consume_phase_c_bilateral_event_handoff` is the one atomic booking boundary.
+It inserts exactly one booked `site_visits` row keyed by the handoff, records
+the scheduled activity, nudges only `new_lead` to `qualifying`, and marks the
+handoff consumed in the same transaction. Retries read the same visit back;
+notification acknowledgement and retry/failure state are fenced by the same
+lease owner. Provider synchronization remains downstream of canonical
+`site_visits`: the existing Google queue trigger/drain handles a connected
+Google calendar, while the iOS EventKit mirror presents the canonical title
+and location to any writable Apple, Google, or Microsoft calendar configured
+on that device. Arbitrary inbound provider events are not imported into OPS.
+
+Migration `20260820222016_phase_c_bilateral_event_consumption.sql`, the worker,
+and the OPS-Web/iOS bindings are local and unapplied. They have not been pushed,
+deployed, released, or exercised against customer rows.
+
 ---
 
 ## Supabase Repositories
