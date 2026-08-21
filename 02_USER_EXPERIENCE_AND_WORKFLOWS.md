@@ -1353,6 +1353,28 @@ in the 2026-04-27 Phase 1+2 rework)
 
 **Proof pack:** `ops-ios/docs/artifacts/leads-console-redesign/` (six PNGs: working band, quiet band, search matches, no matches, newest sort with assignee tokens, stage browser WON tab).
 
+#### Lead detail actions and Won conversion (2026-08-20)
+
+The lead dossier's CONTACT and ASSIGNED TO rows are ordinary tappable controls;
+holding still opens their inline editors. Tap recognition is owned by a real
+button so the long-press recognizer cannot swallow the action on a physical
+device.
+
+Won conversion loads one authoritative project list. Address and client match
+flags rank the rows but never invalidate the list, including leads or projects
+with no linked client. The create-project address uses the shared MapKit-backed
+tokenized input. A selected suggestion carries its coordinates; a manual edit
+explicitly clears coordinates that belonged to older text so the new project
+cannot inherit a stale map pin.
+
+Before commit, the sheet shows every settled lead photo and eligible inbound
+email image in one selected-by-default strip. The operator may toggle items or
+choose ALL/NONE. The exact URL and attachment-ID arrays travel inside the
+guarded conversion evidence and are revalidated under the opportunity lock.
+Omitted arrays retain the legacy select-all contract for older app versions;
+explicit empty arrays mean copy none. Photos still queued on the phone are
+identified as not included and cannot be silently represented as selectable.
+
 ---
 
 ### LEADS Tab — Permission Branch + Delegate Day Sheet (2026-07-28)
