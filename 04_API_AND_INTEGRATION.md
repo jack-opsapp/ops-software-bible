@@ -1555,7 +1555,7 @@ If the visit has an opportunity, client, or project parent, the transaction inse
 
 Site-visit media uses the existing authenticated presign endpoint with a closed target contract:
 
-- request: canonical lowercase `siteVisitId` and `artifactId`, `variant` in `original | rendered | thumbnail`, approved image MIME type, and `fileSize` from 1 byte through the endpoint maximum;
+- request: canonical lowercase `siteVisitId` and `artifactId`, `variant` in `original | rendered | thumbnail`, approved image MIME type, and `fileSize` from 1 byte through the exact 10 MiB endpoint maximum;
 - the request cannot supply `folder`; the server resolves the Firebase bridge identity, rate-limits the actor, requires a canonical UUID company id, and reads the active visit through the user's scoped Supabase client with exact `(id, company_id)` equality;
 - unauthorized lookup failures are non-revealing (`403` authorization failure or `404` unavailable); the phone never receives another tenant's path;
 - derived key: `site-visits/{company_uuid}/{site_visit_uuid}/{artifact_uuid}/{variant}.{ext}`;
@@ -1566,6 +1566,20 @@ Account deletion invokes `eraseSiteVisitPrefix(companyId)` after the transaction
 ### Mobile transport and reconciliation
 
 `SiteVisitPersistenceCoordinator` commits local model mutations and their `SyncOperation` rows atomically. Dependencies enforce parent → artifacts/checklist/identity → media → completion. `SiteVisitOutboundSync` maps each operation to `SiteVisitRepository`; `InboundProcessor` and `RealtimeProcessor` fetch/subscribe to all four tables; `SiteVisitServerMerge` preserves unsent dirty fields while accepting authoritative server state. The local queue is retry machinery only and is encrypted into `SiteVisitRecoveryVault` during forced logout; it is not a Supabase company-data table.
+
+The iOS outbound media boundary (code commit `b3795976`) matches the route's
+10 MiB limit without altering durable source evidence. Files already within the
+limit upload byte-for-byte. Only an oversized raster is decoded into an
+ephemeral outbound JPEG, capped to a 2,048 px longest edge and stepped down
+until it is at most 10 MiB; the phone-local original is never overwritten.
+Newly rendered annotation composites use the same bounded JPEG policy before
+being saved for upload. If preparation cannot prove a compliant image, the
+operation fails visibly while the original remains on the phone.
+
+For a non-2xx presign response, iOS accepts operator-facing detail only from an
+exact JSON `{ "error": string }` envelope. It collapses whitespace and limits
+the detail to 240 characters; HTML and other arbitrary response bodies are not
+surfaced or persisted as error text.
 
 Checklist answers reconcile by active logical identity
 `(site_visit_id, field_id)`, not UUID alone. When Supabase returns the same
@@ -1756,7 +1770,7 @@ enum SyncError: Error {
 enum UploadError: LocalizedError {
     case invalidResponse
     case invalidURL
-    case presignError(statusCode: Int)
+    case presignError(statusCode: Int, message: String?)
     case s3Error(statusCode: Int)
 }
 
