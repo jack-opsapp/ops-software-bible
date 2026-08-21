@@ -1767,7 +1767,7 @@ Core principles:
 - **Phase C is optional**: the core lifecycle must remain correct with Phase C off. Phase C improves extraction, matching, drafting, and learning when enabled, but is not required for basic lifecycle correctness.
 - **Drafts are auditable**: every draft stores its origin, generated text, final sent text, linked opportunity/thread/message context, edit history, and final disposition.
 
-#### P1-16 Phase C lifecycle convergence (2026-08-20 — local only)
+#### P1-16 Phase C lifecycle convergence (production 2026-08-21)
 
 OPS-Web commits `b293d1dd` through `8c86394e` make meaningful projected
 correspondence a durable four-component workload rather than a best-effort
@@ -1806,11 +1806,12 @@ distinct authorized parties agree to one resolved event. It never creates an
 OPS event, site visit, or provider calendar object. Those apply-time checks and
 effects are the P1-17 lifecycle boundary.
 
-Migration `20260820204454_phase_c_lead_intelligence_workload.sql` is local and
-unapplied; production therefore still has the earlier best-effort Phase C
-summary/stage behavior. No production rows were rewritten by this work.
+Migration `20260820204454_phase_c_lead_intelligence_workload.sql` and its two
+foreign-key index follow-ups are applied and verified in production. OPS-Web
+commit `6b69551a` is customer-live. Deployment found zero queued workload rows
+and did not rewrite an opportunity, project, customer, or appointment as proof.
 
-#### P1-17 confirmed-appointment convergence (2026-08-20 — local only)
+#### P1-17 confirmed-appointment convergence (production 2026-08-21)
 
 The P1-16 bilateral envelope becomes a booking only through one
 server-authoritative consumer. A ready envelope must still identify the exact
@@ -1830,9 +1831,11 @@ and readback retries converge on the same visit. Provider outages retain the
 OPS record and retry the existing provider queue; provider calendar content is
 never treated as permission to mutate a lead.
 
-P1-17 is local only. Its database migration, OPS-Web consumer, and iOS schema
-V24/EventKit metadata have not been pushed, deployed, released, or applied to
-production, and no customer row was changed.
+The database migration and OPS-Web consumer are production-live in commit
+`6b69551a`. Release readback found zero bilateral handoffs and zero linked site
+visits, so no customer or provider-calendar row was changed. The iOS schema
+V24/EventKit metadata is merged and pushed on `main` commit `677850ee`; signed
+device/App Store distribution remains Jackson's separate release step.
 
 #### Lead intake terminality and reactivation contract (prepared 2026-07-31)
 

@@ -210,8 +210,8 @@ final class Project: Identifiable {
 }
 ```
 
-**Primary project contact contract (staged locally 2026-08-21; not applied or
-customer-live):** migration `20260821185843_project_primary_sub_client.sql`
+**Primary project contact contract (production schema live 2026-08-21; iOS
+distribution pending):** migration `20260821185843_project_primary_sub_client.sql`
 adds nullable `projects.primary_sub_client_id` plus a partial index. A private,
 search-path-hardened validation trigger accepts only an active `sub_clients` row
 that belongs to the project's current `client_id` and `company_id`. Changing the
@@ -232,6 +232,14 @@ transaction; failure leaves the prior choice visible and queued state unchanged.
 The outbound cross-entity barrier maps `primary_sub_client_id` to `subClient`,
 so an assignment to an offline-created contact waits for that contact's create
 instead of parking on the server validation trigger.
+
+The migration is applied in production under ledger name
+`project_primary_sub_client_20260821185843`. Independent readback confirmed the
+column, foreign key, partial index, validation/compatibility triggers, enabled
+project RLS, and zero automatic assignments across existing projects. The web
+contract is customer-live in OPS-Web production commit `6b69551a`; the iOS
+implementation is merged and pushed on `main` commit `677850ee`, ready for a
+signed device build but not distributed through Apple by this rollout.
 
 **Deck Builder Vinyl Marker (2026-05-21)**: `projects.vinyl_order_status`,
 `projects.vinyl_ordered_at`, and `projects.vinyl_ordered_by` are a
@@ -5621,12 +5629,19 @@ Migrations `20260714230000_email_attachment_persistence` and `20260714232000_gua
 
 Attribution begins only from `(company_id, email_connection_id, email_message_id)`. Inbound sender or outbound external recipients must match the activity's current lead/client/contact identity, and `match_needs_review` always fails closed. Activity reassignment increments scan/inspection generations and re-evaluates cached acceptance. Lead merge uses guarded evidence-bound RPCs. Won conversion needs no duplicate file row because projects retain `opportunity_id`.
 
-## Phase C Lead Intelligence Workload (2026-08-20 — local only, not released)
+## Phase C Lead Intelligence Workload (production live 2026-08-21)
 
 OPS-Web migration `20260820204454_phase_c_lead_intelligence_workload.sql`
 (commits `b293d1dd` through `8c86394e`) adds three server-authoritative tables.
-The migration is not applied to production, has no Supabase ledger row, and is
-not mirrored into the Bible migration archive until it is actually applied.
+It is applied in production under ledger name
+`phase_c_lead_intelligence_workload_20260820204454` (version
+`20260821201943`). Companion production migrations
+`phase_c_workload_fk_indexes_20260821202230` and
+`phase_c_handoff_opportunity_fk_index_20260821202400` cover every introduced
+foreign key. Independent readback found 114 existing opportunities fenced at
+their manual correction boundary, zero queued workload rows, forced RLS, and
+service-role-only worker capability. No opportunity, customer, appointment, or
+calendar row was mutated as deployment proof.
 
 ### `opportunity_phase_c_work`
 
