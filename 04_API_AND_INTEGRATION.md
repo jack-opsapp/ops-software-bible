@@ -1530,6 +1530,44 @@ exact JSON `{ "error": string }` envelope. It collapses whitespace and limits
 the detail to 240 characters; HTML and other arbitrary response bodies are not
 surfaced or persisted as error text.
 
+### Approval-controlled historical site-visit settlement (local source only, 2026-08-21)
+
+Code commit `59f14bd8` adds a deliberately non-automatic recovery boundary for
+the five audited, pre-incident, server-unlinked visits. It is not wired into
+`SyncEngine`, launch/reconnect sweeps, the retry timer, or PENDING WORK's RETRY
+ALL action. The exact immutable manifest is:
+
+| Visit | Expected server status | Permitted outcome |
+|---|---|---|
+| `984c6847-2ac6-4bf3-a56e-9eb08f120fdf` | `in_progress` | Recover active link |
+| `b1e9cea3-4c1a-4247-8a1f-c21aa721bbe2` | `in_progress` | Recover active link |
+| `0de1fc17-61d8-4b23-8534-27f7a529b1ce` | `in_progress` | Recover active link |
+| `4e73b982-c7ad-4303-9f1f-680b26edc10e` | `scheduled` | Recover active link |
+| `df4016c4-6269-49d1-aec2-76e7934600c2` | `completed` | Settle device history only |
+
+`HistoricalSiteVisitSettlementEvidence` derives the target opportunity only
+from the retained phone visit and the complete matching unresolved queue
+envelopes, then requires exact visit/company/relationship identity, active
+same-company target, row-scoped edit capability, no in-flight operation, and a
+fresh server bundle at the manifest's exact status/version. Any missing,
+foreign, extra, duplicate, already-linked, deleted, stale, or conflicting
+evidence fails closed. `prepare` binds those facts and the exact operation ids
+into a deterministic approval digest; `execute` accepts only an approval that
+repeats every immutable plan identity.
+
+For the three in-progress visits and one scheduled visit, execution performs a
+single-row compare-and-set of `site_visits.opportunity_id` only, filtered by the
+exact id, company, status, `updated_at`, `deleted_at IS NULL`, and
+`opportunity_id IS NULL`. A full server relationship readback must agree before
+only the captured phone operations are re-armed. The completed visit never
+enters a server mutation path: fresh server content must fingerprint exactly
+against the retained phone packet, after which only rejected local relationship
+intent and the exact queue operations are accounted as locally settled with
+`serverConfirmedAt = nil`. File-protected prepared/applied receipts make both
+paths auditable and idempotent. This mechanism has not been executed against
+the five live visits; customer settlement remains a separately approved,
+one-visit-at-a-time operation.
+
 Checklist answers reconcile by active logical identity
 `(site_visit_id, field_id)`, not UUID alone. When Supabase returns the same
 logical answer under a canonical UUID different from the phone's provisional

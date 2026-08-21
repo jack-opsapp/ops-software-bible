@@ -9070,6 +9070,16 @@ same-company soft-delete tombstone. It completes locally with no
 active task, absent local task, company mismatch, different entity/operation,
 different error, or any non-parked lifecycle remains visible and untouched.
 
+The separate five-visit historical settlement mechanism (code commit
+`59f14bd8`) does not weaken this retention rule and is not a Pending Work bulk
+action. It can prepare one exact visit only from the retained phone packet,
+complete unresolved queue evidence, a fresh matching server bundle, and current
+row capability. Execution requires a separately supplied exact-plan approval.
+Four active/scheduled visits may compare-and-set only their missing server
+opportunity link; the completed visit receives local accounting only and never a
+server rewrite. Until an individually approved execution succeeds and its
+readback/receipt proves settlement, the work remains retained indefinitely.
+
 **Capability-safe DELETE:** a row exposes the trailing DELETE swipe and detail
 action only when `RecoveryItem.discardPolicy` proves that exact work unit safe.
 Full-swipe execution is disabled. Both entry points show confirmation copy
