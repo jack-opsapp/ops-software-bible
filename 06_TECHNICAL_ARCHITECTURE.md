@@ -2329,6 +2329,19 @@ shape every future one-entity refresh should copy:
   `isSyncing`. A single-row read is not a sync pass and must not present itself
   to the operator as one — the pill stays quiet.
 
+**Assigned-client relationship hydration (2026-08-21).** A permission change
+can make a client readable through an assigned project without changing that
+client row's `updated_at`. The project may therefore already be cached with a
+valid `clientId` while its persisted `Project.client` relationship is nil, and
+an incremental pull cannot be trusted to repair it. After either targeted
+single-client merge (`DataActor.syncClientOnly` or the legacy
+`InboundProcessor.syncClient`), `ProjectClientRelationshipHydrator` reconnects
+that context-resident active client to every active cached project carrying the
+same id before the merge is announced. This is local cache repair only: it does
+not broaden RLS, mutate server data, or synthesize contact fields. The project
+details screen can then expose the fetched phone and email to an operator whose
+existing `clients.view = assigned` access already permits them.
+
 Scope honestly, or leave it whole and say why: `triggerProjectTasksSync` is
 still a full pass, documented at its site as such, because no scoped
 project-task inbound entry point exists (the task repository fetches by company
