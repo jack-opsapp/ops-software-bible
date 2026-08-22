@@ -1047,7 +1047,7 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 **Purpose:** View and manage scheduled work across time. Formerly called "Calendar"; the tab and view are now named "Schedule."
 
-**Updated:** 2026-03-02 — Full redesign replacing `CalendarToggleView` + `ProjectListView` with `DayCanvasView` + `CalendarDaySelector`.
+**Updated:** 2026-08-21 — The 2026-03-02 `DayCanvasView` + `CalendarDaySelector` redesign now uses bounded background snapshots so entering Schedule and moving between cached weeks never wait on SwiftData.
 
 **UI Elements:**
 
@@ -1092,6 +1092,8 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 - Tap task card → Task Details
 - Tap filter → CalendarFilterView
 - FAB → "Personal Event" (all roles) or "Request Time Off" (all roles); admin/office additionally see task/project create items
+
+**Responsiveness contract (2026-08-21):** Date selection is published immediately. Calendar cells and day pages read prepared caches only; they never fetch SwiftData while rendering or inside the tap/swipe path. The active week snapshot contains the visible week plus one adjacent week on either side, so those week moves render from memory while a cancellable background read recenters the window. Tasks are store-bounded by true date overlap, preserving long-running work that started earlier. Personal events and booked visits use a separate rolling 91-day bounded snapshot. Rapid navigation discards stale generations instead of repainting an older week over the current selection. Sources: `ops-ios/OPS/ViewModels/CalendarViewModel.swift`, `ops-ios/OPS/Utilities/DataActor+CalendarGrid.swift`, `ops-ios/OPS/Utilities/CalendarScheduleSnapshot.swift`; code commit `e1a23244`.
 
 **Role Differences:**
 - Admin/Office: See all events; FAB shows full menu (New Task Type, Create Task, Create Project, Create Client, New Estimate, New Lead, Add Expense, Personal Event, Request Time Off)

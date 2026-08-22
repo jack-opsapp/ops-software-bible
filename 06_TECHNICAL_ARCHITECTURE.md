@@ -296,7 +296,7 @@ ops-ios/OPS/
 │   │   │   ├── LoadingOverlay.swift
 │   │   │   ├── CustomTabBar.swift
 │   │   │   ├── TabBarBackground.swift
-│   │   │   ├── KeepAliveTabContainer.swift  # Keep-alive tab slots + slide geometry (2026-08-10); every visited tab stays mounted — see § Navigation System
+│   │   │   ├── KeepAliveTabContainer.swift  # Retained tab slots + immediate visibility switching (updated 2026-08-21); every visited tab stays mounted — see § Navigation System
 │   │   │   ├── TabActivationKey.swift       # \.isActiveTab environment key + onReceiveWhileActive; the activation protocol hidden tabs are held to
 │   │   │   ├── AppHeader.swift
 │   │   │   ├── SearchField.swift
@@ -1224,7 +1224,6 @@ OPS uses a **hybrid navigation system**:
 // MainTabView.swift — index-keyed tab roots, every visited one mounted at once
 struct MainTabView: View {
     @State private var selectedTab = 0
-    @State private var previousTab = 0
     /// Tabs the operator has visited. Mounted on first visit, never unmounted.
     @State private var mountedTabs: Set<Int> = [0]
 
@@ -1236,11 +1235,10 @@ struct MainTabView: View {
 
     var body: some View {
         ZStack {
-            // Keep-alive container: renders every mounted tab and slides
-            // between them. See "Keep-Alive Tab Container" below.
+            // Keep-alive container: renders every mounted tab and switches
+            // visibility immediately. See "Keep-Alive Tab Container" below.
             KeepAliveTabContainer(
                 selected: selectedTab,
-                previous: previousTab,
                 mounted: mountedTabIndices
             ) { index in
                 tabRoot(for: index)   // Home / Leads / Books / JobBoard /
@@ -1261,7 +1259,7 @@ struct MainTabView: View {
 }
 ```
 
-### Keep-Alive Tab Container (2026-08-10)
+### Keep-Alive Tab Container (updated 2026-08-21)
 
 **Problem it solves.** The router this replaced wrapped the tab content in
 `Group { tabContent }.id(selectedTab)` — the `.id()` was what made the slide
@@ -1272,28 +1270,21 @@ positions died. Tab switching is the app's primary navigation, so that teardown
 was the single largest source of navigation lag.
 
 **Slot architecture.** `OPS/Views/Components/Common/KeepAliveTabContainer.swift`
-renders every mounted tab at once inside a `ZStack` and moves them with
-`offset`: the selected tab sits at `0`, every other mounted tab parks exactly
-one measured container width to the side its index lives on
-(`TabContainerWidthKey`, a `max`-reducing preference). Direction of travel is a
-straight index comparison. Only the arriving and departing slots animate — every
-other mounted slot merely flips which side it is parked on, and animating that
-would drag whole screens across the display on a non-adjacent jump. First visit
-to a tab has no offset to animate from, so an asymmetric insertion transition
-supplies the identical slide (removal is `.identity`; slots are never removed).
-Reduce Motion pins every offset to `0` and carries the switch on opacity alone.
+renders every mounted tab at once inside a `ZStack`. Selection changes only the
+slot presentation: the active root is opaque, frontmost, interactive, and in the
+accessibility tree; every parked root is transparent, behind it, non-interactive,
+and accessibility-hidden. There is no measured-width geometry, offset parking,
+insertion transition, crossfade, or screen-wide selection animation. The tab
+bar's tokenized underline may animate independently, but app content becomes
+visible in the same render transaction as the tap.
 
-The container owns **geometry only**. Selection policy — what the indices mean,
-how a tab is chosen, when the mounted set is rebuilt — stays in `MainTabView`.
-
-**Same-transaction contract.** `selectedTab` is never assigned directly.
-Every selection routes through `MainTabView.selectTab(_:with:)` (or the
-`tabSelection` binding that wraps it), which sets `previousTab`, inserts the
-arriving index into `mountedTabs`, and sets `selectedTab` in the SAME
-transaction. `previous` is load-bearing, not bookkeeping: it is the only way to
-know which slot is leaving, and a stale value teleports the outgoing tab
-off-screen instead of sliding it. Updating it in a later `onChange` pass also
-mounts an arriving tab a frame too late to animate in.
+**Immediate-selection contract.** Every selection routes through
+`MainTabView.selectTab(_:with:)` (or the `tabSelection` binding that wraps it),
+which inserts the arriving index into `mountedTabs` before assigning
+`selectedTab`. The legacy animation argument remains only to avoid widening
+deep-link call sites; it is intentionally ignored for primary-tab content.
+`CustomTabBar` writes the binding directly rather than wrapping the entire
+selection in `withAnimation`. Code commit `6e3c948b`.
 
 **Never-evict RAM trade.** A tab mounts on first visit and is never unmounted;
 there is no eviction policy. This is a deliberate memory-for-responsiveness
@@ -1349,8 +1340,9 @@ screen is not guaranteed to win. Inherent to a per-view breadcrumb, and strictly
 better than the wrong tab winning.
 
 **Tests:** `OPSTests/Views/KeepAliveTabContainerTests.swift` hosts the real
-wiring (offsets, per-slot animation eligibility, insertion direction, Reduce
-Motion, mount-set growth).
+wiring (single active presentation, activation environment, retained state,
+broadcast gating, breadcrumb ownership). `TabBarHitTargetTests` separately
+locks full-cell hit geometry and immediate touch-down behavior.
 
 ### Tab Bar Touch Targets (2026-08-11)
 
@@ -2034,9 +2026,9 @@ class ImageCache {
 **Inbound change signal (InboundChangeSignal.swift, 2026-06-09):**
 - Problem it solves: SwiftUI `@Query` screens pick up in-place updates from
   background saves natively, but snapshot caches do not.
-  `CalendarViewModel.dayTaskCache` buckets tasks per day once and only rebuilt
-  on LOCAL edit signals — a teammate's reschedule landed in SwiftData but never
-  repainted the schedule until week-change / pull-to-refresh / relaunch.
+  `CalendarViewModel.dayTaskCache` buckets tasks per day once and therefore
+  needs an explicit invalidation signal — a teammate's reschedule can land in
+  SwiftData without otherwise rebuilding the prepared snapshot.
 - Contract: every inbound merge path (Realtime, delta, full sync — DataActor
   AND legacy InboundProcessor/RealtimeProcessor) posts `.inboundDataMerged`
   with the merged SwiftData model class names after a successful save.
@@ -2057,6 +2049,33 @@ class ImageCache {
 - Tests: `OPSTests/Network/InboundChangeRouterTests.swift` (coalescing, routing,
   starvation guard) and `InboundChangeSignalDataActorTests.swift` (merge → signal
   integration, user-event merge semantics).
+
+**Schedule snapshot loading (2026-08-21; code commit `e1a23244`):**
+
+- `CalendarViewModel.scheduledTasks(for:)` is cache-only. A cache miss returns an
+  empty collection while background work is pending; rendering and date gestures
+  never fall back to a main-context fetch.
+- `CalendarWeekWindow` is exactly 21 days (`weekStart - 7` through
+  `weekStart + 14`, end-exclusive). `DataActor.calendarWeekCache` uses two
+  company-scoped, store-bounded predicates to preserve both task shapes: rows
+  with an end date are admitted by true overlap; nil-end rows are admitted by a
+  start date inside the window. This keeps arbitrarily long-running work without
+  materializing unrelated history.
+- `DataActor.calendarLoadSnapshot` builds the task snapshot and a rolling 91-day
+  auxiliary snapshot for visible `CalendarUserEvent` and booked `SiteVisit` ids
+  in its private context. Only value snapshots and ids cross isolation. The main
+  actor resolves exactly those ids into its own models and publishes all three
+  sources atomically.
+- A snapshot covers the centered week plus its two adjacent weeks. Date selection
+  publishes immediately from a covering snapshot, then a cancellable actor task
+  recenters when needed. A monotonically increasing generation rejects stale
+  results from rapid swipes. Pull-to-refresh awaits one coherent replacement
+  rather than starting three independent loads.
+- When the long-lived DataActor feature is unavailable, Calendar creates a
+  temporary read actor from the same container. There is no synchronous
+  main-context fallback.
+- Coverage: `CalendarGridDataActorTests`, `CalendarFetchPredicationTests`,
+  `ArchivedProjectCalendarVisibilityTests`, and `CalendarBookedVisitsTests`.
 
 **Photo uploads (PhotoProcessor.swift):**
 - Adaptive concurrency: 3 concurrent uploads on WiFi, 1 on cellular
@@ -2161,16 +2180,17 @@ render — which covers most main-context reads in this app.
   work that would let these filters follow the gates into the predicate.
 
 Predicated in this pass: `DataController.getProjects`, `getAllTasks`,
-`getAllScheduledTasks(from:)`, `CalendarViewModel.rebuildWeekCache`, the month
+`getAllScheduledTasks(from:)`, the DataActor calendar snapshot, and the month
 grid. Two behavior corrections rode along, both previously-undocumented bugs:
 `getProjects` now excludes tombstones (the completed-work counters gating the
 review stacks were counting deleted jobs toward the unlock), and
 `getAllScheduledTasks` now gates `deletedAt` (a deleted task kept drawing a
 month-grid badge until the next launch — it was the only calendar fetcher that
-did not). `CalendarViewModel.rebuildWeekCache` takes **no** date bound on
-purpose: its per-day filter admits a task by overlap, tasks carry no maximum
-span, and any lower bound on `startDate` would silently drop long-running work
-off the canvas.
+did not). The original week-cache implementation could not safely add a simple
+`startDate` lower bound because that drops long-running tasks. The 2026-08-21
+DataActor replacement instead bounds by true overlap (`start < endExclusive`
+and `end >= start`) and handles nil-end single-day tasks with a second bounded
+start predicate. See **Schedule snapshot loading** above.
 
 `DataController.getProjectsForToday` was deleted in the same pass — dead code,
 no call sites. Tests: `OPSTests/Sync/CalendarFetchPredicationTests.swift`,
