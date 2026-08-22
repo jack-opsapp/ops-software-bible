@@ -1485,14 +1485,25 @@ covers, and dedicated overlay windows. OPS-owned UIKit-backed custom editors
 must prepare the accessory when their input is created, before it becomes first
 responder; editing-activation installation is only the fallback for
 system-managed inputs. This avoids reloading the keyboard during a custom
-editor's focus transition. The accessory uses one compact 44pt band: an
-invisible full-band `DONE` hit target preserves the OPS minimum touch target,
-while its visible label is top-aligned with tokenized clear space between the
-label and keyboard. The accessory weakly retains its exact owning input and
-resigns that input. `DONE` therefore remains fully above the keyboard and hides
-it without dismissing the screen, clearing data, or relying on the active
-window's responder chain. Source: `ops-ios/OPS/Styles/Components/OPSKeyboardDoneAccessory.swift`
-(code commit `e120ab0c`).
+editor's focus transition.
+
+The visible `DONE` control is a 44pt touch target centered in a 52pt accessory
+band, leaving one tokenized 4pt gutter above it and another between its border
+and the keyboard. It is a directly owned `UIButton`, not a `UIBarButtonItem`,
+because iOS 26 wraps bar items in a system platter whose fixed content band can
+overhang and clip the intended geometry. Its surface is real dark ultra-thin
+material through `UIVisualEffectView`, overlaid with the canonical
+`glassApprox` tint and top-edge light cue, then bounded by the tokenized
+`glassBorder` hairline and `buttonRadius`. The control therefore reads as OPS
+frosted glass rather than a flat translucent-grey fill without surrendering
+layout ownership to the system platter.
+
+The Cake Mono label is optically centered from its actual glyph-path bounds,
+not the font's inaccurate declared cap-height or the line box. The accessory
+weakly retains its exact owning input and resigns that input. `DONE` therefore
+remains fully above the keyboard and hides it without dismissing the screen,
+clearing data, or relying on the active window's responder chain. Source:
+`ops-ios/OPS/Styles/Components/OPSKeyboardDoneAccessory.swift`.
 
 Generic local `.toolbar(placement: .keyboard)` implementations and
 presentation-scoped dismissal modifiers are forbidden because they can miss
