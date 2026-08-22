@@ -612,6 +612,7 @@ Email-related entries from `ops-web/vercel.json`. All UTC. Auth: `Bearer ${CRON_
 | `/api/cron/email/dispatcher` | `*/10 13-23,0-4 * * *` | Pulls scheduled campaigns, enqueues `email_jobs` |
 | `/api/cron/email/worker` | `*/10 13-23,0-4 * * *` | Claims `pending` jobs, calls `gatedSend`, updates counters |
 | `/api/cron/email/auto-resume` | `*/5 13-23,0-4 * * *` | Resumes pause rows where `paused_until < now()` |
+| `/api/cron/email-send-reconciliation` | `8-59/20 * * * *` | Reconciles provider-accepted sends and approved actions; no eligible approved-action claim is a clean no-op |
 | `/api/cron/email/anomaly-check` | `3-59/5 13-23,0-4 * * *` | Bounce/spam/delivery/volume thresholds, auto-pause on critical |
 | `/api/cron/trial-expiry` | `0 14 * * *` | Daily 7am PT trial countdown (7/5/3/1 pre, 7/30 post) |
 | `/api/cron/payment-reminders` | `0 10 * * *` | (See `09_FINANCIAL_SYSTEM.md`) |
