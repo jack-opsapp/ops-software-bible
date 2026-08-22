@@ -7993,7 +7993,7 @@ bounce / spam spikes — auto-pauses global sending via PR 4's `pause()`.
 The pure `evaluateThresholds(snapshot)` returns the full list of breaches.
 `MIN_SENDS_FOR_PCT = 5` suppresses noise from tiny windows.
 
-**Anomaly cron — `/api/cron/email/anomaly-check` (every 5 min):**
+**Anomaly cron — `/api/cron/email/anomaly-check` (`3-59/5 13-23,0-4 * * *` UTC):**
 
 1. Calls `email_event_metrics(15)` + `email_event_metrics(60)` (baseline).
 2. Runs `evaluateThresholds`.
@@ -8003,8 +8003,11 @@ The pure `evaluateThresholds(snapshot)` returns the full list of breaches.
 6. For `severity = critical` AND kind ∈ {`bounce_spike`, `spam_spike`}:
    calls `pause('global', reason, severity='critical', anomalyLogId=<id>)` —
    actor identity from `PMF_OPERATOR_USER_ID` / `PMF_NOTIFICATION_EMAIL`.
-7. Inserts `notifications` row (type `email_anomaly`) — persistent for
-   critical, dismissible for warn. `action_url = /admin/email?tab=event-monitor`.
+7. Calls service-only `create_email_anomaly_notification_if_new` for the
+   `email_anomaly` rail entry — persistent for critical, dismissible for warn,
+   `action_url = /admin/email?tab=event-monitor`, and idempotent by immutable
+   `email-anomaly:<anomaly UUID>` identity. Automatic pauses are reconciled by
+   `reconcile_email_pause_notification_fanout`.
 8. Updates the anomaly row with `pause_audit_id`, `notification_id`,
    `action_taken` (human-readable description).
 
@@ -8027,6 +8030,11 @@ email_anomaly_log.id
 - `email_anomaly_log` — append-only log. Indexed `(kind, detected_at DESC)`,
   partial `(... WHERE resolved_at IS NULL)`. UPDATE/DELETE revoked from
   non-service roles.
+- `create_email_anomaly_notification_if_new(...)` — service-role-only,
+  event-scoped rail projection returning `{notification_id, created}`. The
+  exact partial unique index remains authoritative across read/resolution state.
+- `reconcile_email_pause_notification_fanout(...)` — service-role-only,
+  idempotent projection of an active automatic pause to current operators.
 - `email_pause_audit_log` — extended in PR 8 with optional `severity` +
   `anomaly_log_id` columns. Manual pauses from killswitch admin route leave
   both NULL; cron pauses populate both.
@@ -8057,7 +8065,7 @@ wasted calls when the operator is on another tab.
 
 | Path | Schedule (UTC) |
 |---|---|
-| `/api/cron/email/anomaly-check` | `*/5 * * * *` |
+| `/api/cron/email/anomaly-check` | `3-59/5 13-23,0-4 * * *` |
 
 **Env vars (no new ones):**
 

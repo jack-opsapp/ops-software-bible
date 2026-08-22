@@ -222,6 +222,8 @@ Append-only history. UPDATE/DELETE revoked. Build-time script syncs from the `@t
 
 Tamper-evident log of deliverability anomalies detected by `/api/cron/email/anomaly-check`. Kinds: `bounce_spike`, `spam_spike`, `delivery_drop`, `volume_drop`. Severity: `warn`, `critical`. For criticals that triggered an auto-pause, `pause_audit_id` links back to `email_pause_audit_log`. See [§15](#deliverability-anomaly-detector).
 
+Notification projection is event-scoped, not presentation-state-scoped. `public.create_email_anomaly_notification_if_new(...)` derives `dedupe_key = email-anomaly:<anomaly UUID>` and returns `{notification_id, created}`; the partial unique index on `(type, dedupe_key)` prevents a second rail entry after read, resolution, retry, or operator rotation. `public.reconcile_email_pause_notification_fanout(...)` performs the corresponding durable fanout for an active automatic pause. Both RPCs are `SECURITY DEFINER`, service-role-only contracts.
+
 ### `trial_expiry_notifications` *(migration 053)*
 
 Dedup table for the trial-expiry cron. Unique on `(company_id, notification_type)` where notification_type ∈ {`warning_7d`, `warning_5d`, `discount_3d`, `warning_1d`, `reengagement_7d`, `reengagement_30d`}. Each row records the promo codes attached to the send (`promo_code_50`, `promo_code_30`). See [§14](#trial-expiry-lifecycle).
@@ -547,7 +549,7 @@ The unique `(company_id, notification_type)` constraint on `trial_expiry_notific
 
 ## Deliverability Anomaly Detector
 
-**Cron**: `/api/cron/email/anomaly-check` (`ops-web/src/app/api/cron/email/anomaly-check/route.ts`). Schedule: `*/5 13-23,0-4 * * *` UTC.
+**Cron**: `/api/cron/email/anomaly-check` (`ops-web/src/app/api/cron/email/anomaly-check/route.ts`). Schedule: `3-59/5 13-23,0-4 * * *` UTC.
 
 Pure threshold evaluator in `ops-web/src/lib/email/anomaly-thresholds.ts`:
 
@@ -570,10 +572,12 @@ Snapshot inputs from `email_event_metrics(p_minutes_back)` RPC (migration 106):
 3. **Dedup** against `email_anomaly_log` rows within the last 60 minutes — skip if same kind at equal-or-higher severity was already logged.
 4. Insert `email_anomaly_log` row for each breach.
 5. **Auto-pause** ONLY for `critical` + `kind ∈ {bounce_spike, spam_spike}` — calls `pause({scope:'global', severity:'critical', anomalyLogId, ...})`. Requires `PMF_OPERATOR_USER_ID` and `PMF_NOTIFICATION_EMAIL` env vars (actor of record). If unset, pause is skipped and `action_taken` records why.
-6. Insert operator rail notification (type=`email_anomaly`). `persistent=true` for critical, `false` for warn. Routes to `/admin/email?tab=event-monitor`.
-7. Update the anomaly row with `action_taken`, `notification_id`, `pause_audit_id`.
+6. Call service-only `create_email_anomaly_notification_if_new` for the operator rail notification (`type=email_anomaly`). It is persistent for critical breaches, dismissible for warnings, routes to `/admin/email?tab=event-monitor`, and is idempotent by immutable anomaly identity.
+7. Reconcile any automatic-pause notification fanout, then update the anomaly row with `action_taken`, `notification_id`, and `pause_audit_id`.
 
 `delivery_drop` and `volume_drop` are alert-only — they don't auto-pause. Operator decides.
+
+**Production contract repair (2026-08-22 UTC).** Production had advanced past historical migration `20260813172000_email_anomaly_notification_identity.sql`, so PostgREST returned `PGRST202` for the missing notification RPC. Ledger `20260822041423_email_anomaly_notification_identity_forward_repair_20260813172000` replayed both RPCs, both exact uniqueness contracts, service-only ACLs, postflight catalog validation, and a schema-cache reload. The next scheduled run returned HTTP 200 at `04:18:25Z`; the durable workload row completed at `04:18:42.952369Z`, released its lease, reset consecutive failures to zero, and left the circuit closed. OPS-Web commit `4770573e18c237bd7e69145d59a1c8cc3991e7b7` records the repair and is live in READY deployment `dpl_8niQ5dLMgRSjNHcdYgwSCrWwXcHb` at `app.opsapp.co` with no alias error. The byte-exact forward migration is archived in `migrations/`.
 
 ---
 
@@ -608,7 +612,7 @@ Email-related entries from `ops-web/vercel.json`. All UTC. Auth: `Bearer ${CRON_
 | `/api/cron/email/dispatcher` | `*/10 13-23,0-4 * * *` | Pulls scheduled campaigns, enqueues `email_jobs` |
 | `/api/cron/email/worker` | `*/10 13-23,0-4 * * *` | Claims `pending` jobs, calls `gatedSend`, updates counters |
 | `/api/cron/email/auto-resume` | `*/5 13-23,0-4 * * *` | Resumes pause rows where `paused_until < now()` |
-| `/api/cron/email/anomaly-check` | `*/5 13-23,0-4 * * *` | Bounce/spam/delivery/volume thresholds, auto-pause on critical |
+| `/api/cron/email/anomaly-check` | `3-59/5 13-23,0-4 * * *` | Bounce/spam/delivery/volume thresholds, auto-pause on critical |
 | `/api/cron/trial-expiry` | `0 14 * * *` | Daily 7am PT trial countdown (7/5/3/1 pre, 7/30 post) |
 | `/api/cron/payment-reminders` | `0 10 * * *` | (See `09_FINANCIAL_SYSTEM.md`) |
 | `/api/cron/financial-digest` | `0 7 * * 1` | Weekly Monday financial summary |

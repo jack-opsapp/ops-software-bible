@@ -5590,6 +5590,8 @@ Eleven Supabase tables back the outbound email subsystem (SendGrid transport, `g
 - **`email_anomaly_log`** — Deliverability anomalies (`bounce_spike` / `spam_spike` / `delivery_drop` / `volume_drop`) detected by `/api/cron/email/anomaly-check`. Migration 105.
 - **`trial_expiry_notifications`** — Dedup table for the trial-expiry cron. Unique on `(company_id, notification_type)`. Migration 053. See `13_EMAIL_SYSTEM.md` § Trial-Expiry Lifecycle.
 
+`notifications` is the durable projection for anomaly rail entries. Production ledger `20260822041423_email_anomaly_notification_identity_forward_repair_20260813172000` installs the service-only `create_email_anomaly_notification_if_new` and `reconcile_email_pause_notification_fanout` RPCs plus their exact partial unique indexes. Identity is anchored to the immutable anomaly event, so read state, resolution state, retries, and operator rotation cannot create a duplicate. The ledger is mirrored byte-exact in `migrations/20260822041423_email_anomaly_notification_identity_forward_repair_20260813172000.sql`.
+
 The `BEFORE INSERT ON companies` trigger `initialize_company_trial` (migrations 065, 066) — which stamps `trial_end_date` and makes the trial-expiry email path possible — is documented in `13_EMAIL_SYSTEM.md` § Data Model.
 
 ---
