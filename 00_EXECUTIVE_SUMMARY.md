@@ -4,9 +4,9 @@
 
 This executive summary provides a high-level overview of OPS (Operational Project System) for non-technical stakeholders and serves as the entry point for understanding the product, market, and technical foundation.
 
-## Current agent access posture (2026-08-29)
+## Current agent access posture (2026-08-29 UTC)
 
-OPS production exposes eleven read-only tools to Claude through the remote MCP connector. A separate local OPS-Web branch implements the complete thirty-four-read business catalogue, including site visits, deck-design geometry and measurements, tasks, artifacts, sales, payments, expenses, supply, company/team context, integration health, work queue, and operational overview. That P2 branch is not pushed, deployed, database-applied, or externally exposed. Production remains at eleven reads; all write capabilities remain unavailable. See `specs/2026-08-29-mcp-read-catalogue-p2.md`.
+OPS production now runs capability manifest `2026-08-22.capability-manifest.v8` and the complete thirty-four-read business catalogue at the database/application layer, including site visits, deck-design geometry and measurements, tasks, artifacts, sales, payments, expenses, supply, company/team context, integration health, work queue, and operational overview. All thirty-nine ordered P2 migrations are production-applied, and OPS-Web commit `5e6ac2fb4db2b3f07b76b673d05ca7a92ae02584` is served by READY Vercel deployment `dpl_CWAAobozwoKHAYJfqATC1FN7bABL` at `app.opsapp.co`. External MCP exposure remains immutable `2026-08-22.mcp-exposure.v1`: exactly eleven read-only tools and seven grantable read scopes. The additional twenty-three reads are deployed dark, no thirty-four-read exposure revision has been built, and all external writes remain unavailable. OAuth metadata and the MCP bearer challenge passed live checks. Claude remains the accepted production host; the Codex canary is awaiting user browser consent and is not yet accepted. See `specs/2026-08-29-mcp-read-catalogue-p2.md`.
 
 ---
 
@@ -262,7 +262,7 @@ Every design decision reflects real-world field experience:
 - Floating window system (draggable, minimizable create forms)
 - **Project Notes system:** first-class threaded notes with @mentions, author attribution, photo attachments, legacy migration from Bubble teamNotes
 - **Calendar/Schedule system:** 5-view calendar (month, week, day, team timeline, agenda) with drag-and-drop scheduling, event resize, click-to-create, detail panel, multi-filter sidebar, conflict detection, keyboard shortcuts, responsive (mobile/tablet/desktop)
-- **Claude MCP connector:** production-live, read-only access to eleven actor-, company-, permission-, and source-scoped tools through `https://app.opsapp.co/api/mcp`, including bounded customer and job discovery. OAuth consent and revocation are OPS-owned; no write or site-visit capability is exposed. See `04_API_AND_INTEGRATION.md` § “OPS Remote MCP Server — P1 Mount, Claude First.”
+- **Remote MCP connector:** production-live at `https://app.opsapp.co/api/mcp`, with immutable exposure v1 limited to eleven actor-, company-, permission-, and source-scoped read tools and seven grantable scopes. Claude is accepted; the Codex DCR canary is awaiting user browser consent and is not yet accepted. Manifest v8's additional twenty-three reads remain externally dark, and no write or site-visit capability is exposed. OAuth consent and revocation remain OPS-owned. See `04_API_AND_INTEGRATION.md` § “OPS Remote MCP Server — P1 Mount, Claude First.”
 
 **Ecosystem Apps:**
 - **ops-site** — Marketing website (Next.js)
