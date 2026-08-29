@@ -1243,7 +1243,7 @@ These events are automatically sent to Google Ads:
 
 **History imported 2026-08-05 21:13 UTC (730/730 days):** `ads_daily_account` 197 rows, `ads_daily_campaign` 467 rows, `ads_daily_search_term` 5,274 rows. Activity spans 2025-02-20 → 2026-03-09 (no spend after 2026-03-09): $4,777.80 CAD, 8,495 clicks, 355 conversions (account and campaign totals cross-check exactly).
 
-**Token designation (2026-08-05):** Google's approval notice names the **"App Conversion Tracking and Remarketing API"** and warns that full access provisioning "may take up to two weeks to propagate." Empirically this restricts nothing OPS depends on — every production query surface was exercised against the live account the same day and returned HTTP 200: account summary, campaign, `keyword_view`, `search_term_view`, `conversion_action` (resource + segmented), and the daily-spend series. If provisioning changes behavior mid-propagation, the daily cron records the failure in `ads_sync_status.error`, which the page's sync bar renders — no extra monitoring needed.
+**Token designation (2026-08-05):** Google's approval notice names the **"App Conversion Tracking and Remarketing API"** and warns that full access provisioning "may take up to two weeks to propagate." Empirically this restricts nothing OPS depends on — every production query surface was exercised against the live account the same day and returned HTTP 200: account summary, campaign, `keyword_view`, `search_term_view`, `conversion_action` (resource + segmented), and the daily-spend series. If provisioning changes behavior mid-propagation, the **provider-access degrade contract** below carries it.
 
 **Conversion tiles (2026-08-05, commit `a3be19be`):** `COST PER SIGNUP` / `COST PER INSTALL` had never rendered a value. Three defects, all masked by the pre-approval 403 and by `safe()` swallowing the error:
 1. The breakdown query selected `metrics.cost_micros` alongside `segments.conversion_action_name` — rejected with `PROHIBITED_SEGMENT_WITH_METRIC_IN_SELECT_OR_WHERE_CLAUSE`. **Google does not attribute cost to individual conversion actions.** The window's total account spend is the only honest numerator (this is also how the Ads UI computes cost/conv. when segmenting), so `ConversionBreakdown.cost` now carries that window total and `cpa = windowSpend / action conversions`.
@@ -1271,6 +1271,61 @@ The reporting direction (Google Ads → OPS) is entirely separate from the conve
 | `ad_spend_log` (PMF CAC/payback) | `/api/cron/pmf/google-ads-sync` daily 10:24 UTC | One account-level row per day, zero-row on no-spend days |
 
 **Sync state** lives in `ads_sync_status` (`daily-sync` + `backfill` rows). Cost: Google Ads API Basic access is free (15k operations/day quota; OPS usage is single-digit calls per day).
+
+**Provider-access degrade contract (bug 964cf782, shipped 2026-08-29).** The bible previously claimed the status row alone was sufficient monitoring. The 2026-07-06 → 2026-08-03 incident disproved it: with the developer token unapproved, all three ads cron workflows hard-500'd on **every scheduled run for four weeks** — seven duplicate health filings, the PMF dashboard silently missing its spend series, and no single truthful signal anywhere. The rows were accurate; nothing was watching them. Access was granted 2026-08-05 and all three workflows have been green since (briefings emailed 08-10/17/24, daily sync current, PMF spend rows daily), so the remaining defect was the **failure mode**, not the credential.
+
+A blocked account or token is a standing operator condition, not a code defect, and is now handled as one:
+
+| Piece | Contract |
+|---|---|
+| Classifier | `classifyGoogleAdsAccessFailure()` (`src/lib/admin/ads-provider-health.ts`) walks the `cause` chain (depth 6) and matches a **401/403** `GoogleAdsApiError` — the typed error `rawSearch` now throws, message template unchanged. Returns a one-line reason naming the marker (`DEVELOPER_TOKEN_NOT_APPROVED`, `PERMISSION_DENIED`, `UNAUTHENTICATED`, `invalid_grant`, …); `null` for 400s, 5xx, network faults, and database errors. |
+| Shared state | `ads_sync_status` row `id = 'provider-access'` — `failed` + reason while blocked, `complete` when healthy. One row the admin sync bar and nightly health monitor can read instead of a 500 storm. |
+| Notification | Exactly one rail notification on the healthy↔blocked **transition** (and one on recovery), type `ads_provider_alert`, `persistent: true` while blocked, `action_url` `/admin/google-ads`. Operator identity comes from `getOptionalPmfOperatorIdentity()` (`PMF_OPERATOR_USER_ID` / `PMF_OPERATOR_COMPANY_ID`); **if those envs are unset the helper logs and skips — the notification silently never fires.** A missing row counts as healthy, so the first-ever healthy run stays silent. |
+| Route behavior | All three routes (`ads-sync`, `pmf/google-ads-sync`, `ads-briefing`) return **HTTP 200** with a `degraded` payload on an access-classified failure. **Unexpected errors still 500** — real defects must still page. Database-pressure semantics are unchanged. |
+| Data truth | A degraded `pmf/google-ads-sync` run writes **no** `ad_spend_log` row. A missing day means "not synced"; a zero row means "checked, no spend" — the two are never blurred. |
+
+`reportAdsProviderHealth()` never throws. The three callers run at 08:04, 10:24, and Mon 12:34 UTC — never concurrently — so read-then-write transition detection is race-free in practice; the worst theoretical race is one duplicate notification. Tests: `tests/unit/admin/ads-provider-health.test.ts`, `tests/unit/api/ads-sync-cron.test.ts`, `tests/unit/api/ads-briefing-cron.test.ts`, `tests/integration/pmf-google-ads-sync-cron.test.ts`.
+
+### App Store Connect Analytics Ingestion (Growth › App Store)
+
+**Pipeline.** `/api/cron/app-store-sync` (daily 09:04 UTC, `maxDuration` 300) walks Apple's analytics hierarchy under a fenced `app-store-sync` workload lease:
+
+`asc_report_requests` → reports (per category) → `DAILY` instances → segments → gzipped TSV → `asc_raw_rows` → mapped facts → batched upsert into `asc_discovery_engagement` / `asc_downloads` → segment + instance marked processed → cursor advanced.
+
+Each step is individually cursor-durable, so a mid-run crash resumes exactly. `runSync()` loops steps until the walk completes a full cycle, a **240s budget** expires, 60 steps run, or the lease aborts. Before this the route processed exactly **one segment per day**, and because the engagement category gains a new instance daily, the walk never reached `APP_STORE_COMMERCE` — `asc_downloads` had **0 rows, ever**, against an 86-instance backlog.
+
+**Report allowlist — one report per category.** Five reports funnel into two fact tables; the Detailed and Web Preview variants restate the same totals at a finer grain, so ingesting them collides or double-counts against the same conflict identity.
+
+| Category | Ingested report | Skipped |
+|---|---|---|
+| `APP_STORE_ENGAGEMENT` | App Store Discovery and Engagement **Standard** | …Detailed, Web Preview Engagement Standard/Detailed, Retention Messaging |
+| `APP_STORE_COMMERCE` | App Store Downloads **Standard** | all others |
+
+Non-allowlisted reports are skipped at the report-walk level: the cursor advances past them, no instances are fetched, and no `asc_reports` row is written. A cursor resumed *inside* a non-allowlisted report re-checks the report name once and unpins itself.
+
+**`engagement_type` is Apple's `Event` taxonomy** — `Impression` / `Page view` / `Tap`. It is **not** `Engagement Type`, which carries only the tap subtype (`Get` / `Open` / `Re-download`) and is preserved solely in `asc_raw_rows.raw`. `parseTsv` resolves columns by header **name**, and **alias order is the declared resolution priority** with the canonical header as the final fallback — never inferred from the order columns happen to appear in Apple's file. This matters because the Standard engagement report carries **both** columns, and the dashboard (`ilike engagement_type '%page view%'`) plus the `asc_conversion_daily` view (`lower(engagement_type) LIKE '%impression%'`) both consume the Event taxonomy.
+
+**Batch aggregation by conflict identity.** Fact batches are collapsed to one row per ON CONFLICT identity with `counts` and `unique_counts` **summed**, before the upsert:
+
+| Table | Unique index | Columns |
+|---|---|---|
+| `asc_discovery_engagement` | `asc_de_uk` | 9 — granularity, reporting_date, engagement_type, page_type, source_type, source_info, device, platform_version, territory |
+| `asc_downloads` | `asc_dl_uk` | 10 — as above plus download_type and campaign, minus engagement_type |
+
+Both are **`NULLS NOT DISTINCT`**, so NULL dimensions collide rather than multiply. This is semantically required, not merely defensive: under the Event taxonomy a `Tap/Get` row and a `Tap/Open` row legitimately collapse to one `Tap` identity whose count is the sum. It is also what prevents Postgres **21000** (`ON CONFLICT DO UPDATE command cannot affect row a second time`), which a batched upsert raises whenever one identity appears twice. **Caveat:** `unique_counts` summed across a dropped subtype dimension is Apple's coarser-grain **upper bound** (one device can appear under both subtypes) — the same property every existing dashboard aggregate over these tables already has.
+
+**Idempotency and status.** Raw rows are **deleted then re-inserted** per segment (replace semantics), so a retry converges instead of amplifying. `asc_sync_status.last_synced_date` is the **monotonic max** processing date: it is omitted from the status write when a run ingested nothing, and never regresses when Apple serves an older restatement segment. Failures persist the flattened **`cause` chain** (`describeFailure`, up to 6 levels, 800 chars) rather than only the wrapper message — the wrapper alone ("… fact upsert failed") is what made the original wedge undiagnosable.
+
+**The 2026-08 incident.** Two defects compounded:
+
+1. **08-09 → 08-11 cardinality wedge.** Apple's file carried two `Tap` rows differing only in `Engagement Type` (`Open` vs `Get`). The then-deployed parser resolved `engagement_type` by *file header order*, so both took the `Event` value `Tap` → identical conflict identity → Postgres 21000 → the route 500'd and the workload cursor never advanced. The 500s stopped on 08-12 only because the colliding rows aged out of Apple's restatement window; the bomb stayed armed. Three segments (`d60e4cea`, `50d6b46c`, `2df9a7c8`, 126/132/135 rows) were left stranded in `state = 'discovered'`.
+2. **The 08-14 "fix" (`518423f9`) regressed the taxonomy.** It switched resolution to candidate order, so `engagement_type` began resolving from `Engagement Type` instead of `Event`. Facts through 08-17 carry the event taxonomy (`Impression` 720 rows, `Page view` 29, `Tap` 6); facts from 08-18 carry NULL (4,126 rows), `Get`, `Open`, `Re-download` — **invisible to both the dashboard and `asc_conversion_daily`**. The 08-18 snapshot segment re-ingested history under the NULL flavor while the old `Impression` rows survived, double-representing overlapping ranges. And under those semantics Impression and Page-view rows sharing dimensions both mapped to `engagement_type = NULL` — the same NULLS-NOT-DISTINCT identity, re-arming 21000.
+
+**2026-08-29 fact rebuild.** `asc_discovery_engagement` was rebuilt from `asc_raw_rows` in one transaction — the raws preserve **both** `event` and `engagement type` for every row ever ingested, so nothing was lost. The rebuild takes Standard-report segments only, applies the Event taxonomy, aggregates per identity, and lets later segments supersede earlier ones (restatement order). It simultaneously ingested the three stranded segments, purged the NULL/`Get`/`Open` era, removed the double-counted overlap, and evicted the Detailed/Web-Preview pollution. Detailed and Web Preview raw rows, segments, and report rows remain for audit; their facts are deliberately not re-created.
+
+**`asc_conversion_daily` downloads contract.** The view's downloads CTE previously counted only rows whose `download_type` was NULL or a literal total (`'total downloads'` / `'total'`). Apple's Downloads Standard report emits **breakdown** rows (First-time download / Redownload) and no total row, so the view would have reported zero downloads forever once ingestion started. It now **sums the breakdown rows and excludes any literal total row**, so a hypothetical total+breakdown file cannot double-count (migration `20260829120000`). Zero behavior change while `asc_downloads` is empty. **Open readback:** Apple's actual `download_type` values are unverified until the first COMMERCE ingestion — confirm them against this assumption once downloads start flowing.
+
+Tests: `tests/unit/app-store-parse.test.ts`, `tests/unit/app-store-sync.test.ts`, `tests/unit/app-store-sync-outage.test.ts`, `tests/unit/app-store-cron.test.ts`.
 
 ### Attribution Capture (Unified Attribution P2 — 2026-08-06)
 
