@@ -119,6 +119,19 @@ verify them by object, never by version key.
   preserved; every other guard, the reminder `-1` clear semantics, the change detection and the activity row
   are byte-for-byte the deployed body (diffed against `pg_get_functiondef` on 2026-08-29). Existing web/MCP
   callers that pass the arg are unaffected. See `04_API_AND_INTEGRATION.md` § reschedule_site_visit.
+- `20260829021000_project_photos_client_update_grant.sql` — iOS bug sweep 2026-08-28 (Cluster D, bug
+  `1154fe67`). Widens the client `UPDATE` grant on `public.project_photos` from the three columns granted by
+  ledger `20260729162950` to `(deleted_at, is_client_visible, caption, taken_at, thumbnail_url, rendered_url)`.
+  The three added columns let the iOS reconciler back-fill capture metadata onto the photo rows
+  `private.execute_opportunity_conversion_core` mirrors server-side with `taken_at` NULL and no thumbnails
+  (bug `ba75732a`; 214 of 931 rows carry a NULL `taken_at`). **Correction to the bug thread:** the sweep's
+  planning probe read `information_schema.role_table_grants`, which reports only TABLE-level grants and is
+  blind to column-scoped ones — the original trio has in fact been granted since 2026-07-29, so photo
+  soft-delete and client-visibility writes were never grant-blocked. Verified against
+  `information_schema.column_privileges` on 2026-08-29. `GRANT` is idempotent, so re-granting the original
+  three is a no-op. Row rules (company_isolation RLS, `trg_project_photos_00_write_guard`, the RESTRICTIVE
+  hard-DELETE denial) are untouched; `url`/ids/`uploaded_by`/`source` stay non-updatable by client roles.
+  See `07_SPECIALIZED_FEATURES.md` § project photos.
 
 ## Legacy files whose content differs from the applied text
 
