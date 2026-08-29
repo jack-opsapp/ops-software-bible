@@ -1173,11 +1173,98 @@ iOS change scopes the delete affordance to own photos for non-admins, while a
 `projects.edit` grant at scope `all` retains admin-any deletion. UUID casing and
 whitespace are normalized before comparing; empty, malformed, or server-only
 uploaders such as `system` never match a crew user. Sources:
-`OPS/DataModels/ProjectPhoto+DeleteAuthorization.swift` and
+`OPS/DataModels/Supabase/ProjectPhoto.swift` (§ `ProjectPhotoDeleteAuthorization`) and
 `OPSTests/DataModels/ProjectPhotoDeleteAuthorizationTests.swift`; commits
 `e468976b` and `9dd75e55`, merged into local iOS `main`. App Store distribution
 of that client behavior remains a separate, unverified release gate; the live
 server guard rejects any older-client affordance that exceeds this contract.
+
+**Grant widening + a correction to the record (2026-08-29, iOS bug sweep Cluster D
+— bug `1154fe67`).** The trio above has been granted **since 2026-07-29** and the
+delete / visibility paths were never grant-blocked after that date. The sweep's
+planning probe reported otherwise because it read
+`information_schema.role_table_grants`, which lists only TABLE-level grants and is
+blind to column-scoped ones; `information_schema.column_privileges` is the correct
+catalog and confirmed the trio live on 2026-08-29 (29 soft-deletes have landed
+since the grant). The client `UPDATE` grant is being widened to
+`(deleted_at, is_client_visible, caption, taken_at, thumbnail_url, rendered_url)`.
+The three added columns exist so the iOS reconciler can back-fill capture metadata
+onto rows minted server-side by `private.execute_opportunity_conversion_core`,
+which mirrors site-visit photos with `taken_at` NULL and no thumbnails (214 of 931
+rows carry a NULL `taken_at`). `GRANT` is idempotent, so re-granting the original
+three is a no-op. `url`, the ids, `uploaded_by` and `source` stay non-updatable by
+client roles; every row-level rule — `company_isolation`,
+`trg_project_photos_00_write_guard`, the RESTRICTIVE hard-DELETE denial — is
+unchanged. Migration authored at
+`ops-software-bible/migrations/20260829021000_project_photos_client_update_grant.sql`;
+**not yet applied** (see that directory's README § Authored here, awaiting approval).
+
+**Durable soft-delete drain (2026-08-29 — bug `1154fe67`).** `deleteProjectPhoto`
+and the notes prune loop always stamped `deletedAt` + `needsSync = true` on the
+local row, but nothing drained that flag: a remote soft-delete that failed —
+offline, or refused — was lost forever and the photo resurrected on the next
+inbound sync. `ImageSyncManager.drainPendingPhotoSoftDeletes` now re-pushes every
+unconfirmed tombstone on each sync pass (startup, reconnect, retry timer), running
+BEFORE the empty-upload-queue early return so a launch with no pending uploads
+still delivers one. `softDeleteProjectPhotoRow` returns success instead of
+swallowing it, clears the flag only for the rows an accepted statement covered
+(`clearPendingSoftDelete`), and files through `AutoBugReporter.reportIfPermanent`
+on a permanent rejection — the May-12 silent-RLS-swallow class stays loud. The
+work list is keyed by (project, url) because one statement covers every row on the
+pair. Cover: `OPSTests/Sync/PhotoSoftDeleteDrainTests.swift`.
+
+**Site-visit photo dual lane and its reconciliation contract (2026-08-29 — bug
+`ba75732a`).** A converted site visit's photos reach `project_photos` by two
+routes, and both must stay. Online, `private.execute_opportunity_conversion_core`
+mirrors `site_visits.photos[]` into `project_photos` inside the same transaction
+that creates the project — server-generated ids, `uploaded_by = sv.created_by`,
+`taken_at` NULL, no caption/thumbnail/rendered. Offline, the client queue is the
+only delivery path: `SiteVisitProjectHandoff` enqueues a `projectPhoto` create per
+remote-URL artifact. When conversion ran online those client creates are born
+redundant — every attempt re-INSERTs and hits a dedupe arbiter, and because the
+server rows carry ids the phone has never seen it can neither insert nor link.
+Two partial unique indexes arbitrate the same natural key
+`(company_id, project_id, site_visit_id, url)`:
+`project_photos_active_site_visit_url_key`
+(`WHERE deleted_at IS NULL AND source = 'site_visit' AND site_visit_id IS NOT NULL`)
+and `project_photos_active_site_visit_url_uidx`
+(`WHERE site_visit_id IS NOT NULL AND deleted_at IS NULL`).
+
+The repair is reconciliation, never removal of the client lane.
+`SyncOperationReconcilers` (`OPS/Network/Sync/SyncOperationReconcilers.swift`)
+detects two classes and both outbound twins — `DataActor.executeOperation` and the
+legacy `OutboundProcessor.executeOperation` — consult it after the primary-key
+idempotency block and before disposition routing:
+
+| Failure | Reconciliation |
+|---|---|
+| `projectPhoto` **create** vs `project_photos_active_site_visit_url*` | Look the row up by natural key, adopt the server id locally (merging and deleting a local twin the inbound merge already materialized under that id), back-fill the metadata the conversion RPC does not carry, complete the op. |
+| `projectTask` **update** raising `task_not_found` against a soft-deleted task | Tombstone-wins: stamp the server's `deleted_at` on the local task, clear its pending flag, complete the op. |
+
+Detection is deliberately narrow — a `_pkey` conflict or any other 23505 still
+parks for a human. Annotations bind by `photoURL`, never by photo id, so healing
+the id has no annotation ripple. Two further changes ride the same fix: the stored
+handoff payload now carries its `id` (the wire always did, via `genericTablePush`),
+and each twin's post-push completion transaction moved OUT of the push `do` block,
+so a LOCAL persistence throw can no longer be classified as a server rejection,
+consume retry budget, or park an operation the server already accepted — it leaves
+the op `inProgress` for the launch stale sweep instead. Ops that parked BEFORE the
+reconcilers existed are invisible to that sweep (parked is deliberately terminal),
+so `SyncEngine.reenqueueRecoverableOperations` now also calls
+`resolveReconcilableParkedOperations()` on the active outbound driver, gated on
+connectivity: matching ops resolve against server state and PENDING WORK empties
+itself with no user action. Cover:
+`OPSTests/Sync/SyncOperationReconcilerTests.swift`.
+
+**Delete affordance, second surface (2026-08-29).** `ProjectPhotosGrid`'s
+long-press delete was ungated — it offered a delete on every tile regardless of
+uploader, the one photo surface commits `e468976b` / `9dd75e55` did not reach. It
+now asks the same question through the same `ProjectPhotoDeleteAuthorization`, and
+fails closed until attribution has loaded. Both surfaces build their per-URL
+attribution map with the shared `ProjectPhotoUploaderAttribution.byURL`, so the
+collapse rule (rows on one URL that disagree read `.unmatchable`, because one
+statement soft-deletes them all and the trigger must accept them all) cannot drift
+between them. Cover: `OPSTests/DataModels/ProjectPhotoUploaderAttributionMapTests.swift`.
 
 **Parent-create ordering barrier (2026-08-18 — bug `ca26fd7a`).** The restrictive
 INSERT policy was not the defect. The report fired at `2026-08-19 03:05:23Z`,
