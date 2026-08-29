@@ -109,16 +109,6 @@ verify them by object, never by version key.
   rather than dropped so a stale client fails loudly (42501) instead of quietly bypassing the guards. Zero
   callers: the shim stamps `legacy_shim` into `opportunity_dispositions.evidence` on every call and none of
   the 26 conversions recorded since 2026-06-02 carries it.
-- `20260829020416_reschedule_site_visit_scheduled_at_null_keeps.sql` — iOS bug sweep 2026-08-28 (Cluster B).
-  Gives `public.reschedule_site_visit` a `default null` on `p_scheduled_at` so NULL (or an omitted arg) keeps
-  the stored time, and moves the past-time guard inside the "time actually moved" branch. Until this lands, a
-  reschedule that changes only crew / duration / heads-up omits `p_scheduled_at` on the wire (Codable drops nil
-  keys), PostgREST cannot resolve the overload at all, and the operator sees "Server error. Try again." —
-  the client already implements the documented NULL-keeps contract (`BookSiteVisitForm.rescheduleIntent()`).
-  `create or replace` with identical arg types, so the OID, grants and the Google-sync trigger wiring are
-  preserved; every other guard, the reminder `-1` clear semantics, the change detection and the activity row
-  are byte-for-byte the deployed body (diffed against `pg_get_functiondef` on 2026-08-29). Existing web/MCP
-  callers that pass the arg are unaffected. See `04_API_AND_INTEGRATION.md` § reschedule_site_visit.
 - `20260829021000_project_photos_client_update_grant.sql` — iOS bug sweep 2026-08-28 (Cluster D, bug
   `1154fe67`). Widens the client `UPDATE` grant on `public.project_photos` from the three columns granted by
   ledger `20260729162950` to `(deleted_at, is_client_visible, caption, taken_at, thumbnail_url, rendered_url)`.

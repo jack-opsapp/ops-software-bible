@@ -1647,7 +1647,7 @@ A site visit exists in exactly **two** shapes, separated by one column:
 - **JobBoard FAB** — the `site-visit` item reads BOOK SITE VISIT and raises the NOW/BOOK branch (START NOW → walk-up capture; BOOK A VISIT → leads-only picker → booking sheet, state-aware reschedule when the lead already holds the open booking).
 - **Booking sheet WHEN surface** — a Monday-first paged week rail (18-month horizon + month jump) whose day cells carry tan booked-visit markers; a BOOKED — <DAY> strip lists that day's existing visits (calendar-visibility-scoped, the moved booking excluded); a non-blocking tan OVERLAPS note flags window collisions. Signals inform, they never block.
 - **Lead NEXT TOUCH** — a booked visit outranks `next_follow_up_at` in the detail hero (presentation only; the column is untouched). The cell opens the appointment sheet: live countdown (`SiteVisitCountdown`), window, crew, START NOW (visit-day onward, convert grant), REBOOK (reschedule mode).
-- `reschedule_site_visit.p_scheduled_at` is NULL-keeps as of 2026-08-28 (see 04_API) — crew/duration/reminder-only reschedules omit it. **The migration is authored but NOT yet applied to prod** (`migrations/20260829020416_reschedule_site_visit_scheduled_at_null_keeps.sql`); until it lands, a crew/duration/reminder-only reschedule still fails with a generic server error.
+- `reschedule_site_visit.p_scheduled_at` is NULL-keeps as of 2026-08-28 (see 04_API) — crew/duration/reminder-only reschedules omit it. Applied to prod 2026-08-28, ledger `20260829022150`.
 
 ### Checklist Administration
 
