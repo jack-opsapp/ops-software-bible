@@ -1629,7 +1629,7 @@ A site visit exists in exactly **two** shapes, separated by one column:
 
 **Entry points (all lead-attached).** Every lead-attached visit affordance presents a two-option branch: **NOW** → the existing immediate capture, unchanged; **BOOK A VISIT** → the booking sheet/modal. On iOS that is the leads-tab VISIT chip, lead detail, the day-sheet panel, and the add-lead sheet; on web it is the pipeline lead detail next-steps strip. The branch is **state-aware**: when the lead already has an open booking, the second option reads `RESCHEDULE — THU 10:30AM` and opens the same sheet in reschedule mode. A second booking is never stacked.
 
-The **FAB stays immediate-capture only**. Booking always has a lead, so booking lives on lead surfaces; the FAB exists for the operator standing at a door. Booking from the calendar or from an empty slot is deliberately out of scope.
+**The FAB carries the same branch (2026-08-28, bug 9c1e2916).** It previously offered immediate capture only, on the reasoning that booking always has a lead. That reasoning held for the sheet, not for the entry point: the operator who wants to book is as likely to reach for the FAB as for a lead row. The FAB's `Book Site Visit` item now raises the identical NOW/BOOK dialog — START NOW is the unchanged leadless walk-up capture, BOOK A VISIT resolves the missing lead through a leads-only target picker (`ActivityTargetPickerView(sources: .leadsOnly)`, inline `+ New Lead` intact) and then opens the booking sheet state-aware. Booking from the calendar or from an empty slot remains deliberately out of scope.
 
 **The write path is server-only.** All three surfaces (iOS, web, future MCP tools) call the same RPCs — `book_site_visit`, `reschedule_site_visit`, `cancel_site_visit_booking` (`04_API_AND_INTEGRATION.md` § *Site-visit booking RPCs*). Booking requires connectivity by design: the side effects are server-owned, so there is no offline queueing of a booking — iOS surfaces a terse error instead. Fields are date, time, duration (default 60), WHO'S GOING (defaults to the booker), and a heads-up override defaulting to the user's setting.
 
@@ -1641,6 +1641,13 @@ The **FAB stays immediate-capture only**. Booking always has a lead, so booking 
 3. The `trg_site_visits_google_calendar_sync` trigger enqueues outward calendar work (`07_SPECIALIZED_FEATURES.md` § 19c).
 
 **Where a booked visit appears.** Both OPS calendars render booked visits as a **third source** alongside tasks and user events (iOS `CalendarViewModel`; web schedule day/week/month). Visits are explicitly **excluded** from drag-reschedule, cascade, auto-schedule, the unscheduled tray, and crew scheduling — a visit is not a task and must never enter task machinery. They also mirror one-way outward to the operator's personal calendars: Apple via the on-device `CalendarMirrorService` `.siteVisit` source, Google via the queue drain. Editing in Apple or Google does **not** move the OPS booking; reschedules happen in OPS and reconcile outward.
+
+#### Booking surfaces (2026-08-28)
+
+- **JobBoard FAB** — the `site-visit` item reads BOOK SITE VISIT and raises the NOW/BOOK branch (START NOW → walk-up capture; BOOK A VISIT → leads-only picker → booking sheet, state-aware reschedule when the lead already holds the open booking).
+- **Booking sheet WHEN surface** — a Monday-first paged week rail (18-month horizon + month jump) whose day cells carry tan booked-visit markers; a BOOKED — <DAY> strip lists that day's existing visits (calendar-visibility-scoped, the moved booking excluded); a non-blocking tan OVERLAPS note flags window collisions. Signals inform, they never block.
+- **Lead NEXT TOUCH** — a booked visit outranks `next_follow_up_at` in the detail hero (presentation only; the column is untouched). The cell opens the appointment sheet: live countdown (`SiteVisitCountdown`), window, crew, START NOW (visit-day onward, convert grant), REBOOK (reschedule mode).
+- `reschedule_site_visit.p_scheduled_at` is NULL-keeps as of 2026-08-28 (see 04_API) — crew/duration/reminder-only reschedules omit it. **The migration is authored but NOT yet applied to prod** (`migrations/20260829020416_reschedule_site_visit_scheduled_at_null_keeps.sql`); until it lands, a crew/duration/reminder-only reschedule still fails with a generic server error.
 
 ### Checklist Administration
 
