@@ -4035,6 +4035,20 @@ The normalization revision advances to `ops.correspondence.normalized-text.v2`. 
 - The shared six-table immutability guard `private.reject_agent_job_memory_mutation()` is left untouched. The delivery ledger gets its own table-scoped guard, identical in every respect but one: it admits a transaction-local re-projection write, and only when the marker names the exact row **and** every column outside the four projection columns is byte-identical. An update that changes one byte of `content_value` alongside the projection falls through to the immutability failure. The audited company-data purge remains the only permitted delete.
 - Recovery of already-stored placeholders runs through two new service-role-only RPCs — `list_agent_provider_delivery_sources_for_renormalization_as_system` (keyset-paged over `normalization_status = 'rejected'`) and `reproject_agent_provider_delivery_source_as_system`, which validates the incoming projection with the same rules capture applies and reports whether the row actually moved — driven by `scripts/renormalize-delivery-sources.ts`. Running it still reprocesses real customer email and remains Jackson's call.
 
+### MCP complete read catalogue P2 (local candidate 2026-08-29; not deployed)
+
+OPS-Web branch `feat/mcp-read-catalogue-p2` composes the original eleven reads with twenty-three new domain methods under one nominal read-catalogue service. The MCP dispatch map contains all thirty-four fixed capability-to-method mappings, but `createOpsMcpServer` registers only the tools in the injected immutable exposure object. Exposure v1 remains exactly the original eleven reads and seven scopes, so P2 methods are not externally callable even when their implementation is present.
+
+The same thirty-four-method domain service can be constructed behind the internal Phase C adapter. Current Phase C behavior continues to call its existing conversation-context method; composition does not opt Phase C into unrelated reads or change its customer-facing switch.
+
+The P2 transport chain is: resolved `ActorContext` and stored OAuth grant → manifest-owned closed selector → nominal authorization → nominal repository → fixed service-role RPC → same-statement authority/source reproof → strict private snapshot → bounded public result. Caller input cannot contain company, actor, permission, policy, SQL relation, column list, or arbitrary sort/filter definitions.
+
+Nominal policy creation is not authority. Candidate policies remain dormant until the central manifest activates their exact object identities after the full manifest invariants pass; both the primary authorization boundary and the P2 binding layer reject unactivated, cloned, or structurally similar policies.
+
+The intended deck request—“grab the deck design from Carly Hunter's site visit, total linear feet of railing and square footage, and show the geometry”—uses customer/job discovery, site-visit context, then the opaque design reference with `get_deck_design_geometry`. It never searches raw deck JSON by customer name and never treats geometry coordinates as measured dimensions.
+
+No deployment contract changed. The migration wave must apply before v8 application code; an authorized release must then push/deploy code and create a new immutable exposure revision before any P2 tool becomes visible. Claude's current production grant proves only the eleven-read P1 connector. ChatGPT remains unproven until a real connector/OAuth/tool-call run succeeds. Full contract: `specs/2026-08-29-mcp-read-catalogue-p2.md`.
+
 ### P1 release gates — complete (verified 2026-08-20)
 
 1. `OPS_AGENT_OPERATIONAL_READ_CURSOR_KEY` is provisioned in Vercel production. Its value was not read or exposed; successful authenticated paged reads prove the runtime accepted it.

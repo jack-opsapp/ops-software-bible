@@ -6083,6 +6083,20 @@ Production readback proves both RPC signatures and service-role-only grants, 40/
 
 A live authenticated `/api/mcp` canary listed exactly eleven reads. Nine calls returned successful results; conversation-context and correspondence-evidence selectors without matching canary records returned their expected privacy-safe `NOT_FOUND` outcomes. Revoking the disposable grant made the next bearer call return `401`; all disposable OAuth client, code, grant, and token rows were deleted with zero-row readback while the immutable request audit remained.
 
+### Complete MCP read catalogue P2 (prepared 2026-08-29, not applied)
+
+The isolated OPS-Web branch `feat/mcp-read-catalogue-p2` adds thirty-eight ordered migration files for manifest-v8 compatibility, versioned OAuth consent, durable MCP limiting/evidence redemption, shared attention projections, and twenty-three new purpose-built reads. These files are local migration artifacts, not production ledger rows. No shared database was changed.
+
+The schema pattern is fixed across domains: private revision counters and exact churn triggers; bounded/private same-statement card or evidence projections; and one service-role-only, `SECURITY DEFINER`, search-path-pinned public RPC per fixed capability family. The source families cover customer context, tasks, artifacts, site visits, deck designs, sales documents, payments, expenses/reimbursements, work queue, catalogue, purchasing, company, team, availability, integrations, and operational overview. Every source reaching its 501st sentinel fails closed rather than returning an incomplete result.
+
+The active local policy identity is `2026-08-22.capability-manifest.v8`. The compatibility migration preserves v6/v7 output values and recursively re-proves them only when v8 is requested. New P2 RPCs accept v8 only. The frozen v7 manifest remains byte-identical, and exposure remains independently versioned at `2026-08-22.mcp-exposure.v1` with eleven tools/seven scopes.
+
+Deck geometry is read from a strict private projection of the selected `deck_designs` row and its proven visit/job relationship. The public contract never returns raw `drawing_data`; it returns bounded topology and independently qualified measurements. Geometry, visit, artifact, and job revision counters invalidate stale fences on every selected authority/content change.
+
+Operational-overview rows retain a canonical `{component, source_inspected}` pair. Each child proof binds only its own authorization, inspection count, and revisions; the collection binds the ordered inspection vector and derived total. Work-queue revision triggers cover every selected authority/content field across all nine queue sources so a page cursor cannot survive a visibility or card-content change.
+
+Full catalogue and release boundary: `specs/2026-08-29-mcp-read-catalogue-p2.md`.
+
 ### Delivery-source normalization re-projection (prepared 2026-08-29, not applied)
 
 Migration `20260830113400_delivery_source_normalization_reprojection.sql`, written on OPS-Web branch `fix/bugsweep-email-20260828`, lets `private.agent_provider_delivery_sources` accept a repaired reading of source bytes it already retains. It exists because the evidence normalizer was rejecting 100% of real HTML mail, so the ledger stored `[SUBJECT OMITTED: UNSAFE SOURCE]` / `[CONTENT OMITTED: UNSAFE SOURCE]` for correspondence the operator reads normally in their own mailbox (bug `8db73af6`). The file asserts its prerequisite relations and functions before it changes anything.

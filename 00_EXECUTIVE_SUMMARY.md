@@ -4,6 +4,10 @@
 
 This executive summary provides a high-level overview of OPS (Operational Project System) for non-technical stakeholders and serves as the entry point for understanding the product, market, and technical foundation.
 
+## Current agent access posture (2026-08-29)
+
+OPS production exposes eleven read-only tools to Claude through the remote MCP connector. A separate local OPS-Web branch implements the complete thirty-four-read business catalogue, including site visits, deck-design geometry and measurements, tasks, artifacts, sales, payments, expenses, supply, company/team context, integration health, work queue, and operational overview. That P2 branch is not pushed, deployed, database-applied, or externally exposed. Production remains at eleven reads; all write capabilities remain unavailable. See `specs/2026-08-29-mcp-read-catalogue-p2.md`.
+
 ---
 
 ## Elevator Pitch (Founder's Voice)

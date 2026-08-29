@@ -10,6 +10,8 @@
 
 **Status update (2026-08-22 UTC):** The MCP surface expanded from nine to eleven reads through database-first discovery rollout `20260822015049_agent_discovery_reads_20260820220000` plus indexed-writer ACL repair `20260822015939_agent_discovery_index_writer_acl_20260822015828`. OPS-Web release commit `5eb4b561c14cf8dace2b906d50ebcd34a0ba13db` was served by READY deployment `dpl_6ZMAhdXuweX9jSuVG8T58Z5gzWko`. A live authenticated canary listed all eleven tools, exercised every read, proved revocation with a subsequent `401`, and left zero disposable OAuth rows. The two privacy-safe `NOT_FOUND` outcomes reflected absent canary conversation/evidence records, not transport or authorization failures. The permanent Claude grant was not modified.
 
+**Status update (2026-08-29, local candidate only):** The isolated OPS-Web branch `feat/mcp-read-catalogue-p2` implements the remaining twenty-three purpose-built reads and composes all thirty-four under manifest v8. External registration remains the immutable exposure-v1 list of eleven reads/seven scopes, all fourteen write shells remain unavailable, and frozen v7 bytes/cursors retain exact compatibility. The migration wave is unapplied; the branch is unpushed and undeployed; no OAuth grant or real host changed. Scope and release gates: `specs/2026-08-29-mcp-read-catalogue-p2.md`.
+
 **Decision:** Build one company- and actor-scoped OPS domain service, then expose it through three adapters: Phase C, the existing OPS API, and a public remote MCP server for Claude, ChatGPT, and other approved hosts. MCP is a transport and discovery layer. It does not own OPS business rules.
 
 **Related initiative:** Phase C lead conversation memory.
