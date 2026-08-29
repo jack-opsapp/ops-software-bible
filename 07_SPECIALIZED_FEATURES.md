@@ -8890,6 +8890,31 @@ A resolved/closed bug doesn't match step 3 because the partial index excludes th
 | `PhotoAnnotationSyncManager.uploadAnnotationPNG` | S3 upload of annotation overlay | `reportIfPermanent` + existing local-save fallback. |
 | `PhotoAnnotationSyncManager.syncPendingAnnotations` | Background retry of cached annotations | `reportIfPermanent` to surface poisoned-row regressions. |
 
+### Non-catch-site producer — deck-open canary (2026-08-28, bug `2fa645a8`)
+
+[`OPS/Services/BugReport/DeckOpenCanary.swift`](https://github.com/canprojack/ops/blob/main/ops-ios/OPS/Services/BugReport/DeckOpenCanary.swift). The first `AutoBugReporter` producer that is **not** a catch site: it reports a process that never got far enough to catch anything.
+
+A watchdog kill leaves no in-app trace — `BugReportCaptureService` breadcrumbs are in-memory and die with the process — so the DECK tap on the lead dossier could kill the app a fifth time with no evidence. The canary is a persisted marker in `UserDefaults` (key `deck_open_canary_v1`) holding `{ leadId, phase, armedAt }`:
+
+| Transition | Where |
+|---|---|
+| **Arm** (`phase = tapped`) | `LeadDetailView`'s `onOpenDeck` — the DECK row tap. |
+| **Advance** → `screenAppeared` | `LeadDeckScreen`'s `.task`, i.e. the first committed body. |
+| **Advance** → `designResolved` | `DeckTabView`'s `onDesignChange`, i.e. the viewport resolved a design (or resolved none) and rendered. |
+| **Disarm** | 3s after `screenAppeared` (`DeckOpenCanary.settleDelay`), on `.onDisappear`, and on `scenePhase == .background`. |
+
+If the app relaunches and the marker is still armed, `OPSApp`'s first `.active` of the process calls `takeEvidenceAtLaunch()` (read-and-clear) and files ONE row through `AutoBugReporter.shared.report(...)` with:
+
+- `screen` = `Leads.LeadDeckScreen`, `suspectedFile` = `LeadDeckScreen.swift`
+- `error_code` = **`deck-open-never-settled-<phase>`** — any `bug_reports` row carrying that prefix is a residual kill on bug `2fa645a8`, and the phase suffix names how far the open got before the process died
+- `metadata` = `leadId`, `phase`, `armedAt`
+
+Client + server dedupe therefore apply unchanged: repeats collapse into one ticket and accumulate `times_reported`.
+
+Deliberate honesty limits: backgrounding disarms (a jetsam kill of a background app is not this bug); a marker older than 24h is stale — a reboot or a flat battery, not a hang — and is discarded rather than filed; a force-quit inside the settle window is a possible false positive, which is why the summary says *did not settle*, never *crashed*. The launch read is guarded to once per process so an `.inactive → .active` bounce (Control Centre, a call banner) cannot file against a deck that is still on screen and healthy.
+
+Both lead screens also gained `.trackScreen(...)` (`Leads.LeadDetailView`, `Leads.LeadDeckScreen`) — before this, every report filed from the dossier or the deck screen recorded `currentScreen: "Leads"`, the tab root.
+
 ### Race-safe RPC (post-review fix)
 
 Migration `20260515205350_bug_reports_record_auto_bug_race_safe` wraps the INSERT branch in `BEGIN ... EXCEPTION WHEN unique_violation`. Two concurrent fires of the same dedupe hash can both pass the initial SELECT before either inserts; the partial unique index makes one win and one raise `23505`. The EXCEPTION block catches the loser and replays the dedupe as an UPDATE so neither call is silently dropped. The original SELECT-then-INSERT path stays as the happy path (no exception overhead when there's no race).
