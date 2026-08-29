@@ -4314,7 +4314,37 @@ production commit `6b69551a`. The matching iOS proof-only dispatch bindings are
 merged and pushed on `main` commit `677850ee`; phone/App Store distribution is
 Jackson's separate signed-build step.
 
-**Deprecated:** the `send-push-notification` Edge Function (project `ijeekuhbatykdomumfjx`) is **orphaned** — zero callers, legacy `include_external_user_ids`/`users.device_token` targeting, inserts no rail row. Superseded by `/api/notifications/send` (iOS) and `/api/notifications/dispatch` (web). Safe to delete.
+**Quiet hours now cover every push sender (bug `42aa787c`, 2026-08-28).**
+Enforcement used to live *only* inside `resolveNotificationPreferences`, so any
+sender that derived its own recipients from an RPC claim pushed straight through
+a crew member's window. `filterPushRecipientsByQuietHours`
+(`src/lib/notifications/server-notification-service.ts`) is the shared gate those
+senders now share; it reads each recipient's window, evaluates it in
+`companies.timezone`, and returns the survivors. It costs zero extra round-trips
+when nobody has a window configured. Senders routed through it:
+
+| Sender | Kinds it was leaking |
+|---|---|
+| `task-mutation-automation-outbox-service` | task assigned / completed / schedule change — the core crew leak |
+| `lead-assignment-delivery-service` | `lead_assigned` |
+| `unassigned-lead-assignment-delivery-service` | unassigned-lead assignment |
+| `opportunity-conversion-notification-delivery-service` | `lead_converted` |
+| `trial-expiry-service` | `trial_expiry` (all active admins) |
+| `dispatchRoleNeededNotification` | `role_needed` — previously had **no** preference gate at all |
+| `POST /api/auth/join-company` | `member_joined` admin fan-out (pushes by player id) |
+
+The three delivery workers take the filter as an injectable dependency
+(`filterQuietHours`) so their existing test seams keep working. Suppression drops
+the PUSH only — rail rows, emails, and delivery completion are untouched, and a
+suppressed push is dropped, never queued.
+
+**Deliberate bypasses (do not "fix"):** `POST /api/cron/site-visit-prompts`
+(§14.3.7 — the operator chose the appointment time) and
+`openai-quota-alert-service` (platform incident). iOS local, time-anchored
+notifications follow the same principle: a user-chosen hour fires at that hour;
+event-driven pushes respect quiet hours.
+
+**Deprecated:** the `send-push-notification` Edge Function (project `ijeekuhbatykdomumfjx`) is **orphaned** — zero callers, legacy `include_external_user_ids`/`users.device_token` targeting, inserts no rail row. Superseded by `/api/notifications/dispatch` (web + iOS proof dispatch) and `/api/notifications/push-companion` (iOS companion pushes). Safe to delete. **`/api/notifications/send` is permanently retired** — a 404 stub since `57ade126` (2026-07-16).
 
 ### Architecture Components
 
@@ -4416,14 +4446,60 @@ struct NotificationDTO: Codable, Identifiable {
 ```
 
 #### NotificationListView (iOS)
-**Location:** `OPS/OPS/Views/Notifications/NotificationListView.swift`
+**Location:** `ops-ios/OPS/Views/Notifications/NotificationListView.swift`
 
 In-app notification list:
 - Fetches from `NotificationRepository.fetchRecent(userId:)`
-- Each row shows: unread dot indicator, type-specific icon (mention = primaryAccent, assignment = successStatus, update = secondaryText), title (bold if unread), body (2 lines), relative time
-- Tap action: marks as read locally and on server, deep links to project if `projectId` is set via `appState.viewProjectDetailsById()`
-- "Mark All Read" toolbar button
-- Empty state with bell.slash icon
+- Each row shows: unread dot indicator, type-specific icon, title (bold if unread), body (2 lines), relative time
+- "Mark All Read" toolbar button; empty state with bell.slash icon
+- A `PENDING SYNC` section (`SyncStatusCopy.PendingWork.notificationSectionTitle`) heads the queued-work card above the list
+
+**Rail routing order (`handleNotificationTap`, rewritten 2026-08-28, bug `c2946efc`).**
+Every branch either navigates somewhere real or renders no button at all — an
+inert control is worse than none:
+
+1. **Catalog-setup** rows (`CatalogSetupNotificationRoute`).
+2. **Site-visit prompts** — `deep_link_type` in `site_visit_heads_up` /
+   `site_visit_start`. Heads-up opens the lead; START posts the `StartSiteVisit`
+   relay so the leads tab raises the capture cover. Both resolve the opportunity
+   id from `action_url`; a START row whose id will not resolve falls back to the
+   lead. Previously these matched **no case at all** and the button did nothing.
+3. **Lead-family rows** — `LeadNotificationRouteParser.isLeadNotification`. Beyond
+   the `leadRoutingValues` vocabulary this now claims generic `system` / `inbox`
+   email-engine rows, but *only when a lead is actually recoverable*: an
+   opportunity id in `action_url`, an opportunity id in the dedupe key, or an
+   inbox-thread id to resolve via `email_threads.opportunity_id`. A `system` row
+   with no lead signal stays in the ordinary switch.
+   - Dedupe-key prefixes carrying an opportunity id: `lead_lifecycle:` and
+     `email-opportunity-event:<kind>:<opportunity>:<event>:<n>` (the **first**
+     UUID token is the opportunity; the second is the event id and must not win).
+     This is what routes the ~85 "Possible deal won" review rows, which carry
+     `/pipeline` with no id in the URL.
+4. **`deep_link_type` switch** — explicit cases for `task`/`taskDetails`,
+   `project`/`projectDetails`/`project_note`/`projectNotes` (rows carry no task
+   id; the project is the deepest honest destination), `team` (Settings → Manage
+   Team), and `cashflow_forecast` (bible §14.3.2's spelling, aliased to the
+   shipped `cashflow`), alongside the pre-existing expense/invoice/review/catalog
+   cases.
+5. **`notification.type` fallback**, then the final `project_id` fallback.
+
+**Unresolvable lead-family rows land on the LEADS tab, never the Job Board**
+(`OpenLeadsTab` → `MainTabView`, which enforces `pipeline.view` and falls back to
+the Job Board only for users with no pipeline at all). The `inbox` /
+`email_sync_complete` case shares that fallback.
+
+**Web-only deep links render no button.** `settings` and `email_signature` rows
+(`email_identity_confirmation_required`, `email_signature_required`) keep their
+title and body — the operator learns what to do and acts on web, where the
+surface exists.
+
+**Occluder dismissal (bug `4d2e91a9`).** Deep-link intents call
+`AppState.clearNavigationOccluders()` before navigating, which dismisses the
+notifications rail, universal search, and a **view-only** project-details sheet.
+Active project MODE survives — a crew member on a job keeps their project — and
+mid-task modals (plan selection, an in-progress site-visit capture, the deck
+editor, form sheets) are owned by their surfaces and never touched. Without this
+a push-tapped lead opened *underneath* whatever sheet was already presented.
 
 #### NotificationSettingsView (iOS)
 **Location:** `OPS/OPS/Views/Settings/NotificationSettingsView.swift`
@@ -4844,6 +4920,99 @@ One notification type covers both server-owned booking prompts; the two moments 
 **Rail has no opt-out.** Rail rows are written for all active assignees; `channel_preferences['site_visit_reminder']` gates the push only. Quiet hours are bypassed on purpose — the operator chose the appointment time.
 
 **Time-to-leave alert (iOS local, not a `notifications` row).** `SiteVisitDepartureAlertScheduler` fires at `scheduled_at − driving ETA − 5 min` for today's booked visits assigned to the user, using the app's **existing** location authorization; it never prompts for location just for this, and with no permission or no lead address it is silently absent. Cancel-then-schedule on every booking change; armed at launch and refreshed on foreground, booking changes, and the CalendarMirror background wake. It carries no time-sensitive entitlement (that needs provisioning — a deliberate deferral).
+
+### §14.11 Push routing + companion pushes (2026-08-28)
+
+Closes the notification half of the 2026-08-28 bug sweep (bugs `c2946efc`,
+`4d2e91a9`, `8dc71fa9`, `42aa787c`). Rail-side routing is documented under
+*NotificationListView (iOS)*; quiet-hours coverage under *Task Reschedule →
+Push*. This section owns push-tap routing and the companion-push contract.
+
+#### Push-tap routing (iOS)
+
+Three paths must agree — the in-app rail, `AppDelegate.onClick` (OneSignal), and
+`NotificationManager.handleRemoteNotificationResponse` (UNUserNotificationCenter).
+Every posted `NotificationCenter` event must have a mounted listener or the tap
+is dead.
+
+- **Lead, site-visit heads-up, and START taps ride `DeepLinkCoordinator`.** They
+  previously posted straight to `NotificationCenter` behind a fixed 0.5 s delay;
+  on a cold launch nothing is mounted yet, so the intent was dropped. They now
+  use the same durable stash/drain projects already used. New coordinator entity
+  `site-visit-start` → `StartSiteVisit` (`leadId`). `MainTabView` clears the
+  stash on receipt in both handlers.
+- **The UN path reads `deep_link_type`.** The site-visit cron payload carries
+  `{deep_link_type, leadId, siteVisitId}` and **no** `type` key, so
+  `routeByType`'s site-visit cases were unreachable and a START push fell through
+  to the bare-`leadId` branch — opening the lead instead of capture.
+- **An in-progress capture is never stomped.** A START tap for visit B while
+  visit A's capture cover is open drops the intent
+  (`LeadsTabView.resolvePendingSiteVisitStartIfNeeded`).
+
+#### Dead events repaired
+
+Five events were posted with zero listeners, so those taps did nothing:
+
+| Posted (dead) | Now |
+|---|---|
+| `NavigateToMap` (4 sites) | `NavigateToMapView` — the listener's real name |
+| `OpenExpenseDetail` | `OpenExpenseBatch` (with `batchId`) / `OpenExpenses` |
+| `OpenTeamMemberDetails` | Settings → Manage Team relay (`OpenSettings` → `SettingsOpenManageTeam`) |
+| `OpenInventory` | `OpenCatalog` — stock lives in the Catalog tab |
+| `ScheduleAccepted` / `ScheduleDeclined` | Removed: the schedule category's ACCEPT/DECLINE `UNNotificationAction`s are gone. A control that lies is worse than no control; the tap opens the day's schedule. |
+
+#### `POST /api/notifications/push-companion`
+
+Restores iOS-originated companion pushes. `OneSignalService.sendViaOpsWeb` posted
+to `/api/notifications/send`, a 404 stub since `57ade126` (2026-07-16), so every
+companion push silently failed for six weeks: mentions, note and photo fan-outs,
+expense decisions, overdue invoices, time off, role assignment, inventory
+thresholds, team joins. `try?` at the call sites hid it.
+
+The replacement restores delivery **without** restoring the hole — it accepts no
+copy and no arbitrary targeting.
+
+- **Modules:** `src/lib/notifications/push-companion.ts` (logic) +
+  `src/app/api/notifications/push-companion/route.ts` (thin wrapper).
+- **Body:** `{ notificationType, recipientUserIds[], dedupeKey? }`.
+- **Actor:** `resolveNotificationRouteActor` (401/403). The actor's `companyId`
+  scopes everything; the body's ids only hint at which rows to look at.
+- **Proof:** the durable rail rows a narrow SECURITY DEFINER RPC already wrote —
+  matched by company + type (+ `dedupe_key` when supplied), `created_at` within
+  **15 minutes**, capped at 50 recipients, newest row per `user_id`. The actor's
+  own receipt row is excluded.
+- **Gates:** global `push_enabled`, then the per-event channel key
+  (`mention`/`photo_comment` → `team_mentions`; `project_note`/`photo_uploaded` →
+  `project_updates`; `expense_*` → `expense_approved`; `invoice_overdue` →
+  `invoice_sent`; unmapped types get the global flag only), then quiet hours via
+  the shared filter.
+- **Send:** one `sendOneSignalPush` per row using **the row's own** title and
+  body, `idempotencyKey = row.id`, and a payload derived only from the row
+  (`type`, `deep_link_type`, `projectId`, `batchId`, `noteId`, and `leadId`
+  parsed from `action_url`). No `screen` key — iOS `routeByType` owns routing
+  from `type`, which also retires the broken `screen: "expenses"` payload.
+- **Response:** `{ success, matched, pushed, suppressed }`.
+- **Threat model:** worst case for an authenticated same-company actor is
+  re-pushing an existing ≤15-minute-old rail row to that row's own recipient with
+  that row's own copy — no copy injection, no cross-company reach, idempotent per
+  row.
+
+**iOS side.** `sendToUser`/`sendToUsers` now take `(recipients, rowType,
+dedupeKey?)` — every caller states the row type its paired RPC writes, and all
+client-side copy construction is deleted. Row types: `mention`, `project_note`,
+`photo_uploaded`, `photo_comment`, `expense_approved`, `expense_rejected`,
+`expense_paid`, `invoice_overdue`, `time_off_approved`, `time_off_denied`,
+`time_off_booked`, `time_off_requested`, `role_assigned`, `inventory_warning`,
+`inventory_critical`, and `role_needed`.
+
+> The crew-code team-join lane pushes **`role_needed`**, not `team_join`: there is
+> no `notify_team_join` RPC — `join_user_to_company` writes one `role_needed` row
+> per admin (deduped), matching what `POST /api/auth/join-company` writes on web.
+
+Task and project lifecycle wrappers on `OneSignalService` are **explicit no-ops**.
+P1-17 re-homed those kinds onto `/api/notifications/dispatch`, which writes the
+rail row and sends the push in one authorized call, and their repository methods
+already return empty recipient lists. Sending from here would double-push.
 
 ### §14.4 Email infrastructure (typed React Email)
 
