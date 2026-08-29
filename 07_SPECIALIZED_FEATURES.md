@@ -6747,17 +6747,26 @@ returns `noop_sync_incomplete`, clears `category_classified_at`, and leaves the
 thread for terminal retry. This prevents the first message in a catch-up batch
 from authorizing a draft before later messages are durable.
 
+**Narrowed to provider scope 2026-08-29.** A pending derived summary no longer
+counts. Lead summaries are computed *from* the mailbox snapshot, so they can
+never make that snapshot less current, and treating them as incomplete sync
+suppressed every Phase C lane on the primary mailbox for seven days
+(0700468d). Active sync, structured continuation, and recovery page token still
+fail closed exactly as before. See § Inbox engine repair wave (2026-08-29).
+
 Provider-draft reconciliation uses the draft history's exact
 `source_message_id`, not draft creation time alone. If any other persisted
 activity on the exact mailbox thread occurs at or after that source boundary,
 the draft is stale: the worker idempotently deletes the provider draft, marks
 the history `superseded`, and skips learning. Greeting identity is bound to the
-actual latest inbound source sender; another thread participant cannot supply
-the salutation.
+exact source message the draft answers — the newest inbound only when no source
+is supplied — so on a multi-party thread another participant cannot supply the
+salutation (narrowed 2026-08-29; previously the newest real-customer inbound in
+every case).
 
 #### Human-authority learning, subjects, and signatures (production 2026-07-17)
 
-Phase C learns only from an outcome whose human authority the database can verify. Authenticated in-app manual sends are `operator_authored` and may update the full writing profile; a matched OPS/provider draft that the operator sends is `operator_approved` and may teach only the operator's durable edits, never the unchanged AI-authored body. Autonomous sends and generic provider Sent-folder mail do bookkeeping but cannot train profiles or memories. The browser feedback endpoint may discard a draft but may not claim it was sent. Repeated edits are stored as de-identified evidence and need three consistent human examples before promotion; receipts make profile/memory application exactly once across retries.
+Phase C learns only from an outcome whose human authority the database can verify. Authenticated in-app manual sends are `operator_authored` and may update the full writing profile; a matched OPS/provider draft that the operator sends is `operator_approved` and may teach only the operator's durable edits, never the unchanged AI-authored body. Autonomous sends and generic provider Sent-folder mail do bookkeeping but cannot train profiles or memories. The browser feedback endpoint may discard a draft but may not claim it was sent. From 2026-08-29 an operator's full rewrite on a *company* mailbox also resolves an actor, through the assignment-anchored `company_mailbox_assignee` proof; the lesson it carries is memory-only and never touches edit statistics (see § Inbox engine repair wave). Repeated edits are stored as de-identified evidence and need three consistent human examples before promotion; receipts make profile/memory application exactly once across retries.
 
 Calibration and graduation are scoped to the exact canonical OPS actor, mailbox connection, and email category. Statistics, candidate eligibility, user consent, prompt delivery, and automatic drafting settings cannot bleed between teammates or mailboxes. Revoking consent immediately closes the automatic-send path; if the category later qualifies again, the graduation prompt reopens instead of remaining permanently suppressed by the older response. A prompt is an invitation only—automatic sending still requires current scoped permission, current consent, the global autonomy gate, the category gate, and the connection kill switch at execution time.
 
@@ -6765,7 +6774,7 @@ Inbound correspondence deduplication is mailbox-scoped and preserves the exact p
 
 `email_threads.opportunity_id` is a denormalized Inbox cache projection, not relationship authority. When routine ingestion has already established one immutable `opportunity_email_threads` link and one delivered provider-message activity for the same company, mailbox, raw thread, and opportunity, the service-only `attach_email_thread_to_opportunity_as_system` operation may project that owner onto an existing unlinked cache row. It serializes with lead data review, revalidates the active connection and opportunity, permits only `NULL → canonical owner`, and consumes one exact child-reparent capability. A different existing parent, split evidence, inactive mailbox, missing proof, or client conflict fails the sync without advancing its cursor. The generic child-reparent trigger remains closed, and no historical rows are backfilled.
 
-Reply subjects retain the provider thread subject with exactly one `Re:`. A blank new-thread subject resolves in this order: operator input, configured/template subject, a three-example learned template populated only with current-lead facts, contextual current-lead generation, then `Your inquiry`. Learned templates contain placeholders (`{contact}`, `{company}`, `{address}`, `{project}`, `{email}`, `{number}`), never another lead's raw subject. The subject field remains visible/editable; a manual edit becomes operator provenance.
+Reply subjects retain the provider thread subject with exactly one `Re:`. A blank new-thread subject resolves in this order: operator input, configured/template subject, a three-example learned template populated only with current-lead facts, contextual current-lead generation, then `Your inquiry`. Learned templates contain placeholders (`{contact}`, `{company}`, `{address}`, `{project}`, `{email}`, `{number}`), never another lead's raw subject. The subject field remains visible/editable; a manual edit becomes operator provenance. **Corrected 2026-08-29:** the learned rank was unreachable in practice because two call sites injected the server-owned outreach constant into the configured rank, and the learned rank was empty on every mailbox because `subject_preferences` had no writer. Both are fixed, and the source-bound lead-outreach lane now suppresses the generated rank and falls back to the constant instead of `Your inquiry` — see § Inbox engine repair wave (2026-08-29).
 
 Every OPS draft/send uses one effective signature: current-operator OPS, mailbox OPS, exact Gmail provider identity, then none. Gmail import is read-only. Microsoft Graph has no Office-signature API, so Microsoft users save/paste an OPS signature. Review-only Gmail draft placement is the signatureless exception: when no optional effective signature exists, Phase C and contact-form draft workers place the draft as plain text for operator review instead of leaving the lead pending. This does not relax delivery authorization: send, approved-action, and automatic-send paths still require a current effective signature and fail closed before provider delivery. Missing signatures create one persistent operator/mailbox notification that deep-links to Email Settings and resolves/reopens with signature availability. Provider draft hydration strips any exact historical signature revision before appending the current one, preventing duplicate footers and signature contamination in learning. Historical profile scans skip a message entirely unless an exact connection-scoped known signature revision is removed; lookup failures and unmatched footers never enter the learning queue.
 
@@ -6787,7 +6796,7 @@ Root-caused from the Canpro impersonation incident (bug `4da75e71`): contact-for
 
 1. **Operator identity in every draft prompt.** `buildDraftSystemPrompt` (`src/lib/api/services/conversation-state/draft-system-prompt.ts`, extracted from `ai-draft-service.ts`) receives `DraftOperatorIdentity` loaded from authoritative `users.first_name/last_name` + `companies.name` (never inferred from email content) and a `signatureWillBeAppended` flag. With a confirmed signature the model is forbidden from writing ANY name/phone/contact block (closing phrase only — the renderer appends the signature); without one it signs first-name only and may never invent contact details. The "never adopt another person's identity from forwarded content" rule ships unconditionally.
 2. **Forward-wrapper stripping.** `stripForwardWrapper` (`conversation-state/forward-wrapper.ts`) removes the forwarder's device-signature block (closing line → `Sent from my iPhone/iPad/Android…`) that precedes `Begin forwarded message:` / Gmail's `---------- Forwarded message ----------`, while preserving any real forwarder note above it and the forwarded payload byte-for-byte. Applied to contact-form (`assigned_contact_form_review`) prompt input.
-3. **Per-mailbox outreach subject.** `email_connections.outreach_subject` (nullable text; prod migration `add_email_connections_outreach_subject`, 2026-08-02) feeds `configuredSubject` for new-thread lead outreach; the old constant `ASSIGNED_CONTACT_FORM_REVIEW_SUBJECT` ("Thanks for reaching out") is now only the unset fallback. `chooseNewThreadSubject` priority unchanged: operator > configured > learned > generated.
+3. **Per-mailbox outreach subject.** `email_connections.outreach_subject` (nullable text; prod migration `add_email_connections_outreach_subject`, 2026-08-02) feeds `configuredSubject` for new-thread lead outreach; the old constant `ASSIGNED_CONTACT_FORM_REVIEW_SUBJECT` ("Thanks for reaching out") is now only the unset fallback. `chooseNewThreadSubject` priority unchanged: operator > configured > learned > generated. **This layer did not hold until 2026-08-29:** `AIDraftService` and the draft route both kept passing the constant *as* `configuredSubject` on the source-bound lane, so it still outranked every learned subject. Both call sites now pass only the operator's own setting, and on those lanes the constant reaches the draft solely as the last-resort fallback. The queue-driven assignment contact-form worker still substitutes the constant for an unset `outreach_subject` before it calls the draft service; that lane is unchanged and is called out in § Inbox engine repair wave.
 4. **Identity gate on new-lead outreach.** The contact-form draft worker holds BEFORE generation (and before reusing prepared drafts) unless `EmailSignatureService.hasConfirmedIdentity()` — an active operator- or mailbox-scope `email_signatures` row with `confirmed_at` set (provider-scope alone never satisfies). Held queue rows retry non-terminally (`result_reason: awaiting_identity_confirmation`, mailbox-busy backoff pattern) and a persistent rail notification (`type: email_identity_confirmation_required`, dedup key `email-identity-confirmation:{connectionId}:{userId}`, actionUrl `/settings?section=profile&connection={id}`) prompts confirmation — best-effort by design, the hold itself is the protection. In-thread replies are NOT gated.
 5. **Voice profile blend floor.** `TYPE_PROFILE_STANDALONE_MIN = 50`: a type-specific writing profile below 50 analyzed emails blends into the general profile at `n/50` weight instead of standing alone (the old `>= 10` bar let a stale 10-email `client_new_inquiry` profile fully shadow a 1,973-email general profile). New-thread purpose instruction (`ASSIGNED_CONTACT_FORM_REVIEW_INSTRUCTION`) now demands answering the customer's actual inquiry — the prior text literally instructed "acknowledge the request… suggest a quick call or site visit", which is what produced template replies.
 
@@ -6982,6 +6991,416 @@ visits, so no customer data or provider calendar was mutated during
 verification. The iOS schema V24 bindings are merged and pushed on `main`
 commit `677850ee`; device/App Store distribution remains a separate signed
 build.
+
+### Inbox engine repair wave (prepared 2026-08-29, not deployed)
+
+A twenty-bug sweep of the email/inbox engine. Ten bugs were verified already
+fixed against live database and repository state and closed on evidence; the
+rest were repaired on OPS-Web branch `fix/bugsweep-email-20260828`, twenty-one
+commits on top of the production commit `c7f0bae4`. Ten migrations were written
+in the same branch and are **not applied to production**; the single predicate
+production already carries as an emergency hotfix is called out where it
+belongs below. Nothing in the wave weakens the dark-launch
+invariant — every change produces drafts, notifications, quarantine rows, or
+ledger transitions, never a send.
+
+#### New-thread subject authority (4da75e71)
+
+A blank new-thread subject resolves by rank. The server-owned constant
+`ASSIGNED_CONTACT_FORM_REVIEW_SUBJECT` occupies the last rank only.
+
+| Rank | Slot | Source |
+|------|------|--------|
+| 1 | operator | Subject the operator typed on this draft |
+| 2 | configured | `email_connections.outreach_subject` — the operator's real per-mailbox setting, and nothing else |
+| 3 | learned | A `subject_preferences` pattern at `count >= 3`, fillable entirely from this lead's current facts |
+| 4 | generated | Contextual subject built from opportunity title and purpose instruction — **suppressed on the source-bound lead-outreach lane** |
+| 5 | fallback | `ASSIGNED_CONTACT_FORM_REVIEW_SUBJECT` on the source-bound lane; `Your inquiry` elsewhere |
+
+Two call sites were injecting the constant into rank 2, which made rank 3
+unreachable forever: `AIDraftService` defaulted `configuredSubject` to the
+constant on source-bound new threads, and `/api/integrations/email/draft`
+passed it explicitly for the assigned contact-form review lane. Both now pass
+only the operator's own setting. The generated slot is suppressed on the
+source-bound lane because both of its inputs are internal artifacts — OPS's own
+purpose instruction and an opportunity title of the form
+`Sandra Dunford — Email inquiry` — and neither may reach a customer's subject
+line. Reply subjects are unchanged: the provider thread subject with exactly
+one `Re:`.
+
+**One lane still pre-resolves rank 2, by design.** The queue-driven assignment
+contact-form draft worker (`email-assignment-contact-form-draft-worker.ts`)
+collapses an unset `email_connections.outreach_subject` to the constant
+*before* calling the draft service, so on a mailbox that has never configured
+an outreach subject that lane still outranks a learned subject. It was left
+untouched deliberately — that default is its own fallback rather than an
+unconditional override — but it is the one remaining place where rank 2 is not
+purely operator-authored, and it is where a mailbox should set
+`outreach_subject` (or expect the constant) until the lane is revisited.
+
+#### Subject-preference learning — the writer (4da75e71)
+
+`agent_writing_profiles.subject_preferences` shipped in 2026-07 with a reader
+and no writer, so it was `{}` on every production row and rank 3 could never
+win even after the ranking repair. The writer is the service-role-only RPC
+`public.merge_agent_writing_profile_subject_preferences(p_company_id,
+p_user_id, p_profile_type, p_subject, p_context jsonb, p_is_thread_opening,
+p_dry_run)` in
+`20260830100000_agent_writing_profile_subject_preferences_merge.sql`. It is
+deliberately a small dedicated function rather than a change to the
+learning-apply path: subject evidence arrives on its own cadence and must never
+be able to fail a body-learning transaction.
+
+The stored shape is dictated by the reader, which is authoritative:
+`{"preferred_patterns": [{ "pattern", "count", "examples",
+"last_promoted_at" }]}`. Patterns may name only the six reader tokens
+(`{contact}`, `{company}`, `{address}`, `{project}`, `{email}`, `{number}`),
+need `count >= 3` before they may speak, and the array is capped at ten ranked
+by count then recency. De-identification happens on write: this lead's own
+values are substituted for their tokens, longest value first so a company name
+containing the contact name cannot be half-eaten, and values shorter than three
+characters are ignored as coincidence rather than identity. `examples` stores
+the de-identified pattern, never a customer's raw subject.
+
+Evidence is thread-opening outbound only. `normalizeLearnedSubjectExample`
+(`src/lib/email/email-subject-policy.ts`) trims, bounds at 200 characters, and
+rejects reply/forward prefixes; the SQL mirrors the same three checks so a
+subject reaching the database by any path clears the same bar. Thread-opening
+is asserted by callers that can prove it and otherwise inferred from the
+subject's own shape — the learning queue holds one send, not its thread, and
+asserting otherwise would file every reply as new-thread evidence.
+
+The learner fires from `EmailOutboundLearningService` after a job's effects
+have committed, gated on `apply_full_body_learning` — the same flag the body
+sample clears, and the proof that the operator wrote this message rather than
+approving one of OPS's. An approved OPS draft therefore can never teach the
+server constant back to the profile. The lead's context is read once from the
+send's opportunity, scoped to its company. A missing writing profile is not
+created from a subject alone. Failures are logged and dropped: the apply
+transaction is already committed, and an unfiled subject is not worth replaying
+every receipt, profile, and memory effect. `scripts/backfill-subject-preferences.ts`
+(dry-run by default) is the bounded historical pass.
+
+#### Greeting identity from the exact source message (d3e9b50d item 5)
+
+`deriveRecipient` returned the newest real-customer inbound, which is only
+correct on a two-party thread: when a general contractor loops OPS in and the
+homeowner also writes, the newest inbound is frequently not the person the
+reply is for.
+`assembleConversationState` and `buildConversationState` now accept
+`sourceProviderMessageId`, and `AIDraftService` passes the authorized source
+activity's provider message id. The message with that id supplies the greeting;
+an id that names no inbound on the thread falls through to the previous
+behaviour rather than greeting nobody.
+
+`activities` does not persist a sender display name, so the drafter routinely
+opened with a bare `Hi,` to a customer who had typed their own name at the
+bottom of the message. When the provider identity yields no name,
+`buildDraftStateContext` reads the sign-off from the latest customer message's
+**raw** body — the clean body has the signature block removed, which is exactly
+where the name lives — after a strict quoted-content cut so an earlier writer in
+the chain cannot supply the name. One or two capitalized words, at most 24
+characters, no digits or `@`, and not a closing word (`thanks`, `regards`,
+`cheers`, `best`, `sincerely`, and family). Anything short of certainty returns
+null: a wrong name is worse than none.
+
+#### Learning capture on operator rewrites (cc90c3ed)
+
+The highest-value correction OPS can learn from is the operator throwing a
+draft away and writing their own reply. On a company-type mailbox that lesson
+was discarded twice over: the actor RPC refused every outcome but `used`, so no
+actor resolved and the learning queue was never reached; and even when learning
+fired, the replaced draft was deliberately never attached, so the lesson in the
+delta was lost. Five teaching sends on 2026-08-06 were lost exactly this way.
+
+Actor proof by outcome and mailbox type:
+
+| Outcome | Personal mailbox | Company mailbox |
+|---------|------------------|-----------------|
+| `used` — operator sent OPS's draft | `personal_mailbox_owner` | `native_mailbox_draft` |
+| `from_scratch` — operator rewrote | `personal_mailbox_owner` | `company_mailbox_assignee` (new) |
+
+The new arm holds the same evidence bar as `native_mailbox_draft`: the draft's
+bound user is the candidate, and that user must be an active member of the
+company, the opportunity's current `assigned_to` at `assignment_version > 0`,
+authorized by `private.user_can_send_opportunity_inbox`, on an active
+sync-enabled connection, with the outbound activity dated after the draft. A
+shared mailbox cannot name the author of a send either way; whether the
+operator reused OPS's wording or replaced it, the person who owns the
+conversation is the same, and the assignment checks still have to prove it.
+Recognition (`used` versus `from_scratch`) therefore no longer gates capture.
+
+Resolving the actor is necessary and nowhere near sufficient: three further
+server-side gates re-judge the same proof before a lesson may apply — the
+proof-type CHECK, the proof binder, and the learning guard — and each had to
+learn the new arm. Two migrations, a lockstep pair:
+
+- `20260830103000_learning_actor_from_scratch_company_assignee.sql` re-sources
+  `resolve_email_outbound_learning_mailbox_actor_as_system` with the new arm.
+- `20260830103100_learning_queue_replaced_draft_lesson.sql` adds
+  `email_outbound_learning_queue.replaced_draft_history_id`, widens
+  `email_outbound_learning_actor_proof_check` with the arm, teaches
+  `private.bind_email_outbound_learning_actor_proof` to mint the proof, teaches
+  `private.email_outbound_learning_guard` to re-validate it, and replaces
+  `public.enqueue_email_outbound_learning` with the new pointer argument.
+
+**Ordering rule: `20260830103000` must never be applied without
+`20260830103100`.** Alone, the actor RPC names an operator whom the binder and
+guard would immediately reject.
+
+The replacement lesson is memory-only. The discarded draft is never attached as
+the sent draft — that would book a bogus 100% rewrite against edit statistics
+and poison the writing profile — so it travels on `replaced_draft_history_id`
+instead. Memory extraction still derives facts from the delivered message only,
+then mines the draft-to-send delta as durable `correction` facts (evidence-key
+kind `draft-replacement-correction`, at most twenty per send). Edit-distance
+profile statistics never see a rewrite.
+
+Autonomy graduation is deliberately **not** widened: `company_mailbox_assignee`
+is absent from `list_phase_c_graduation_actor_scopes_as_system` and from the
+accuracy readers, so the blast radius of the new proof is training data and
+never sending.
+
+#### Mailbox liveness has two scopes (0700468d, 86c758b1)
+
+`last_synced_at` means terminal completion and `provider_snapshot_at` means
+provider-current (§ Sync health notifications above). The continuation
+predicate now carries the same distinction:
+
+| Scope | Question it answers | Who reads it |
+|-------|--------------------|--------------|
+| `provider` | Does the provider itself still owe this mailbox mail? | Phase C router (`assertPhaseCSyncTerminal`), `EmailThreadService.retryDirtyClassifications` |
+| `complete` | Provider caught up **and** every derived OPS continuation drained | Email-sync cron scheduling priority, checkpoint bookkeeping |
+
+An un-leased `sync_in_progress_at` and an unfinished history-recovery page
+count as pending under both — those are mailbox-fetch state, not derived state.
+`emailSyncContinuationPendingForConnection` takes an explicit
+`scope` and still defaults to `complete`;
+`emailProviderSyncPendingForConnection` is the provider-scoped twin.
+
+The v1 continuation envelope (`ops-email-sync:v1:{…}`) gains
+`pendingLeadSummaryAttempts`, a per-opportunity consecutive-failure count. It is
+additive and decode-tolerant: payloads written before it decode to `{}`, the
+map is pruned to the pending set on encode, and an empty pending list still
+collapses to the bare provider token, so
+`isEmailSyncContinuationPending` semantics are unchanged.
+
+The scope split closes a live outage. Between 2026-08-21 and 2026-08-28, one
+lead summary that could not converge kept the envelope non-empty on the primary
+Canpro connection; the router read that derived remainder as "sync incomplete"
+and suppressed **all** Phase C reply drafting on that mailbox for seven days
+while the provider was fully caught up.
+
+#### Lead-summary convergence and quarantine (0700468d)
+
+The deterministic renderer is the only writer allowed to commit authoritative
+current facts after the model's bounded attempts. It was failing its own
+validators for three independent reasons, each of which made the contract
+unsatisfiable rather than merely strict:
+
+1. **Superseded revisions of the emitted fact.** The renderer states only
+   resolved current facts, so a superseded entry that the emitted current fact
+   already carries ("wood railing" → "glass railing") is not evidence of
+   repetition. Omitting the fact drew an omission failure and stating it drew a
+   repetition failure. Fixed by per-field self-exclusion applied **only** to
+   the renderer's own output: a superseded price, scope, schedule, objection,
+   or next action that the emitted fact itself carries is dropped from that
+   one validation context. A genuinely distinct superseded fact still rejects,
+   and model-authored summaries are still judged against the unfiltered full
+   context — the model-conflicting-claim carve-out is kept deliberately, as a
+   trust-boundary signal.
+2. **Anchor loss in the fragment clip.** Schedule clauses are validated by
+   anchor (calendar date, time, qualifier), and the fixed 280-character head
+   clip silently deleted the anchor the validator looks for. Selection is now
+   anchor-preserving: the head clip, else the first anchor-bearing sentence,
+   else the tail window, else the head clip unchanged when the schedule carries
+   no anchors at all. Every candidate is a normalized excerpt of the resolved
+   schedule fact; no anchor is ever invented.
+3. **The renderer's own scope clause read as a schedule assertion.**
+   `summaryCarriesSchedule` re-parses the whole summary into clauses, and a
+   deck scope says "install" almost every time, so a schedule the renderer
+   demonstrably did state was reported as omitted. When the emitted schedule
+   clause satisfies the anchor contract on its own, that clause-level proof
+   stands in for the whole-summary re-parse; when it does not, the contract
+   stays in place and still throws.
+
+Non-convergence is now bounded instead of infinite.
+`LEAD_SUMMARY_DEFERRAL_ATTEMPT_CAP = 3` consecutive failures per opportunity,
+and only a `model_contract` or `model_refusal` reason consumes budget: a
+provider outage is an infrastructure condition, not a poison lead, and a lead
+that this cycle never attempted does not count either. At the cap the
+opportunity leaves the envelope — which is what lets the mailbox complete — and
+lands in `public.lead_summary_refresh_quarantine` with one persistent,
+open-deduped rail notification per lead deep-linked to the lead. A quarantined
+lead is released by newer evidence: the scheduled sweep admits it again only
+when its latest context timestamp is newer than `quarantined_at`, while the targeted
+refresh path — always driven by concrete new evidence for those exact leads —
+releases unconditionally and grants one more bounded round.
+`/api/cron/lead-summary-refresh` reports `quarantinedCount` and `quarantined`
+and stays HTTP 200: a per-lead data problem is not a workload failure and must
+not trip the circuit.
+
+#### Webhook history high-water drain (86c758b1)
+
+A Gmail Pub/Sub push is the only thing that knows the mailbox reached a given
+`historyId`. The webhook route logged that number and fired a manual sync at
+it; when the push arrived while the per-connection mailbox lease was held —
+exactly during a burst — the manual sync was rejected and the advertised
+position was lost, leaving the mailbox parked at the in-flight pass's lower
+position until the next cron interval, with no signal anywhere.
+
+The position is now durable. The webhook records it through the service-role
+RPC `public.record_email_webhook_high_water(p_connection_id, p_history_id)`
+**before** any dispatch decision, so the 30-second debounce and a
+lease-rejected sync both still leave their mark. The mark is a monotone
+high-water, never a cursor: it is never read as a place to resume from, and a
+malformed value is ignored rather than raised, because this call sits on the
+path that acks Pub/Sub.
+
+Once a Gmail incremental fetch returns and before its mail is processed, the
+sync engine compares where the pass landed against the mark and, when it is
+behind, keeps walking — at most three extra bounded drain passes, each the
+provider's own incremental fetch, whose mail joins this same cycle's discovery
+so nothing is processed twice or on a second code path. One pass normally suffices, since a fresh history read returns the
+mailbox's current position; the budget bounds the pathological case. Every
+ambiguity fails open to the previous behaviour: an absent or unparseable mark,
+a missing column, a structured continuation already pending, a mailbox
+reconciliation pass, or a failed drain fetch. The one outcome that is not
+allowed is a pass that knows it is behind reporting completion. When the budget
+runs out the cycle persists a **checkpoint** rather than a completion, so
+`last_synced_at` stays put and the provider snapshot is not marked current. The
+re-drive is the interval gate plus the next webhook or cron tick — not the
+continuation-priority path, since a bare provider historyId is not a
+continuation envelope and does not register as one.
+
+#### Phase C work-queue claims are null-safe (d26b3a98)
+
+`claim_opportunity_phase_c_work` excluded completed rows with
+`not (a = r and b = r and c = r and d = r)`. Every freshly enqueued row carries
+`NULL` in all four component markers, so each comparison evaluated `UNKNOWN`,
+the negation stayed `UNKNOWN`, and the `WHERE` clause rejected the row: the
+queue accumulated due work that could never be claimed (23 rows, `attempt_count
+= 0` on every one, oldest due 2026-08-21) while the worker reported an empty
+queue. The predicate is now the null-safe De Morgan transform — a row is
+claimable when **any** component marker `is distinct from` the required event
+id. Nothing else in the function changed. This one is already live: it was
+applied to production ahead of the branch as the emergency hotfix ledger
+`phase_c_claim_null_safe_hotfix` (2026-08-29), and
+`20260830113000_phase_c_claim_null_safe.sql` is the repo source of truth so a
+schema redeploy cannot regress it.
+
+#### Contact-form provenance is proven at enqueue (57567bec)
+
+The message-scoped source key `email:<provider>:<connection>:message:<id>` is
+byte-identical for a contact-form notification and for a trusted generic
+forward, so `private.enqueue_email_assignment_contact_form_draft` could not tell
+them apart. An ordinary forward reached the auto-draft worker, whose parser
+threw `EMAIL_ASSIGNMENT_CONTACT_FORM_DRAFT_SOURCE_INVALID` on all eight
+attempts, and the row went terminal — a hard failure for mail that should never
+have entered the lane.
+
+Two layers now. At enqueue,
+`private.email_contact_form_source_markers_present(subject, body)` is a coarse
+structural mirror of the TypeScript parser's acceptance conditions — a reply
+that quotes a notification is ordinary correspondence; a platform body marker
+alone suffices; otherwise a generic form subject must be paired with an
+explicit labeled submitter-email line. A source carrying none of them and
+holding no service attestation is not enqueued; that mail takes the ordinary
+assignment-notification lane. The TypeScript parser remains authoritative at
+draft time — the SQL answers only "could this be a form notification at all",
+never "what did the form contain".
+
+At failure, `SOURCE_INVALID` and `CUSTOMER_MISMATCH` are verdicts about the
+source message, not transport trouble, so they now resolve immediately to
+`status = 'skipped'` with `result_reason = 'not_contact_form'` instead of
+burning eight attempts. A durable provider-create marker still outranks
+everything (reconciliation-first) and a superseded assignment still returns
+`stale`. The gate should make the skip arm unreachable; if the SQL mirror ever
+drifts from the parser, the drift costs one clean self-describing skip.
+Migrations `20260830113100` and `20260830113200`; the latter widens the queue's
+completion-shape constraint for the new reason.
+
+#### Actor-unavailable is visible and re-driven (d3e9b50d item 7, 51032567 item 5)
+
+`noop_actor_unavailable` was silent: the router returned the outcome and
+dropped the thread until new mail happened to arrive. On an actionable CUSTOMER
+thread at an autonomy level that promised action (`auto_draft` and above), that
+is a customer reply nobody learns about. The router now raises one persistent,
+open-deduped rail notification per thread (dedupe key
+`phase-c-actor-unavailable:<threadId>`, action `Assign this lead`, deep-linked
+to `/inbox/<threadId>`, recipient resolved server-side as the recorded company
+admin or an active admin user) and re-defers the thread by clearing
+`category_classified_at` so the next classification sweep runs it again as soon
+as an assignee exists. The alert never throws — a routing decision must not fail
+because its alert could not be written — and placement-only passes,
+non-CUSTOMER threads, non-actionable threads, and levels below `auto_draft` are
+excluded.
+
+#### Placement recovery ages out (bf45611d residual)
+
+The stranded-draft sweep's seven-day window is a scan bound, so `phase_c` rows
+older than it stayed at `status = 'drafted'` with a null `mailbox_draft_id`
+forever — five real rows from 2026-08-05/06 were invisible to the sweep
+permanently. They cannot simply be placed: a three-week-old automatic reply
+reads worse than no reply. Rows past the window (scoped exactly like the
+placement scan, `thread_id is not null` included, so the contact-form worker's
+threadless drafts keep their own queue's lifecycle) are superseded instead, at
+most fifty per cycle, counted as `agedOut` in the recovery summary. Age-out is
+bookkeeping and is wrapped so it can never cost the connection its placement
+retry.
+
+#### Learning apply function re-sourced (bc6f8083)
+
+`apply_email_outbound_learning_legacy_internal` casts a stored embedding with
+`::text::<schema>.vector(1536)`. The repository source qualified that as
+`extensions.vector`, but the type lives in `public` on this project, so every
+job carrying an embedding failed on an unknown type. Production was hotfixed to
+`public.vector` and the queue drained, but a schema redeploy from source would
+have restored the breakage.
+`20260830113300_apply_email_outbound_learning_public_vector_resource.sql`
+re-sources the function from the live definition — the same body, signature,
+`search_path`, lease and ownership checks, with only the cast qualification
+changed.
+
+#### Confirmed Gmail thread tombstones (84b04ee6)
+
+A Gmail thread deleted between listing and reading returned a body-confirmed
+404/410 that aborted the whole stage-review cursor. `gmail-provider.ts` now
+raises a typed `ProviderThreadTombstoneError` only for a body-confirmed
+`notFound`/`gone` (`NOT_FOUND`/`GONE`) response, and it is tolerated **only**
+in the derived stage-review pass, which skips that thread and continues its
+peers. Every other path stays fail-closed and still holds the cursor. Cherry-
+picked onto the branch unchanged (commit `869f3532`); notes in
+`ops-web/docs/plans/2026-08-28-email-stage-review-thread-tombstone.md`.
+
+#### Correspondence evidence normalization (8db73af6)
+
+The agent-control-plane evidence boundary was rejecting 100% of real HTML mail,
+so MCP correspondence reads returned redaction placeholders for messages the
+operator can read perfectly well in their own mailbox. The repaired posture,
+the construct-by-construct treatment table, and the ledger re-projection
+contract are documented with the rest of that subsystem in
+`04_API_AND_INTEGRATION.md` § Evidence normalization posture (2026-08-29); the
+storage contract is in `03_DATA_ARCHITECTURE.md` § Agent Control Plane Schema.
+
+#### Migrations written in this wave
+
+All written on `fix/bugsweep-email-20260828` and pending production
+application, except `20260830113000`, whose predicate production already
+carries as an emergency hotfix.
+
+| File | What it changes |
+|------|-----------------|
+| `20260830100000_agent_writing_profile_subject_preferences_merge.sql` | Subject-preference merge RPC (the missing writer) |
+| `20260830103000_learning_actor_from_scratch_company_assignee.sql` | Learning-actor RPC gains the company-mailbox rewrite arm |
+| `20260830103100_learning_queue_replaced_draft_lesson.sql` | `replaced_draft_history_id`, widened proof CHECK, binder, guard, enqueue |
+| `20260830110000_lead_summary_refresh_quarantine.sql` | Quarantine table, upsert/release RPCs, notification dedupe index |
+| `20260830113000_phase_c_claim_null_safe.sql` | Null-safe Phase C work-claim predicate |
+| `20260830113100_contact_form_enqueue_provenance_gate.sql` | Structural contact-form marker mirror + enqueue refusal |
+| `20260830113200_contact_form_deterministic_source_invalid_skip.sql` | Deterministic source verdicts skip; completion shape widened |
+| `20260830113300_apply_email_outbound_learning_public_vector_resource.sql` | `public.vector` cast committed to source |
+| `20260830113400_delivery_source_normalization_reprojection.sql` | Evidence-ledger re-projection, revision v2, backfill RPCs |
+| `20260830113500_email_connection_webhook_high_water.sql` | `webhook_history_high_water` column + record RPC |
 
 ### What replaced the old §19
 

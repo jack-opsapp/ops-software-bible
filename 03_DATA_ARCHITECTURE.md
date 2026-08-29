@@ -4486,6 +4486,7 @@ These tables exist in Supabase only (not in SwiftData). See `10_JOB_LIFECYCLE_AN
 - **Prepared migrations `20260731210000_event_driven_archived_lead_reactivation.sql` and `20260801003000_fix_contact_form_draft_rpc_identifiers.sql` were not applied as of 2026-08-01.** The first adds exact-thread inbound reactivation, mailbox-owner/assignment-review disposition, assignment-version-fenced deliveries, and an archived-stage transition guard. The second exposes PostgreSQL-safe service-only names for the contact-form provider-create reservation and uncertain-outcome reconciliation RPCs; their original 67- and 74-byte declarations exist in the catalog only under server-truncated names and therefore cannot be resolved by PostgREST using the application strings. Neither migration backfills or assigns historical leads.
 - **Migration record `20260805190312_email_provider_snapshot_health` is live as of the 2026-08-05 production readback.** Its repository source is `20260805151056_email_provider_snapshot_health.sql`. It adds nullable `email_connections.provider_snapshot_at`, extends the checkpoint RPC with trailing optional `p_provider_snapshot_complete`, and makes terminal completion advance provider health from the database clock. The original positional fourth argument remains `p_clear_recovery`, so the database-first rollout remained backward compatible with the old server.
 - **Prepared migration `20260802163538_keep_contact_form_mailbox_busy_retryable.sql` is not applied as of 2026-08-02.** It adds nullable `email_assignment_contact_form_draft_queue.mailbox_busy_since`, a partial operational index, a private canonical physical-mailbox lease predicate, a service-only mailbox-aware claim replacement, and one persistent notification lifecycle after an hour of continuous contention. Due rows are marked once and excluded before the bounded worker limit while the lease is active, preventing attempt churn, repeat model work, provider polling, and healthy-mailbox starvation. A post-claim acquisition race returns to the same wait; provider-create uncertainty and stale assignment retain stricter outcomes. The generalized repair returns only exact `failed` contention rows with both provider-create markers null to the guarded queue. It changes no provider, draft-history, opportunity, or assignment record directly; the normal worker gates run again before provider access. OPS-Web commits: `92344a64`, `865bab6e`.
+- **Contact-form provenance gate (migrations `20260830113100_contact_form_enqueue_provenance_gate.sql` and `20260830113200_contact_form_deterministic_source_invalid_skip.sql`, written on OPS-Web branch `fix/bugsweep-email-20260828` 2026-08-29, not applied).** The message-scoped source key `email:<provider>:<connection>:message:<id>` is byte-identical for a contact-form notification and for a trusted generic forward, so `private.enqueue_email_assignment_contact_form_draft` could not distinguish provenance and ordinary forwards entered the auto-draft lane, where the worker's parser failed deterministically eight times and the row went terminal. The new immutable, strict predicate `private.email_contact_form_source_markers_present(subject, body)` is a coarse structural mirror of `looksLikeContactFormSubmission`: a quoted reply is ordinary correspondence, a platform body marker alone suffices, otherwise a generic form subject must be paired with an explicit labeled submitter-email line. Enqueue refuses a source carrying no markers and holding no `private.email_contact_form_recipient_attestations` row; the TypeScript parser stays authoritative at draft time. The companion migration widens `email_assignment_contact_form_draft_completion_shape` with the terminal reason `not_contact_form` and makes `fail_email_assignment_contact_form_draft_as_system` resolve `…SOURCE_INVALID` / `…CUSTOMER_MISMATCH` straight to `status = 'skipped'` — a durable provider-create marker still forces `reconciliation_required` and a superseded assignment still returns `stale`.
 
 ### email_connections
 
@@ -4547,6 +4548,8 @@ CREATE TABLE email_connections (
 ```
 
 Token columns (`access_token`, `refresh_token`) are accessed via service role only in API routes — not exposed to client via RLS column-level restrictions.
+
+**Webhook history high-water (migration `20260830113500_email_connection_webhook_high_water.sql`, written on OPS-Web branch `fix/bugsweep-email-20260828` 2026-08-29, not applied).** Adds nullable `email_connections.webhook_history_high_water` (TEXT) — the highest Gmail `historyId` any provider push has ever advertised for this connection. It is **advisory and monotone, never a cursor and never a resume point**: the sync engine only compares its own completed pass against it to decide whether the mailbox still owes a bounded drain, so a stale or absurd value can cost one extra fetch and can never skip mail. Written only by the service-role RPC `public.record_email_webhook_high_water(p_connection_id uuid, p_history_id text)`, which performs the monotone maximum inside the `UPDATE`'s own `WHERE` clause (null, non-numeric, or lower stored values lose) and silently ignores any input that is not a bounded run of digits — it sits on the path that acks Pub/Sub, where raising would turn a malformed notification into a redelivery storm. Both sides are uint64 decimal strings, so the comparison goes through `numeric` behind that validity guard rather than `bigint` or float. The column is purely additive with no default, backfill, or constraint on existing rows, so it may be applied before or after the code that reads it; the engine's read fails open on a missing column. Behaviour: `07_SPECIALIZED_FEATURES.md` § Inbox engine repair wave (2026-08-29).
 
 **Current cursor and health authority (2026-08-05 production contract).** The live
 column names used by the sync engine are `history_id`, `last_synced_at`,
@@ -4912,6 +4915,8 @@ CREATE TABLE agent_writing_profiles (
 
 **Subject learning (prepared 2026-07-14, migration `20260713210000_phase_c_learning_signatures`):** `subject_preferences.preferred_patterns` contains ranked `{ pattern, count, examples, last_promoted_at }` objects. `pattern` and `examples` are de-identified templates only, using `{contact}`, `{company}`, `{address}`, `{project}`, `{email}`, and `{number}`. Raw subjects are not retained in preference evidence. A pattern needs three database-verified human examples before promotion; subsequent evidence continues updating its count/examples.
 
+**The writer landed 2026-08-29 (migration `20260830100000_agent_writing_profile_subject_preferences_merge.sql`, written on OPS-Web branch `fix/bugsweep-email-20260828`, not applied).** Until then the column had a reader and no writer and was `{}` on every production row, so the learned rank could never win. `public.merge_agent_writing_profile_subject_preferences(p_company_id uuid, p_user_id uuid, p_profile_type text, p_subject text, p_context jsonb, p_is_thread_opening boolean, p_dry_run boolean)` is service-role only and merges exactly one thread-opening outbound subject: it mirrors the TypeScript normalizer in SQL (whitespace collapse, 200-character bound, reply/forward prefixes refused), substitutes this lead's own context values for the six tokens longest-value-first (values under three characters ignored), increments `count` on a case-insensitive pattern match, stores the de-identified pattern as its own `examples` entry, and caps `preferred_patterns` at ten ranked by count then `last_promoted_at`. It never creates a profile — learning enriches a voice that already exists — and returns a JSONB receipt (`learned`, `reason`, `pattern`, `count`, `dry_run`) so a dry run can be inspected without writing. Behaviour and call site: `07_SPECIALIZED_FEATURES.md` § Subject-preference learning.
+
 ### email_templates
 
 Company-scoped email templates with merge field support. Used by the compose flow and AI draft generation.
@@ -4990,6 +4995,15 @@ Migration `20260723233000_operator_one_tap_lead_follow_up.sql` extends the durab
 Prepared by migrations `20260713205000_email_outbound_learning_queue` and `20260713210000_phase_c_learning_signatures`. The queue is the durable owner of sent-draft bookkeeping, writing-profile learning, and correction-memory application. Provider message identity is immutable and connection-scoped. Prepared outcomes are receipted before apply, leased for retry, and deduplicated across provider replay.
 
 `learning_authority` is one of `autonomous`, `operator_approved`, or `operator_authored`, but the database derives/upgrades it only from verifiable activity/draft provenance; an RPC caller cannot promote its own authority. `apply_full_body_learning` is separately persisted at preparation time and may be true only for verified `operator_authored` rows. `operator_approved` rows can apply de-identified durable edit evidence without sampling the AI-authored final body; autonomous jobs may complete mandatory draft bookkeeping but cannot train writing profiles or memories. `email_outbound_edit_evidence` stores de-identified repeated changes; promotion receipts make profile mutations exactly once. Provenance enrichment clears any uncommitted prepared writing/memory payload before recomputation. Service role owns all queue RPC execution.
+
+**Replacement lessons (migrations `20260830103000` + `20260830103100`, written on OPS-Web branch `fix/bugsweep-email-20260828` 2026-08-29, not applied — a lockstep pair, and `…103000` must never be applied without `…103100`).** A company-type mailbox previously resolved no learning actor for a `from_scratch` outcome at all, so the operator's own rewrite — the highest-value correction available — trained nothing. Four coordinated changes:
+
+- `email_outbound_learning_queue.replaced_draft_history_id uuid references ai_draft_history(id)` — the OPS draft this send replaced. It is provenance for a memory-only lesson; it is never the sent draft and is never counted in edit statistics.
+- `email_outbound_learning_actor_proof_check` gains a `company_mailbox_assignee` arm, which may exist only alongside a non-null `replaced_draft_history_id`, `opportunity_id`, and `assignment_version_snapshot`. Every pre-existing arm is preserved verbatim, so every stored row still satisfies the constraint.
+- `private.bind_email_outbound_learning_actor_proof` mints that proof only when the replaced draft belongs to the exact current assignee on this connection and thread and the send followed it; `private.email_outbound_learning_guard` re-validates the same facts before apply, and rejects the arm if a sent draft is attached, the replaced pointer is missing, the connection is not company-type, or the opportunity is absent.
+- `public.enqueue_email_outbound_learning` is replaced (not overloaded — two candidates differing only by a defaulted argument make the PostgREST call ambiguous) to accept the new pointer; the previous body is retained un-callable under an internal name, following the retirement pattern of `20260713210000`.
+
+The evidence bar equals the `native_mailbox_draft` arm: active user, opportunity `assigned_to` = actor at `assignment_version > 0`, `private.user_can_send_opportunity_inbox`, active sync-enabled connection, and an outbound activity dated after the draft. `list_phase_c_graduation_actor_scopes_as_system` and the accuracy readers deliberately do **not** recognize the new proof type, so it can widen training data and never sending.
 
 ### email_signatures
 
@@ -5790,6 +5804,55 @@ LOCKED`; failure records an error and exponential backoff, while an
 acknowledgement can clear only the exact event snapshot it leased. A newer
 event supersedes the worker without losing work.
 
+**Null-safe claim predicate (2026-08-29).** `claim_opportunity_phase_c_work`
+excluded fully-completed rows with `not (a = r and b = r and c = r and d = r)`.
+Every freshly enqueued row carries `NULL` in all four component markers, so each
+comparison evaluated UNKNOWN, the negation stayed UNKNOWN, and the `WHERE`
+clause rejected the row: the queue accumulated due work no worker could ever
+claim (23 rows, `attempt_count = 0` on every one, oldest due 2026-08-21) while
+the worker reported an empty queue. The predicate is now the null-safe De
+Morgan transform — claimable when **any** component marker
+`is distinct from required_event_id` — so fresh all-NULL rows are claimable and
+fully-completed rows stay excluded. Nothing else in the function changed. This
+one is live ahead of its repo file: applied to production as the emergency
+hotfix ledger `phase_c_claim_null_safe_hotfix` (2026-08-29), with
+`20260830113000_phase_c_claim_null_safe.sql` on OPS-Web branch
+`fix/bugsweep-email-20260828` as the source of truth so a schema redeploy
+cannot regress it. Bug `d26b3a98`.
+
+### `lead_summary_refresh_quarantine`
+
+Written by migration `20260830110000_lead_summary_refresh_quarantine.sql` on
+OPS-Web branch `fix/bugsweep-email-20260828` (2026-08-29); **not applied**. Lead
+summaries are derived data, but a lead whose summary could not converge stayed
+in the mailbox continuation envelope forever, and a non-empty envelope means
+"sync incomplete" — so one such lead froze the whole mailbox cursor and every
+Phase C lane on the connection for seven days (bug `0700468d`).
+
+One row per opportunity: `opportunity_id` (primary key, `references
+opportunities(id) on delete cascade`), `company_id`, `reason`, `last_error`,
+`deferral_count`, `quarantined_at`. RLS is enabled with every grant revoked from
+`public`, `anon`, and `authenticated`; only `service_role` reaches it, through
+two RPCs. `upsert_lead_summary_refresh_quarantine(opportunity_id, company_id,
+reason, last_error, deferral_count)` proves the opportunity is live and
+company-scoped, re-stamps `quarantined_at` on conflict so only evidence newer
+than *this* moment can release the lead, derives the recipient server-side (the
+lead's active assignee, else the oldest active `pipeline.view … all` holder),
+and opens one persistent notification under dedupe key
+`lead-summary-quarantine:<opportunityId>` deep-linked to the lead — enforced
+unique by the partial index
+`notifications_lead_summary_quarantine_unique`. No reachable owner is not a
+failure: the durable row and the refresh cron's payload still surface the
+non-convergence. `release_lead_summary_refresh_quarantine(opportunity_id)`
+deletes the row and resolves the open alert with reason
+`lead_summary_quarantine_released`.
+
+Only `model_contract` and `model_refusal` reasons ever reach this table; a
+provider outage is an infrastructure condition and never consumes budget. The
+cap is three consecutive failures, tracked per opportunity in the continuation
+envelope's `pendingLeadSummaryAttempts` map. See
+`07_SPECIALIZED_FEATURES.md` § Lead-summary convergence and quarantine.
+
 ### `opportunity_lifecycle_decisions`
 
 Append-only decision evidence precedes every lifecycle mutation. Each receipt
@@ -6019,6 +6082,20 @@ The database boundary freezes Unicode 15.0 interchange text, excluding the 66 re
 Production readback proves both RPC signatures and service-role-only grants, 40/40 valid and ready indexes, six trigram indexes bound to the installed `public.gin_trgm_ops`, and the zero-downtime v6/v7 compatibility bridge. The first post-apply email update exposed that PostgreSQL expression-index maintenance also requires the indexed table's existing DML roles to execute the exact transitive helper graph. Repair ledger `20260822015939_agent_discovery_index_writer_acl_20260822015828`, mirrored at SHA-256 `e27fff38ad2ad22f3a47b6cf5223be585750e7c85ba0b0b2696179e0a459ac1f`, grants `anon`, `authenticated`, and `service_role` only the eight scalar helpers used by the 40 indexes; `PUBLIC` and every non-index discovery helper remain denied. Rolled-back role-specific writes, fresh-install convergence, scheduled email-sync recovery, and independent review prove the repair.
 
 A live authenticated `/api/mcp` canary listed exactly eleven reads. Nine calls returned successful results; conversation-context and correspondence-evidence selectors without matching canary records returned their expected privacy-safe `NOT_FOUND` outcomes. Revoking the disposable grant made the next bearer call return `401`; all disposable OAuth client, code, grant, and token rows were deleted with zero-row readback while the immutable request audit remained.
+
+### Delivery-source normalization re-projection (prepared 2026-08-29, not applied)
+
+Migration `20260830113400_delivery_source_normalization_reprojection.sql`, written on OPS-Web branch `fix/bugsweep-email-20260828`, lets `private.agent_provider_delivery_sources` accept a repaired reading of source bytes it already retains. It exists because the evidence normalizer was rejecting 100% of real HTML mail, so the ledger stored `[SUBJECT OMITTED: UNSAFE SOURCE]` / `[CONTENT OMITTED: UNSAFE SOURCE]` for correspondence the operator reads normally in their own mailbox (bug `8db73af6`). The file asserts its prerequisite relations and functions before it changes anything.
+
+The immutability boundary is narrowed, not lifted:
+
+- **Source bytes are immutable forever.** `content_value` and every identity, media-type, charset, selection-revision, part-id, attachment-descriptor, and evidence-id column still raise `agent_provider_delivery_source_idempotency_conflict` on any difference. The capture-time `source_sha256` is deliberately never rewritten — it is the tenant hash key `public.job_conversation_turns` references, so moving it would break immutable conversation turns.
+- **Only the derived text projection may move**, in place: `normalized_subject`, `normalized_plain_text`, `normalization_revision`, `normalization_status`. `capture_agent_provider_delivery_source_as_system` now lifts those four comparisons out of the conflict test and, when they and only they differ, writes a bounded UPDATE instead of raising.
+- **The shared guard is untouched.** `private.reject_agent_job_memory_mutation()` still protects its six tables exactly as strictly as before. The delivery ledger gets its own table-scoped `private.reject_agent_provider_delivery_source_mutation()`, which admits an UPDATE only when the transaction-local marker `ops.agent_provider_delivery_source_reprojection` names that exact row **and** `to_jsonb(new)` minus the four projection keys equals `to_jsonb(old)` minus the same keys. An update that changes one byte of `content_value` alongside the projection falls through to `agent_job_memory_record_is_immutable`. The audited company-data purge remains the only permitted delete.
+- **`normalization_revision` CHECK widened** from the single v1 literal to `{ops.correspondence.normalized-text.v1, ops.correspondence.normalized-text.v2}`. **Apply before deploying code that carries the v2 constant** — the reverse order fails every capture on a check violation, a full evidence-capture outage. Applying first is safe because already-deployed code writing v1 stays valid.
+- **Backfill lane:** two service-role-only RPCs, `list_agent_provider_delivery_sources_for_renormalization_as_system(p_limit, p_before_delivered_at, p_before_id)` (keyset-paged over `normalization_status = 'rejected'`, bounded 1–500) and `reproject_agent_provider_delivery_source_as_system(company_id, source_id, normalized_subject, normalized_plain_text, normalization_revision, normalization_status)`, which validates the incoming projection with exactly the rules capture applies, sets and clears the transaction-local marker around its own UPDATE, and returns whether the row actually moved. Driver script: `scripts/renormalize-delivery-sources.ts`. Running it reprocesses real customer email and remains Jackson's decision.
+
+Guard posture behind the revision bump: `04_API_AND_INTEGRATION.md` § Evidence normalization posture (2026-08-29).
 
 ## Company Automation Settings + Schedule Cascade Outbox Recovery (bugs da219610, 541e3dad)
 
