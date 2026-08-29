@@ -3014,6 +3014,35 @@ A new OAuth state `source='calendar'` binds to one exact connection like `'alert
 
 Operator surface: one state-aware `CALENDAR SYNC — OFF/ON` row on the connected Gmail card in Settings → COMMS (`src/components/settings/integrations-tab.tsx`), Gmail-only and status-gated; return params `calendar=connected|error` raise a toast and are stripped. Until a company connects, the enqueue trigger finds no calendar-scoped connection and the whole feature is simply **inert** — no queue rows, no errors.
 
+### 27. GET /api/cron/schedule-optimization + GET /api/cron/financial-digest — Phase C automation failure semantics
+
+**Sources:** `ops-web/src/app/api/cron/schedule-optimization/route.ts` (`"14 5 * * *"`, daily 05:14 UTC) and `.../financial-digest/route.ts` (`"4 7 * * 1"`, Mondays 07:04 UTC), over `cron-workload-control-service.ts` + `cron-company-fanout-service.ts`. Repaired in `518423f9` ("fix(ops): repair nightly health defects"), test-covered by `tests/unit/api/schedule-optimization-cron.test.ts`, `tests/unit/api/financial-digest-cron.test.ts`, `tests/unit/services/cron-company-fanout-service.test.ts`.
+
+Both routes deliberately fail **loudly**. The prior behavior — a per-company error swallowed into a skip while the workload lane recorded success — is what bugs da219610 and 541e3dad were.
+
+- **Settings loaders throw.** `ScheduleOptimizationService.loadScheduleSettings` and `FinancialIntelligenceService.getFinancialSettings` call `throwCronDatabaseOperationError` on any database error. A missing column, a revoked grant, or a renamed key can never again present as a successful skip. (Columns and defaults: `03_DATA_ARCHITECTURE.md` § Company Automation Settings.)
+- **Truthful workload completion.** `runWithCronWorkloadControl` (`workloadKey` `schedule-optimization` / `financial-digest`, 360 s lease) records `succeeded: false` when the body throws. `status: "skipped"` with `reason: "lease_held"` answers 200 `ok:true, ran:false` (a healthy overlap); any other skip reason answers **503**.
+- **Bounded fanout with a durable retry cursor.** `runBoundedPhaseCCompanyFanout` walks companies with `retryPolicy.maxAttempts: 3`, retrying at most one poison company per invocation. Pending retries persist across runs in a cursor keyed `phase-c-fanout:v2:` (payload `{"v":2,"pageCursor":…,"pending":[{"companyId":…,"attempts":n}]}`).
+- **Scheduled retry ⇒ HTTP 500.** When `fanout.retry.status === "scheduled"` the route throws (`FinancialDigestRunError` / its schedule-optimization twin), so the invocation is a visible failure and the lane records a failure.
+- **Exhaustion ⇒ HTTP 200 with `ok:false`.** After three cross-run attempts the response carries `ok:false`, per-company `errors`, and `retry.exhausted` naming each company and its attempt count. Giving up advances the sweep; the next fresh walk fails loudly again. The observable cycle for a persistent defect is therefore 500, 500, 200-`ok:false`, repeat — never silence.
+
+Failure of the *memory projection* is intentionally retryable rather than fatal to the digest: `financial-digest` proposes its `financial:weekly:<ISO week>` action first, then calls `storeFinancialMemories`, so a projection failure leaves the company pending in the retry cursor with the digest already proposed. That is exactly the 2026-08-24 07:04:53 workload failure caused by the never-applied `replace_financial_analysis_memories` (see `03_DATA_ARCHITECTURE.md` § Migration application record).
+
+### 28. GET /api/admin/company/[id] — live read contract (bug 2577ac54)
+
+**Source:** `ops-web/src/app/api/admin/company/[id]/route.ts`; the server page `src/app/admin/companies/[id]/page.tsx` holds a parallel copy of the same four reads, and `src/app/admin/_components/company-sheet.tsx` consumes this route's JSON.
+
+Auth: `verifyAdminAuth` + `isAdminEmail` (401 otherwise). Unknown company ⇒ 404 from the `getCompanyDetail` null contract. The four inline reads use the live schema — a March-era fossil read `pipeline_references`, `estimates.total_amount`, `invoices.total_amount`, and `payments.deleted_at`, none of which exist, and destructured only `{ data }` so every failure was served as an empty array:
+
+| Response field | Read |
+|---|---|
+| `pipeline[]` | `opportunities` — `id, stage, estimated_value, created_at`, `company_id = :id`, `deleted_at IS NULL`, `archived_at IS NULL`; projected as `{ id, stage, value, created_at }` (`value` ← `estimated_value`) |
+| `estimates[]` | `estimates` — `id, status, total, created_at`, `deleted_at IS NULL` |
+| `invoices[]` | `invoices` — `id, status, total, created_at`, `deleted_at IS NULL` |
+| `recentPayments[]` | `payments` — `id, amount, created_at`, **`voided_at IS NULL`** (payments are voided, never soft-deleted), newest 10 |
+
+Every read is wrapped so a Supabase error throws `Admin company query failed [<operation>]: <message>`; the route's try/catch turns that into **500** with the message. The shared admin data layer (`src/lib/admin/admin-queries.ts`) applies the same rule through `adminRead` / `AdminQueryError` for every admin read — `estimates`/`invoices` `total`, `payments.voided_at`, `audit_log.changed_at`, live promo columns, portal and integration counts derived from `portal_branding` / `portal_tokens` / `email_connections` / `accounting_connections`, and the pipeline from `opportunities` / `project_photos` / `project_notes`.
+
 ---
 
 ## Review Swipe Mutation APIs (2026-07-21)

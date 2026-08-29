@@ -6020,6 +6020,145 @@ Production readback proves both RPC signatures and service-role-only grants, 40/
 
 A live authenticated `/api/mcp` canary listed exactly eleven reads. Nine calls returned successful results; conversation-context and correspondence-evidence selectors without matching canary records returned their expected privacy-safe `NOT_FOUND` outcomes. Revoking the disposable grant made the next bearer call return `401`; all disposable OAuth client, code, grant, and token rows were deleted with zero-row readback while the immutable request audit remained.
 
+## Company Automation Settings + Schedule Cascade Outbox Recovery (bugs da219610, 541e3dad)
+
+### Company automation settings authority
+
+`public.companies.schedule_settings` and `public.companies.invoice_settings` are the single source of truth for Phase C schedule optimization and for invoice / financial-intelligence policy. Both are `jsonb NOT NULL` with a full default policy stored in the column default and a `jsonb_typeof(...) = 'object'` guard (`companies_schedule_settings_object_check`, `companies_invoice_settings_object_check`). Source: `supabase/migrations/20260813170000_add_company_automation_settings.sql` in OPS-Web.
+
+The application shipped the reads before the columns existed (Phase C, `26d65dde`), which is the whole of bugs da219610 and 541e3dad: every enabled company failed at `column companies.schedule_settings does not exist` and the failure was swallowed as a skip. Both columns are live in prod.
+
+`schedule_settings` default:
+
+```json
+{
+  "enabled": true,
+  "optimization_window_days": 2,
+  "travel_optimization": true,
+  "conflict_detection": true,
+  "weather_awareness": true,
+  "climate_zone": "auto",
+  "cascade_detection": true,
+  "outdoor_task_type_ids": []
+}
+```
+
+`invoice_settings` default (financial-intelligence thresholds are nested, not a sibling column):
+
+```json
+{
+  "default_payment_terms": "NET-30",
+  "default_tax_rate": 0,
+  "auto_suggest_on_completion": true,
+  "auto_suggest_from_estimate": true,
+  "high_value_threshold": 5000,
+  "include_cover_email": true,
+  "financial_intelligence": {
+    "enabled": true,
+    "overdue_pct_threshold": 30,
+    "concentration_pct_threshold": 40,
+    "aging_days_threshold": 60,
+    "aging_min_count": 3,
+    "win_rate_increase_threshold": 80,
+    "win_rate_decrease_threshold": 40,
+    "min_estimates_for_analysis": 5
+  }
+}
+```
+
+**Writes.** `/api/settings/schedule` writes `schedule_settings` directly. `/api/settings/invoice` never writes the column directly — it validates the patch and then calls `public.merge_company_invoice_settings(p_company_id uuid, p_patch jsonb)`, which merges inside PostgreSQL (top-level keys shallow-merged, `financial_intelligence` merged one level deeper) so two settings sections saved concurrently cannot erase one another between a client read and update. The function is `security invoker`, `set search_path = ''`, revoked from `public`/`anon`/`authenticated` and granted to `service_role` only; it raises when the company does not exist.
+
+**Reads.** `ScheduleOptimizationService.loadScheduleSettings` and `FinancialIntelligenceService.getFinancialSettings` both throw (`throwCronDatabaseOperationError`) on any database error — repaired in `518423f9`. A missing column, a revoked grant, or a renamed key can never again present as a successful skip.
+
+### Migration application record (verify by object — ledger version keys lie)
+
+The 2026-08-13 repair wave was authored as four files but applied piecemeal. Ledger version keys do **not** match the repo filenames; the only sound verification is by object (`pg_proc` / `information_schema.columns`), never by version key.
+
+| Repo file (OPS-Web `supabase/migrations/`) | Object it lands | Applied |
+|---|---|---|
+| `20260813170000_add_company_automation_settings.sql` | `companies.schedule_settings`, `companies.invoice_settings`, `merge_company_invoice_settings` | 2026-08-16, ledger `20260816230535 add_company_automation_settings` (no mirror in `migrations/` — the archive backfill covers through 2026-08-12; PM to mirror) |
+| `20260813171000_append_analytics_events_rpc.sql` | `append_analytics_events` + legacy bridge | Applied 2026-08-29 as a forward repair (forward-repair keys recorded by PM) |
+| `20260813172000_email_anomaly_notification_identity.sql` | email anomaly notification identity | 2026-08-22, ledger `20260822041423_email_anomaly_notification_identity_forward_repair_20260813172000` (mirrored in `migrations/`) |
+| `20260813173000_atomic_financial_analysis_memories.sql` | `replace_financial_analysis_memories` | Applied 2026-08-29 as a forward repair (forward-repair keys recorded by PM) |
+
+The two forward repairs were the live gap behind the second half of 541e3dad: with `replace_financial_analysis_memories` absent, every Monday digest proposed its `financial:weekly:<ISO week>` action and then threw at the memory-projection step (`storeFinancialMemories`), recording a workload failure seconds later and leaving a pending retry in the durable fanout cursor. The digest itself was never lost; the `agent_memories` projection (`source='financial_analysis'`) simply never persisted. `append_analytics_events` has no web callers — it serves the iOS analytics transport from the same wave.
+
+Verification queries:
+
+```sql
+SELECT proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND proname IN ('replace_financial_analysis_memories', 'append_analytics_events', 'merge_company_invoice_settings');
+
+SELECT column_name, data_type, is_nullable FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'companies'
+  AND column_name IN ('schedule_settings', 'invoice_settings');
+```
+
+### Schedule cascade outbox — terminal-failure recovery runbook
+
+`task_schedule_automation_outbox` rows go terminal (`status='failed'`, `disposition='failed'`) after 10 attempts. Between 2026-07-25 and 2026-08-14, 39 `kind='schedule_cascade'` rows for company `a612edc0-5c18-4c4d-af97-55b9410dd077` went terminal with `last_error` beginning `Failed to load schedule optimization settings: column companies.schedule_settings does not exist`. The code defect was fixed in `518423f9` and the column applied 2026-08-16; the terminal rows were left for a deliberate later replay (bug da219610).
+
+**Step 1 — reconcile before touching anything (read-only).** `predicted` is what the worker will do with each row on replay:
+
+```sql
+SELECT o.id AS outbox_id, o.task_id,
+       o.task_schedule_version AS event_version,
+       t.schedule_version      AS current_version,
+       t.status                AS task_status,
+       (t.id IS NULL OR t.deleted_at IS NOT NULL) AS task_gone,
+       CASE
+         WHEN t.id IS NULL OR t.deleted_at IS NOT NULL THEN 'task_deleted'
+         WHEN t.status <> 'active'                      THEN 'superseded'
+         WHEN t.schedule_version <> o.task_schedule_version THEN 'superseded'
+         ELSE 'live replay (cascade may propose actions)'
+       END AS predicted,
+       o.attempts, o.requested_at
+FROM task_schedule_automation_outbox o
+LEFT JOIN project_tasks t ON t.id = o.task_id
+WHERE o.status = 'failed' AND o.disposition = 'failed' AND o.kind = 'schedule_cascade'
+  AND o.last_error LIKE 'Failed to load schedule optimization settings: column companies.schedule_settings does not exist%'
+ORDER BY o.requested_at;
+```
+
+**Step 2 — re-enqueue (one transaction, idempotent by predicate).** The claim RPC (`claim_task_schedule_automation_events`) only sees rows with `status IN ('pending','processing')`, `available_at <= now()`, no live lease, and `attempts < 10`, so restoring those fields is the whole of a replay:
+
+```sql
+BEGIN;
+UPDATE task_schedule_automation_outbox
+SET status = 'pending',
+    attempts = 0,
+    available_at = now(),
+    disposition = NULL,
+    completed_at = NULL,
+    worker_id = NULL,
+    lease_token = NULL,
+    lease_expires_at = NULL
+WHERE status = 'failed' AND disposition = 'failed' AND kind = 'schedule_cascade'
+  AND last_error LIKE 'Failed to load schedule optimization settings: column companies.schedule_settings does not exist%';
+-- Expect the row count from Step 1 (39 on 2026-08-29). Any other count: ROLLBACK and re-reconcile.
+COMMIT;
+```
+
+`last_error` is intentionally preserved for forensics; the claim RPC nulls it on claim.
+
+**Step 3 — drain.** No manual action. `/api/cron/lead-assignment-deliveries` (`"2-59/10 * * * *"`) drains one outbox event per run, plus opportunistic drains after task edits through `/api/tasks` — 39 rows clear in ≤ ~6.5 hours. Do not curl-flood the endpoint.
+
+**Replay safety.** `TaskMutationAutomationOutboxService.processClaim` guards every replay: deleted task → `task_deleted`; task not `active`, or a schedule snapshot that no longer matches the event (`taskMatchesScheduleChange`) → `superseded`; actor no longer holds edit → `access_lost`. Only a still-matching schedule runs the real cascade, and its output is an approval-queue proposal for that company's admins — never an auto-send. On 2026-08-28 the three events named in bug da219610 all predicted `superseded` (task `schedule_version` 3/5/5 vs event versions 2/2/3).
+
+**Step 4 — post-replay verification (next day):**
+
+```sql
+SELECT status, disposition, count(*)
+FROM task_schedule_automation_outbox
+WHERE kind = 'schedule_cascade' AND requested_at < '2026-08-15'
+GROUP BY status, disposition;
+```
+
+Expected: every row `completed` with a disposition in (`superseded`, `processed`, `no_action`, `task_deleted`, `access_lost`), and zero rows left in `failed/failed` with the `schedule_settings` signature. A row back in `failed` carrying a *new* `last_error` is a new defect, not this one. Record the resulting disposition counts here when the replay completes.
+
+**Explicitly excluded from the replay predicate:** two rows from 2026-08-27 22:23 UTC (`kind` `schedule_change` and `task_assigned`, same company, 10 attempts) whose `last_error` is `Task notification push failed`. That is OneSignal delivery, a different failure family, tracked as its own bug.
+
 ## MCP OAuth Authorization Server Schema (applied 2026-08-18 UTC)
 
 Ledger `20260818155813_mcp_oauth_authorization_server` (mirrored byte-exact in `migrations/`). Storage for the Claude-first MCP mount — see `04_API_AND_INTEGRATION.md` § "OPS Remote MCP Server — P1 Mount". Applied to production and live. The consuming routes are deployed at `https://app.opsapp.co/api/mcp`; a dynamically registered Claude client and one unrevoked grant were verified in production on 2026-08-20.
