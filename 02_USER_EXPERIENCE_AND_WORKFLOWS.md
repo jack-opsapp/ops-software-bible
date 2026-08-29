@@ -681,6 +681,25 @@ The tutorial is a **fully interactive, hands-on guide** that walks users through
 - Estimate-to-invoice conversion is a single swipe action
 - Accounting dashboard provides at-a-glance financial health
 
+**Web undo contract (updated 2026-08-29):** On `OPS-Web` every pipeline stage
+mutation that has a true inverse surfaces a visible UNDO on its toast, rendered
+through the canonical `showUndoToast` helper on the olive success rail: active
+stage moves, archive, mark-lost (dialog confirm), and discards — both the
+Phase-C reason-capture path and the plain/fallback path. Each mutation pushes
+its undo entry and hands the toast that entry's **id**, so the toast's UNDO and
+the top bar's Cmd+Z consume one and the same entry: whichever the operator
+fires first performs the reversal and the other silently no-ops. A stage change
+can therefore never be reverted twice, and a stale toast can never undo a newer,
+unrelated action.
+
+Two deliberate exceptions. **Won/convert offers no toast undo** — winning a deal
+runs the atomic `convert_opportunity_to_project` RPC, and moving the stage back
+does not unwind the project it minted, so a visible UNDO would promise a
+reversal it cannot deliver (Cmd+Z still restores the stage, as before). And the
+**discard capture toast's silent branch stays silent**: that toast already
+carried its own UNDO for its whole lifetime, so a second toast after it closes
+is noise. The undo entry still reaches the global stack on both branches.
+
 ---
 
 ### Catalog Journey: Manage Stock + Products (updated 2026-07-21)
