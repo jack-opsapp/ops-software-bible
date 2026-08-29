@@ -2346,6 +2346,35 @@ UINotificationFeedbackGenerator().notificationOccurred(.error)
 
 **Exception**: `cardBackgroundDark.opacity(0.8)` is a defined pattern.
 
+#### 1b. Slash-Opacity on an rgba-String Token (Web) — added 2026-08-29
+
+Tailwind's slash-opacity modifier **replaces** a color's alpha channel; it does
+not scale it. Every OPS surface/fill token is authored as an rgba STRING, so a
+modifier silently discards the token's own alpha:
+
+```tsx
+// ❌ WRONG — surface-input is rgba(255,255,255,0.04); this compiles to
+//            rgba(255 255 255 / 0.5): a 50%-white slab on a black canvas.
+<div className="bg-surface-input/50" />
+
+// ❌ WRONG — fill-neutral-dim is 0.06; /60 is a 10× brightening.
+<div className="bg-fill-neutral-dim/60" />
+
+// ✅ CORRECT — pick the token that already carries the intended alpha.
+<div className="bg-surface-input" />       {/* 4% — input surfaces */}
+<div className="bg-fill-neutral-dim" />    {/* 6% — skeletons, tracks */}
+<div className="bg-fill-neutral" />        {/* 14% — bar fills */}
+```
+
+This shipped as a real defect (bug `911c3f71`: the settings trades/industries
+picker rendered as a light-grey slab). **Never apply a `/NN` modifier to a
+`surface-*` or `fill-*` token** — reach for the token whose alpha is already
+right. Audit with:
+
+```bash
+grep -rnoE "bg-(surface|fill)-[a-z-]+/[0-9]{1,3}" src
+```
+
 #### 2. Misuse of Secondary Accent
 
 ```swift
