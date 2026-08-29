@@ -700,6 +700,38 @@ reversal it cannot deliver (Cmd+Z still restores the stage, as before). And the
 carried its own UNDO for its whole lifetime, so a second toast after it closes
 is noise. The undo entry still reaches the global stack on both branches.
 
+**Web scan-level glance layer (added 2026-08-29):** The lead detail panel has
+long carried a Site visits section and a Deck design section, but the surfaces
+an owner actually *scans* — the focused board's cards and the table's rows —
+showed neither, so "is a visit booked, did it happen, is there a deck?" cost
+one lead-open per lead. Both facts now read at a glance:
+
+- **Focused card.** The card's signal line gains a MapPin token: an upcoming
+  booked visit renders as a date (`Aug 25`), otherwise the last completed visit
+  renders as elapsed time (`3d ago`). The two states differ in FORM, not only
+  in tone, so the reading survives a monochrome scan; tan is used only when the
+  visit is today. A PencilRuler token marks a lead that has a deck design, with
+  a count only when there is more than one.
+- **Table.** A sortable **SITE VISIT** column (upcoming date → `DONE` + date →
+  `—`), plus the same deck glyph on the deal cell. A deck is evidence attached
+  to a deal, not a dimension worth its own column, so it never claims scan-level
+  width. The column enters fresh-view defaults; existing saved views are not
+  bulk-edited and opt in through VIEW SETTINGS.
+- **Walk-up rule (load-bearing).** Derivation runs through a pure,
+  clock-injected helper (`src/lib/utils/site-visit-glance.ts`). A visit row with
+  `booked_at IS NULL` is a walk-up / legacy capture whose `scheduled_at` merely
+  defaulted to `created_at`; it can never be reported as upcoming, but its
+  COMPLETION still counts as history. Cancelled and soft-deleted rows are
+  ignored entirely.
+- **Scoping.** Both reads are company-wide and shared through the TanStack
+  cache, so a board of any size costs one request each. RLS on `site_visits`
+  and `deck_designs` (`company_isolation` + `assigned_lead_scope_*`) returns
+  exactly the rows the caller may see — there is deliberately NO client-side
+  permission filtering on this layer.
+
+The mobile pipeline card deliberately carries no glance tokens: it is one tap
+from the drawer, which renders both sections in full.
+
 ---
 
 ### Catalog Journey: Manage Stock + Products (updated 2026-07-21)
