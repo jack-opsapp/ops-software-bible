@@ -4,6 +4,8 @@
 
 **Local P2 update (2026-08-29):** A separate isolated branch now implements the complete thirty-four-read business catalogue, including the site-visit and deck-geometry flow. It does not alter this production-live P1 status: the P2 migrations are unapplied, code is unpushed/undeployed, exposure v1 still lists eleven reads, and no ChatGPT host has been proven. See `specs/2026-08-29-mcp-read-catalogue-p2.md`.
 
+**Local Codex extension (2026-08-29):** The P2 branch also adds strict Codex desktop DCR callback support after a real production registration attempt exposed the Claude-only callback gate. The candidate admits only one complete literal `127.0.0.1` loopback callback with an explicit valid port and bounded callback identifier, then retains exact redirect binding throughout OAuth. It has passed application and disposable PostgreSQL 17 lifecycle tests, but remains unpushed, undeployed, and unapplied; production still rejects Codex and this work created no Codex grant. This does not rewrite the historical Claude-first P1 scope or prove ChatGPT compatibility.
+
 The build also found and repaired four production defects in the Task 13 job-catalog read RPCs — its E2E was their first-ever production execution, and plpgsql's lazy validation had hidden them behind the wave's parse verification. See the API chapter section above for the four defect classes and ledgers `20260818174706` / `20260818175549`.
 
 **Original scoping (2026-08-18):** Jackson ruled that Claude is the first external host to connect to the OPS agent control plane. This document scopes the mounting initiative; the build session produces the implementation plan.

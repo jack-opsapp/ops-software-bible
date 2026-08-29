@@ -6085,7 +6085,7 @@ A live authenticated `/api/mcp` canary listed exactly eleven reads. Nine calls r
 
 ### Complete MCP read catalogue P2 (prepared 2026-08-29, not applied)
 
-The isolated OPS-Web branch `feat/mcp-read-catalogue-p2` adds thirty-eight ordered migration files for manifest-v8 compatibility, versioned OAuth consent, durable MCP limiting/evidence redemption, shared attention projections, and twenty-three new purpose-built reads. These files are local migration artifacts, not production ledger rows. No shared database was changed.
+The isolated OPS-Web branch `feat/mcp-read-catalogue-p2` adds thirty-nine ordered migration files for manifest-v8 compatibility, versioned OAuth consent, strict Codex DCR callback registration, durable MCP limiting/evidence redemption, shared attention projections, and twenty-three new purpose-built reads. These files are local migration artifacts, not production ledger rows. No shared database was changed.
 
 The schema pattern is fixed across domains: private revision counters and exact churn triggers; bounded/private same-statement card or evidence projections; and one service-role-only, `SECURITY DEFINER`, search-path-pinned public RPC per fixed capability family. The source families cover customer context, tasks, artifacts, site visits, deck designs, sales documents, payments, expenses/reimbursements, work queue, catalogue, purchasing, company, team, availability, integrations, and operational overview. Every source reaching its 501st sentinel fails closed rather than returning an incomplete result.
 
@@ -6267,6 +6267,12 @@ Ledger `20260818155813_mcp_oauth_authorization_server` (mirrored byte-exact in `
 **No plaintext credential ever reaches a table** — codes and tokens are stored only as digests.
 
 Key behaviors implemented in the RPCs rather than the application: presenting a consumed authorization code revokes the grant it minted and all of that grant's tokens; presenting an already-rotated refresh token revokes the entire token family and its grant; minting a grant revokes any prior live grant for the same binding; and `revoke_mcp_oauth_token_as_system` follows RFC 7009 by returning true even for an unknown token. All were exercised live during the mount's E2E.
+
+### Codex DCR callback policy (local migration candidate, 2026-08-29)
+
+Migration `20260829192448_mcp_oauth_codex_dcr_callbacks.sql` replaces only the current eight-argument `register_mcp_oauth_client_as_system` body. It adds no table, column, index, trigger, data backfill, grant type, scope, or external capability. The migration is local and unapplied in every shared environment.
+
+The registration RPC now mirrors the application callback boundary: either the two exact Claude HTTPS callbacks, or exactly one Codex callback with raw shape `http://127.0.0.1:<1-65535>/callback/<8-128 base64url characters>`. Mixed Claude/Codex arrays and multiple Codex callbacks are rejected. Existing client rows and grants are unchanged. Every later OAuth function continues using exact array membership or equality, so consent, code creation, and token exchange never substitute ports, callback identifiers, hosts, or paths. A failed wrong-port code exchange leaves the code unconsumed; an exact retry remains valid.
 
 **Legacy identifier note.** The repair of the Task 13 read RPCs (ledger `20260818174706`, `20260818175549`) added `private.agent_uuid_from_legacy_text(text)` — a shape-guarded immutable cast. It exists because `public.projects.id` is `uuid` while eleven child tables (`activities`, `estimates`, `project_notes`, `project_photos`, `project_team_members`, `site_visits`, and others) store `project_id` as `TEXT`, and `projects.opportunity_id` is `TEXT` alongside the `uuid` `projects.opportunity_ref`. Any new SQL joining these columns must cast explicitly; the wave's Task 13 reads did not, and failed at runtime the first time they executed.
 

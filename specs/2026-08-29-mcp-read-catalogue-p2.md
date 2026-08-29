@@ -8,6 +8,12 @@ P2 adds twenty-three purpose-built, actor- and company-scoped reads to the eleve
 
 This is complete business-data access, not generic database access. Every tool has a closed input grammar, fixed permission variants, bounded source scan, strict private projection, proof/revision binding, bounded public result, and untrusted-business-data marking. There is no table browser, arbitrary SQL, arbitrary filter/sort/column selection, caller-supplied company identity, raw export, or unrestricted notes/memory endpoint.
 
+## Codex desktop connector compatibility
+
+The same local branch now accepts the observed Codex native DCR callback without broadening the OAuth grant or tool surface. Codex registers one complete ephemeral loopback URI after binding its port. OPS accepts only literal `http://127.0.0.1:<1-65535>/callback/<bounded-base64url-id>` and preserves that complete value byte-for-byte through consent, code creation, and token exchange. Claude's hosted callbacks remain exact. CIMD, wildcard ports, host aliases, mixed callback families, and multiple Codex callbacks remain closed.
+
+The captured registration payload and adversarial application tests pass, and the complete thirty-nine-migration PostgreSQL 17 wave passes with exact redirect lifecycle and replay proof. This establishes a local release candidate, not a connected host: production has not received the migration or code and still rejects Codex. A successful real Codex OAuth consent and authenticated tool call remains a release gate. ChatGPT is a separate host proof.
+
 ## P2 catalogue
 
 | Capability                  | Business purpose                                                                                                                                             |
@@ -61,7 +67,7 @@ The public result excludes raw `drawing_data`, persisted component payloads, cat
 
 ## Data and proof boundaries
 
-The local branch adds thirty-eight ordered Supabase migrations: manifest compatibility, domain revisions, OAuth consent-catalog versioning, durable MCP rate limits, evidence nonce/redemption, shared attention projections, and the source/RPC boundaries for every P2 domain. They are local migration artifacts only; none is an applied production ledger entry.
+The local branch adds thirty-nine ordered Supabase migrations: manifest compatibility, domain revisions, OAuth consent-catalog versioning, strict Codex DCR callback registration, durable MCP rate limits, evidence nonce/redemption, shared attention projections, and the source/RPC boundaries for every P2 domain. They are local migration artifacts only; none is an applied production ledger entry.
 
 Every public RPC is service-role only, fixed-name, `SECURITY DEFINER`, search-path pinned, same-statement authorized, and source bounded. P2 paginated reads use a fifteen-minute signed cursor bound to actor, company, OAuth client/grant facts, permission snapshot, capability and schema identity, canonical input, exact source revision vector, and predecessor. A source reaching its sentinel fails with a bounded error; it cannot be reported as an empty or complete result.
 
@@ -82,7 +88,7 @@ Before any P2 tool becomes customer-live:
 1. Apply and read back the complete ordered migration wave in an authorized environment before deploying v8 code.
 2. Push/merge and deploy the reviewed OPS-Web release.
 3. Mint a new immutable exposure revision containing only the separately approved P2 capability wave and its exact required scopes; never edit exposure v1.
-4. Complete real-host OAuth consent and authenticated tool-list/call proof. Claude production proof does not automatically prove ChatGPT connector compatibility.
+4. Complete real Codex OAuth consent and authenticated tool-list/call proof after deployment. Claude production proof does not automatically prove Codex or ChatGPT connector compatibility, and Codex proof will not automatically prove ChatGPT.
 5. Prove revocation, actor/permission changes, pagination, rate limiting, evidence redemption, audit privacy, and rollback against the deployed release.
 
 Until those gates are complete, this document describes a local implemented candidate, not customer-live access.

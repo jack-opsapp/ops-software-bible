@@ -12,6 +12,8 @@
 
 **Status update (2026-08-29, local candidate only):** The isolated OPS-Web branch `feat/mcp-read-catalogue-p2` implements the remaining twenty-three purpose-built reads and composes all thirty-four under manifest v8. External registration remains the immutable exposure-v1 list of eleven reads/seven scopes, all fourteen write shells remain unavailable, and frozen v7 bytes/cursors retain exact compatibility. The migration wave is unapplied; the branch is unpushed and undeployed; no OAuth grant or real host changed. Scope and release gates: `specs/2026-08-29-mcp-read-catalogue-p2.md`.
 
+**Status update (2026-08-29, Codex compatibility candidate):** A real Codex desktop DCR attempt proved the deployed authorization server rejects Codex's explicit ephemeral `127.0.0.1` callback at its Claude-only registration gate. The P2 branch now admits only the captured native callback family and keeps the complete URI byte-exact through consent, code, and token exchange. The additive registration-RPC migration and full PostgreSQL 17 lifecycle pass locally. No migration, push, deployment, OAuth grant, exposure revision, or real Codex tool call has occurred; ChatGPT remains separately unproven.
+
 **Decision:** Build one company- and actor-scoped OPS domain service, then expose it through three adapters: Phase C, the existing OPS API, and a public remote MCP server for Claude, ChatGPT, and other approved hosts. MCP is a transport and discovery layer. It does not own OPS business rules.
 
 **Related initiative:** Phase C lead conversation memory.
@@ -91,7 +93,7 @@ The Claude-first read-only MCP slice is coherent and production-live. The remain
 - The two site-visit control-plane capabilities remain dark. The canonical booking/reschedule/cancel RPCs and prompt/calendar workers are production-live, but no externally exposed agent-control-plane tool invokes them.
 - A general change-set and cryptographic confirmation-receipt engine for safe external writes does not yet exist as a complete production surface.
 - The Phase C customer-facing context switch remains separate. MCP availability does not prove its shadow-quality threshold, rollback gate, or customer-facing cutover.
-- No second external host connection is recorded. Claude is the proven P1 host; ChatGPT and other hosts require their own connector-compatibility and consent verification before being called supported.
+- No second external host connection is recorded. Claude is the proven P1 host. Codex desktop has a tested local compatibility candidate but still requires deployment and real consent/tool-call proof; ChatGPT and every other host require their own connector-compatibility and consent verification before being called supported.
 
 Resolved for the eleven reads: public remote transport, OAuth authorization-server discovery, dynamic registration, consent, opaque audience-bound tokens, revocation, external actor/permission intersection, audit, rate limits, deployed endpoint, and a real Claude host connection.
 
@@ -886,6 +888,8 @@ Implement:
 - backward-compatible Dynamic Client Registration while required by deployed hosts;
 - predefined client registrations when a host has stable published metadata;
 - public clients using `none` and confidential clients using `private_key_jwt` where supported.
+
+**Current implementation note (2026-08-29):** The production P1 server deliberately advertises DCR rather than CIMD or authorization-response issuer support. Claude uses its two exact hosted callbacks. The local Codex candidate additionally accepts one complete explicit-port `127.0.0.1` callback and keeps exact equality afterward; it does not implement wildcard loopback ports or remote metadata retrieval. This is a documented deviation from the broader target-state list above, not a claim that those future mechanisms are live.
 
 OPS keeps Firebase as the interactive human identity system. A narrow, standards-compliant OAuth authorization facade issues OPS MCP grants/tokens after Firebase login and company selection. Token, grant, discovery, redirect, and revocation logic must use a proven OAuth implementation/library; OPS does not hand-roll cryptographic protocol primitives.
 

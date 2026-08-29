@@ -3918,6 +3918,14 @@ The dedicated `mcp.opsapp.co` hostname from the foundation design is deliberatel
 
 **Claude-side facts verified live on 2026-08-18** (Anthropic docs, not cached knowledge): Claude clients still speak the 2025-era handshake (they send `initialize`); 2026-07-28 is announced but not confirmed shipped in any Claude surface. Claude sends RFC 8707 `resource` on authorize and token requests and requires PKCE S256 on every request. Connector callback: `https://claude.ai/api/mcp/auth_callback`. Discovery documents are cached ~5 minutes globally. Tool results cap at ~150,000 characters (our contract's 60,000-char ceiling sits inside it); tool calls time out at 300s. On Team/Enterprise plans only an Owner may add a connector, and there is no staging surface — connector testing happens against production claude.ai.
 
+#### Codex desktop OAuth compatibility (local release candidate, 2026-08-29)
+
+The isolated P2 branch now contains a tested compatibility repair for Codex desktop's MCP connector. A real Codex DCR attempt against production reached the live registration endpoint and was rejected before authorization because production accepts only Claude's hosted callback. A loopback capture then proved Codex first binds an ephemeral local port and registers that complete URI—for example `http://127.0.0.1:51759/callback/lwaKvnR9ZEom`—in the DCR request. Codex carries the same bytes through authorization and token exchange, so wildcard or port-equivalent matching is neither required nor allowed.
+
+The candidate keeps Claude's two hosted callback strings exact and adds one raw Codex family: literal `http`, literal host `127.0.0.1`, one explicit decimal port from 1 through 65535, exact path `/callback/`, and a bounded base64url callback identifier. It rejects `localhost`, IPv6, alternate numeric/encoded loopback spellings, userinfo, query, fragment, path encoding, missing or padded ports, mixed callback families, and registrations containing multiple Codex callbacks. Consent preview, approval/denial redirect, authorization code, and token exchange continue to compare the complete registered URI byte-for-byte. CIMD and authorization-response issuer support remain unadvertised.
+
+Application tests cover the captured Codex payload plus adversarial redirect shapes. A disposable PostgreSQL 17 full-wave run proved exact storage, consent/code binding, wrong-port rejection without consuming the code, exact retry, migration replay, and all earlier P2 migrations. This is local release evidence only: migration `20260829192448_mcp_oauth_codex_dcr_callbacks.sql` is unapplied, the code is unpushed and undeployed, production still rejects Codex registration, and no real Codex consent or authenticated MCP call has succeeded yet. Codex desktop compatibility does not by itself prove ChatGPT connector compatibility.
+
 ### Routes
 
 | Route | Method | Purpose |
@@ -4047,7 +4055,7 @@ Nominal policy creation is not authority. Candidate policies remain dormant unti
 
 The intended deck request—“grab the deck design from Carly Hunter's site visit, total linear feet of railing and square footage, and show the geometry”—uses customer/job discovery, site-visit context, then the opaque design reference with `get_deck_design_geometry`. It never searches raw deck JSON by customer name and never treats geometry coordinates as measured dimensions.
 
-No deployment contract changed. The migration wave must apply before v8 application code; an authorized release must then push/deploy code and create a new immutable exposure revision before any P2 tool becomes visible. Claude's current production grant proves only the eleven-read P1 connector. ChatGPT remains unproven until a real connector/OAuth/tool-call run succeeds. Full contract: `specs/2026-08-29-mcp-read-catalogue-p2.md`.
+No deployment contract changed. The migration wave must apply before v8 application code; an authorized release must then push/deploy code and create a new immutable exposure revision before any P2 tool becomes visible. Claude's current production grant proves only the eleven-read P1 connector. Codex OAuth compatibility is a local release candidate, while ChatGPT remains unproven until each host completes a real connector/OAuth/tool-call run. Full contract: `specs/2026-08-29-mcp-read-catalogue-p2.md`.
 
 ### P1 release gates — complete (verified 2026-08-20)
 
