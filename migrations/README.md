@@ -75,6 +75,32 @@ version. The attachment-shadowing repair followed that path on 2026-08-21 and is
   (`20260818053040`, `20260818053050`) are already applied, so nothing is half-shipped while it waits.
   See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § project_photos.
 
+### Applied by the 2026-08-28 bug-sweep PM (mirrored below, md5-verified)
+
+- `20260829022150_reschedule_site_visit_scheduled_at_null_keeps.sql` — Cluster B; `p_scheduled_at` NULL-keeps.
+- `20260829074612_lead_won_prompt_decline_columns.sql` — Cluster F 1/3; additive decline columns (bug `9a89b951`, D3).
+- `20260829074731_win_linked_opportunity_rpc.sql` — Cluster F 2/3; SECURITY INVOKER win-with-actor RPC (D3).
+- `20260829074744_project_photos_client_update_grant.sql` — iOS bug sweep 2026-08-28 (Cluster D, bug
+  `1154fe67`). Widens the client `UPDATE` grant on `public.project_photos` from the three columns granted by
+  ledger `20260729162950` to `(deleted_at, is_client_visible, caption, taken_at, thumbnail_url, rendered_url)`.
+  The three added columns let the iOS reconciler back-fill capture metadata onto the photo rows
+  `private.execute_opportunity_conversion_core` mirrors server-side with `taken_at` NULL and no thumbnails
+  (bug `ba75732a`; 214 of 931 rows carry a NULL `taken_at`). **Correction to the bug thread:** the sweep's
+  planning probe read `information_schema.role_table_grants`, which reports only TABLE-level grants and is
+  blind to column-scoped ones — the original trio has in fact been granted since 2026-07-29, so photo
+  soft-delete and client-visibility writes were never grant-blocked. Verified against
+  `information_schema.column_privileges` on 2026-08-29. `GRANT` is idempotent, so re-granting the original
+  three is a no-op. Row rules (company_isolation RLS, `trg_project_photos_00_write_guard`, the RESTRICTIVE
+  hard-DELETE denial) are untouched; `url`/ids/`uploaded_by`/`source` stay non-updatable by client roles.
+  See `07_SPECIALIZED_FEATURES.md` § project photos.
+  **Applied 2026-08-29, ledger `20260829074744`; mirror md5-verified against `statements[1]`.**
+
+Cluster F 3/3 — the link-trigger surgery that STOPS auto-winning linked leads
+(`ops-ios` worktree `docs/migrations/2026-08-28-03-project-opportunity-link-stop-stage-side-effect.staged.sql`)
+— is deliberately HELD: applying it before the prompt-bearing clients exist would leave a window where nothing
+wins a linked lead. GO condition: the sweep's iOS build verified AND the ops-web won-prompt ships. Apply order
+3 of 3; post-apply verification steps are in the file header.
+
 ### Authored here, awaiting approval (NOT YET APPLIED)
 
 Fix SQL authored directly in this directory because it targets prod objects rather than riding an `ops-web`
@@ -109,20 +135,6 @@ verify them by object, never by version key.
   rather than dropped so a stale client fails loudly (42501) instead of quietly bypassing the guards. Zero
   callers: the shim stamps `legacy_shim` into `opportunity_dispositions.evidence` on every call and none of
   the 26 conversions recorded since 2026-06-02 carries it.
-- `20260829021000_project_photos_client_update_grant.sql` — iOS bug sweep 2026-08-28 (Cluster D, bug
-  `1154fe67`). Widens the client `UPDATE` grant on `public.project_photos` from the three columns granted by
-  ledger `20260729162950` to `(deleted_at, is_client_visible, caption, taken_at, thumbnail_url, rendered_url)`.
-  The three added columns let the iOS reconciler back-fill capture metadata onto the photo rows
-  `private.execute_opportunity_conversion_core` mirrors server-side with `taken_at` NULL and no thumbnails
-  (bug `ba75732a`; 214 of 931 rows carry a NULL `taken_at`). **Correction to the bug thread:** the sweep's
-  planning probe read `information_schema.role_table_grants`, which reports only TABLE-level grants and is
-  blind to column-scoped ones — the original trio has in fact been granted since 2026-07-29, so photo
-  soft-delete and client-visibility writes were never grant-blocked. Verified against
-  `information_schema.column_privileges` on 2026-08-29. `GRANT` is idempotent, so re-granting the original
-  three is a no-op. Row rules (company_isolation RLS, `trg_project_photos_00_write_guard`, the RESTRICTIVE
-  hard-DELETE denial) are untouched; `url`/ids/`uploaded_by`/`source` stay non-updatable by client roles.
-  See `07_SPECIALIZED_FEATURES.md` § project photos.
-
 ## Legacy files whose content differs from the applied text
 
 Session-written mirrors sometimes drifted from what was actually applied: a prepended doc header, a stray blank
