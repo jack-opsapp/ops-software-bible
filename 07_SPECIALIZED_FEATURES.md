@@ -7161,6 +7161,66 @@ is absent from `list_phase_c_graduation_actor_scopes_as_system` and from the
 accuracy readers, so the blast radius of the new proof is training data and
 never sending.
 
+#### Expected queue coverage — the 2026-08 missing-row audit
+
+An outbound send with no `email_outbound_learning_queue` row is not by itself
+a capture failure; on a company-type mailbox it is the majority case. The
+coverage contract, assembled from the only two write paths:
+
+- **Sync lane** (`learnFromOutboundEmail`, `sync-engine.ts`) runs for every
+  ingested outbound with external recipients but enqueues only when the author
+  is provable: `activities.created_by` from an authenticated OPS send, or the
+  mailbox owner on an `individual` connection. On a `company` connection with
+  no OPS activity, `resolveOutboundLearningActorId`
+  (`src/lib/email/outbound-learning-actor.ts`) returns null and the send is
+  deliberately not learned — a shared-mailbox From address, connection creator,
+  or matching login email never proves who wrote the message.
+- **Reconciliation lane** (`draft-reconciliation.ts`) reaches only threads
+  carrying a placed Phase C draft (`auto_drafted` + `mailbox_draft_id`), claims
+  one sent message per draft, and enqueues on `used` (`draft_history_id`) and —
+  since the cc90c3ed pair above — on `from_scratch`
+  (`replaced_draft_history_id`, `company_mailbox_assignee` proof). A
+  stale-context supersede (the first activity after the draft's source message
+  is inbound, or predates the draft) terminalizes the draft with no learning by
+  design, and terminal rows are never revisited.
+
+On a company mailbox, therefore, rows exist only for authenticated OPS sends
+and for the one send that resolved each placed draft. Everything else is
+unattributable by policy, not lost by accident.
+
+Audited 2026-08-29 (post-ship) against Canpro, the heavy production tenant:
+142 outbound sends since 2026-08-01, 29 with queue rows — every one a
+draft-resolved `used` capture — and 113 without, all accounted for by the
+contract plus one already-fixed defect:
+
+| Sends | Why no row exists |
+|-------|-------------------|
+| 48 | No OPS draft ever existed on the thread — largely the 08-02 → 08-29 Phase C freezes; unattributable on a company mailbox |
+| 13 | The thread's only draft was created after the send |
+| 20 (18 drafts) | True operator rewrites lost to pre-fix cc90c3ed code — its production evidence, alongside the five 08-06 teaching sends |
+| 16 (6 drafts) | Stale-context supersedes — no learning intended |
+| 5 | The thread's draft learned from a different send it claimed (one lesson per draft) |
+| 5 | The thread's superseded draft was never placed in the mailbox — outside the reconciliation contract |
+| 4 (2 drafts) | Superseded drafts whose source message was never ingested as an activity |
+| 2 | Paired with stuck unplaced `auto_drafted` rows (below) |
+
+Zero missing rows had `created_by` set (no authenticated-send loss). The 11
+supersedes stamped 18:45:23Z on 2026-08-29 are the D5 age-out batch, not
+organic rewrites — two of them had no activity after their source at all, a
+state the reconciler never marks superseded. The cc90c3ed subset is not
+retroactively capturable: reconciliation never revisits terminal rows, and
+training on weeks-stale rewrites was rejected with the age-out. Rewrite capture
+going forward still requires the opportunity's current exact assignee to be the
+draft owner; all 49 Canpro threads drafted in August sat on opportunities with
+a current assignee, so the assignee half of that proof holds in practice.
+
+Residue, harmless but real: ten `auto_drafted` rows (2026-06-30 → 07-14, nine
+with threads, all bound to the same operator) carry no `mailbox_draft_id`, so
+the reconciler's pending query can never see them and the D5 age-out did not
+sweep them. They do not suppress new drafting — the pending-draft predicate
+(`mailbox-draft-helpers.ts`) requires placement — they are simply stale open
+state awaiting a terminal status.
+
 #### Mailbox liveness has two scopes (0700468d, 86c758b1)
 
 `last_synced_at` means terminal completion and `provider_snapshot_at` means
