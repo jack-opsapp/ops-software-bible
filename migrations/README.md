@@ -68,12 +68,9 @@ read back. Once applied, remove it from this staged section and mirror the ledge
 version. The attachment-shadowing repair followed that path on 2026-08-21 and is archived as
 `20260821202539_fix_related_attachment_record_shadowing.sql`.
 
-- `ops-web/supabase/migrations/staged/20260817_STAGED_email_photo_source_attribution.sql` — flips the
-  email→project photo pipeline to `source = 'email'` (+ provenance) and backfills the 12 photos already imported
-  as `'other'`. **GO condition: the ops-web `main` push GO — apply it and push in the same action**, because the
-  deployed gallery silently drops photos whose `source` it does not recognise. Its two additive prerequisites
-  (`20260818053040`, `20260818053050`) are already applied, so nothing is half-shipped while it waits.
-  See `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § project_photos.
+The email-photo source flip followed that path on 2026-08-29: applied at the ops-web `main` push GO
+(origin/main `014c888a`, same action per its GO condition; 13 photos backfilled with sender attribution,
+verified live) and archived as `20260829233858_email_photo_source_attribution.sql`.
 
 ### Applied by the 2026-08-28 bug-sweep PM (mirrored below, md5-verified)
 
@@ -94,6 +91,13 @@ version. The attachment-shadowing repair followed that path on 2026-08-21 and is
   hard-DELETE denial) are untouched; `url`/ids/`uploaded_by`/`source` stay non-updatable by client roles.
   See `07_SPECIALIZED_FEATURES.md` § project photos.
   **Applied 2026-08-29, ledger `20260829074744`; mirror md5-verified against `statements[1]`.**
+- `20260829091036_lead_classification_review_borderline_reason.sql` — Cluster G; `borderline_confidence` review lane.
+- `20260829091049_lead_summary_refresh_queue.sql` — Cluster G; durable refresh queue + writer-side triggers.
+- `20260829233858_email_photo_source_attribution.sql` — the staged flip, applied at the push GO (see above).
+- `20260829235345_project_opportunity_link_stop_stage_side_effect.sql` — Cluster F 3/3, the won-prompt
+  ACTIVATION FLIP: the link trigger no longer force-wins linked leads on project status; base was the live
+  body re-fetched at apply time with exactly the two write-side deletions. Verified by object and by a
+  rolled-back behavioral probe (status→accepted left the lead stage and transitions untouched).
 
 Cluster F 3/3 — the link-trigger surgery that STOPS auto-winning linked leads
 (`ops-ios` worktree `docs/migrations/2026-08-28-03-project-opportunity-link-stop-stage-side-effect.staged.sql`)
