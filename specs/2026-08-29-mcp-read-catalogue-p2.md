@@ -1,20 +1,47 @@
 # MCP Complete Read Catalogue — P2 (2026-08-29)
 
-**Status:** **PRODUCTION-DEPLOYED, EXTERNALLY DARK.** All thirty-nine ordered P2 migrations are production-applied, and OPS-Web production HEAD `a567902f86946436385244acc1fd0154afe78a1e` is served by READY Vercel deployment `dpl_FGXsf3DT5rc3n1coooSyq3yuFLFc` at `app.opsapp.co`. The final deployment includes both live post-release auth repairs: it preserves the sanitized MCP authorization return path after sign-in and uses an on-page Firebase popup for MCP-specific Google/Apple login after the live full-page redirect returned no session. Production runs capability manifest `2026-08-22.capability-manifest.v8` with thirty-four implemented reads. External MCP exposure remains immutable `2026-08-22.mcp-exposure.v1`: exactly eleven tools and seven grantable read scopes. The other twenty-three reads are deployed dark, no thirty-four-read exposure revision has been built, and all external writes remain unavailable. OAuth metadata and the MCP bearer challenge passed live checks. Codex completed DCR/OAuth and one exact read-only `search_jobs` canary through the system-browser path on 2026-08-29 and is accepted for that verified production path; the constrained Codex canary report did not surface an explicit contract-version label and does not widen exposure v1.
+**Status:** **PRODUCTION DISCOVERY-LIVE; AUTHENTICATED V2 ACCEPTANCE PENDING.** OPS-Web commit `d5befc466c7dbf3d67b76cde698c9a9aa4df719c` defines immutable exposure `2026-08-29.mcp-exposure.v2`: exactly thirty-four read-only business tools and twenty grantable read scopes. The P2 data/RPC wave remains production-applied. The exact connector-callback database policy is also production-applied from source migration `20260830113800_mcp_oauth_chatgpt_rfc9207_callback.sql` under production ledger version `20260830004843` and name `20260830113800_mcp_oauth_chatgpt_rfc9207_callback`. Git-backed Vercel deployment `dpl_3DWhhcueWxeFW2AJnEmxT1bFhfNu` is `READY` in production on that exact SHA, with `app.opsapp.co` attached and no alias error. Canonical and query-bypass authorization/protected-resource metadata expose the exact twenty scopes and RFC 9207 support flag; unauthenticated `POST /api/mcp` returns the matching 401 challenge. The untouched v1 Codex connector has authenticated and listed exactly its eleven v1 tools without calling one. Two fresh v2 Codex registrations requested all twenty scopes but expired before approval/token exchange; a separate ChatGPT registration canary proved its exact stable-callback DCR response. All three v2 clients received zero grants and were guarded-disabled. No v2 host acceptance is claimed.
 
 ## Outcome
 
-P2 adds twenty-three purpose-built, actor- and company-scoped reads to the eleven production reads. The production capability manifest therefore contains thirty-four implemented reads. The immutable external exposure remains `2026-08-22.mcp-exposure.v1`, which advertises only the original eleven reads. All fourteen prepare/commit capabilities remain unavailable and absent from external registration.
+Exposure v2 selects the complete thirty-four-read business catalogue already implemented under capability manifest `2026-08-22.capability-manifest.v8`. Existing clients, grants, access tokens, and refresh families remain pinned to stored exposure `2026-08-22.mcp-exposure.v1`; they continue to receive exactly eleven tools and seven scopes and never widen silently. A Claude, ChatGPT, or Codex host reaches v2 only through fresh dynamic client registration and operator consent. Unknown stored exposure revisions fail closed.
 
-This is complete business-data access, not generic database access. Every tool has a closed input grammar, fixed permission variants, bounded source scan, strict private projection, proof/revision binding, bounded public result, and untrusted-business-data marking. There is no table browser, arbitrary SQL, arbitrary filter/sort/column selection, caller-supplied company identity, raw export, or unrestricted notes/memory endpoint.
+This is complete bounded business-data access, not generic database access. Every tool has a closed input grammar, fixed permission variants, bounded source scan, strict private projection, proof/revision binding, bounded public result, and untrusted-business-data marking. There is no table browser, arbitrary SQL, arbitrary filter/sort/column selection, caller-supplied company identity, raw export, or unrestricted notes/memory endpoint.
 
-## Codex desktop connector compatibility
+All externally callable business tools are reads. No MCP tool creates, updates, deletes, prepares, commits, or sends company data. OAuth issuance/revocation, immutable request-audit append, durable rate limiting, and single-use evidence-token redemption may mutate private security bookkeeping; none is a business-data write tool.
 
-The deployed authorization server accepts the observed Codex native DCR callback without broadening the OAuth grant or tool surface. Codex registers one complete ephemeral loopback URI after binding its port. OPS accepts only literal `http://127.0.0.1:<1-65535>/callback/<bounded-base64url-id>` and preserves that complete value byte-for-byte through consent, code creation, and token exchange. Claude's hosted callbacks remain exact. CIMD, wildcard ports, host aliases, mixed callback families, and multiple Codex callbacks remain closed.
+## Connector and OAuth contract
 
-The captured registration payload and adversarial application tests pass, and the complete thirty-nine-migration PostgreSQL 17 wave passes with exact redirect lifecycle and replay proof. The migration and application code are now production-live, including the auth-continuation and MCP-specific popup repairs, and OAuth metadata plus the MCP bearer challenge passed live checks. The first live full-page Firebase provider return produced no session; MCP Google/Apple login now stays on the authorization page and completes through a popup, while ordinary production login keeps its full-page redirect. During final Codex acceptance, the in-app browser returned Firebase `auth/network-request-failed`; the system browser then completed DCR/OAuth successfully. `codex mcp list --json` showed `ops_-_maverick_projects` enabled with `auth_status` `o_auth` and URL `https://app.opsapp.co/api/mcp`. One exact `search_jobs` canary with `{"lifecycle_states":["active"],"limit":1}` completed successfully and printed no business data. The constrained Codex canary report did not surface an explicit contract-version label. ChatGPT remains a separate host proof.
+Dynamic registration accepts one callback family per client and keeps the complete registered URI byte-exact through consent, authorization-code creation, and token exchange:
 
-## P2 catalogue
+- Claude: only `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback`.
+- ChatGPT: exactly one `https://chatgpt.com/connector_platform_oauth_redirect`.
+- Codex: exactly one `http://127.0.0.1:<1-65535>/callback/<8-128-character-base64url-id>`.
+
+Mixed families, multiple ChatGPT or Codex callbacks, wildcard ports, `localhost`, callback templates, query/fragment variants, aliases, and CIMD remain rejected. The v2 application advertises `authorization_response_iss_parameter_supported: true` and appends the exact issuer `iss=https://app.opsapp.co` to both successful code responses and explicit authorization denials. The server retains RFC 7591 dynamic registration, authorization code with PKCE S256, exact RFC 8707 resource binding, rotating refresh tokens with reuse detection, and RFC 7009 revocation. `offline_access` is not an OPS business-data scope and is not requested; persistent access uses the rotating refresh-token grant.
+
+The callback migration changes no table, column, index, trigger, scope, grant type, tool, or existing client/grant. Its registration RPC remains `SECURITY DEFINER`, `VOLATILE`, search-path pinned, denied to `PUBLIC`, `anon`, and `authenticated`, and executable only by `service_role`.
+
+## Compatibility and acceptance readback
+
+The untouched Codex connector `ops_-_maverick_projects` authenticated against its existing v1 grant and returned exactly the canonical v1 catalogue: `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, `get_job_conversation_context`, `list_customer_jobs`, `get_job_summary`, `search_job_history`, `get_correspondence_evidence`, `search_customers`, `search_jobs`, and `resolve_job_participants`. The canary made no business tool call. This proves preserved-v1 authenticated listing without reading or changing company data.
+
+Two fresh v2 Codex DCR attempts each requested the exact twenty-scope ceiling. Both OAuth callbacks expired before operator approval or token exchange. Neither client ever held a grant, and both client rows were guarded-disabled after the attempts. The local `ops_-_maverick_projects_v2` configuration entry remains present but unauthenticated.
+
+A separate production ChatGPT DCR canary posted the exact stable callback and received HTTP 201 with `token_endpoint_auth_method=none`, exact grant types `authorization_code` plus `refresh_token`, response type `code`, the exact callback, and the exact twenty-scope string. It received no grant and was immediately guarded-disabled. This proves ChatGPT registration-path compatibility only, not ChatGPT OAuth or tool acceptance.
+
+Production readback now shows v1 with seven active clients and two active grants unchanged; v2 with zero active clients, three disabled clients, and zero grants. These facts prove exact v2 registration/discovery behavior and preserved-v1 authenticated listing, not v2 host acceptance.
+
+## V2 catalogue
+
+- Schedule and jobs: `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, `get_job_conversation_context`, `list_customer_jobs`, `get_job_summary`, `search_job_history`, `get_correspondence_evidence`, `search_customers`, `search_jobs`, `resolve_job_participants`.
+- Customer, task, artifact, visit, and deck context: `get_customer_context`, `list_tasks`, `get_task_context`, `list_job_artifacts`, `get_job_artifact_evidence`, `list_site_visits`, `get_site_visit_context`, `get_deck_design_geometry`.
+- Financial and operational data: `list_sales_documents`, `get_sales_document`, `list_payments`, `list_expenses`, `get_expense_context`, `list_work_queue`.
+- Catalogue, purchasing, company, team, and integrations: `search_catalog_items`, `get_catalog_item`, `list_purchase_orders`, `get_purchase_order`, `get_company_context`, `list_team_members`, `list_team_availability`, `get_integration_health`, `get_operational_overview`.
+
+The twenty grantable read scopes, in canonical order, are `ops.jobs.read`, `ops.schedule.read`, `ops.customers.read`, `ops.customer_contacts.read`, `ops.photos.read`, `ops.correspondence.read`, `ops.financials.read`, `ops.tasks.read`, `ops.site_visits.read`, `ops.files.read`, `ops.financial_documents.read`, `ops.payments.read`, `ops.expenses.read`, `ops.catalog.read`, `ops.purchasing.read`, `ops.catalog_costs.read`, `ops.company.read`, `ops.team.read`, `ops.integrations.read`, and `ops.operations.read`.
+
+## P2 additions within v2
 
 | Capability                  | Business purpose                                                                                                                                             |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -58,16 +85,17 @@ The public result excludes raw `drawing_data`, persisted component payloads, cat
 ## Manifest and rollout model
 
 - Frozen compatibility manifest: `2026-08-20.capability-manifest.v7`.
-- Production active policy manifest: `2026-08-22.capability-manifest.v8`.
-- External exposure: `2026-08-22.mcp-exposure.v1`, unchanged at eleven tools and seven read scopes.
-- V7 manifest bytes remain byte-identical. Existing v7 read cursors are accepted only under the exact v8 transition binding, including their legacy query hash; a continued request reissues a v8-only cursor. Unknown manifest versions, changed permissions, changed query identity, or tampering fail closed.
+- Production policy manifest: `2026-08-22.capability-manifest.v8`.
+- Frozen compatibility exposure: `2026-08-22.mcp-exposure.v1`, exactly eleven tools and seven read scopes.
+- V2 release exposure: `2026-08-29.mcp-exposure.v2`, exactly thirty-four tools and twenty read scopes.
+- V7 manifest bytes and v1 exposure bytes remain unchanged. Existing v1 grants resolve v1 after the v2 application is live.
 - Existing v6/v7 SQL results are returned unchanged for their own manifest identity. V8 recursively re-proves the same business data without rewriting business strings.
 - OAuth consent labels are versioned independently from policy and exposure. A host cannot make a capability grantable by naming it.
 - Candidate policy objects are nominal but dormant. Only the central manifest can activate the exact policy identities that passed the complete v7/v8 invariant checks; authorization and every P2 binding reject a newly minted, cloned, structural, or otherwise unactivated policy.
 
 ## Data and proof boundaries
 
-Production has applied all thirty-nine ordered Supabase migrations: manifest compatibility, domain revisions, OAuth consent-catalog versioning, strict Codex DCR callback registration, durable MCP rate limits, evidence nonce/redemption, shared attention projections, and the source/RPC boundaries for every P2 domain. The Bible's migration archive mirrors the applied ordered wave.
+Production has applied the complete thirty-nine-migration P2 wave plus callback-policy ledger version `20260830004843`. The Bible's migration archive mirrors both the ordered P2 wave and the callback source migration.
 
 Every public RPC is service-role only, fixed-name, `SECURITY DEFINER`, search-path pinned, same-statement authorized, and source bounded. P2 paginated reads use a fifteen-minute signed cursor bound to actor, company, OAuth client/grant facts, permission snapshot, capability and schema identity, canonical input, exact source revision vector, and predecessor. A source reaching its sentinel fails with a bounded error; it cannot be reported as an empty or complete result.
 
@@ -81,8 +109,8 @@ The catalogue never returns provider credentials, OAuth/access/refresh tokens, w
 
 Writes remain outside this release. Future material assignment, catalogue setup, and deck-geometry creation/editing must use a prepare → deterministic preview → explicit OPS human approval → one-time commit protocol. A geometry source fence is evidence of freshness only; it never authorizes a write.
 
-## Remaining external-exposure release boundary
+## Remaining release proof
 
-The database/application release is complete, but it does not make any of the twenty-three added reads customer-live. Exposure v1 remains frozen at eleven tools and seven scopes. A full-catalogue release must separately build and review a new immutable exposure revision, approve its exact capability/scope set, deploy it, and complete host-specific tool-list/call, revocation, authority-change, pagination, rate-limit, evidence, audit-privacy, and rollback proof. No thirty-four-read exposure revision exists today.
+READY deployment and production discovery are proven: canonical plus cache-bypass metadata return the exact twenty scopes, the RFC 9207 support flag is true, and the unauthenticated resource returns the matching 401 bearer challenge. Exact Codex and ChatGPT v2 DCR behavior plus preserved-v1 authenticated listing are also proven. V2 still requires a non-expired operator approval, token exchange, authenticated thirty-four-tool listing/calls, token rotation, revocation, and representative deck/site-visit calls before host acceptance. The three disabled, grant-free v2 clients prove none of those authenticated steps. ChatGPT still requires its own OAuth/tool-call proof. Connector acceptance is host-specific.
 
-The Codex canary must still complete the user's final browser flow, token exchange, authenticated `tools/list` and tool-call proof, revocation, and cleanup readback before Codex is called an accepted host. Claude production proof does not automatically prove Codex or ChatGPT connector compatibility, and eventual Codex proof will not automatically prove ChatGPT. Until a separate external-exposure release completes, the twenty-three P2 reads remain unavailable to every external host.
+Rollback is also grant-aware: moving only the active source pointer back to v1 would not narrow already-created v2 grants, because bearer resolution honors each grant's stored exposure revision. A v2 rollback therefore requires a pre-v2 application build (or equivalent code revert) plus revocation/disablement of v2 clients and grants and a forward database repair if the callback policy must be narrowed.
