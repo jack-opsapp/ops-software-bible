@@ -7333,6 +7333,56 @@ re-drive is the interval gate plus the next webhook or cron tick — not the
 continuation-priority path, since a bare provider historyId is not a
 continuation envelope and does not register as one.
 
+#### The recovery walk checkpoints per page (86c758b1)
+
+Recovering an expired Gmail cursor means replaying a bounded interval before a
+fresh `history_id` may be committed. The walk listed every page it was allowed
+— up to 10 pages or 500 threads — and then read all of those threads under a
+single two-minute deadline. `mapGmailReads` lets no partial result escape by
+design, so a pass that overran that deadline threw away every page it had
+already read and persisted nothing at all. The next attempt then re-listed the
+identical first page against the identical interval and overran identically.
+Proven live 2026-08-29 on a 30-day `in:anywhere` window: six consecutive server
+attempts moved the mailbox zero pages, and at the ~599-thread ceiling the
+inter-batch pacing alone (~120 batches × 250 ms) spent a quarter of the budget
+before a single thread was read. The walk was aborted cleanly — recovery
+columns cleared, `history_id` and `last_synced_at` never moved.
+
+The walk now lists and reads **one page at a time**. A page's `nextPageToken`
+becomes the pass's resume position only after that page has been read in full
+and its mail is carried out of the walk for ingestion, so the checkpoint the
+cycle writes after ingestion always names a page the mailbox actually consumed.
+An overrun on page N truncates the pass there: pages 1..N-1 are ingested, page
+N is re-listed next cycle, nothing is skipped and nothing is committed twice.
+
+The persist itself did **not** move earlier. It stays where it was — one
+owner-fenced `persist_email_connection_recovery_checkpoint_as_system` at the
+end of the cycle, strictly after ingestion. Writing a page token mid-walk would
+durably skip mail whenever ingestion later failed, which is the invariant the
+walk has always held (a failed recovered-activity insert leaves both cursors
+unadvanced). Durability comes from the pass now *returning* the pages it read
+instead of discarding them, not from persisting sooner.
+
+Each page also receives its own slice of the read budget — the remaining budget
+divided by the pages the pass may still read, floored at 45 s — rather than one
+shared cliff, so a slow page fails alone instead of consuming the time the
+pages behind it need. Healthy pages finish well inside a slice and the walk
+keeps going, so throughput is unchanged; a degraded mailbox falls back to two
+or three pages per cycle instead of failing entirely. The first page of a pass
+is always granted a slice: a pass that can advance zero pages is the stall.
+
+Terminal semantics are unchanged and now explicit. Only a pass that consumes
+the provider's last page commits the fresh cursor and clears all three recovery
+columns in the same owner-fenced write; that is carried by a `complete` flag on
+the checkpoint, because a null resume token means *page one*, not completion.
+A pass that stopped early — on its caps, its budget, or an overrun — records
+`continuationPending` and its resume position, leaving `last_synced_at` where
+it was. Only a read-deadline overrun truncates a pass; auth, scope, and
+provider faults still propagate and are diagnosed on the paths that mark them.
+Incremental-sync read semantics and every other `mapGmailReads` caller are
+untouched. OPS-Web `fix/web-bug-sweep-integration-20260829`, commit
+`335019e9`, not pushed.
+
 #### Phase C work-queue claims are null-safe (d26b3a98)
 
 `claim_opportunity_phase_c_work` excluded completed rows with
