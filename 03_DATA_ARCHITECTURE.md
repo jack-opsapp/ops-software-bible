@@ -6306,4 +6306,23 @@ Live readback proves all six tables have RLS enabled, zero policies, and zero di
 
 The schema is live but dormant. Active MCP v2 remains read-only; no grant selects v3, no schedule is registered, no routine can be configured through product code, and no row exists to run. OPS-Web commit `1742861a` and Vercel deployment `dpl_GEwkEiT9AwjQSrZXyoYQtWAXoJ46` contain the compatible application layer without activating this authority.
 
+## Invisible Office Collections State (local candidate, unapplied)
+
+Candidate migration `supabase/migrations/20260831140000_agent_collections_vertical.sql` defines the private persistence and approval boundary for the second Invisible Office vertical. It is intentionally **not** present in the production migration ledger. The schema below is a local candidate until a separately authorized database release applies and independently reads it back.
+
+| Table | Purpose |
+|-------|---------|
+| `private.agent_collections_runs` | Immutable, tenant-bound receivables result, authority snapshot, exact business date, source revisions, argument hash, idempotency binding, and `collections-aging:2026-08-31.v1` metric revision. |
+| `private.agent_collections_change_sets` | One immutable recipient/subject/body/invoice preview and SHA-256 digest per approval-ready debtor. Blocked debtors never receive a change set. |
+| `private.agent_collections_confirmations` | Single-use Firebase-authenticated OPS confirmation bound to the current actor, company, action, change set, preview digest, and action-derived idempotency key. |
+| `private.agent_collections_receipts` | Replay-safe statement that the draft was approved inside OPS only, with `messages_sent = 0`, `money_moved = false`, and `financial_documents_issued = 0`. |
+
+All four tables enable RLS and define no browser policy. The migration revokes direct privileges from `public`, `anon`, `authenticated`, and `service_role`; six narrow public RPCs grant execution only to `service_role`: `resolve_agent_collections_timezone_as_system`, `inspect_agent_collections_correspondence_as_system`, `persist_agent_collections_as_system`, `commit_agent_collections_draft_as_actor`, `reject_agent_collections_draft_as_actor`, and `consume_agent_collections_prepare_rate_limit_as_system`. The private authority assertion is owner-only. Every public function pins its search path.
+
+Preparation rechecks exact actor, company membership, live OAuth grant/client/revision/exposure/scopes, and all four company-wide permissions before persistence. Approval locks the exact action and change set, validates the immutable digest and expiry, repeats current authority, consumes one confirmation, and returns the stored receipt on exact replay. It creates no email delivery intent, payment, invoice, estimate, credit document, or legal workflow. Rejection keeps private draft state and the public queue row coherent without a receipt or external effect.
+
+The migration also admits the separate `mcp-collections-prepare:2026-08-31.v1` durable limiter with ceilings of 6 actor, 6 grant, and 30 company preparations per minute. No schedule, routine table, cron route, or autonomous execution path exists for this vertical.
+
+Canonical behavior and release boundaries: `specs/2026-08-31-ops-mcp-collections-vertical.md`.
+
 **End of Data Architecture Documentation**
