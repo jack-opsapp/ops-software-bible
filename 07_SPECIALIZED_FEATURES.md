@@ -10166,4 +10166,20 @@ release gate.
 
 ---
 
+## 37. Invisible Office Day Closeout (local only, not activated)
+
+“Close out my day. What did I forget?” is the first complete reactive Invisible Office vertical. The inactive MCP v3 exposes one composite prepare tool. OPS calculates the answer from the current operator's authorized schedule, work queue, pipeline, invoices, and normalized correspondence; the host does not define metrics, tenant identity, or authority.
+
+The result is a compact operator brief: tomorrow's work and readiness gaps, due work, stalled leads, outstanding balances grouped by currency, correspondence coverage, and bounded communication briefs. Every section names its coverage and source revisions. If any relevant delivery source is rejected, missing, or truncated, the correspondence section is `not_evaluated`; the result suppresses correspondence-dependent findings and briefs instead of claiming the inbox is clear.
+
+A result with findings creates one immutable `file_day_closeout` item in the existing approval queue and one persistent rail notification. Its queue card shows the business date, exact connected OAuth client, grouped findings, currency balances, correspondence truth boundary, and the exact filing statement. The card cannot be edited or bulk-approved. `FILE CLOSEOUT` records only the closeout inside OPS; `LEAVE OPEN` creates no effect. The receipt states **no messages sent · no money moved**. A clear result remains inspectable without creating an interruption.
+
+Approval never trusts a host-side boolean. The existing Firebase-authenticated OPS route supplies the current actor to the database commit boundary, which rechecks current membership, grant, scopes, permissions, company, action, change set, preview digest, and expiry before consuming one confirmation. Exact retries return the stored receipt; changed or cross-tenant retries fail closed. Autonomous and bulk executors reject this action family.
+
+OPS also owns the private future routine record. This phase defines its schedule, timezone, actor/client/grant binding, cursor, claim, and failure state but does not expose routine configuration or activate a worker. A future scheduled path must reuse the same current-authority, partial-coverage, confirmation, notification, and receipt rules.
+
+**Release boundary:** active production v2 remains read-only and byte-stable. V3, capability manifest v9, consent catalogue v2, and migration `20260831003057_agent_day_closeout_foundation_zero.sql` are local-only. No production schema, connector authority, deployment, or customer behavior changed. Routine execution and authenticated host acceptance remain separate gates. Canonical contracts and acceptance cases: `specs/2026-08-30-ops-mcp-day-closeout-foundation-zero.md`.
+
+---
+
 **End of Document**

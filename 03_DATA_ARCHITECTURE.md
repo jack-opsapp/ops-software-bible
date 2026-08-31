@@ -6283,4 +6283,20 @@ The live ChatGPT registration-path canary posted exactly `https://chatgpt.com/co
 
 **Legacy identifier note.** The repair of the Task 13 read RPCs (ledger `20260818174706`, `20260818175549`) added `private.agent_uuid_from_legacy_text(text)` — a shape-guarded immutable cast. It exists because `public.projects.id` is `uuid` while eleven child tables (`activities`, `estimates`, `project_notes`, `project_photos`, `project_team_members`, `site_visits`, and others) store `project_id` as `TEXT`, and `projects.opportunity_id` is `TEXT` alongside the `uuid` `projects.opportunity_ref`. Any new SQL joining these columns must cast explicitly; the wave's Task 13 reads did not, and failed at runtime the first time they executed.
 
+## Invisible Office Day Closeout State (local only, not applied)
+
+Migration `20260831003057_agent_day_closeout_foundation_zero.sql` defines the private persistence boundary for the first Invisible Office vertical. It has not been applied to production. The schema owns five concerns instead of leaving them in an assistant host:
+
+| Table | Purpose |
+|-------|---------|
+| `private.agent_day_closeout_routines` | Future schedule, timezone, named actor, OAuth client/grant binding, required scopes, cursor, claim lease, last outcome, and failure state. No routine worker or configuration surface is active in this phase. |
+| `private.agent_day_closeout_runs` | Immutable, tenant-bound reactive or future routine result, authority snapshot, source revisions, coverage, idempotency binding, and metric-definition revision. |
+| `private.agent_day_closeout_change_sets` | Exact filing preview and SHA-256 digest for a run with findings. It grants no send, payment, invoice-issue, deletion, or mass-action authority. |
+| `private.agent_day_closeout_confirmations` | Single-use Firebase-authenticated OPS confirmation bound to the current actor, company, action, change set, digest, and idempotency key. |
+| `private.agent_day_closeout_receipts` | Replay-safe statement of the effect that actually committed inside OPS, including explicit `messages_sent = 0` and `money_moved = false`. |
+
+RLS is enabled on all five tables and all direct privileges are revoked from `public`, `anon`, `authenticated`, and `service_role`. Narrow service-role-only functions perform preparation, filing, and durable prepare-rate-limit consumption. Both prepare and commit re-resolve the current actor/company grant and exact seven owner permissions; input never supplies tenant identity. The commit transaction locks the action and change set, validates the immutable digest and expiry, consumes one confirmation, stores one receipt, resolves the persistent review notification, and returns the stored receipt on an exact replay.
+
+The migration is implementation-only evidence until it is applied under an explicitly authorized release. The active read-only MCP schema above remains the production contract.
+
 **End of Data Architecture Documentation**

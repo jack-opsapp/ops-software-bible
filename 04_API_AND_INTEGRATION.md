@@ -4090,6 +4090,26 @@ The database callback policy is production-applied as ledger version `2026083000
 
 No further release gate remains for the Claude-first read-only P1. Expanding to another host, enabling site-visit tools, adding any write capability, or changing the Phase C customer-facing context path is a separate initiative with its own authorization and proof gates.
 
+### Current MCP boundary and Invisible Office Foundation Zero (local only, 2026-08-30)
+
+The production route has since advanced to immutable read-only exposure `2026-08-29.mcp-exposure.v2`: 34 read tools, 20 grantable read scopes, current-grant/current-permission reauthorization, and the durable request audit/rate-limit path. Historical v1 grants remain pinned to v1. Production metadata and the unauthenticated bearer challenge advertise only the active read ceiling. The older P1 numbers above are historical release evidence, not the present catalogue size.
+
+The first Invisible Office vertical, **“Close out my day. What did I forget?”**, is implemented locally behind separate, inactive contracts:
+
+- capability manifest `2026-08-30.capability-manifest.v9` remints v8 without changing its bytes and adds `prepare_day_closeout` plus an internal-only `commit_day_closeout`;
+- exposure `2026-08-30.mcp-exposure.v3` registers exactly `prepare_day_closeout`; `commit_day_closeout` is never an MCP tool;
+- consent catalogue `2026-08-30.mcp-consent-catalog.v2` admits read + prepare scopes, but active consent remains v1 and active exposure remains v2;
+- `prepare_day_closeout` requires all seven read/prepare scopes and exact `all` authority for `calendar.view`, `email.view`, `invoices.view`, `pipeline.view`, `projects.view`, `reports.view`, and `tasks.view`;
+- actor/company identity comes only from the validated grant. The domain service reuses the production read contracts, computes `day-closeout:2026-08-30.v1` server-side, separates currency totals, discloses bounded/incomplete coverage, and suppresses correspondence findings and briefs when any relevant delivery source is unreadable;
+- preparation is idempotent and creates no external effect. Findings produce one immutable private change set, one non-editable/non-bulk `file_day_closeout` queue item, and one persistent review notification;
+- the Firebase-authenticated OPS approval route is the only commit adapter. Its database transaction locks the exact actor/company/action/change set/digest, rechecks current membership/grant/scopes/permissions, consumes one confirmation, files the record inside OPS, resolves the notification, and stores a replay-safe receipt stating `messages_sent = 0` and `money_moved = false`;
+- private OPS tables own runs, change sets, confirmations, receipts, and the future routine schedule/claim/cursor/failure state. Direct `anon`, `authenticated`, and `service_role` table access is revoked; only narrow service-role RPCs cross the boundary; and
+- closeout preparation has a separate durable 6 actor / 6 grant / 30 company per-minute policy bound to v3 and `ops.operations.prepare`.
+
+This is **not customer-live**. Migration `20260831003057_agent_day_closeout_foundation_zero.sql` has not been applied, v3/v9/v2-consent have not been activated, and no connector has received the new authority. Routine configuration, due-row claiming/finalization, blocked-run notification, and cron invocation remain activation-gated. Representative production correspondence is also still incomplete: normalization v2 has recovered some HTML mail, but rejected/unreadable delivery-source rows remain, so the closeout correctly reports correspondence as not evaluated rather than claiming a complete inbox sweep.
+
+Activation requires Jackson's explicit release permission plus separate authenticated host acceptance for consent, discovery, tool call, refresh/revocation, exact OPS approval, receipt replay, tenant isolation, and routine handoff. Local contracts and tests are implementation proof only. Full design and remaining gates: `specs/2026-08-30-ops-mcp-day-closeout-foundation-zero.md`.
+
 **End of Document**
 
 This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, email pipeline integration, and error management with full fidelity to the current implementation.
