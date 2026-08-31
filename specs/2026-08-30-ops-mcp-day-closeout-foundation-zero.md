@@ -1,8 +1,8 @@
 # OPS MCP — Foundation Zero / Day Closeout Vertical
 
-**Status:** Production Foundation Zero remains dormant. A complete production-readiness extension is verified locally; its configuration migration, application release, authenticated live-host proof, v3 activation, and worker activation have not been applied.
+**Status:** Production Foundation Zero and its operator-owned configuration boundary are live but dormant. The active customer contract remains read-only v2, production has no v3 client, grant, or routine, and the worker flag is absent. Authenticated v3 live-host proof, v3 activation, and worker activation have not been performed.
 **Parent vision:** `specs/2026-08-30-ops-mcp-vision-handoff.md`
-**Release:** OPS-Web `1742861a`; Vercel `dpl_GEwkEiT9AwjQSrZXyoYQtWAXoJ46` (`Ready`, production, `app.opsapp.co`).
+**Release:** OPS-Web Foundation Zero `1742861a`; production-readiness release `1945c60b`, contained by live production head `4d9f0313`; Vercel `dpl_5A9VnK1bmMMkwhPCsnVUxNufYvjZ` (`Ready`, production, `app.opsapp.co`).
 
 ## Outcome
 
@@ -23,7 +23,7 @@ Quiet is a first-class outcome. A clear scheduled run remains inspectable but do
 - Active MCP exposure `2026-08-29.mcp-exposure.v2` remains immutable and read-only.
 - Existing v1 grants remain pinned to v1.
 - The deployed application contains an **inactive** v3 exposure. No client or grant selects it. It is not activated until each host passes authenticated discovery, tool-call, refresh/revocation, confirmation, commit, receipt, and routine-handoff acceptance.
-- The local release candidate does not change the active exposure constant. V2 remains the only active production contract, with the same 34 read-only tools and 20 scopes.
+- The production-readiness release does not change the active exposure constant. V2 remains the only active production contract, with the same 34 read-only tools and 20 scopes.
 - V3 grants only `ops.operations.prepare` in addition to the read scopes required by the closeout. It grants no communication-send, financial-write, payment, deletion, mass-action, or regulatory authority.
 - Existing dark write families remain unavailable. This vertical does not imply that their host acceptance or confirmation paths are finished.
 
@@ -80,7 +80,7 @@ The three production-applied migrations define private OPS-owned routine state f
 
 The due-row claim/finalization service, valid run history, separate terminal-failure history, change cursor, and cron adapter are deployed. The route is fail-closed behind `CRON_SECRET` plus `OPS_DAY_CLOSEOUT_ROUTINES_ENABLED=true`, uses the shared OPS cron workload lease, and processes at most ten occurrences within its hard budget. Production currently has no registered schedule, no v3 client or grant, no routine rows, and no enabled worker.
 
-The local release candidate adds the smallest operator-owned configuration boundary over the private routine table:
+The production release adds the smallest operator-owned configuration boundary over the private routine table:
 
 - service-role-only list and upsert RPCs bind the current session actor and company to one exact live v3 grant, its reviewed seven-scope ceiling, and `settings.integrations: all`;
 - creating or enabling a routine requires every current granular closeout permission; an existing operator-owned routine remains visible and can be disabled after data-authority loss, while re-enabling still fails closed;
@@ -89,11 +89,11 @@ The local release candidate adds the smallest operator-owned configuration bound
 - OAuth grant or token revocation disables and de-leases the bound routine in the same transaction; and
 - direct table access remains revoked, tenant isolation remains inside the database boundary, and no generic automation builder is introduced.
 
-The candidate registers `/api/cron/day-closeout-routines` on the offset `2-59/5 * * * *` lane. That preserves the production cron collision budget and adds 288 function invocations per day, approximately 8,640 in a 30-day month, once deployed. Registration alone still cannot execute routine work because the private worker flag remains false. Scheduled closeouts use no OPS-paid model call; they compute deterministic findings and communication briefs. Vercel bills cron runs as ordinary function invocations, so the marginal charge is zero while the project remains inside its included allocation; beyond that allocation, invocation and compute charges apply. Host-authored reactive drafts may ride on the user’s host subscription; any future OPS-owned drafting or extraction cost must be measured before pricing or activation.
+The production release registers `/api/cron/day-closeout-routines` on the offset `2-59/5 * * * *` lane. That preserves the production cron collision budget and adds 288 function invocations per day, approximately 8,640 in a 30-day month. Registration alone cannot execute routine work because `OPS_DAY_CLOSEOUT_ROUTINES_ENABLED` is absent in production. Scheduled closeouts use no OPS-paid model call; they compute deterministic findings and communication briefs. Vercel bills cron runs as ordinary function invocations, so the marginal charge is zero while the project remains inside its included allocation; beyond that allocation, invocation and compute charges apply. Host-authored reactive drafts may ride on the user’s host subscription; any future OPS-owned drafting or extraction cost must be measured before pricing or activation.
 
 ## Interface choice
 
-The authenticated OPS approval queue remains the confirmation surface. For an eligible v3 connection, the local release candidate adds one compact control inside **Settings → Integrations → Connected agents**: “Close out my day,” a daily switch, one company-local time, the company timezone, last-review state, and an explicit save. It states **Sends nothing. Moves no money.** The control is absent for v1/v2 grants and disappears when the grant is revoked. There is no standalone routine dashboard or generic builder.
+The authenticated OPS approval queue remains the confirmation surface. For an eligible v3 connection, the production release includes one compact control inside **Settings → Integrations → Connected agents**: “Close out my day,” a daily switch, one company-local time, the company timezone, last-review state, and an explicit save. It states **Sends nothing. Moves no money.** The control is absent for v1/v2 grants and disappears when the grant is revoked. With zero production v3 grants, it is not currently visible to a customer. There is no standalone routine dashboard or generic builder.
 
 A closeout-specific approval detail block shows:
 
@@ -124,9 +124,9 @@ Before activation, dedicated seeded companies must prove:
 - the queue card exposes the exact immutable preview before approval; and
 - v1/v2 discovery bytes and grant behavior remain unchanged.
 
-## Local production-readiness proof
+## Production-readiness implementation proof
 
-The isolated OPS-Web release candidate at commit `2c23cb8e` includes the routine configuration migration and runtime SQL contract, authenticated settings API, Connected agents control, offset Vercel schedule, Node 22 CI alignment, and a direct authenticated MCP host-acceptance runner. The runner performs protocol initialization, the initialized notification, exact single-tool discovery, and one schema-valid `prepare_day_closeout` call. Its output contains only contract revision and aggregate state; it never prints the bearer, business contents, entity identifiers, or transport error bodies.
+The isolated OPS-Web implementation at commit `2c23cb8e`, released through merge commit `1945c60b`, includes the routine configuration migration and runtime SQL contract, authenticated settings API, Connected agents control, offset Vercel schedule, Node 22 CI alignment, and a direct authenticated MCP host-acceptance runner. The runner performs protocol initialization, the initialized notification, exact single-tool discovery, and one schema-valid `prepare_day_closeout` call. Its output contains only contract revision and aggregate state; it never prints the bearer, business contents, entity identifiers, or transport error bodies.
 
 Fresh local proof on Node 22.23.2 includes:
 
@@ -134,23 +134,25 @@ Fresh local proof on Node 22.23.2 includes:
 - 723/723 focused MCP, OAuth, closeout, routine, settings, and cron-isolation tests passing;
 - TypeScript typecheck and Prettier checks passing;
 - repository lint exiting successfully with only the inherited warning backlog;
-- the complete 419-route production build passing; and
+- the complete 419-route candidate build and fresh 426-route release-merge build passing; and
 - desktop and 390×844 browser proof of toggle → save → authoritative server readback, with v2 connections unchanged.
 
 The repository-wide Vitest sweep passes 15,318 tests and remains red on 29 unrelated pre-existing email, pipeline, hook, schedule, and summary-refresh tests. The exact failures do not touch this vertical. `npm audit --omit=dev` also reports 33 inherited production-dependency advisories (3 critical, 16 high, 13 moderate, 1 low); this candidate adds no dependency or lockfile change. Those are separate repository health work, not evidence that this vertical's authority or routine contracts failed.
 
 ## Production proof and remaining activation gate
 
-Production ledger versions `20260831042518_agent_day_closeout_foundation_zero`, `20260831042631_agent_day_closeout_routine_worker`, and `20260831042924_agent_day_closeout_fk_indexes` are applied to `ops-app` and mirrored byte-exact in this Bible. Live readback proves all six tables have RLS enabled, zero policies, zero direct `anon`/`authenticated`/`service_role` table grants, and zero rows; every public closeout RPC is search-path pinned and executable only by `service_role`. Supabase's scoped performance advisor reports no missing foreign-key index. Its remaining notices are expected on empty dormant tables: fail-closed RLS with no policies and indexes not yet used.
+Production ledger versions `20260831042518_agent_day_closeout_foundation_zero`, `20260831042631_agent_day_closeout_routine_worker`, `20260831042924_agent_day_closeout_fk_indexes`, and `20260831061700_agent_day_closeout_routine_configuration` are applied to `ops-app` and mirrored byte-exact in this Bible. Live readback proves all six tables have RLS enabled, zero policies, zero direct `anon`/`authenticated`/`service_role` table grants, and zero rows; every public closeout RPC is search-path pinned and executable only by `service_role`. The configuration list RPC is stable; its upsert RPC is volatile. Both pin `pg_catalog, public, private, extensions, pg_temp`, bind the current actor and company to the exact inactive v3 grant, and remain executable only by `postgres` and `service_role`. Supabase's scoped security and performance advisors report no warning or error for this slice. Their remaining informational notices are expected on empty dormant tables: fail-closed RLS with no policies and indexes not yet used.
 
-OPS-Web commit `1742861a` is production-live in Vercel deployment `dpl_GEwkEiT9AwjQSrZXyoYQtWAXoJ46`. The exact release passed the focused closeout/authority/MCP safety suite and a full 419-route Node 22 production build. Live metadata still advertises the exact twenty read-only v2 scopes; unauthenticated MCP and cron probes both return 401, and the deployment had no error- or fatal-level runtime log entry after release. The repository-wide GitHub CI still stops on the same pre-existing contact-form SQL fixture failure as the previous production `main`, before npm install or this vertical's tests; it is not evidence against this release and remains outside this vertical.
+OPS-Web merge commit `1945c60b` reached production in Vercel deployment `dpl_omGcXfSXUiEX8bHH2aT86vTsCby3`; current live head `4d9f0313` is a verified descendant containing that release and is `Ready` in deployment `dpl_5A9VnK1bmMMkwhPCsnVUxNufYvjZ`. The release merge passed 723/723 focused closeout, authority, MCP, OAuth, settings, and cron tests, followed by a fresh 426-route Node 22 production build. A later concurrent analytics merge was confirmed to contain `1945c60b` and passed its own production build before taking the live alias.
+
+Post-alias live readback at `app.opsapp.co` proves that MCP metadata still advertises exactly the twenty read-only v2 scopes and excludes `ops.operations.prepare`. Unauthenticated probes of MCP transport, routine configuration, and routine cron routes each return 401. Vercel has a production `CRON_SECRET`, but `OPS_DAY_CLOSEOUT_ROUTINES_ENABLED` is absent. The first observed authenticated scheduled invocation on the live descendant returned 200 through the fail-closed disabled path. Subsequent database readback still found zero v3 OAuth clients, zero v3 grants, zero routines, zero closeout runs, and zero routine failures. The exact deployment and scoped routes showed no error or fatal runtime entries after release.
 
 Deployment and schema proof are not host acceptance. Existing Codex proof remains a bounded read-only v1 path; production v2 discovery exists but authenticated v2 host acceptance remains pending. Claude, ChatGPT, Codex, and any future supported host require separate live proof for the new v3 consent, composite prepare call, exact OPS confirmation, receipt readback, refresh, revocation, attachments or stable references where applicable, and routine handoff. Until that matrix passes and Jackson explicitly authorizes activation, v3 stays inactive and this capability is not customer-live.
 
-The safe release order is fixed:
+The safe release order is fixed. Steps 1 and 2 are complete; steps 3 through 5 remain deliberately gated:
 
-1. apply the routine-configuration migration and independently read back functions, ACLs, and zero customer rows;
-2. deploy the application candidate with v2 still active and `OPS_DAY_CLOSEOUT_ROUTINES_ENABLED` unset/false;
+1. **Complete:** apply the routine-configuration migration and independently read back functions, ACLs, and zero customer rows;
+2. **Complete:** deploy the application candidate with v2 still active and `OPS_DAY_CLOSEOUT_ROUTINES_ENABLED` unset/false;
 3. create one dedicated synthetic v3 OAuth connection and run the authenticated host-acceptance runner, refresh/revocation proof, approval confirmation, commit, and receipt readback;
 4. activate v3 only after the exact host matrix is green and Jackson explicitly approves it; and
 5. enable the worker and one synthetic routine first, then prove the scheduled receipt before any customer routine is enabled.
