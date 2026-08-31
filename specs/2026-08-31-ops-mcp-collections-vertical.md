@@ -12,7 +12,7 @@ The implementation is local only. It does not push, deploy, apply a migration, a
 
 ## Local implementation record
 
-OPS-Web branch `feat/ops-mcp-collections-p2` implements this contract in commits `1e5fdd69`, `34844e43`, `277bc415`, `31e74969`, `983bc159`, `65eb6777`, and `1c521ea8`. The canonical application sources are `src/lib/agent-control-plane/contracts/collections.ts`, `src/lib/agent-control-plane/services/collections/`, `src/lib/agent-control-plane/registry/manifest-v10.ts`, `src/lib/agent-control-plane/registry/mcp-exposure-v4.ts`, `src/lib/agent-control-plane/mcp/server-factory.ts`, `src/lib/api/services/approval-queue-service.ts`, and `src/components/agent/collections-draft-preview.tsx`.
+OPS-Web branch `feat/ops-mcp-collections-p2` implements this contract in commits `1e5fdd69`, `34844e43`, `277bc415`, `31e74969`, `983bc159`, `65eb6777`, and `1c521ea8`. The canonical application sources are `src/lib/agent-control-plane/contracts/collections.ts`, `src/lib/agent-control-plane/services/collections/`, `src/lib/agent-control-plane/registry/collections-capability.ts`, `src/lib/agent-control-plane/registry/capability-manifest.ts`, `src/lib/agent-control-plane/registry/mcp-exposure-catalog.ts`, `src/lib/agent-control-plane/mcp/server-factory.ts`, `src/lib/api/services/approval-queue-service.ts`, and `src/components/agent/collections-draft-preview.tsx`.
 
 Candidate migration `20260831140000_agent_collections_vertical.sql` is mirrored byte-for-byte under this Bible's `supabase/migrations/` directory. It has not been applied to any database and therefore describes a proposed local schema, not current production state.
 
