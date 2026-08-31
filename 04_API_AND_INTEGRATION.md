@@ -4098,7 +4098,7 @@ Local database access is limited to the six service RPCs documented in `03_DATA_
 
 Approval is deliberately not an MCP tool. The Firebase-authenticated OPS queue service calls `commit_agent_collections_draft_as_actor` with the exact action-derived idempotency key and immutable preview digest. It cannot submit edits and never routes the action to an email executor. Exact retries return the stored receipt; autonomous and bulk execution reject this action family. The only successful effect is `collections_draft_approved_inside_ops`, accompanied by `messages_sent = 0`, `money_moved = false`, and `financial_documents_issued = 0`. `reject_agent_collections_draft_as_actor` leaves the draft open coherently and also produces no external effect.
 
-**Release boundary:** application commits `1e5fdd69`, `34844e43`, `277bc415`, `31e74969`, `983bc159`, and `65eb6777` exist only on local branch `feat/ops-mcp-collections-p2`. Candidate migration `20260831140000_agent_collections_vertical.sql` is mirrored under this Bible's `supabase/migrations/` directory but has not been applied. Nothing was pushed, deployed, registered, granted, activated, sent, paid, or issued. Full contract: `specs/2026-08-31-ops-mcp-collections-vertical.md`.
+**Release boundary:** application commits `1e5fdd69`, `34844e43`, `277bc415`, `31e74969`, `983bc159`, `65eb6777`, and `1c521ea8` exist only on local branch `feat/ops-mcp-collections-p2`. Candidate migration `20260831140000_agent_collections_vertical.sql` is mirrored under this Bible's `supabase/migrations/` directory but has not been applied. Nothing was pushed, deployed, registered, granted, activated, sent, paid, or issued. Full contract: `specs/2026-08-31-ops-mcp-collections-vertical.md`.
 
 **End of Document**
 
