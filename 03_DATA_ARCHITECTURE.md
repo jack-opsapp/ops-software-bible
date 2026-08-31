@@ -1701,6 +1701,29 @@ The editor composites every *other* author's overlay as a NON-editable base unde
 
 ---
 
+### Project photo delivery — canonical store + server-side CSV projection (2026-08-31, bug `16d487c4`)
+
+**`project_photos` is the canonical store. `projects.project_images` is a server-maintained projection of it — no client writes that column any more.**
+
+**The bug this replaced.** The iOS save path PATCHed the legacy `projects.project_images` CSV *first*. That UPDATE is gated by the RESTRICTIVE `role_scope_update` policy → `private.current_user_can_edit_project(id)`, which requires admin, `projects.edit = all`, or `assigned` + task membership. A crew member holding `photos.upload` but no `projects.edit` therefore matched **0 rows** — and the client read a 0-row PATCH as *"the project does not exist server-side"*. It then skipped the canonical `project_photos` INSERT (gated only on project **view**, which the same crew member *did* hold and which would have succeeded), marked the tiles failed, and auto-filed a bug claiming a live, undeleted job was absent. Three crew photos ended up recorded nowhere but that phone's local CSV. The drain path had the complementary defect — its CSV PATCH had no write guard at all, so it "succeeded" against 0 rows and cleared `needsSync`. Web uploads (`project-photo-service.ts`) never wrote the CSV at all.
+
+**The client rule, stated plainly: photo delivery requires project VIEW, never `projects.edit`.**
+
+| Object | Contract |
+|---|---|
+| `project_photos_active_project_url_uidx` | Partial unique index on `(project_id, url) WHERE deleted_at IS NULL`. The idempotency arbiter every mirror writer and the outbound reconcilers key on. A 23505 naming it means the server already holds the row — adopt, never park. Migration `cluster_j_01`. |
+| `private.project_images_apply_mirror()` + trigger `zz1_project_photos_mirror_csv` | `AFTER INSERT OR UPDATE OF deleted_at ON project_photos`. Projects active rows into `projects.project_images` and removes tombstoned ones. **SECURITY DEFINER is load-bearing** — the projection must not depend on the uploader holding `projects.edit`, since that dependency *was* the bug. Resolves the legacy `text` `project_id` through `private.project_table_project_id_from_text`. Migration `cluster_j_02`. |
+| `private.project_images_union_guard()` + trigger `zz2_projects_project_images_union` | `BEFORE UPDATE OF project_images ON projects`. Merges any incoming array with the live `project_photos` truth so no writer — including **shipped iOS builds that still PATCH the whole array** — can drop an active mirrored URL or resurrect a tombstoned one. Migration `cluster_j_02`. |
+| `public.project_server_state(p_project_id uuid) → text` | `active` \| `deleted` \| `absent`. Company-scoped (another tenant's row reads `absent`), SECURITY DEFINER, **granted to `anon`** — load-bearing under the Firebase JWT bridge, where the app executes as `anon`. Deliberately reveals deleted-ness to company members: RLS SELECT hides soft-deleted rows from everyone, so this RPC is the only way a device can learn a deletion happened. No JWT/company ⇒ `absent`, never an error. Migration `cluster_j_03`. |
+
+Trigger naming follows the table convention — `trg_project_photos_00_write_guard` fires first, `zz1_`/`zz2_` last. The projection write bumps `projects.updated_at` via `update_projects_timestamp`, which is **desired**: realtime/delta then propagates the CSV to every device.
+
+**Client consequences (iOS).** `ImageSyncManager.deliverPortalMirror` is the single chokepoint for portal delivery and the single place a delivery failure is classified or filed. It inserts canonically first, then — only on a *permanent* rejection — probes for the truth instead of inferring it: a visible row means an edit refusal (filed as `PHOTO_PORTAL_INSERT_REFUSED`, queued); an invisible row goes to `project_server_state`, where `active` = held-not-shared (no bug — a permission state, not a defect), `deleted` = tombstone applied locally, and `absent` = filed as `PROJECT_ROW_MISSING` only after the create barrier agrees. A probe that cannot answer queues and concludes nothing. Undelivered rows persist in a durable `pendingPortalMirrors` queue (UserDefaults, deduped by url) that keeps the 30s retry armed, and a once-per-launch backfill sweep re-delivers photos stranded by pre-fix builds. The same three-way verdict backs `SyncOperationReconcilers.projectUpdateRowVerdict` for outbound project updates, so PENDING WORK stops reporting a deletion that never happened (`SyncStatusCopy.PendingWork.editRefusedDetail*`).
+
+**Lead-source vocabulary (bug `44db2ea4`, same wave).** `opportunities_source_check` permits exactly `referral, website, email, phone, walk_in, social_media, repeat_client, voice_log, other`. `ClientLeadAutocreate.permittedSources` is the client mirror and `makeInlineLeadDTO` is the single constructor every inline "New Lead" mini-form builds through; unknown values clamp to `other`, the standing contract for client-created leads. The BOOK VISIT / log-activity forms previously sent `log_activity`, which is not in the list — every such create had failed since the code shipped (prod holds zero rows with that source). **If a migration ever changes the constraint, the client mirror changes in the same commit.**
+
+---
+
 ### 25. CalendarUserEvent (Supabase-Backed)
 
 **File**: `DataModels/Supabase/CalendarUserEvent.swift`
