@@ -1,42 +1,42 @@
 # 21 - Analytics System
 
-**Last verified:** August 30, 2026
+**Last verified:** August 31, 2026
 **Scope:** GA4, Search Console, App Store Connect, Firebase conversion telemetry, Supabase product telemetry, first-party attribution, business milestones, and the founder growth surface.
 
 This chapter distinguishes production truth from code that is prepared and verified locally. A local commit, migration file, or passing test is not evidence that production has changed.
 
 ## 1. Production status
 
-### Verified live snapshot — August 30, 2026
+### Verified live snapshot — August 31, 2026
 
 | Area | Verified production state |
 |---|---|
-| Marketing GA4 | Property `475051117`; measurement ID `G-HKM7RWVTDV`. The current server identity is denied read access. |
-| Logged-in web GA4 | Property `539494652`; measurement ID `G-JJP5SN122V`. The current server identity is denied read access. |
-| iOS Firebase / GA4 | Property `514229717`. The current server identity can read it. |
-| Search Console | The exact property identity and reader grant are not configured in OPS-Web. No Search Console warehouse facts are live. |
-| App Store Connect | Engagement facts exist, but the verified audit found zero download facts. Store conversion is provisional until commerce ingestion is backfilled and reconciled. |
-| Supabase product telemetry | `16,044` live `analytics_events`; duplicate event IDs `0`. The newest web event was `2026-05-14T21:05:12.156Z`; no web product events arrived in the preceding seven days. |
-| Product-event contract | Production still has the legacy shape. `schema_version`, `environment`, and `received_at` are absent. The staged `analytics_sync_runs` and `touchpoints` tables are also absent. |
-| Event privacy | Production is not clean. The verified scan found identifier-bearing properties including `project_id`, UUID values in `error_type`, `deeplinkid`, and generic `id`. Safe boolean keys such as `has_email`, `has_phone`, and `has_address` are not PII findings. No production rows were changed during the audit. |
-| Trial attribution | The legacy attribution table exists, but current first-touch coverage is not sufficient for source-to-revenue claims. Historical unknown attribution remains unknown unless deterministic or self-reported evidence exists. |
-| Founder growth page | Not live. Production does not yet have the normalized acquisition warehouse, derived milestone tables, or source-health contract required by the page. |
+| Marketing GA4 | Property `475051117`; measurement ID `G-HKM7RWVTDV`. `opsapp.co` is live with only this tag. The retained backfill is complete through `2026-08-29`: `910` native-grain facts across `304` observed dates, `2,774` sessions, `1,006` engaged sessions, and `0` duplicate grains. |
+| Logged-in web GA4 | Property `539494652`; measurement ID `G-JJP5SN122V`. `app.opsapp.co` is live with only this tag. The retained backfill is complete through `2026-08-29`: `62` native-grain facts across `42` observed dates, `128` sessions, `28` engaged sessions, and `0` duplicate grains. |
+| iOS Firebase / GA4 | Property `514229717`. The production server identity can read it and health reports the property healthy. The narrowed five-event source contract is pushed, but is not customer-live until a signed App Store release. Analytics Admin reports all five required key events plus four extras: `app_store_subscription_convert`, `app_store_subscription_renew`, `first_open`, and `in_app_purchase`. |
+| Search Console | Exact property `sc-domain:opsapp.co`; reader grant, API, and production environment are verified. The retained backfill is complete from `2025-04-28` through `2026-08-28`: `9,886` native-grain facts across `485` dates, `108` reported query-grain clicks, `20,083` reported query-grain impressions, and `0` duplicate grains. Search Console privacy-suppressed queries remain absent rather than being inferred. |
+| App Store Connect | `4,822` engagement facts cover `2026-01-01` through `2026-08-29`. A fresh one-time snapshot request was created at `2026-08-31T09:04:15Z`; the durable traversal remains `running`. Apple has exposed seven engagement reports and no commerce report, so download facts remain `0` and store conversion is provisional rather than a synthesized zero. |
+| Supabase product telemetry | `16,135` live `analytics_events`; invalid contracts `0`, duplicate event IDs `0`, unsafe property rows `0`. The newest web event remained `2026-05-14T21:05:12.156Z` at verification time, so freshness is not inferred from the migration itself. |
+| Product-event contract | Versioned event columns, `analytics_sync_runs`, touchpoints, source replacement, growth milestones, health state, and retention operations are migrated and independently read back from production. Web delivery is live; the iOS queue awaits App Store release. |
+| Event privacy | The production privacy check is validated. The legacy identifier-bearing properties were removed without deleting historical events; the post-migration readback found `0` unsafe rows. Safe boolean presence keys remain allowed. |
+| Trial attribution | `53` non-deleted companies with a trial start reconcile to `53` eligible attribution rows and `53` growth milestones. All `53` are explicitly unknown: `47` `self_reported_blank` and `6` `self_reported_unmapped`. Trial, activation, paid, and revenue deltas are all `0`; no aggregate source is used to invent user-level attribution. |
+| Founder growth page | The normalized warehouse, founder surface, source health, and reconciliation contracts are deployed on `app.opsapp.co`. The `2026-08-31T21:51:39.278Z` evaluation marked marketing GA, web-app GA, iOS GA, Search Console, web product, attribution, business truth, and privacy healthy. Overall health remains failed only on `app_store.sync_status`. Google key-event cleanup, App Store traversal, iOS release, and the seven-day observation window remain open. |
 
-### Locally verified release candidate — not live
+### Rollout state
 
-The cross-platform analytics hardening branches prepare the following changes:
+The marketing site, logged-in web app, and production database hardening are live. The release includes:
 
 - Correct, validated GA property mapping on both web surfaces.
 - One versioned first-touch payload across `opsapp.co` and `app.opsapp.co`.
 - Authenticated, idempotent web product-event delivery with server-derived identity.
-- A durable iOS product-event queue, with Firebase narrowed to five conversion signals.
+- A durable iOS product-event queue, with Firebase narrowed to five conversion signals; the source is pushed but not yet released through the App Store.
 - Search Console and GA4 acquisition warehouse jobs with atomic date replacement.
 - Restored App Store commerce traversal and truthful partial/completed status.
 - Business milestones derived from Supabase records, not client events.
 - A founder growth surface with visible freshness, coverage, and source failure states.
 - Automated health transitions, persistent failure notifications, privacy enforcement, and retention aggregation.
 
-None of those changes are production behavior until the relevant branch is pushed, deployed or released, the staged Supabase migrations are explicitly applied, required Google permissions are granted, and live readback succeeds.
+Production evidence is deliberately split: web/site source is pushed and deployed; Supabase migrations are applied and read back; iOS source is pushed but not released; Google property permissions, APIs, and the exact Search Console identity are verified; GA4 and Search Console warehouse backfills are complete and independently read back; four extra Google key events remain; Apple commerce traversal is incomplete; seven-day certification has not elapsed.
 
 ## 2. Source ownership
 
@@ -65,7 +65,7 @@ Property selection is explicit and fail-closed.
 | `web_app` | `app.opsapp.co` | `539494652` | `G-JJP5SN122V` |
 | `ios_app` | Firebase iOS app | `514229717` | Managed by Firebase |
 
-OPS-Web must reject a valid-looking ID if it belongs to the wrong registry key. Measurement IDs are trimmed before use; executable or legacy Universal Analytics identifiers are rejected. A dedicated read-only Google service identity is the target owner. The existing Firebase administrator identity is only a transitional fallback for GA reads and currently lacks access to the two web properties.
+OPS-Web must reject a valid-looking ID if it belongs to the wrong registry key. Measurement IDs are trimmed before use; executable or legacy Universal Analytics identifiers are rejected. A dedicated read-only Google service identity is the target owner. The existing transitional server identity currently has read access to all three exact GA properties and `sc-domain:opsapp.co`.
 
 ## 4. Collection contracts
 
@@ -82,7 +82,7 @@ Advertising storage or personalization must not be enabled until the privacy pol
 
 ### First-party product events
 
-The release-candidate event contract is version `1`:
+The production event contract is version `1`:
 
 | Field | Contract |
 |---|---|
@@ -108,11 +108,11 @@ Firebase is conversion QA and Google optimization telemetry, not product or busi
 4. `create_first_project`
 5. `purchase`
 
-`session_start`, app opens, logins, navigation, screen views, CRUD telemetry, and errors are not key conversions. The deployed Firebase key-event configuration must be verified separately in Google administration; local code cannot prove it.
+`session_start`, app opens, logins, navigation, screen views, CRUD telemetry, and errors are not key conversions. Analytics Admin verification on August 31 found all five required names configured. Four extra key events still must be unmarked: `app_store_subscription_convert`, `app_store_subscription_renew`, `first_open`, and `in_app_purchase`. Local code cannot change or prove this production administration state.
 
 ## 5. Attribution
 
-The release candidate stores one validated first touch for 30 days. It accepts only allowlisted UTM fields, `gclid`, `fbclid`, canonical landing path, referrer domain, captured time, and anonymous ID. It never stores an arbitrary query string.
+Production stores one validated first touch for 30 days. It accepts only allowlisted UTM fields, `gclid`, `fbclid`, canonical landing path, referrer domain, captured time, and anonymous ID. It never stores an arbitrary query string.
 
 Deterministic attribution and self-reported acquisition remain separate facts. A later self-reported answer may fill an otherwise unknown classification but may not overwrite stronger first-touch evidence. Direct is an explicit classification; skipped self-report is not silently converted to Direct.
 
@@ -122,15 +122,15 @@ Raw click IDs and raw touchpoints expire after 30 days. The durable classified c
 
 ## 6. Warehouse and freshness
 
-The release candidate uses one `analytics_sync_runs` row per source invocation. A source result is never converted to zero when its API is denied or unavailable.
+Production uses one `analytics_sync_runs` row per source invocation. A source result is never converted to zero when its API is denied or unavailable.
 
 | Source | Expected finalized date | Daily job |
 |---|---|---|
-| Search Console | D-3 | 09:24 UTC |
+| Search Console | D-3 | 09:26 UTC |
 | GA4 marketing | D-2 | 09:44 UTC |
 | GA4 web app | D-2 | 09:44 UTC |
 | App Store Connect | D-2 when commerce reports exist | 09:04 UTC |
-| Analytics health | Evaluates all sources after source jobs | 10:49 UTC |
+| Analytics health | Evaluates all sources after source jobs | 10:46 UTC |
 
 Search Console and GA4 date partitions are replaced atomically. A restatement either replaces one complete date or leaves the prior facts intact. A bounded App Store walk remains `running` while a cursor is present and becomes `complete` only when the cycle closes.
 
@@ -138,7 +138,7 @@ Before 10:15 UTC, a running/partial source or a normal finalized-date lag is `ex
 
 ## 7. Health and alert rules
 
-The prepared health evaluator checks:
+The deployed health evaluator checks:
 
 - exact property and measurement mapping;
 - read permission on all three GA properties;
@@ -159,9 +159,9 @@ Analytics must never contain names, email addresses, phone numbers, street addre
 
 Appropriate properties are bounded counts, booleans, stable enum values, state transitions, and coarse UI context. Boolean presence fields such as `has_email` are allowed because they do not contain the email.
 
-The staged database check rejects unsafe properties on every new insert/update while leaving legacy rows visible to the health scanner. The constraint is intentionally `NOT VALID` until production legacy findings are remediated.
+The validated database check rejects unsafe properties on every new insert/update. Legacy unsafe properties were scrubbed key-by-key so safe dimensions and all historical event rows were preserved.
 
-Retention in the staged migration:
+Production retention:
 
 - aggregate raw `analytics_events` older than 12 months into non-identifying daily facts;
 - delete the raw rows only after the aggregate write succeeds in the same transaction;

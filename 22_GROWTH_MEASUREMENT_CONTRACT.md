@@ -1,9 +1,9 @@
 # 22 - Growth Measurement Contract
 
-**Last verified:** August 30, 2026
-**Deployment state:** Locally implemented and verified; not yet deployed or migrated to production.
+**Last verified:** August 31, 2026
+**Deployment state:** Web/site source is pushed and deployed; production Supabase is migrated and read back; all three GA properties and `sc-domain:opsapp.co` are directly readable by the production identity; GA4 and Search Console retained-history backfills are complete with zero duplicate grains. Four extra Google key events, the iOS App Store release, Apple commerce completion, and seven-day certification remain open.
 
-This is the canonical definition of every growth number OPS intends to show. Production remains governed by the live-state warnings in [21_ANALYTICS_SYSTEM.md](./21_ANALYTICS_SYSTEM.md) until release and live readback are complete.
+This is the canonical definition of every growth number OPS shows. Production qualification and outstanding source gates are recorded in [21_ANALYTICS_SYSTEM.md](./21_ANALYTICS_SYSTEM.md).
 
 ## 1. Non-negotiable rules
 
@@ -149,7 +149,7 @@ An API envelope never catches a source error and substitutes numeric zero. Sourc
 
 Daily automated health requires zero deltas between normalized growth views and direct business records:
 
-- trial delta: attribution rows minus non-deleted companies with trial start;
+- trial delta: attribution rows joined to a non-deleted company with a trial start, minus those same eligible companies; orphaned/deleted-company history and rows without a canonical trial start are excluded from both sides;
 - activation delta: `growth_funnel_daily.activated_companies` minus company milestones with `activated_at`;
 - paid delta: funnel paid companies minus company milestones with `first_paid_at`;
 - revenue delta: funnel revenue minus positive confirmed `invoice.paid` amounts.
@@ -158,7 +158,7 @@ The current migration also requires zero invalid event contracts, duplicate even
 
 ## 8. Release certification
 
-This contract becomes production truth only after all of the following are proven independently:
+The web/database contract is production truth. Full cross-platform release certification still requires all of the following to be proven independently:
 
 - three GA property permissions succeed for the dedicated read-only identity;
 - exact Search Console property identity and permission succeed;
