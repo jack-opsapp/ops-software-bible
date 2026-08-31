@@ -11,16 +11,16 @@ This chapter distinguishes production truth from code that is prepared and verif
 
 | Area | Verified production state |
 |---|---|
-| Marketing GA4 | Property `475051117`; measurement ID `G-HKM7RWVTDV`. `opsapp.co` is live with only this tag. The production server identity can read the property and returned `2` sessions for `2026-08-29`. |
-| Logged-in web GA4 | Property `539494652`; measurement ID `G-JJP5SN122V`. `app.opsapp.co` is live with only this tag. The production server identity can read the property and returned `5` sessions for `2026-08-29`. |
-| iOS Firebase / GA4 | Property `514229717`. The production server identity can read the property and returned `14` sessions for `2026-08-29`. The narrowed five-event source contract is pushed, but is not customer-live until a signed App Store release. Analytics Admin currently reports `13` key events rather than the required five-event set. |
-| Search Console | The exact property is `sc-domain:opsapp.co`. Its reader grant and API are verified, and a direct query returned one row for `2026-08-28`. `SEARCH_CONSOLE_SITE_URL` is deployed on OPS-Web in production. No Search Console warehouse backfill has been authorized or executed. |
+| Marketing GA4 | Property `475051117`; measurement ID `G-HKM7RWVTDV`. `opsapp.co` is live with only this tag. The retained backfill is complete through `2026-08-29`: `910` native-grain facts across `304` observed dates, `2,774` sessions, `1,006` engaged sessions, and `0` duplicate grains. |
+| Logged-in web GA4 | Property `539494652`; measurement ID `G-JJP5SN122V`. `app.opsapp.co` is live with only this tag. The retained backfill is complete through `2026-08-29`: `62` native-grain facts across `42` observed dates, `128` sessions, `28` engaged sessions, and `0` duplicate grains. |
+| iOS Firebase / GA4 | Property `514229717`. The production server identity can read it and health reports the property healthy. The narrowed five-event source contract is pushed, but is not customer-live until a signed App Store release. Analytics Admin reports all five required key events plus four extras: `app_store_subscription_convert`, `app_store_subscription_renew`, `first_open`, and `in_app_purchase`. |
+| Search Console | Exact property `sc-domain:opsapp.co`; reader grant, API, and production environment are verified. The retained backfill is complete from `2025-04-28` through `2026-08-28`: `9,886` native-grain facts across `485` dates, `108` reported query-grain clicks, `20,083` reported query-grain impressions, and `0` duplicate grains. Search Console privacy-suppressed queries remain absent rather than being inferred. |
 | App Store Connect | `4,822` engagement facts cover `2026-01-01` through `2026-08-29`. A fresh one-time snapshot request was created at `2026-08-31T09:04:15Z`; the durable traversal remains `running`. Apple has exposed seven engagement reports and no commerce report, so download facts remain `0` and store conversion is provisional rather than a synthesized zero. |
 | Supabase product telemetry | `16,135` live `analytics_events`; invalid contracts `0`, duplicate event IDs `0`, unsafe property rows `0`. The newest web event remained `2026-05-14T21:05:12.156Z` at verification time, so freshness is not inferred from the migration itself. |
 | Product-event contract | Versioned event columns, `analytics_sync_runs`, touchpoints, source replacement, growth milestones, health state, and retention operations are migrated and independently read back from production. Web delivery is live; the iOS queue awaits App Store release. |
 | Event privacy | The production privacy check is validated. The legacy identifier-bearing properties were removed without deleting historical events; the post-migration readback found `0` unsafe rows. Safe boolean presence keys remain allowed. |
 | Trial attribution | `53` non-deleted companies with a trial start reconcile to `53` eligible attribution rows and `53` growth milestones. All `53` are explicitly unknown: `47` `self_reported_blank` and `6` `self_reported_unmapped`. Trial, activation, paid, and revenue deltas are all `0`; no aggregate source is used to invent user-level attribution. |
-| Founder growth page | The normalized warehouse, founder surface, source health, and reconciliation contracts are deployed on `app.opsapp.co`. Business truth, attribution, Google property access, web product health, and privacy are healthy. GA4 and Search Console external reads succeed, but their production warehouse backfills are still pending. The surface is not fully certified while those backfills, Google key-event cleanup, App Store traversal, iOS release, and the seven-day observation window remain open. |
+| Founder growth page | The normalized warehouse, founder surface, source health, and reconciliation contracts are deployed on `app.opsapp.co`. The `2026-08-31T21:51:39.278Z` evaluation marked marketing GA, web-app GA, iOS GA, Search Console, web product, attribution, business truth, and privacy healthy. Overall health remains failed only on `app_store.sync_status`. Google key-event cleanup, App Store traversal, iOS release, and the seven-day observation window remain open. |
 
 ### Rollout state
 
@@ -36,7 +36,7 @@ The marketing site, logged-in web app, and production database hardening are liv
 - A founder growth surface with visible freshness, coverage, and source failure states.
 - Automated health transitions, persistent failure notifications, privacy enforcement, and retention aggregation.
 
-Production evidence is deliberately split: web/site source is pushed and deployed; Supabase migrations are applied and read back; iOS source is pushed but not released; Google property permissions, APIs, and the exact Search Console identity are verified; GA4/Search Console warehouse backfills and Google key-event cleanup remain open; Apple commerce traversal is incomplete; seven-day certification has not elapsed.
+Production evidence is deliberately split: web/site source is pushed and deployed; Supabase migrations are applied and read back; iOS source is pushed but not released; Google property permissions, APIs, and the exact Search Console identity are verified; GA4 and Search Console warehouse backfills are complete and independently read back; four extra Google key events remain; Apple commerce traversal is incomplete; seven-day certification has not elapsed.
 
 ## 2. Source ownership
 
@@ -108,7 +108,7 @@ Firebase is conversion QA and Google optimization telemetry, not product or busi
 4. `create_first_project`
 5. `purchase`
 
-`session_start`, app opens, logins, navigation, screen views, CRUD telemetry, and errors are not key conversions. Analytics Admin verification on August 31 found `13` configured key events: only `sign_up` and `purchase` belong to the required set; `begin_trial`, `complete_onboarding`, and `create_first_project` are missing; the other `11` configured events must be unmarked. Local code cannot change or prove this production administration state.
+`session_start`, app opens, logins, navigation, screen views, CRUD telemetry, and errors are not key conversions. Analytics Admin verification on August 31 found all five required names configured. Four extra key events still must be unmarked: `app_store_subscription_convert`, `app_store_subscription_renew`, `first_open`, and `in_app_purchase`. Local code cannot change or prove this production administration state.
 
 ## 5. Attribution
 
