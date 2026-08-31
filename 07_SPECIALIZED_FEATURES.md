@@ -10186,4 +10186,18 @@ Candidate migration `20260831190000_mcp_v3_synthetic_canary.sql` through review-
 
 ---
 
+## 38. Invisible Office Collections (local candidate, inactive and unapplied)
+
+“Who owes me money?” is a bounded receivables control sheet, not a general email agent. OPS calculates the exact answer from authorized invoice records using server-owned date arithmetic, groups it by canonical debtor, preserves separate currency totals, and shows every included invoice and aging bucket. The host cannot choose the tenant, metric, recipient, authority, or sorting rule. A source catalogue that exceeds the fixed 100-invoice bound fails closed instead of reporting a partial balance as complete.
+
+For each debtor, OPS resolves the current canonical contact and inspects immutable correspondence coverage. Missing, ambiguous, blocked, duplicate-review, or shared recipients produce facts only. Unreadable coverage, outbound contact inside seven days, or inbound contact inside three days also blocks preparation. A blocked debtor has an exact reason and no queue action. No model infers an address or reads free-text invoice fields as contact authority.
+
+An eligible debtor receives one deterministic consolidated draft. The draft names the exact currency-separated balances and invoices, escalates factual tone by the oldest aging bucket, and asks for payment or a firm payment date without legal threats. The queue card exposes the debtor, recipient, invoice dates, days overdue, buckets, balances, complete subject/body, truth boundary, and SHA-256 approval seal. It has no editor or send control and cannot be selected for bulk approval.
+
+`APPROVE DRAFT` records only that the exact immutable draft was approved inside OPS. It sends no message, moves no money, and issues no invoice, estimate, credit note, or other financial document. The receipt states those zero effects explicitly and is stable under exact retry. `LEAVE OPEN` keeps the public action and private draft decision coherent without contacting the customer. Autonomous executors reject this action family.
+
+**Release boundary:** the implementation exists only on local OPS-Web branch `feat/ops-mcp-collections-p2`; v4 and capability manifest v10 are inactive. Production MCP remains read-only v2, and the externally gated v3 synthetic canary is unchanged. The candidate database migration is mirrored but unapplied. No client, grant, consent, deployment, delivery, payment, or financial document exists because of this work. Canonical contract: `specs/2026-08-31-ops-mcp-collections-vertical.md`.
+
+---
+
 **End of Document**
