@@ -30,7 +30,7 @@ Quiet is a first-class outcome. A clear scheduled run remains inspectable but do
 
 ### Current actor and tenant
 
-Every reactive call uses the already resolved MCP actor context. Actor and company IDs never come from tool input. The local routine record is designed to bind a future scheduled run to one OPS actor, OAuth client, grant, and company. Before routine execution can be activated, its claim/finalization path must recheck, at execution time:
+Every reactive call uses the already resolved MCP actor context. Actor and company IDs never come from tool input. The local routine record and dormant worker bind every scheduled run to one OPS actor, OAuth client, grant, and company. Before any business read, every claimed occurrence rechecks, at execution time:
 
 1. routine enabled and due;
 2. company and user active;
@@ -39,7 +39,7 @@ Every reactive call uses the already resolved MCP actor context. Actor and compa
 5. current granular OPS permissions; and
 6. the exact company binding across every read and write.
 
-The implemented reactive path fails closed before reads or persistence when current authority is absent. The not-yet-built routine executor must turn any scheduled-run authority failure into a durable `blocked` or `failed` run plus a persistent manager notification; it must never turn that failure into a quiet success.
+The reactive and routine paths fail closed before reads or persistence when current authority is absent. For a routine, the trusted auth adapter itself reads the exact current routine/actor/company/grant/client/scope binding from the database before it can mint an actor context; raw claim fields cannot mint authority. Persistence rechecks that binding again so revocation during the read window cannot become a prepared run. Authority loss creates a typed durable `blocked` failure record, disables that exact routine, and raises a persistent operator notification. Transient execution failures retry after 5 then 15 minutes; the third failure creates a typed durable `failed` failure record and persistent notification. A defensive fourth claim performs no business read. Before any retry or failure is recorded, finalization recovers an exact closeout run that may already have committed when its response was lost. No failure is fabricated as a partial `DayCloseoutResult`, and no failure becomes a quiet success.
 
 ### Server-owned closeout definition
 
@@ -75,11 +75,11 @@ The receipt states exactly what happened: the closeout was filed inside OPS. It 
 
 ### OPS-owned routine foundation
 
-The local migration defines private OPS-owned routine state for schedule, timezone, named actor, OAuth client/grant binding, required scopes, enabled state, next run, claim, last run, failure state, change cursor, and schedule revision. The host is never the scheduler or system of record.
+The two local migrations define private OPS-owned routine state for schedule, timezone, named actor, OAuth client/grant binding, required scopes, enabled state, next run, leased claim, bounded retry state, last run, failure state, change cursor, and schedule revision. Due claims use `FOR UPDATE SKIP LOCKED` plus an exact token and expiry. The worker claims exactly one occurrence immediately before executing it, then claims the next only while at least 60 seconds remain in its 240-second execution budget; unstarted rows never spend attempts. It cancels routine work at 210 seconds, preserving the final 30 seconds for truthful finalization. Work-budget expiry follows the same bounded 5/15-minute retry ladder as transient execution failure. Successful or terminal occurrences compute the next occurrence from the stored local wall-clock time, IANA timezone, and ISO weekdays, so daylight-saving changes do not shift the operator's chosen time. The host is never the scheduler or system of record.
 
-Routine configuration, due-row claim/finalization, blocked-run signaling, and the cron adapter are activation-gated follow-through, not part of the reactive first vertical. They must use the same current-authority and receipt boundary before any routine can be enabled. This phase deliberately does not build a generic automation builder.
+The due-row claim/finalization service, valid run history, separate terminal-failure history, change cursor, and cron adapter are implemented locally. The route is fail-closed behind `CRON_SECRET` plus `OPS_DAY_CLOSEOUT_ROUTINES_ENABLED=true`, uses the shared OPS cron workload lease, and processes at most ten occurrences within its hard budget. It is deliberately absent from `vercel.json`, so no schedule is registered. Routine rows default disabled, direct table access remains revoked, and no configuration RPC or interface exists; no routine can be enabled through product code until the exact owner-approved configuration experience is designed and authorized. This phase deliberately does not build a generic automation builder.
 
-Scheduled closeouts use no OPS-paid model call. They compute deterministic findings and communication briefs. Host-authored reactive drafts may ride on the user’s host subscription; any future OPS-owned drafting or extraction cost must be measured before pricing or activation.
+Scheduled closeouts use no OPS-paid model call. They compute deterministic findings and communication briefs. With no registered cron and no enabled routine, this local phase adds no runtime cost. Activating the scheduler would add Vercel invocation and database-read cost; that cost must be measured before registration. Host-authored reactive drafts may ride on the user’s host subscription; any future OPS-owned drafting or extraction cost must be measured before pricing or activation.
 
 ## Interface choice
 
@@ -107,10 +107,11 @@ Before activation, dedicated seeded companies must prove:
 - no closeout path invokes send, payment, financial-document issue, deletion, or mass mutation code;
 - correspondence-dependent briefs are suppressed when readability coverage is incomplete;
 - a clear authorized run creates no interruption while remaining inspectable;
-- future failed/blocked routine runs create a persistent failure signal before scheduling is activated;
+- a partial result remains a schema-valid closeout run, while blocked and failed outcomes use the separate typed failure ledger; all three create persistent failure signals while clear runs remain quiet;
+- overlapping workers cannot claim one occurrence, the worker never charges an attempt to unstarted work, retries stop after the exact bounded sequence, committed-response-loss recovers the stored run, and the next wall-clock occurrence remains stable across DST boundaries;
 - the queue card exposes the exact immutable preview before approval; and
 - v1/v2 discovery bytes and grant behavior remain unchanged.
 
 ## Host acceptance remains a release gate
 
-Local contracts and tests are not host acceptance. Claude, ChatGPT, and any future supported host require separate live, authenticated proof for OAuth consent, tools/list, the composite prepare call, exact OPS confirmation, receipt readback, refresh, revocation, attachments or stable references where applicable, and routine handoff. Until that matrix passes and Jackson explicitly authorizes release, v3 stays inactive and this capability is not customer-live.
+Local contracts and tests are not host acceptance. Claude, ChatGPT, and any future supported host require separate live, authenticated proof for OAuth consent, tools/list, the composite prepare call, exact OPS confirmation, receipt readback, refresh, revocation, attachments or stable references where applicable, and routine handoff. Until that matrix passes and Jackson explicitly authorizes release, v3 stays inactive and this capability is not customer-live. Migration `20260831004500_agent_day_closeout_routine_worker.sql` is also unapplied. Its static SQL safety contract is verified locally; execution proof remains explicitly unclaimed because migration application was not authorized.
