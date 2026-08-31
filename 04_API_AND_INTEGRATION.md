@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: August 7, 2026
+**Last Updated**: August 30, 2026
 **iOS Reference**: `ops-ios/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -1162,76 +1162,23 @@ In `NotificationManager.swift`:
 
 ## Firebase Analytics
 
-Firebase is used **only for analytics** (Google Ads conversion tracking). It is NOT used for authentication or database.
+Firebase serves two distinct roles in OPS: verified identity for legacy/bridged API flows and a deliberately narrow iOS conversion feed. Supabase remains the database and business source of truth.
 
-**SDK**: `FirebaseCore` + `FirebaseAnalytics`
-**Config File**: `GoogleService-Info.plist`
-**Initialization**: `FirebaseApp.configure()` in `AppDelegate.didFinishLaunchingWithOptions` (must be first)
+**SDK:** `FirebaseCore` + `FirebaseAnalytics`
+**Config:** `GoogleService-Info.plist`
+**Initialization:** `FirebaseApp.configure()` in `AppDelegate.didFinishLaunchingWithOptions`
 
-### AnalyticsManager
+`ops-ios/OPS/Utilities/AnalyticsManager.swift` is the conversion boundary. The locally verified release candidate allows exactly:
 
-**Source**: `OPS/Utilities/AnalyticsManager.swift`
-Singleton for tracking conversion events via Firebase Analytics. Events flow to Google Ads via the Firebase Analytics integration.
+1. `sign_up`
+2. `begin_trial`
+3. `complete_onboarding`
+4. `create_first_project`
+5. `purchase`
 
-### Event Categories
+Screen views, app opens, logins, navigation, CRUD telemetry, sync failures, and product-friction events go to first-party Supabase product analytics instead. They are not Firebase key conversions. Business conversion truth still comes from Supabase company/project/billing records.
 
-#### Authentication Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `sign_up` | `method`, `user_type` | New user account creation |
-| `login` | `method`, `user_type` | Returning user login |
-
-#### Onboarding Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `complete_onboarding` | `user_type`, `has_company` | User completes onboarding |
-| `begin_trial` | `user_type`, `trial_days` | Company owner starts trial |
-
-#### Subscription Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `purchase` | `item_name`, `price`, `currency`, `user_type` | Subscription purchase |
-| `subscribe` | `item_name`, `price`, `currency`, `user_type` | Custom subscription event |
-
-#### CRUD Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `create_project` | `project_count`, `user_type` | Project created |
-| `create_first_project` | `user_type` | First project (high-intent) |
-| `project_edited` | `project_id` | Project updated |
-| `project_deleted` | - | Project deleted |
-| `task_created` | `task_type`, `has_schedule`, `team_size` | Task created |
-| `task_edited` | `task_id` | Task updated |
-| `task_completed` | `task_type` | Task marked complete |
-| `client_created` | `has_email`, `has_phone`, `import_method` | Client created |
-
-#### Screen View Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `screen_view` | `screen_name`, `screen_class` | Screen viewed |
-| `tab_selected` | `tab_name`, `tab_index` | Tab navigation |
-
-#### Engagement Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `navigation_started` | `project_id` | User starts navigation |
-| `search_performed` | `section`, `results_count` | Search executed |
-| `image_uploaded` | `image_count`, `context` | Photo uploaded |
-
-### Google Ads Conversion Events
-
-These events are automatically sent to Google Ads:
-1. `sign_up` - Primary acquisition conversion
-2. `purchase` - Revenue conversion
-3. `create_first_project` - High-intent engagement
-4. `complete_onboarding` - Onboarding completion
-5. `task_completed` - Productivity signal
+**Deployment warning (verified August 30, 2026):** the narrowed iOS contract is locally committed and tested but is not an App Store release. Firebase/GA key-event configuration is a separate Google-admin state and has not been changed by this work. See `21_ANALYTICS_SYSTEM.md` and `22_GROWTH_MEASUREMENT_CONTRACT.md`.
 
 ### Google Ads Reporting Integration (admin analytics)
 
@@ -1361,6 +1308,34 @@ iOS writes it as a follow-up update after `create_company_for_owner` returns (th
 Seven Bubble-era companies carry legacy free-text values (`Instagram`, `Word of Mouth (Onsite)`, `Internet Advertisement`, `Other`). These are **intentionally not migrated** — `Internet Advertisement` cannot be mapped to a slug without guessing. **Normalize at read time in P4.**
 
 **Known coverage limit.** Every primary CTA on `ops-site` points at the App Store, and no click id survives an install. Measured over companies created since 2026-03-01, only ~26% (5 of 19) were born through web setup. Cookie-based attribution therefore covers a minority of signups by construction; the referral question is what covers the rest. `try-ops` (ad landing pages) does not yet write the cookie — a `.opsapp.co` cookie written there would reach the app, so that remains an open follow-up.
+
+---
+
+### Cross-platform growth integrations — local release candidate, not live
+
+The August 30 analytics hardening branch adds these server-only integrations. Their existence in code is not a production-deployment claim.
+
+| Route | Schedule / auth | Responsibility |
+|---|---|---|
+| `GET /api/cron/search-console-sync` | Daily 09:24 UTC; `CRON_SECRET`; fenced workload lease | Pull finalized D-3 Search Console facts and atomically replace each reporting date. |
+| `GET /api/cron/ga4-acquisition-sync` | Daily 09:44 UTC; `CRON_SECRET`; fenced workload lease | Pull D-2 marketing and web-app GA4 acquisition facts by explicit registry key. |
+| `GET /api/cron/app-store-sync` | Daily 09:04 UTC; `CRON_SECRET`; fenced workload lease | Resume Apple's report walk. Status stays `running` while `cursorAfter` exists and becomes `complete` only after the cycle closes. |
+| `GET /api/cron/analytics-health` | Daily 10:49 UTC; `CRON_SECRET`; fenced workload lease | Check permissions, freshness, warehouse completeness, event quality, attribution reasons, and business reconciliation; apply transition-only admin alerts. |
+| `GET /api/admin/acquisition/overview`, `/search`, `/app-store`, `/health` | OPS admin session | Return normalized source envelopes with `asOf`, `finalizedThrough`, coverage, and source state. |
+
+The Google reader uses a dedicated read-only service account when `GA4_SERVICE_ACCOUNT_*` or Search Console-specific credentials are configured. The exact property registry is fixed in code. Required production configuration before deployment:
+
+- `GA4_MARKETING_PROPERTY_ID=475051117`
+- `GA4_WEB_APP_PROPERTY_ID=539494652`
+- `GA4_IOS_PROPERTY_ID=514229717`
+- `GA4_MARKETING_MEASUREMENT_ID=G-HKM7RWVTDV`
+- `GA4_WEB_APP_MEASUREMENT_ID=G-JJP5SN122V`
+- `NEXT_PUBLIC_GA_MEASUREMENT_ID=G-JJP5SN122V`
+- exact, verified `SEARCH_CONSOLE_SITE_URL`
+- dedicated Google reader credentials with access to all three GA properties and Search Console
+- valid `OPS_PLATFORM_ALERT_USER_ID` and matching `OPS_PLATFORM_ALERT_COMPANY_ID`
+
+The current production reader is denied on the two web GA properties and granted on iOS. Search Console identity is unconfigured. Those are credential gates, not zero-valued analytics.
 
 ---
 
