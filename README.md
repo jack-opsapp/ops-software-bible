@@ -271,6 +271,30 @@ Start with the Executive Summary to understand the business context, then procee
 
 ---
 
+### 📊 [21_ANALYTICS_SYSTEM.md](21_ANALYTICS_SYSTEM.md)
+**Cross-platform analytics architecture and verified deployment state**
+
+- Exact GA4 property registry and current access state
+- Search Console, App Store Connect, Firebase, and Supabase source ownership
+- Product-event, privacy, retention, freshness, and alert contracts
+- Clear separation between live production truth and the locally verified release candidate
+
+**Start here for:** Analytics implementation, source health, privacy, retention, or release certification
+
+---
+
+### 🎯 [22_GROWTH_MEASUREMENT_CONTRACT.md](22_GROWTH_MEASUREMENT_CONTRACT.md)
+**Canonical growth formulas, attribution precedence, and founder reporting contract**
+
+- Trial, seven-day activation, fourteen-day first value, paid, revenue, and coverage formulas
+- Attribution evidence precedence and channel classification
+- Source-state semantics and reconciliation requirements
+- Exact rollout gates before the contract becomes production truth
+
+**Start here for:** Any growth number, attribution decision, funnel definition, or founder analytics surface
+
+---
+
 ### 🚀 [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)
 **Production deployment and operations**
 
@@ -342,6 +366,9 @@ Start with the Executive Summary to understand the business context, then procee
 
 **"I need to write copy / marketing / email / app store listing for a feature"**
 → Read [14_FEATURE_POSITIONING.md](14_FEATURE_POSITIONING.md)
+
+**"I need to understand analytics, attribution, or a growth metric"**
+→ Read [21_ANALYTICS_SYSTEM.md](21_ANALYTICS_SYSTEM.md) + [22_GROWTH_MEASUREMENT_CONTRACT.md](22_GROWTH_MEASUREMENT_CONTRACT.md)
 
 **"I need to deploy to production"**
 → Read [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)
