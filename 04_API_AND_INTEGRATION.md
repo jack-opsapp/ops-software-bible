@@ -1854,6 +1854,30 @@ same key — direct + queued paths can never duplicate). Before this change the
 allowlist rejected the key (`unsupported_opportunity_field`, 22023 → HTTP 400),
 which was root cause RC1 of the 2026-07-22 stuck-lead incident.
 
+**`source` must be a constraint member — the RPC does not validate it.**
+`private.create_opportunity_company_serialized_internal` passes
+`p_opportunity.source` straight into the INSERT, so the live
+`opportunities_source_check` constraint is the only thing standing between a
+client and a failed write. Permitted values, verified against prod 2026-08-31:
+
+```
+referral · website · email · phone · walk_in · social_media · repeat_client · voice_log · other
+```
+
+An off-constraint value fails the INSERT with a CHECK violation, which reaches
+the caller as `guardedCreateRejected` — an opaque "could not create" with no
+hint that the *source string* was the problem. Every client must send a member
+of that list. iOS holds the canonical fallback at
+`ClientLeadAutocreate.schemaAllowedSource` (`"other"`), the lead form's SOURCE
+chip ids are asserted to be a subset by `LeadsConformanceTests`, and the
+BOOK VISIT picker's client-materialization lane sends `repeat_client`.
+
+**Incident (2026-08-31):** the inline lead creates in `ActivityTargetPickerView`
+and `UnifiedLogActivityViewModel` were sending `source: "log_activity"`, which
+has never been a constraint member — every typed and voice inline create was
+rejected server-side. Zero `log_activity` rows exist in prod, confirming none
+ever landed.
+
 ### `link_deck_design_to_opportunity_guarded(p_design_id uuid, p_target_opportunity_id uuid) → jsonb`
 
 Sanctioned path for linking an ORPHAN deck design (opportunity_id IS NULL) to a
