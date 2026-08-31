@@ -7512,6 +7512,106 @@ carries as an emergency hotfix.
 | `20260830113400_delivery_source_normalization_reprojection.sql` | Evidence-ledger re-projection, revision v2, backfill RPCs |
 | `20260830113500_email_connection_webhook_high_water.sql` | `webhook_history_high_water` column + record RPC |
 
+### Email-intelligence hardening — flagged-sender gate, Stage-B sender history, summary sanitization (bug `7ca126d2`, prepared 2026-08-31, not deployed)
+
+Traced from the canonical example: **Vitrum**, a glass supplier Canpro buys
+from, produced five "leads" in five months and one incoherent AI summary. The
+bad lead (opportunity `b444e6fc`) was created by the pre-2026-08-29 brain, but
+the trace exposed defects live in the shipped code. Repaired on OPS-Web branch
+`fix/sweep0831-cluster-l`, four commits on top of production commit
+`9a53168d`. **No migrations.** No model, temperature, or lane changes — the
+classifier lanes and the summary model are unchanged, and every change
+tightens autonomy rather than widening it.
+
+**Why the lead was created.** Cindi Howard's reply arrived on a thread with no
+opportunity link and no pattern/platform/forwarder/contact-form match, so it
+entered the unmatched lane and was classified from a single message — the old
+brain never saw that the operator had STARTED the thread with a purchase
+order. The feedback prior did run and was arithmetically impotent: one
+sender-negative is worth `-0.16`, so a `0.90` baseline landed at `0.74`,
+still clear of the `0.70` threshold, and the lane created in silence.
+
+**1. A flagged sender never silently creates a lead**
+(`lead-feedback-prior-service.ts`). When the operator has any active negative
+feedback for the exact sender, no positive history for that sender, and the
+baseline verdict is `lead` at or above threshold, the outcome is now `defer`
+with `review_reason = 'feedback_boundary'` instead of `lead`. Suppression
+authority is unchanged and still requires an exact source match, two
+independent sender rows, or mature domain evidence — what changed is the
+*fallback*, which used to be auto-creation. `feedback_boundary` was already in
+the `lead_classification_reviews.review_reason` CHECK, so no migration. The
+review projects a hold onto the inbox thread through
+`persistDeferredLeadClassification`; the reviewer's borderline band only
+remaps `not_lead` outcomes, so `defer` passes through untouched.
+
+**2. Stage B gets system-verified sender history**
+(`ai-sync-reviewer.loadSenderHistoryFacts` → `email-ai-classifier`). Phase C
+already held every fact needed to keep Vitrum out of the pipeline — 209
+threads from the domain classified VENDOR/RECEIPT, an operator discard as
+`vendor_sales`, and five prior opportunities all terminal — and no wire
+carried any of it to the lead decision. The loader runs **three batched,
+company-scoped queries per review batch, never one per candidate**: a
+thread-category census over `email_threads` for the sender and its domain,
+active negative `lead_disposition_feedback` reason codes, and the
+`opportunities` stage census for the matching CRM contact. It renders one
+sentence block of counts and enum words, capped at 400 characters and omitted
+entirely when the database says nothing. The block rides in the **system**
+prompt keyed by candidate id — never in the untrusted user payload — and
+carries no body text, subject, or name; a count cannot carry an injection. A
+load failure degrades to "no history" rather than failing Stage B. It runs
+only when the caller supplies a Supabase client alongside the mailbox lease.
+
+**3. Lead summaries are sanitized on evidence-in and text-out**
+(`lead-summary-service.ts`, `conversation-state/message-cleaner.ts`,
+`utils/email-parsing.ts`). The 2026-08-31 summary for `b444e6fc` read
+`Scope: 8723 | 9785 201 St Langley Twp, BC V1M 3E7 | From: Jackson Sweet Sent:
+Thursday… Next action: <mojibake>` — a sliced signature card and a
+mojibake-quoted copy of the operator's own message. Three body-cleaning
+failures fed it, all now closed:
+
+- **Space-only lines.** Outlook emits `"\n \n \n"` separators, so every
+  line-anchored heuristic that expects an empty line silently missed.
+  `normalizeBodyLines` right-trims each line before any stripper runs.
+- **Reply headers.** The `QUOTE_MARKERS` From/Sent/To triple demands three
+  strictly consecutive unprefixed lines. `stripOutlookReplyHeaderBlock` pairs
+  a line-start `From:` with a `Sent:`/`Date:` line within three lines,
+  tolerating blank lines, a missing `To:`, and `>` prefixes. The colon is
+  load-bearing — authored prose opening "From day one" is untouched.
+- **Signature cards.** A pipe-delimited ALL-CAPS card
+  (`JANE DOE | INSIDE SALES REP |`) carries no `--` delimiter, device footer,
+  sign-off word, or labelled `Phone:` line, so all four existing anchors
+  walked past it. A fifth anchor cuts at the card when the tail below it is
+  entirely card-shaped.
+- **Mojibake.** Zero-width and bidi marks that arrived double-encoded (`â€چ`)
+  are removed by exact third character, so a mangled quote, dash, or
+  apostrophe — real text — survives.
+
+Provider-native "clean" bodies are normalized and header-stripped too:
+`providerCleanBody` only ever meant the quote chain was gone.
+`body_text_clean` rows written before this keep their artifacts at rest
+forever, so the summary service re-cleans at read time through
+`sanitizeSummaryEvidenceBody`, which — unlike the conversation cleaner, which
+must never blank a message — returns nothing for a body that is only a contact
+card. On the way out, every resolved fact field (scope, schedule, objection,
+next action, excluded scope) is rejected when it reads as a reply header or a
+contact card (two or more pipe separators with a phone or postal token), and
+the validation contexts are guarded on the same terms so a validator can never
+demand that a summary repeat a card it was handed.
+
+**Deliberately unchanged.** The `customer-deterministic-v2` rule (a thread
+linked to a live-stage opportunity is CUSTOMER — correct rule, wrong upstream
+link); Lane-1 adoption of new mail into the linked opportunity; the router's
+`require_human_review` on a malformed message; the terminal-tier
+create-new-instead-of-revive guard; and terminal-summary eligibility —
+summarizing terminal opportunities is by design, the *content* was the bug.
+
+**Root cause still open (product, not a bug).** Vitrum is a supplier stored in
+`clients` (`41a26c73`, created 2026-03-18, with Cindi as a sub-contact).
+People and vendors living in the client table is the upstream cause of this
+whole class; the honest fix is a vendor/supplier entity, which is a feature,
+not a repair. Thread `31cc0378` carries the same shape (an internal office
+contact stored as a client).
+
 ### What replaced the old §19
 
 The pre-rebuild inbox used `InboxService.getPipelineThreads()` (pipeline-only) and grouped threads into `InboxConversation` by client. Legacy files removed in Phase 7 cleanup: `inbox-service.ts`, `use-unified-inbox.ts`, `use-inbox.ts`, `unified-inbox.ts` types, and nine legacy inbox components. The `ComposeEmailModal` and thread message fetching via provider `fetchThread` are retained and reused by v2.
