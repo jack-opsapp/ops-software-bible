@@ -30,6 +30,14 @@ select md5(statements[1]) from supabase_migrations.schema_migrations where versi
 - Files dated `2026-05-*.sql` (no 14-digit stamp) predate this convention. Each is mapped below; where its content
   drifted from the applied text, the canonical `<version>_<name>.sql` produced by the backfill sits alongside it.
 
+## Invisible Office day-closeout release (2026-08-31 UTC)
+
+- `20260831042518_agent_day_closeout_foundation_zero.sql`
+- `20260831042631_agent_day_closeout_routine_worker.sql`
+- `20260831042924_agent_day_closeout_fk_indexes.sql`
+
+All three are byte-exact against `supabase_migrations.schema_migrations.statements[1]`: 40,971 bytes / SHA-256 `ddc67ee5999b555cd3c6835ea408e66ce5764e9fef2b366f74b67c155947e7d7`; 27,377 bytes / `09a8649add196f172a1d68a0e862a91b59272d75c5f33a931228f1dd0c1d876a`; and 1,114 bytes / `2d1296ab7afeec4bd9fc96c0db04463d00e3d04b773893a3deeef59242669dc7`. They install the dormant, private day-closeout persistence/worker boundary and its covering foreign-key indexes. Application release does not register its cron, create or enable a routine, or activate MCP v3.
+
 ## Ledger rows without stored SQL (file is the authority)
 
 These 6 CLI-era ledger rows have an empty `statements` array; the version-named file is the only record of their SQL:

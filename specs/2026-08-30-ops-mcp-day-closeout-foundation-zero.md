@@ -1,8 +1,8 @@
 # OPS MCP — Foundation Zero / Day Closeout Vertical
 
-**Status:** Implemented locally on isolated OPS-Web/Bible branches; not migrated, activated, pushed, deployed, host-accepted, or customer-live.
+**Status:** Production schema and application released dormant on 2026-08-30/31; v3 is not activated, host-accepted, scheduled, or customer-live.
 **Parent vision:** `specs/2026-08-30-ops-mcp-vision-handoff.md`
-**Target:** Local-only implementation. No production migration, exposure activation, host support claim, push, or deployment in this phase.
+**Release:** OPS-Web `1742861a`; Vercel `dpl_GEwkEiT9AwjQSrZXyoYQtWAXoJ46` (`Ready`, production, `app.opsapp.co`).
 
 ## Outcome
 
@@ -22,7 +22,7 @@ Quiet is a first-class outcome. A clear scheduled run remains inspectable but do
 
 - Active MCP exposure `2026-08-29.mcp-exposure.v2` remains immutable and read-only.
 - Existing v1 grants remain pinned to v1.
-- This phase introduces an **inactive** v3 exposure. It is not activated until each host passes authenticated discovery, tool-call, refresh/revocation, confirmation, commit, receipt, and routine-handoff acceptance.
+- The deployed application contains an **inactive** v3 exposure. No client or grant selects it. It is not activated until each host passes authenticated discovery, tool-call, refresh/revocation, confirmation, commit, receipt, and routine-handoff acceptance.
 - V3 grants only `ops.operations.prepare` in addition to the read scopes required by the closeout. It grants no communication-send, financial-write, payment, deletion, mass-action, or regulatory authority.
 - Existing dark write families remain unavailable. This vertical does not imply that their host acceptance or confirmation paths are finished.
 
@@ -75,11 +75,11 @@ The receipt states exactly what happened: the closeout was filed inside OPS. It 
 
 ### OPS-owned routine foundation
 
-The two local migrations define private OPS-owned routine state for schedule, timezone, named actor, OAuth client/grant binding, required scopes, enabled state, next run, leased claim, bounded retry state, last run, failure state, change cursor, and schedule revision. Due claims use `FOR UPDATE SKIP LOCKED` plus an exact token and expiry. The worker claims exactly one occurrence immediately before executing it, then claims the next only while at least 60 seconds remain in its 240-second execution budget; unstarted rows never spend attempts. It cancels routine work at 210 seconds, preserving the final 30 seconds for truthful finalization. Work-budget expiry follows the same bounded 5/15-minute retry ladder as transient execution failure. Successful or terminal occurrences compute the next occurrence from the stored local wall-clock time, IANA timezone, and ISO weekdays, so daylight-saving changes do not shift the operator's chosen time. The host is never the scheduler or system of record.
+The three production-applied migrations define private OPS-owned routine state for schedule, timezone, named actor, OAuth client/grant binding, required scopes, enabled state, next run, leased claim, bounded retry state, last run, failure state, change cursor, schedule revision, and covering foreign-key indexes. Due claims use `FOR UPDATE SKIP LOCKED` plus an exact token and expiry. The worker claims exactly one occurrence immediately before executing it, then claims the next only while at least 60 seconds remain in its 240-second execution budget; unstarted rows never spend attempts. It cancels routine work at 210 seconds, preserving the final 30 seconds for truthful finalization. Work-budget expiry follows the same bounded 5/15-minute retry ladder as transient execution failure. Successful or terminal occurrences compute the next occurrence from the stored local wall-clock time, IANA timezone, and ISO weekdays, so daylight-saving changes do not shift the operator's chosen time. The host is never the scheduler or system of record.
 
-The due-row claim/finalization service, valid run history, separate terminal-failure history, change cursor, and cron adapter are implemented locally. The route is fail-closed behind `CRON_SECRET` plus `OPS_DAY_CLOSEOUT_ROUTINES_ENABLED=true`, uses the shared OPS cron workload lease, and processes at most ten occurrences within its hard budget. It is deliberately absent from `vercel.json`, so no schedule is registered. Routine rows default disabled, direct table access remains revoked, and no configuration RPC or interface exists; no routine can be enabled through product code until the exact owner-approved configuration experience is designed and authorized. This phase deliberately does not build a generic automation builder.
+The due-row claim/finalization service, valid run history, separate terminal-failure history, change cursor, and cron adapter are deployed. The route is fail-closed behind `CRON_SECRET` plus `OPS_DAY_CLOSEOUT_ROUTINES_ENABLED=true`, uses the shared OPS cron workload lease, and processes at most ten occurrences within its hard budget. It is deliberately absent from `vercel.json`, so no schedule is registered. Routine rows default disabled, direct table access remains revoked, and no configuration RPC or interface exists; no routine can be enabled through product code until the exact owner-approved configuration experience is designed and authorized. This phase deliberately does not build a generic automation builder.
 
-Scheduled closeouts use no OPS-paid model call. They compute deterministic findings and communication briefs. With no registered cron and no enabled routine, this local phase adds no runtime cost. Activating the scheduler would add Vercel invocation and database-read cost; that cost must be measured before registration. Host-authored reactive drafts may ride on the user’s host subscription; any future OPS-owned drafting or extraction cost must be measured before pricing or activation.
+Scheduled closeouts use no OPS-paid model call. They compute deterministic findings and communication briefs. With no registered cron, no routine rows, and no enabled routine, this release adds no scheduled invocation or model/provider cost; the empty schema and indexes remain inside the existing Supabase service. Activating the scheduler would add Vercel invocation and database-read cost; that cost must be measured before registration. Host-authored reactive drafts may ride on the user’s host subscription; any future OPS-owned drafting or extraction cost must be measured before pricing or activation.
 
 ## Interface choice
 
@@ -112,6 +112,10 @@ Before activation, dedicated seeded companies must prove:
 - the queue card exposes the exact immutable preview before approval; and
 - v1/v2 discovery bytes and grant behavior remain unchanged.
 
-## Host acceptance remains a release gate
+## Production proof and remaining activation gate
 
-Local contracts and tests are not host acceptance. Claude, ChatGPT, and any future supported host require separate live, authenticated proof for OAuth consent, tools/list, the composite prepare call, exact OPS confirmation, receipt readback, refresh, revocation, attachments or stable references where applicable, and routine handoff. Until that matrix passes and Jackson explicitly authorizes release, v3 stays inactive and this capability is not customer-live. Migration `20260831004500_agent_day_closeout_routine_worker.sql` is also unapplied. Its static SQL safety contract is verified locally; execution proof remains explicitly unclaimed because migration application was not authorized.
+Production ledger versions `20260831042518_agent_day_closeout_foundation_zero`, `20260831042631_agent_day_closeout_routine_worker`, and `20260831042924_agent_day_closeout_fk_indexes` are applied to `ops-app` and mirrored byte-exact in this Bible. Live readback proves all six tables have RLS enabled, zero policies, zero direct `anon`/`authenticated`/`service_role` table grants, and zero rows; every public closeout RPC is search-path pinned and executable only by `service_role`. Supabase's scoped performance advisor reports no missing foreign-key index. Its remaining notices are expected on empty dormant tables: fail-closed RLS with no policies and indexes not yet used.
+
+OPS-Web commit `1742861a` is production-live in Vercel deployment `dpl_GEwkEiT9AwjQSrZXyoYQtWAXoJ46`. The exact release passed the focused closeout/authority/MCP safety suite and a full 419-route Node 22 production build. Live metadata still advertises the exact twenty read-only v2 scopes; unauthenticated MCP and cron probes both return 401, and the deployment had no error- or fatal-level runtime log entry after release. The repository-wide GitHub CI still stops on the same pre-existing contact-form SQL fixture failure as the previous production `main`, before npm install or this vertical's tests; it is not evidence against this release and remains outside this vertical.
+
+Deployment and schema proof are not host acceptance. Existing Codex proof remains a bounded read-only v1 path; production v2 discovery exists but authenticated v2 host acceptance remains pending. Claude, ChatGPT, Codex, and any future supported host require separate live proof for the new v3 consent, composite prepare call, exact OPS confirmation, receipt readback, refresh, revocation, attachments or stable references where applicable, and routine handoff. Until that matrix passes and Jackson explicitly authorizes activation, v3 stays inactive and this capability is not customer-live.

@@ -10166,7 +10166,7 @@ release gate.
 
 ---
 
-## 37. Invisible Office Day Closeout (local only, not activated)
+## 37. Invisible Office Day Closeout (production-released dormant, not activated)
 
 “Close out my day. What did I forget?” is the first complete reactive Invisible Office vertical. The inactive MCP v3 exposes one composite prepare tool. OPS calculates the answer from the current operator's authorized schedule, work queue, pipeline, invoices, and normalized correspondence; the host does not define metrics, tenant identity, or authority.
 
@@ -10180,7 +10180,7 @@ OPS also owns the private routine record and dormant worker. It claims one lease
 
 Routine activation is intentionally impossible in this phase. Rows default disabled, tables have no direct API grants, no configuration RPC or settings flow exists, `OPS_DAY_CLOSEOUT_ROUTINES_ENABLED` defaults off, and `/api/cron/day-closeout-routines` is not registered in `vercel.json`. The shared OPS workload lease and cron adapter are ready for later activation without making an MCP host the scheduler.
 
-**Release boundary:** active production v2 remains read-only and byte-stable. V3, capability manifest v9, consent catalogue v2, and migrations `20260831003057_agent_day_closeout_foundation_zero.sql` plus `20260831004500_agent_day_closeout_routine_worker.sql` are local-only and unapplied. The routine migration has static contract proof only; runtime migration proof remains unclaimed because application was not authorized. No production schema, connector authority, scheduler registration, deployment, cost, or customer behavior changed. Routine configuration, activation, and authenticated host acceptance remain separate gates. Canonical contracts and acceptance cases: `specs/2026-08-30-ops-mcp-day-closeout-foundation-zero.md`.
+**Release boundary:** active production v2 remains read-only and byte-stable. The dormant schema is live under ledger versions `20260831042518_agent_day_closeout_foundation_zero`, `20260831042631_agent_day_closeout_routine_worker`, and `20260831042924_agent_day_closeout_fk_indexes`; OPS-Web commit `1742861a` is served by Ready production deployment `dpl_GEwkEiT9AwjQSrZXyoYQtWAXoJ46`. Live proof shows six RLS-enabled, policy-free, direct-grant-free, empty private tables; service-role-only public RPCs; all foreign-key advisor indexes present; zero routines; and an unauthorized cron probe returning 401. V3, capability manifest v9, and consent catalogue v2 remain inactive with no selecting client or grant. No scheduler is registered, no routine can be configured, and no model/provider is called, so this release creates no scheduled invocation or model/provider cost and changes no customer behavior. Existing Codex acceptance is a bounded read-only v1 path; authenticated v2 host acceptance remains pending and does not prove the new v3 prepare/commit path. Routine configuration, activation, v3 host acceptance, and measured scheduler/database cost remain separate gates. Canonical contracts and acceptance cases: `specs/2026-08-30-ops-mcp-day-closeout-foundation-zero.md`.
 
 ---
 

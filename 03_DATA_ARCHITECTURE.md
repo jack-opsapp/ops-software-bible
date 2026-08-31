@@ -6283,9 +6283,9 @@ The live ChatGPT registration-path canary posted exactly `https://chatgpt.com/co
 
 **Legacy identifier note.** The repair of the Task 13 read RPCs (ledger `20260818174706`, `20260818175549`) added `private.agent_uuid_from_legacy_text(text)` — a shape-guarded immutable cast. It exists because `public.projects.id` is `uuid` while eleven child tables (`activities`, `estimates`, `project_notes`, `project_photos`, `project_team_members`, `site_visits`, and others) store `project_id` as `TEXT`, and `projects.opportunity_id` is `TEXT` alongside the `uuid` `projects.opportunity_ref`. Any new SQL joining these columns must cast explicitly; the wave's Task 13 reads did not, and failed at runtime the first time they executed.
 
-## Invisible Office Day Closeout State (local only, not applied)
+## Invisible Office Day Closeout State (production-applied, dormant)
 
-OPS-Web migrations `20260831003057_agent_day_closeout_foundation_zero.sql` and `20260831004500_agent_day_closeout_routine_worker.sql` define the private persistence and dormant-worker boundary for the first Invisible Office vertical. Neither has been applied to production. The schema owns six concerns instead of leaving them in an assistant host:
+Production ledger migrations `20260831042518_agent_day_closeout_foundation_zero.sql`, `20260831042631_agent_day_closeout_routine_worker.sql`, and `20260831042924_agent_day_closeout_fk_indexes.sql` define the private persistence, dormant-worker, and foreign-key index boundary for the first Invisible Office vertical. All three are applied to `ops-app` and mirrored byte-exact in this Bible. The schema owns six concerns instead of leaving them in an assistant host:
 
 | Table | Purpose |
 |-------|---------|
@@ -6302,6 +6302,8 @@ Both reactive and routine preparation re-resolve the current actor/company grant
 
 The filing transaction locks the action and change set, validates the immutable digest and expiry, consumes one confirmation, stores one receipt, resolves the persistent review notification, and returns the stored receipt on an exact replay.
 
-These migrations are implementation-only evidence until they are applied under an explicitly authorized release. They are intentionally absent from this Bible's `migrations/` archive because that directory mirrors migrations actually applied to production; if release is authorized and apply succeeds, both files must be mirrored byte-exact and this section changed from local/unapplied to applied with live RLS/RPC proof. The active read-only MCP schema above remains the production contract.
+Live readback proves all six tables have RLS enabled, zero policies, and zero direct privileges for `anon`, `authenticated`, or `service_role`; all six are empty and the routine table has zero enabled rows. Every public closeout RPC is `SECURITY DEFINER`, pins its `search_path`, and grants `EXECUTE` only to `service_role`; the private authority and schedule helpers have no app-role grant. The rate-limit CHECK admits the exact separate `mcp-day-closeout-prepare:2026-08-30.v1` policy, and all eight advisor-reported foreign-key lookups now have covering indexes. Remaining scoped advisor notices are intentional: RLS with no policy is the fail-closed private-table design, and unused-index notices are expected while the tables contain zero rows.
+
+The schema is live but dormant. Active MCP v2 remains read-only; no grant selects v3, no schedule is registered, no routine can be configured through product code, and no row exists to run. OPS-Web commit `1742861a` and Vercel deployment `dpl_GEwkEiT9AwjQSrZXyoYQtWAXoJ46` contain the compatible application layer without activating this authority.
 
 **End of Data Architecture Documentation**
