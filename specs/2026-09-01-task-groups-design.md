@@ -90,7 +90,7 @@ One deterministic rule set, defined server-side (ops-web service + RPC, mirrored
 
 **Agent contract (Phase C / lead→project conversion).** Evidence ladder for *what scopes exist*:
 1. Sold scope — estimate/quote line items on the lead. Authoritative.
-2. Observed/stated scope — site-visit record, correspondence.
+2. Observed/stated scope — site-visit record, lead notes, customer correspondence (the email chain is a first-class source; when an estimate also exists, the estimate wins — discussed ≠ sold).
 3. Neither → **ask one clarifying question. Never pattern-fill scope from history** (not every job has glass; not every job has a privacy screen — Jackson, 2026-09-01). Company history may inform only *defaults around confirmed scopes* (crew, duration), never scope existence.
 
 Authority (per 2026-08-30 MCP vision handoff §5.1): agent-composed tasks are reversible internal filing — unscheduled or draft-dated with `schedule_confirmed_at` null, receipted with the composition reason, one-tap confirm, one-tap reverse. Auto-file only under an explicit bounded owner policy. Golden-task coverage: composition rules are deterministic → 100% assertion coverage per the vision spec.
