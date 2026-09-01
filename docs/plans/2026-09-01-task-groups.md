@@ -178,7 +178,8 @@ Behavior (single transaction; lock parent task `for update` **before** the scope
 **Files:** migration `conversion_grouped_tasks` (+ mirror) editing `convert_opportunity_to_project` (called by `ops-ios/OPS/Services/LeadConversionService.swift:328`) and the estimate-acceptance task materialization (locate via `\df+`/`pg_get_functiondef` search for the function inserting `project_tasks` with `source_line_item_id` — the one whose results decode into `AcceptEstimateProjectTaskResultDTO`, `ops-ios/OPS/Network/Supabase/DTOs/EstimateDTOs.swift:244`).
 
 - Route LABOR line items through `compose_task_scopes`; each visit-group becomes one task (primary type = first scope) + `task_scopes` rows carrying `source_line_item_id`; singles unchanged.
-- Result shape returned to iOS must stay decodable by the shipped app: keep one row per created *task* (old builds see fewer, coherent tasks — acceptable and additive-safe).
+- Result shape returned to iOS must stay decodable by the shipped app: keep one row per created *task*.
+- **Rollout gate (amended 2026-09-01):** automatic grouping is gated per company by a new additive column `companies.task_groups_conversion_enabled boolean not null default false`. When false (every company today) both conversion RPCs behave byte-identically to today (one task per LABOR line item). The flag is flipped per company only after that company's crew build renders scopes (P2+P3 shipped via TestFlight) — otherwise crew on an older build would open a converted project and silently not see the non-primary scopes. Manual group creation on new clients is a human choice and is not gated. The flag is a rollout control, never a product setting: no UI, flipped by SQL at build time, documented in `03_DATA_ARCHITECTURE.md`.
 
 **Verify:** seeded estimate with 1 vinyl + 3 rail-variant LABOR items converts to 2 tasks (1 single + 1 group of 3) with provenance intact (spec §10.6). Commit mirror.
 
