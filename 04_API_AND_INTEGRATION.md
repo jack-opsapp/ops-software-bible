@@ -3933,6 +3933,20 @@ The release prerequisites above were satisfied and executed on 2026-08-18 (UTC).
 - **Outbound posture at the control-plane cutover checkpoint:** auto-send remained OFF (`INBOX_AUTO_SEND_ENABLED` unset — the cron no-ops); `public.claim_email_send_provider_delivery(uuid)` EXECUTE was re-granted to `service_role` after deploy verification (out-of-ledger; `migrations/20260818052155_restore_claim_email_send_provider_delivery_grant.sql`), closing the last deliberately-held outbound revoke. MCP was still unmounted at this checkpoint; the production mount described immediately below superseded that state later the same day.
 - **Deferred verification pass (Maverick Projects, 2026-08-18):** the pass immediately caught one wave defect — the stale July version-gate twin on `task_schedule_automation_outbox` aborting confirm/unconfirm on `schedule_version = 0` tasks (`23514`) — fixed by ledger `20260818052612` before the first new-code `auto-confirm-schedules` cron firing (schedule `39 * * * *`; zero customer impact; see `03_DATA_ARCHITECTURE.md`). After the fix: full schedule-confirm round-trip green through the new RPC path on a Maverick task under service-role claims (`confirm_project_task_schedule_as_system` → `newly_confirmed: true`, row proof bound, one `schedule_confirmation_dispatch` outbox row; `unconfirm_project_task_schedule_as_system` → `newly_unconfirmed: true`, proof cleared). Phase-10 canary validation layers re-proven live: reserve without service claims → `42501 access_denied`; reserve with malformed hashes → `22023 PHASE_C_AUTO_SEND_SOURCE_FENCE_INVALID`; resolve of unknown reservation → `23505 PHASE_C_AUTO_SEND_IDEMPOTENCY_CONFLICT`. No `email_connections` rows were created and nothing was sent (Maverick has zero connections). All test rows removed: both pending dispatch outbox rows, the temporary `phase_c` feature override, zero reservation residue; the test task restored to its exact pre-test state.
 
+## Agent Queue Routes — `agent.review` gate + history statuses (2026-09-01)
+
+All four queue handlers authenticate with Firebase (`authenticateRequest`) and then gate on the granular key `agent.review` through `requirePermission(auth, "agent.review")` (`src/app/api/agent/_lib/auth.ts` → `checkPermissionByUserId` → `public.has_permission`, fail-closed: an RPC error is a 403). This replaced the `requireAdminOrOwner` manager check (`account_holder_id ∪ admin_ids`) on these routes only; the other `/api/agent/*` routes keep `requireAdminOrOwner`. Preset grants: Admin, Owner, Office (ledger `20260901201256_agent_review_permission`). The service layer runs under the service-role client for the duration of each call (`setSupabaseOverride`), so company scoping is `auth.companyId` from the authenticated user, never a request parameter.
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/agent/queue` | GET | List. `status=<one>` or `statuses=a,b` (comma list; validated by `parseStatusesParam`, unknown value → 400; takes precedence over `status`), `actionType`, `priority`. Pending lists sort priority (urgent→low) then newest; a `statuses` list that excludes `pending` sorts `reviewed_at desc nulls last, updated_at desc` (the HISTORY view). `statsOnly=true` → `{ pending, approvedToday, rejectedToday, avgResponseTimeMinutes }`; `countOnly=true` → `{ count }`. Hard limit 200 rows. |
+| `/api/agent/queue` | POST | Manual proposal (`actionType`, `actionData`, `contextSummary` required; validated type list in the handler). 200 with `{ message }` when an identical action is already pending, 201 `{ actionId }` otherwise. |
+| `/api/agent/queue/[actionId]` | PATCH | `{ action: "approve" \| "reject", notes?, editedActionData? }`. Approve executes the type's executor and returns the updated row; 409 when the row is gone or already handled. |
+| `/api/agent/queue/[actionId]` | DELETE | Cancel a pending action. |
+| `/api/agent/queue/bulk` | POST | `{ actionIds[], action, notes? }`, max 25; returns `{ approved \| rejected, failed, errors[] }`. |
+
+Client hooks (`src/lib/hooks/use-approval-queue.ts`) are enabled only when the permission store grants `agent.review`; the sidebar badge poll additionally requires the company `phase_c` flag.
+
 ## OPS Remote MCP Server — P1 Mount, Claude First (production-live 2026-08-18; reverified 2026-08-20)
 
 Supersedes the "MCP transport remains unmounted and dark" statements above. The mount is **deployed and operational in production**. The MCP merge `a860f5ee` is in the ancestry of the current READY Vercel production deployment, which serves `app.opsapp.co`. Claude completed dynamic registration and OAuth consent against the live endpoint. Scope: `specs/2026-08-18-mcp-mount-claude-first-scope.md`; plan: `specs/plans/2026-08-18-mcp-mount-claude-first-P1-plan.md`.
@@ -4189,6 +4203,16 @@ The return value gains `scope_count`:
 ```
 
 `private.insert_task_scopes(uuid, uuid, uuid, jsonb)` is revoked from `public`, `anon`, and `authenticated`.
+
+### `create_task_with_event` — estimate provenance keys (2026-09-01)
+
+Source: `migrations/20260901232945_task_creation_provenance.sql`. The same payload allowlist also accepts `source_line_item_id` and `source_estimate_id` (both text, trimmed, blanks stored as null), so a client converting an estimate can create a task — grouped or single — with its provenance in the same transaction instead of a direct insert.
+
+- `source_line_item_id` requires `source_estimate_id` (`invalid_task_payload`, `22023`).
+- `source_estimate_id` must name a live estimate of the actor's company (`invalid_task_source_estimate`, `22023`); `source_line_item_id` must name a line item of that estimate in the same company (`invalid_task_source_line_item`, `22023`).
+- Both values participate in the idempotent-retry comparison: a retry with the same `p_task_id` and identical provenance returns `created: false`; different provenance raises `task_id_conflict` (`23505`).
+- A second live task for the same `(company, project, estimate, line)` is refused by the pre-existing unique index `project_tasks_active_estimate_line_key` (`23505`) — scope rows carry the remaining lines of a grouped visit.
+- Absent keys ⇒ byte-identical legacy behavior (verified 2026-09-01 by row comparison in a rollback probe).
 
 ### `public.create_task_with_event_as_system` — `p_scopes`
 
