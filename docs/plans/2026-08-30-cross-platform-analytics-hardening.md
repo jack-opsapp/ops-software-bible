@@ -278,7 +278,8 @@ Release each repository independently. A local commit, local-main integration, p
 **Admin actions**
 
 - Remove `session_start` as a key event in the iOS property.
-- Keep the deliberate conversion set: `sign_up`, `begin_trial`, `complete_onboarding`, `create_first_project`, and `purchase`.
+- Keep the deliberate OPS-managed conversion set: `sign_up`, `begin_trial`, `complete_onboarding`, `create_first_project`, and `purchase`.
+- Accept GA4's locked app defaults (`first_open`, `in_app_purchase`, `app_store_subscription_convert`, and `app_store_subscription_renew`) as Google-managed property state. Do not count them as OPS business outcomes or require an operator to unstar them.
 - Treat CTA clicks, screen views, app opens, and logins as diagnostics, not conversions.
 - Record the before/after property configuration in `21_ANALYTICS_SYSTEM.md` after live verification.
 
@@ -866,7 +867,7 @@ Analytics are “dialed” only when all of the following are true:
 - Search Console and GA4 daily facts refresh automatically with visible finalized dates.
 - New web and iOS trials carry deterministic, self-reported, direct, or explicitly unknown attribution basis.
 - The web product event stream is fresh, authenticated, idempotent, and cannot be spoofed across companies.
-- Firebase key events contain only deliberate conversion signals; `session_start` is not a key event.
+- Firebase key events contain the five OPS-managed conversion signals plus Google's automatic app defaults; `session_start` is not a key event.
 - Core trial/activation/paid counts reconcile exactly to Supabase business records.
 - The founder page shows web search and App Store discovery separately, then converges on one company funnel.
 - Every number exposes freshness, coverage, and source state.

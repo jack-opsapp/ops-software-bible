@@ -1,7 +1,7 @@
 # 22 - Growth Measurement Contract
 
 **Last verified:** August 31, 2026
-**Deployment state:** Web/site source is pushed and deployed; production Supabase is migrated and read back; all three GA properties and `sc-domain:opsapp.co` are directly readable by the production identity; GA4 and Search Console retained-history backfills are complete with zero duplicate grains. Four extra Google key events, the iOS App Store release, Apple commerce completion, and seven-day certification remain open.
+**Deployment state:** Web/site source is pushed and deployed; production Supabase is migrated and read back; all three GA properties and `sc-domain:opsapp.co` are directly readable by the production identity; GA4 and Search Console retained-history backfills are complete with zero duplicate grains. Google-managed default app key events are verified and require no operator cleanup. The iOS App Store release, Apple commerce availability, and seven-day certification remain open.
 
 This is the canonical definition of every growth number OPS shows. Production qualification and outstanding source gates are recorded in [21_ANALYTICS_SYSTEM.md](./21_ANALYTICS_SYSTEM.md).
 
