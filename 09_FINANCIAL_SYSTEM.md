@@ -2028,6 +2028,20 @@ The answer is not a forecast of future demand and assumes no ramp period, hiring
 
 ---
 
+## MCP Payroll Readiness Definition (local candidate, 2026-09-01)
+
+`check_payroll_readiness` is the canonical read-only answer to “Can I make payroll on the 15th?” It is implemented locally under metric revision `payroll-readiness:2026-09-01.v1` and dormant MCP exposure v8. It is not deployed or customer-live.
+
+Current cash is the signed operator-maintained `expense_settings.forecast_current_balance`, not a bank feed. A negative balance is a truthful deficit. It must be captured within 24 hours. Scheduled obligations must be confirmed complete through the target date within 24 hours and after every included recurrence update, with microsecond ordering preserved. Payroll is an explicitly classified recurring expense due on the requested date with an exact company-local due time; the cutoff is the latest payroll time that day, including six-digit fractional precision. A same-day request after that exact cutoff is insufficient evidence rather than a retrospective cash test.
+
+All recorded overdue recurrence occurrences, scheduled obligations due before cutoff, and approved unpaid reimbursements reduce cash. Malformed active recurrence metadata remains visible and forces `obligation_schedule_invalid`; it cannot filter money out. Reimbursement amounts use the same partial/full/automatic approval and null/zero/positive fallback rule as `batchOwedAmount`. Same-day obligations after cutoff do not. Amounts must be at most 64 transport characters and exactly representable under the version-frozen ISO 4217 currency exponent table; non-finite or wider values become explicit invalid evidence. Totals accumulate as checked integers and overflow is an explicit evidence gap. Missing classifications, timing, coverage, currency, amounts, or a reached source bound prevent a confident answer.
+
+Open invoice balance is invoice total less non-void payments dated no later than the company-local business date and must agree with stored amount-paid and balance-due fields. Future delivery timestamps are invalid. Historical payer delay aggregates those payments of either sign by date and uses the first date from which cumulative net payment stays above invoice total through every later adjustment. Same-day plus/minus entries net together; a later reversal invalidates the earlier apparent settlement until durable recovery; invalid invoice/payment amounts remain visible but never enter the distribution. Legitimate imported delays have no arbitrary ten-year cap. A payer needs five unique valid settlements. Best uses nearest-rank p25 delay, base uses p50, p75 is disclosed, and worst assumes no receivable arrives. A date-only arrival on payroll day is excluded. A modeled arrival already missed or outside canonical years 0001-9999 becomes unknown instead of being moved forward. The output itemizes each obligation occurrence and each receivable's balance and p25/p50 arrival attribution, then independently verifies provenance, sums, timing, completeness, and decision semantics.
+
+`yes` means current cash alone covers all obligations through cutoff. `no` means even the complete best case is negative. `at_risk` means modeled receivables bridge a negative cash-only floor. If an unknown receivable could change a negative cash-only outcome, the result is `insufficient_evidence`. Full contract: `specs/2026-09-01-ops-mcp-payroll-readiness-vertical.md`.
+
+---
+
 **Last Updated**: 2026-09-01
 **Document Version**: 1.6
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.

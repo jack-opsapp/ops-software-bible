@@ -10212,4 +10212,18 @@ The public tool accepts `{}` only. OAuth and current permission authority requir
 
 ---
 
+## 40. Invisible Office Payroll Readiness (local release candidate, dormant)
+
+“Can I make payroll on the 15th?” is a bounded cash control sheet, not a bank balance, collection promise, or general forecast. OPS reads the operator-maintained current cash balance, every recorded recurring obligation through the payroll cutoff, approved unpaid reimbursements, reconciled open invoices, and each payer's actual fully settled invoice history. The host supplies only the target date.
+
+The first answer is `yes`, `no`, `at_risk`, or `insufficient_evidence`. `yes` requires fresh, complete decision-critical evidence and enough current cash to cover payroll plus every other recorded obligation due by cutoff without a receivable. `no` requires complete evidence and a negative best modeled case. `at_risk` means modeled receipts bridge a negative cash-only floor. Missing, stale, ambiguous, inconsistent, or bounded evidence returns precise gaps instead of a guess.
+
+Payroll and other recurring expenses must be explicitly classified. Payroll requires an exact company-local due time, preserved to microsecond precision; a same-day check after that cutoff fails closed. Recorded overdue obligations remain owed. Malformed active schedules remain visible and force insufficiency instead of disappearing; invalid/oversized database scalars become bounded sentinels rather than a transport failure. Approved unpaid reimbursements use the product's canonical amount rule across partial/full/automatic approval and null/zero/positive approved amounts. Same-day obligations after payroll cutoff do not count; date-only receivables arriving on payroll day do not count because their intraday timing is unknown. Future-dated payments or delivery timestamps do not alter an as-of snapshot. A receipt date that is missed or outside canonical years 0001-9999 is not recycled into future cash.
+
+Best and base receivable scenarios use the payer's empirical p25 and p50 delay from at least five durable net settlements. Non-void negative adjustments, same-day reversals, and later credits all affect the true settlement date; non-finite or overlong payment/invoice amounts never become settlement evidence. P75 is evidence only. Worst assumes zero receivable cash. Every money value is exact under the frozen ISO currency table, aggregates use checked integer arithmetic, every obligation occurrence and receivable prediction is itemized, and duplicate provider identities or stored-versus-calculated balance conflicts fail closed.
+
+The feature is read-only and invisible: no setup screen, projection record, notification, queue item, draft, message, payment, document, routine, or model call. Active production remains v2. No v8 client/grant, deployment, migration application, or activation exists. Canonical contract: `specs/2026-09-01-ops-mcp-payroll-readiness-vertical.md`.
+
+---
+
 **End of Document**
