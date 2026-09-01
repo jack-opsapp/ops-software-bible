@@ -4075,6 +4075,136 @@ The normalization revision advances to `ops.correspondence.normalized-text.v2`. 
 
 No further release gate remains for the Claude-first read-only P1. Expanding to another host, enabling site-visit tools, adding any write capability, or changing the Phase C customer-facing context path is a separate initiative with its own authorization and proof gates.
 
+## Task scope and composition RPCs (2026-09-01)
+
+Server-side contracts for task groups. Schema and invariants: `03_DATA_ARCHITECTURE.md` § Task scopes — task groups (2026-09-01). Design: `specs/2026-09-01-task-groups-design.md`.
+
+### `public.set_task_scope_completion`
+
+Source: `migrations/20260901185254_set_task_scope_completion_rpc.sql`. Grants: `authenticated`, `anon`.
+
+```
+set_task_scope_completion(
+  p_scope_id            uuid,
+  p_completed           boolean,
+  p_expected_updated_at timestamptz default null,
+  p_idempotency_key     text        default null
+) returns jsonb
+```
+
+Checking or unchecking one scope, with the status law enforced in a single transaction. `p_idempotency_key` is **required despite its default** — a null or blank key raises `idempotency_key_required`. The RPC locks the parent task first and then the scope, the same order `complete_project_task` uses, so the two cannot deadlock against each other.
+
+Permission is the completion gate, not the edit gate: `private.current_user_can_complete_task_material_consumption(company_id, task_id)`, the same predicate `complete_project_task` applies (the RPC sets `ops.complete_project_task_rpc` before the check). **Unchecking a scope on a task that is already `completed` additionally requires** `private.user_can_change_task_status(actor, task_id)` — reopening a task is a status change.
+
+Behavior:
+
+- **Checking the last open scope** calls `public.complete_project_task(task_id, p_idempotency_key, '{}')`, so materials are consumed exactly once, through the existing idempotency-keyed path rather than a second consumption route. The response carries `task_auto_completed: true` and the nested `completion` object that RPC returned.
+- **Unchecking a scope on a completed task** sets the task back to `active` by direct update. Already-consumed materials stay consumed — completion is reversible, consumption is not.
+- **Optimistic concurrency** mirrors `update_task_with_event`: a stale `p_expected_updated_at` **returns** rather than raises, so a client can reconcile without treating it as an error.
+
+Conflict response:
+
+```json
+{ "ok": false, "conflict": true, "scope_id": "…", "completed": false,
+  "updated_at": "…", "task_status": "active" }
+```
+
+Success response (`completion` present only when the call auto-completed the task):
+
+```json
+{ "ok": true, "conflict": false, "scope_id": "…", "completed": true,
+  "completed_at": "…", "completed_by": "…", "updated_at": "…",
+  "task_status": "completed", "task_auto_completed": true, "completion": { } }
+```
+
+Errors: `access_denied` (`42501`, caller role is not `anon`/`authenticated`), `scope_id_and_completed_required` (`22023`), `idempotency_key_required` (`22023`), `actor_company_not_found` (`42501`), `scope_not_found` (`P0002`, also raised for a soft-deleted scope or parent), `task_company_scope_mismatch` (`42501`), `tasks_edit_required` (`42501`), `task_status_forbidden` (`42501`).
+
+### `public.compose_task_scopes`
+
+Source: `migrations/20260901185510_compose_task_scopes_rpc.sql`, superseded in place by `migrations/20260901190151_compose_task_scopes_reason_grammar.sql` (composition unchanged; only the reason grammar for repeated-type visits changed). `STABLE`, `SECURITY DEFINER`. Grants: `anon`, `authenticated`, `service_role`, `postgres`; `PUBLIC` revoked.
+
+```
+compose_task_scopes(p_company_id uuid, p_candidates jsonb) returns jsonb
+```
+
+The single deterministic composition brain of spec §6 — one rule set consumed by estimate conversion, Quick Add chips, and the Agent Control Plane, rather than three drifting implementations. Company scoping is explicit: a user caller must pass their own company (`private.get_user_company_id()`); `service_role` may pass any company, matching the `read_agent_*_as_system` / `create_task_with_event_as_system` family.
+
+Input — a JSON array, caller order preserved:
+
+```json
+[{ "task_type_id": "uuid", "note": "…", "source_line_item_id": "…" }]
+```
+
+Output:
+
+```json
+{ "visits": [ { "kind": "single" | "group",
+                "primary_task_type_id": "uuid",
+                "scopes": [{ "task_type_id": "…", "note": "…", "source_line_item_id": "…" }],
+                "after_task_type_ids": ["uuid"],
+                "reason": "…" } ] }
+```
+
+Algorithm:
+
+1. Resolve every candidate's type inside `p_company_id`, not soft-deleted.
+2. Build directed dependency edges **among the candidate types only**, resolved transitively. Edges come from `task_types.dependencies[].depends_on_task_type_id`, UUID-shape-guarded; self-edges are dropped.
+3. A type that another candidate depends on, directly or transitively, becomes its **own predecessor visit**, emitted in topological order with input order as the tie-break. Dependency-connected types are different visits — the phases-weeks-apart pattern must not collapse.
+4. Every remaining candidate is a **leaf**. Leaves partition by crew compatibility alone: an empty `default_team_member_ids` is compatible with anything; two non-empty crews are compatible iff equal as sets. Assignment is greedy in input order into the first compatible open group, and a group's effective crew is the first non-empty crew placed in it. Differing predecessor sets never separate leaves — a visit's `after_task_type_ids` is the union of its members' candidate-ancestors, which is how the scheduler applies the max-of-constraints rule.
+5. `primary_task_type_id` is the visit's first member in input order. Candidates that repeat a type stay separate scopes of the same visit. `kind` is `single` iff the visit has exactly one scope. Output order is predecessor visits first (topological), then leaf visits.
+6. Same input ⇒ byte-identical output. A dependency **cycle** among candidates does not raise: composition falls back to input order and stays deterministic.
+
+Reason grammar, exactly as emitted:
+
+- Predecessor visit: `"<type> must finish before <dependents>"`, with `" — after <ancestors>"` appended when the visit itself has ancestors.
+- Leaf visit, several distinct types: `"<types> share a crew and none depends on another — one visit"`.
+- Leaf visit, one distinct type, more than one leaf group: `"<type> has its own crew — separate visit"`.
+- Leaf visit, one distinct type, single leaf group: `"<type> — one visit"`.
+- Any visit whose scopes are all one type and number more than one renders that type as `"<type> (N scopes)"` — estimate conversion routinely sells several lines of the same type.
+- Leaf visits append `" after <ancestors>"` (no dash) when `after_task_type_ids` is non-empty.
+
+Errors: `compose_company_id_required` (`22023`), `compose_company_scope_mismatch` (`42501`), `compose_candidates_array_required` (`22023`), `compose_candidate_task_type_required` (`22023`, an element that is not an object or has no `task_type_id`), `compose_candidate_task_type_invalid` (`22023`, unparseable UUID), `compose_unknown_task_type` (`23503`, a type not live in that company). An empty candidate array returns `{"visits": []}`.
+
+### `create_task_with_event` — `scopes` payload extension
+
+Source: `migrations/20260901185630_task_creation_scopes.sql`. The shared implementation `private.create_task_with_event_for_actor` gains `scopes` in its payload key allowlist, so scopes are created in the same transaction as the task.
+
+```json
+"scopes": [{ "id": "uuid?", "task_type_id": "uuid",
+             "note": "…?", "display_order": 0, "source_line_item_id": "…?" }]
+```
+
+Absent, `null`, or `[]` ⇒ **exactly today's behavior**. Rules enforced by `private.insert_task_scopes`:
+
+- The **first** scope's `task_type_id` must equal the task's `task_type_id`, else `scope_primary_mismatch` (`23514`) — the primary scope mirrors `project_tasks.task_type_id`.
+- Scopes are inserted **only when the task row was freshly inserted** (`row_count = 1` from the `on conflict (id) do nothing`), so an idempotent retry of the same task never duplicates scope rows.
+- `id` defaults to `gen_random_uuid()`; `display_order` defaults to the element's index and may not be negative; `note` and `source_line_item_id` are trimmed, with blanks stored as null.
+- Any unknown key in a scope object, a non-object element, a missing `task_type_id`, an unparseable UUID or integer, or a `scopes` value that is neither array nor null raises `invalid_task_payload` (`22023`).
+
+The return value gains `scope_count`:
+
+```json
+{ "task_id": "…", "created": true, "schedule_version": 0,
+  "updated_at": "…", "scope_count": 3 }
+```
+
+`private.insert_task_scopes(uuid, uuid, uuid, jsonb)` is revoked from `public`, `anon`, and `authenticated`.
+
+### `public.create_task_with_event_as_system` — `p_scopes`
+
+Same migration. The 11-argument signature was **dropped and recreated** with a trailing `p_scopes jsonb default null` (12 arguments) — a default could not be appended in place. Grants were explicitly restored to `service_role` only, with `public`, `anon`, and `authenticated` revoked, because Supabase default privileges would otherwise re-grant the new signature to the API roles. The wrapper still rejects any caller whose `auth.role()` is not `service_role` with `access_denied` (`42501`), and folds `p_scopes` into the payload it hands the shared implementation.
+
+### `sync_accepted_estimate_project_tasks` — changed result keys
+
+Source: `migrations/20260901191611_conversion_grouped_tasks.sql`. `private.sync_accepted_estimate_project_tasks` gains two keys in its JSONB result:
+
+- `scope_count` — scope rows written by this call; `0` on the legacy path.
+- `grouping_enabled` — the resolved value of `companies.task_groups_conversion_enabled` for the estimate's company, so a caller can tell a legacy result from a grouped one without inferring it from counts.
+
+`project_task_count` keeps its meaning: live tasks for this estimate on the project. Acceptance verification now counts a sold line as covered when it is carried **either** by a task's `source_line_item_id` **or** by a live scope's, so a grouped conversion no longer trips `accepted_estimate_task_sync_incomplete` (`23514`). Full conversion behavior: `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Conversion grouping — sold line items into visits (2026-09-01).
+
+---
+
 **End of Document**
 
 This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, email pipeline integration, and error management with full fidelity to the current implementation.

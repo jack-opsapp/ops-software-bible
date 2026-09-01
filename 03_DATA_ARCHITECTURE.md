@@ -6279,4 +6279,68 @@ Key behaviors implemented in the RPCs rather than the application: presenting a 
 
 **Legacy identifier note.** The repair of the Task 13 read RPCs (ledger `20260818174706`, `20260818175549`) added `private.agent_uuid_from_legacy_text(text)` — a shape-guarded immutable cast. It exists because `public.projects.id` is `uuid` while eleven child tables (`activities`, `estimates`, `project_notes`, `project_photos`, `project_team_members`, `site_visits`, and others) store `project_id` as `TEXT`, and `projects.opportunity_id` is `TEXT` alongside the `uuid` `projects.opportunity_ref`. Any new SQL joining these columns must cast explicitly; the wave's Task 13 reads did not, and failed at runtime the first time they executed.
 
+## Task scopes — task groups (2026-09-01)
+
+A task may carry multiple **scopes** — checkable units of work inside one visit. The visit (`project_tasks` row) remains the schedulable unit; scopes never carry dates, crew, or status beyond open/complete. Design: `specs/2026-09-01-task-groups-design.md`. Origin: `bug_reports` `b99a7659-d087-46ef-9578-94bcf0e10c0f`.
+
+The wave is **additive-only**: one new table plus one defaulted column on `companies`. `project_tasks` gains no column and no existing column changes meaning, so shipped iOS builds that predate scopes keep reading the old shape correctly. `project_tasks.task_type_id` continues to mean *the primary scope's type* — what every legacy surface (calendar color, lists, sync, reporting) already reads.
+
+### `public.task_scopes`
+
+Source: `migrations/20260901184459_task_scopes_table.sql`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | `uuid` primary key, **no default** | Caller-supplied. iOS generates with `UUID().uuidString` and must lowercase it. `private.insert_task_scopes` falls back to `gen_random_uuid()` when the payload omits it. |
+| `company_id` | `uuid not null` | Tenant scope. No FK declared; the guard trigger enforces equality with the parent task's company. |
+| `task_id` | `uuid not null` → `public.project_tasks(id)` `on delete cascade` | The visit this scope belongs to. |
+| `task_type_id` | `uuid not null` → `public.task_types(id)` | The scope's identity — its display name, color, and materials vocabulary. |
+| `note` | `text` null | Free detail ("20 ft", "upper deck"). Conversion stores the estimate line name here. |
+| `display_order` | `integer not null default 0` | Order within the visit. |
+| `completed_at` | `timestamptz` null | Null = open. |
+| `completed_by` | `uuid` null | Actor who checked it off. Null in service contexts, where `private.get_current_user_id()` returns null. |
+| `source_line_item_id` | `text` null | Estimate lineage, same convention as `project_tasks.source_line_item_id`. Preserves the provenance needed to partition materials per scope later without a migration. |
+| `split_to_task_id` | `uuid` null → `public.project_tasks(id)` | Set when this scope was split off into its own task; the scope row is then soft-deleted. **No write path ships yet** — the split flow is iOS Phase 3 work; the column is reserved by the spec (§4). |
+| `created_at` / `updated_at` | `timestamptz not null default now()` | `updated_at` maintained by the `update_task_scopes_timestamp` trigger. |
+| `deleted_at` | `timestamptz` null | Soft delete, per the repo-wide strategy. |
+
+Indexes: `task_scopes_task_id_idx` on `(task_id)` partial `where deleted_at is null` (the scope-list read), and `task_scopes_company_id_idx` on `(company_id)`.
+
+**Primary scope mirrors `project_tasks.task_type_id`.** For a grouped task the primary scope also exists as a `task_scopes` row, so rendering is uniform: a task's scope list is exactly its live `task_scopes` rows. `private.insert_task_scopes` enforces this — the first scope's `task_type_id` must equal the task's `task_type_id`, else `scope_primary_mismatch` (`23514`).
+
+### RLS and guards
+
+Two policies, both in the table migration. Anon-role compatible, since the iOS app runs as `anon`.
+
+- **`scope_read`** (SELECT) — a scope is visible exactly when its parent task is, delegating to `private.current_user_can_view_task_row(company_id, project_id, team_member_ids, deleted_at)`. No independent visibility rule to drift.
+- **`scope_write`** (ALL) — company isolation (`company_id = private.get_user_company_id()`) **and** the parent task's own edit rule: admin, or `tasks.edit` resolved scope-aware (`all` → any live task; `assigned` → actor on `team_member_ids` or in the project). `WITH CHECK` re-asserts company isolation. No new permission grant was introduced; nothing is registered in the client permission catalog.
+
+`private.guard_task_scope_refs()` fires `before insert or update of task_id, task_type_id, company_id` as trigger `task_scopes_guard_refs`, raising `scope_parent_task_missing` (`23503`) for a missing or soft-deleted parent, `scope_company_mismatch` (`42501`) when the row's company differs from the parent task's, and `scope_task_type_invalid` (`23503`) for a type that is not a live type of the same company. It mirrors `private.guard_project_task_task_type_reference`.
+
+Trigger `task_scopes_bump_agent_task_revision` fires after every insert, update, and delete, calling `private.bump_agent_read_domain_revision('tasks', 'company_id')` — scope writes advance the same agent read-domain freshness fence as task writes.
+
+### Status law
+
+Source: `migrations/20260901184710_task_scope_status_law.sql`. Trigger `project_tasks_stamp_scopes_on_completion` fires `after update of status` on `project_tasks` and runs `private.stamp_scopes_on_task_completion()`.
+
+When a task transitions **into** `completed` by any write path — the RPC, a direct web update, or an agent — every live open scope is stamped in the same transaction: `completed_at = coalesce(completed_at, now())`, `completed_by = coalesce(completed_by, private.get_current_user_id())`. This is the `COMPLETE ALL` law expressed in the database, so no client can produce a completed task with open scopes. Reopening a task leaves existing stamps in place; scopes are reopened only one at a time through `set_task_scope_completion`. Cancelling a task does not touch scope rows (historical record).
+
+### `companies.task_groups_conversion_enabled` — rollout gate
+
+Source: `migrations/20260901191611_conversion_grouped_tasks.sql`. `boolean not null default false`, added `if not exists`, carrying a column comment that states its purpose.
+
+This is a **rollout control, never a product setting** — no UI, no per-user toggle, flipped per company by SQL only. It exists because grouping is invisible to a crew running a build that predates scope rendering: a converted project would silently show the primary scope and hide the rest. The flag is turned on for a company only after that company's crew builds render scopes. When false — every company today — both conversion RPCs behave byte-identically to the legacy path (one task per LABOR line item). Manual group creation on a new client is a human choice and is not gated. Conversion behavior: `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Conversion grouping — sold line items into visits (2026-09-01).
+
+### Invariants
+
+- **A single-type task carries zero scope rows.** Grouping is opt-in per task; the legacy shape is untouched. Conversion produces either 0 scope rows (single-scope visit, which keeps the line name as `custom_title`, exactly as before) or the full set for a multi-scope visit — it never writes exactly one.
+- **A grouped task's scope set includes its primary.** So a grouped task has ≥ 2 live scope rows. A task reduced to one live scope by a split is still valid and renders as a plain single-type task; `create_task_with_event` also accepts a one-element `scopes` array, so exactly one row is legal, just never produced by conversion.
+- **Split-off sets `split_to_task_id` and soft-deletes the scope**, so the group's live scope list shrinks while the audit trail survives. Write path not yet shipped.
+- **Scopes never carry schedule, crew, or independent status.** Work needing independent scheduling is a separate task, not a scope (the electrician rough-in/finish case in the spec).
+- **Materials and inventory stay task-level** in this build; `source_line_item_id` preserves per-scope lineage for a later partition.
+
+Verified in production 2026-09-01: both policies, all three table triggers, the status-law trigger on `project_tasks`, and all three indexes are live; `task_scopes` holds 0 rows and 0 companies have the gate enabled. RPC contracts: `04_API_AND_INTEGRATION.md` § Task scope and composition RPCs (2026-09-01).
+
+---
+
 **End of Data Architecture Documentation**

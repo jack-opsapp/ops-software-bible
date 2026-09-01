@@ -3494,4 +3494,59 @@ The web app includes a full in-app email client at `/inbox` (inbox view, compose
 
 Unknown or mismatched identity remains activity-scoped `needs_review` and is absent from lead/project photo surfaces. Disconnected mailboxes resume queued work after reconnect. Stored OPS copies remain accessible after provider deletion or disconnect.
 
+## Conversion grouping — sold line items into visits (2026-09-01)
+
+Source: `migrations/20260901191611_conversion_grouped_tasks.sql`. Design: `specs/2026-09-01-task-groups-design.md` §6. Schema: `03_DATA_ARCHITECTURE.md` § Task scopes — task groups (2026-09-01). RPC contracts: `04_API_AND_INTEGRATION.md` § Task scope and composition RPCs (2026-09-01).
+
+Both conversion paths that materialize tasks from sold work — `private.execute_opportunity_conversion_core` (lead → project) and `private.sync_accepted_estimate_project_tasks` (estimate acceptance) — can now compose LABOR line items into grouped tasks instead of emitting one task per line.
+
+### Gate semantics
+
+Each path reads `companies.task_groups_conversion_enabled` for the owning company and branches on it. The column is `boolean not null default false`, so **every company today takes the legacy branch**.
+
+The gate is a rollout control, not a product setting: no UI, no per-user toggle, flipped per company by SQL only. Its reason is client visibility, not risk aversion. Grouping moves work out of task rows and into scope rows; a crew running a build that predates scope rendering would open a converted project and silently not see the non-primary scopes — the work would look like it had vanished. So a company is switched on only after its crew builds render scopes. Manual group creation on a new client is a human choice made in a build that can display it, and is not gated.
+
+When false, both RPCs run the original statement unchanged — one task per LABOR line item, `custom_title` = line name, legacy titles. Byte-identical legacy behavior is the point of the branch; the grouped path is additive beside it.
+
+### Legacy vs grouped materialization
+
+When the gate is true, the grouped branch delegates to `private.materialize_line_item_tasks_grouped(company_id, project_id, lines)`:
+
+1. **Lines already carried are skipped.** A line is done when a live task claims it as `source_line_item_id` *or* a live scope does (joined through its live parent task on the same project). This is the idempotency test, and it is why re-running a conversion adds nothing.
+2. **Untyped LABOR lines cannot be composed** — a line with no `task_type_ref` has no type to group by, so it becomes one task each, exactly as the legacy path, keeping the line name as `custom_title`.
+3. **Typed lines compose per estimate.** Because a task carries exactly one `source_estimate_id`, candidates are batched by `estimate_id` and handed to `public.compose_task_scopes`, ordered by `sort_order` then `line_item_id` for determinism. Each returned visit becomes one task.
+
+Per visit, the task takes `task_type_id` = the visit's `primary_task_type_id`, and its schedule-shaping defaults (`display_order`, `duration`, `task_color`) from the **primary line**. Title depends on shape: a multi-scope visit sets `custom_title` to **null**, so the client renders the auto-title (primary type display + `+N`); a single-scope visit keeps the line name, exactly as legacy.
+
+**Scope rows are written only for multi-scope visits.** A single-scope visit produces a plain task with zero scope rows — so conversion never emits a task with exactly one scope, and the single-type shape stays byte-identical to today. Scopes are inserted through the same `private.insert_task_scopes` helper the creation RPCs use, with `note` = the line name and `source_line_item_id` = that line, `display_order` following visit order.
+
+### Provenance rules
+
+Provenance is split deliberately, and both halves are load-bearing:
+
+- The **task** carries `source_line_item_id` = the **primary** line only, plus `source_estimate_id`.
+- **Every other sold line in the visit is carried by its scope's** `source_line_item_id`.
+
+So no single query on `project_tasks` alone sees all sold lines of a grouped conversion. Every consumer that asks "is this line converted?" must check both provenance surfaces. Two already do:
+
+- **Acceptance verification** in `sync_accepted_estimate_project_tasks` counts a required line as covered when a live task claims it **or** a live scope on a live task of the same project and estimate claims it. Without the scope half, a grouped conversion would fail its own completeness assert with `accepted_estimate_task_sync_incomplete` (`23514`).
+- **Material demand mapping** in `private.resolve_estimate_material_demand_plan` maps a line carried as a scope to the grouped task that owns it, via two `left join lateral` lookups — one for the line itself, one for its `parent_line_item_id` — each resolving through `task_scopes` → `project_tasks` on the same project and estimate, ordered by `created_at, id` and limited to one row. **This mapping applies regardless of the gate**, so a company whose grouped tasks were created by hand (ungated manual grouping) still gets correct material demand. Every sold line therefore maps to a task for materials, grouped or not.
+
+### Idempotency
+
+Repeat conversions add nothing. The pending-line filter in the grouped path excludes any line already carried by a live task or live scope, and the ungrouped path keeps its original guard. Task creation through `create_task_with_event` writes scopes only when the task row was freshly inserted, so a retried creation never duplicates scope rows either.
+
+### Verified 2026-09-01
+
+Against a Canpro-shaped fixture (vinyl + glass rail + gate + 6' tall + one untyped line):
+
+- Gate **on** ⇒ 3 tasks: vinyl as a single, the rail group carrying 3 scopes, and the untyped line as a single.
+- Gate **off** ⇒ 5 tasks, 0 scopes, legacy titles.
+- Repeat conversions add nothing in either mode; every sold line maps to a task for materials.
+- `set_task_scope_completion` exercised across all branches, including denial for a user without task-edit rights on the project.
+
+Production state at documentation time: `task_scopes` holds 0 rows and no company has the gate enabled.
+
+---
+
 *This document supersedes any prior informal notes about entity relationships. All implementation decisions should reference this document.*
