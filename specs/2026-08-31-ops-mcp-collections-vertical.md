@@ -1,20 +1,20 @@
 # OPS MCP Collections Vertical — Design
 
 **Date:** 2026-08-31
-**Status:** Implemented and verified locally; inactive, unapplied, undeployed
+**Status:** Production-released and dormant. The schema and application are live, but active MCP remains read-only v2 and production has zero v4 clients or grants.
 **Source:** `ops-software-bible/specs/2026-08-30-ops-mcp-vision-handoff.md`
 
 ## Objective
 
 Deliver the smallest complete Invisible Office vertical for the operator question “Who owes me money?” The capability returns exact, server-owned receivables aging facts and prepares one consolidated collection draft per debtor for explicit human approval. Preparation and approval never send a message, move money, issue a financial document, or make a legal threat.
 
-The implementation is local only. It does not push, deploy, apply a migration, activate an MCP exposure, or change live OAuth state.
+The production release installs the complete vertical without activating it. No connector can select v4, and no collection draft, approval, message, payment, or financial document is created merely by deployment.
 
-## Local implementation record
+## Production implementation record
 
-OPS-Web branch `feat/ops-mcp-collections-p2` implements this contract in commits `1e5fdd69`, `34844e43`, `277bc415`, `31e74969`, `983bc159`, `65eb6777`, and `1c521ea8`. The canonical application sources are `src/lib/agent-control-plane/contracts/collections.ts`, `src/lib/agent-control-plane/services/collections/`, `src/lib/agent-control-plane/registry/collections-capability.ts`, `src/lib/agent-control-plane/registry/capability-manifest.ts`, `src/lib/agent-control-plane/registry/mcp-exposure-catalog.ts`, `src/lib/agent-control-plane/mcp/server-factory.ts`, `src/lib/api/services/approval-queue-service.ts`, and `src/components/agent/collections-draft-preview.tsx`.
+OPS-Web branch `feat/ops-mcp-collections-p2` implemented this contract in commits `1e5fdd69`, `34844e43`, `277bc415`, `31e74969`, `983bc159`, `65eb6777`, and `1c521ea8`; the verified release is contained by production main `d5b0911b` and Ready Vercel deployment `dpl_3XHPSsdaLJSXgZQF6tu6Uzof8gAf`. The canonical application sources are `src/lib/agent-control-plane/contracts/collections.ts`, `src/lib/agent-control-plane/services/collections/`, `src/lib/agent-control-plane/registry/collections-capability.ts`, `src/lib/agent-control-plane/registry/capability-manifest.ts`, `src/lib/agent-control-plane/registry/mcp-exposure-catalog.ts`, `src/lib/agent-control-plane/mcp/server-factory.ts`, `src/lib/api/services/approval-queue-service.ts`, and `src/components/agent/collections-draft-preview.tsx`.
 
-Candidate migration `20260831140000_agent_collections_vertical.sql` is mirrored byte-for-byte under this Bible's `supabase/migrations/` directory. It has not been applied to any database and therefore describes a proposed local schema, not current production state.
+Source migrations `20260831140000_agent_collections_vertical.sql` and `20260831220500_agent_collections_fk_indexes.sql` are mirrored under this Bible's `supabase/migrations/` directory. Production ledger versions `20260831215642_agent_collections_vertical` and `20260831222256_agent_collections_fk_indexes` are applied to `ops-app` and archived byte-exact under this Bible's `migrations/` directory.
 
 ## Protected boundaries
 
@@ -192,3 +192,7 @@ Rejection uses a narrow database decision RPC so private draft state and public 
 - Queue-service tests proving approval cannot edit or send, rejection is coherent, replay is stable, and bulk/autonomous paths reject the action type.
 - Registry and runtime tests proving v2 and v3 remain unchanged, v4 is inactive, v4 grants only its exact scopes, and dispatch reaches only the collections service for a v4-pinned actor.
 - Type check, focused suite, broader agent-control-plane suite, migration lint/static validation, and final git diff/status audit.
+
+## Production release proof
+
+The exact release passed 2,913 agent-control-plane and collections tests, a clean no-cache TypeScript check, migration safety validation, byte-exact migration comparison, and a production build. Independent live readback found the four private collections tables RLS-enabled, policy-free, direct-grant-free, and empty; all six public RPCs are search-path pinned and executable only by `service_role`. V4 remains structurally present but unreachable: production has zero enabled v4 clients and zero live v4 grants, while active metadata remains the immutable read-only v2 contract. The release therefore creates no delivery, payment, financial-document, or customer-visible effect.
