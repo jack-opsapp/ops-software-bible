@@ -10200,4 +10200,16 @@ An eligible debtor receives one deterministic consolidated draft. The draft name
 
 ---
 
+## 39. Invisible Office Sales Truth (local release candidate, dormant)
+
+“Why are we losing leads, and what should I fix first?” is a bounded sales control sheet, not a model opinion. OPS measures the last 180 company-local days of non-deleted, non-merged opportunities and returns resolved close rate, open-outcome sensitivity, source attribution, recorded loss reasons, first-response time, and completed pipeline velocity. Every metric exposes its population, coverage, sample, confidence, and source references. A source bound or evidence gap produces an insufficient result instead of false precision.
+
+The first recommendation is the answer to what should be fixed first. It comes from a fixed server-owned priority: repair bounded sources, capture missing outcomes or loss reasons, restore stage history or correspondence linkage, reduce measured response delay, review a dominant recorded loss reason or weak measured source, or clear the slowest sufficiently observed stage. At most three items are returned. They carry structured threshold facts and `causal_claim: false`; the tool never says a source, delay, or stage caused a loss.
+
+The public tool accepts `{}` only. OAuth and current permission authority require operations/correspondence read scopes plus company-wide pipeline and email visibility. One service-role-only RPC rechecks the exact actor/company/client/grant/revision, manifest v13, and dormant exposure v7 before reading. No customer name, message body, note, title, email address, raw loss label, or transport secret is returned. The feature creates no durable result, action, notification, routine, draft, message, financial effect, model call, or UI.
+
+**Release boundary:** the implementation and migration are local only on the Phase 5 worktrees rooted at authoritative Phase 4 commit `cf858e0d`. Production remains on read-only exposure v2. No push, deployment, migration apply, client, grant, or v7 activation occurred. Canonical metric, data, proof, cost, and later release contracts: `specs/2026-09-01-ops-mcp-sales-truth-vertical.md`.
+
+---
+
 **End of Document**
