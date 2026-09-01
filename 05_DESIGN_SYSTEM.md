@@ -2714,7 +2714,8 @@ The OPS web app uses a defined z-index scale. Higher z-index = closer to the vie
 | **floating-ui** | 1500–1600 | 400 | Persistent floating elements | Bug report btn (1500), action prompts (1500), FAB backdrop (1540), FAB (1550), window dock (1560) |
 | **window** | 2000+ | 1000 | Floating windows (dynamic) | Create forms — managed by `window-store.ts`, auto-increments on focus |
 | **modal** | 3000 | 2000 | Portaled dialogs & sheets | Radix Dialog/Sheet (rendered via portal to `<body>`) |
-| **map-controls** | 5000 | 4000 | Full-screen map page only | Map toggle button, map scale widget |
+| **map-controls** | 5000 | 3000 | Full-screen map page only | Map toggle button, map scale widget |
+| **picker** | 8000 | 1000 | Capture overlays that must sit above every product surface they let the operator point at | Bug-report element picker (`Z_PICKER` in `bug-report-element-picker.tsx`) |
 | **emergency** | 9000–9999 | — | Absolute top, blocks everything | Sign-out overlay (9999), lockout overlay (9000) |
 
 ### Rules

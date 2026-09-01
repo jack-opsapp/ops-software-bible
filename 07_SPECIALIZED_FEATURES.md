@@ -4825,6 +4825,47 @@ The Quick Actions tab replaces the prior bottom-right circular FAB (`floating-ac
 - Long-press edit mode (replaced by routed customize)
 - The bottom-right 52px circular FAB position
 
+#### Bug-Report Element Picker (OPS Web — 2026-08-31, bug `1f2bf7e9`)
+
+An operator filing a bug can point at the on-screen element the report is about, so triage receives that element's identity and a cropped screenshot of it instead of a full-page capture plus a verbal description ("the grey field in settings" → four candidate components).
+
+**Components:**
+- `src/components/ops/bug-report-element-picker.tsx` — portaled capture overlay (`data-element-picker-root`, `data-bug-report-ignore`, `role="dialog"`, `aria-modal`). Painted `rgba(0,0,0,0.35)` wash — never `backdrop-filter`, which flickers the dashboard on a full-viewport layer — crosshair cursor, hairline reticle (`outline var(--text-2)` on the `surface-hover` fill) following the hovered element with a `role · name` mono pill, and a bottom-left hint rail: `// CLICK AN ELEMENT · ESC CANCELS` · `[ TAB MOVES · ENTER SELECTS ]` · `[ CANCEL ]`.
+- `src/lib/utils/element-reference.ts` — the pure helpers: `describeElement`, `buildStableSelector`, `isPickable`, `resolvePickTarget`, `readComponentChain`, `pickFromPoint`, `computeCropRect`, `buildElementReference`, `captureElementCrop`.
+- `src/lib/types/bug-report-element.ts` — the `ElementReference` contract, `MAX_ELEMENT_REFERENCES = 3`, `ELEMENT_CROP_PADDING_PX = 24`.
+- `src/components/ops/bug-report-drawer.tsx` — the `[ SELECT ELEMENT ]` action, the element chips, and the submission wiring.
+- `src/app/admin/feedback/_components/feedback-content.tsx` — the admin `ELEMENTS (n)` section.
+- i18n: `bugReport.picker.*` (flat dotted keys) in `src/i18n/dictionaries/{en,es}/common.json`.
+
+**Behavior.** Every reporter — minimal form and power-user form alike — gets `[ SELECT ELEMENT ]` in the auto-capture block; at three references it reads `[ MAX 3 ELEMENTS ]` and disables. Activating it enters picking mode: the drawer stays mounted but goes fully transparent and inert (`data-picking="true"`), so the operator's typed text survives, and its outside-click dismiss and Escape-to-close are both suspended — either would otherwise close the form out from under the overlay. The overlay hit-tests with `document.elementsFromPoint` and skips its own subtree rather than toggling `pointer-events`, which flickers the cursor on every move. Not pickable: the overlay, the drawer, the create cluster, anything under a `data-bug-report-ignore` ancestor, `html`/`body`, and zero-size elements. SVG descendants resolve to their nearest HTML ancestor; an `<iframe>` is picked as itself. Selection is a click, a tap, or Enter on the keyboard-focused element (the reticle follows `focusin`, so the keyboard path sees what the pointer path sees). On select the reticle flashes to `--ops-accent` for one beat — the only accent on screen, and only at the instant of commitment — a crop is captured, and the drawer returns carrying an `ELEMENT :: {name}` chip with a 28px thumbnail and a remove control. Esc or `[ CANCEL ]` aborts and returns focus to the action. Motion is the single OPS curve `cubic-bezier(0.22, 1, 0.36, 1)`: 150ms overlay fade, a `requestAnimationFrame`-driven reticle with a 120ms transform/size transition, 150ms flash, all zeroed under `prefers-reduced-motion`. New z-index layer **`picker: 8000`** — above modals (3000) and map controls (5000), below emergency (9000). See `05_DESIGN_SYSTEM.md § 15`.
+
+**`ElementReference` contract** — stored as `bug_reports.custom_metadata.elementReferences: ElementReference[]`:
+
+| Field | Notes |
+|-------|-------|
+| `id` | client uuid, stable within the report |
+| `label` | aria-label → visible text (≤60) → placeholder → alt → title → tag name |
+| `role` | explicit `role` attribute, else implicit (button / link / textbox / checkbox / radio / combobox / generic) |
+| `tag` | lowercase tag name |
+| `selector` | bounded structural CSS path (≤6 levels) built from `data-testid` / `#id` / `aria-label` / `:nth-of-type` segments joined with `>`, stopping early at an anchor that already resolves uniquely. **Never utility classes** — Tailwind strings churn on every restyle, so a class-based path rots within a sprint |
+| `classes` | raw class attribute, kept because it is greppable |
+| `testId` | `data-testid` or null |
+| `text` | text snippet ≤120 |
+| `rect` / `page` / `viewport` | viewport rect at selection time, scroll-adjusted document coords, viewport size |
+| `componentChain` | nearest ≤3 named React components walked from the `__reactFiber$…` key — best effort, and usually empty in production builds because component names are minified |
+| `capturedAt` | ISO timestamp |
+| `attachmentIndex` | index into `bug_reports.additional_attachments` for this reference's crop, or null |
+
+**Storage — no migration.** `bug_reports.custom_metadata` (`jsonb`) and `bug_reports.additional_attachments` (`text[]`) already existed; this feature adds no columns. A crop is cut from a fresh full-page `modern-screenshot` capture, bounded to the element's rect plus 24px padding, clamped to the viewport and scaled to device pixels. `buildCaptureOptions()` in the drawer is the single source of truth for capture scale/filter/background so the full screenshot and the element crops cannot drift apart. Capture runs once per selection, never on hover — a full-body capture costs a few hundred milliseconds on a dense page, which is what the `[ CAPTURING ELEMENT… ]` state exists for.
+
+Crops upload **after** the report row exists, through the existing screenshot route extended with `kind=element&index=n`, landing at `bug-reports/{companyId}/{reportId}/element-{n}.png` with the `s3:` scheme prefix (or `{companyId}/{reportId}/element-{n}.png`, no prefix, under `STORAGE_BACKEND=supabase`). The route reads the row's current `additional_attachments`, appends, writes back, and responds `{ success, path, attachmentIndex }` — the real array position, which is what `attachmentIndex` points at. The drawer uploads sequentially, so arrival order and index order agree; returning the actual position lets a caller detect drift instead of assuming it. `index` must be an integer 0–9 or the route returns 400. Without `kind=element` the route behaves exactly as before: it writes `screenshot_url` and never touches `additional_attachments`; an element crop is the mirror image and never overwrites the screenshot. Auth, company-membership, and reporter checks apply identically to element crops. A failed crop capture or a failed upload is logged and tolerated exactly like the main screenshot — the reference still lands, carrying `attachmentIndex: null` and consuming no attachment slot.
+
+**Admin.** `BugReportDetail` renders an `ELEMENTS (n)` section under SCREENSHOT. Per reference: the crop thumbnail presigned through `GET /api/admin/bug-reports/screenshot?path=…` (`[NO CROP]` when the reference has none), `role · label`, the selector in mono with a `COPY` action, classes, text snippet, rect as `x,y · w×h`, page coordinates, and the component chain joined with ` › `. The metadata shape is type-guarded on read — it is client-written JSON and is never trusted. The raw METADATA dump stays as the audit trail. `getBugReports()` now also selects `additional_attachments`.
+
+**Triage.** No change was required: `GET /api/cron/bug-triage/bug` selects `*`, so the per-bug payload already carries `custom_metadata` and `additional_attachments`. The backlog endpoint's narrow column projection is a work-queue listing by design; the triage agent fetches the full row per bug.
+
+**Out of scope:** the iOS reporter (a different widget), marking multiple points on one screenshot, and editing a reference after selection — remove and re-pick instead.
+
 ### §14.3.4 Expenses Ready for Review — server-side auto-send (2026-06-01)
 
 Emitted by the daily envelope sweep (`public.expense_envelope_sweep()`, pg_cron `expense_envelope_sweep_daily` at 15:15 UTC) when an `open` expense envelope passes `period_end + expense_settings.auto_submit_grace_days` and is auto-sent (flipped `open → pending_review`). **One notification per envelope per approver** — not per expense. This is the server-authoritative replacement for the iOS client's on-submit notification: even a stale app version's expenses now get an envelope and a single review notification when the sweep sends. See `09_FINANCIAL_SYSTEM.md § Server-Authoritative Expense Envelopes (2026-06-01)`.
