@@ -2014,6 +2014,20 @@ Recipients lookup via `public.users_with_permission(company_id, 'finances.view')
 
 ---
 
-**Last Updated**: 2026-05-25
-**Document Version**: 1.5
+## MCP Hiring Break-Even Definition (local candidate, 2026-09-01)
+
+`analyze_hiring_break_even` is the canonical read-only answer to “If I hire a second member in this role at this all-in hourly cost, when does it stop costing me money?” It is implemented locally under metric revision `hiring-break-even:2026-08-31.v1` and dormant MCP exposure v5. It is not deployed or customer-live.
+
+The submitted hourly cost is the complete employer cost per paid hour in the company currency. OPS adds no burden multiplier. The host boundary accepts at most four decimals, but the value must be exactly representable in the resolved currency's canonical minor unit; incompatible precision is rejected, never rounded. The shared currency helper includes current two-decimal CHF, XCG, and ZWG. The source window is the 13 complete company-local ISO weeks before the current local week, anchored from the exact requested observation instant; the contract independently reconstructs the local business date and ISO-week Monday. Revenue is non-void payment cash received in-window on project-linked invoices. Direct cost is the in-window company-currency allocation of expenses in `submitted`, `approved`, or `reimbursed` status. Null currency or allocation evidence forces an insufficient result rather than disappearing. Cash contribution is revenue less that direct expense before existing labour, payroll burden, and overhead.
+
+OPS allocates each project's cash contribution to the selected role by that role's share of merged scheduled project minutes among active assigned members, then distributes the amount across weeks by the role's project minutes. Base utilization and contribution per productive hour use complete-window aggregates. Low/base/high sensitivity uses the 25th/50th/75th percentile of weekly contribution per paid-capacity hour.
+
+Weekly hire cost is the configured standard paid week times the submitted hourly cost. Required productive hours are weekly cost divided by contribution per productive hour; required revenue is weekly cost divided by contribution margin; required utilization is hourly cost divided by contribution per productive hour. A break-even date is returned only when observed contribution yield can cover the entire standard week's hire cost, and identifies the first configured working day in the next week when that cumulative amount is reached.
+
+The answer is not a forecast of future demand and assumes no ramp period, hiring fee, overtime, or additional work. Missing or ambiguous role data, incomplete/bounded source coverage, fewer than eight usable weeks, fewer than three financially observed role projects, invalid schedule/currency records, or non-positive revenue/contribution return an explicit insufficient result with no scenario numbers. Full contract: `specs/2026-08-31-ops-mcp-hiring-what-if-vertical.md`.
+
+---
+
+**Last Updated**: 2026-09-01
+**Document Version**: 1.6
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
