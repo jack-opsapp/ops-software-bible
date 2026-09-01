@@ -67,7 +67,7 @@ RLS: same company-membership policies as `project_tasks` (anon-role compatible â
 
 **Pair-spawner (`TaskPairSpawner`).** Evaluates the union of the created task's scope types as predecessors. Never spawns a type that is already a scope of the group (it's already part of the visit). Spawned tasks remain separate tasks, as today.
 
-**Recurrence.** Allowed. Materialized instances copy the scope set fresh (all open). Exceptions untouched.
+**Recurrence.** Recurrence templates (`task_recurrences`) stay single-type â€” the server cron that materializes instances is untouched. A materialized instance is an ordinary task and may gain scopes after the fact (the cleaning-service add-on case). No template-level scope concept in this build.
 
 **Materials / inventory.** Unchanged in this build: `task_materials` and consumption stay task-level. `task_scopes.source_line_item_id` preserves the lineage needed to partition later without a migration.
 
