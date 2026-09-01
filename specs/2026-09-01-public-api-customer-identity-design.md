@@ -97,7 +97,7 @@ Concurrency: `pg_advisory_xact_lock` on `hashtext(company_id || ':' || normalize
 | **P6 — Third-party OAuth clients** | Authorization-code + PKCE for external origins; 10-min access tokens; rotating refresh; pairwise refs. Only when an integrator needs it. | — |
 
 ## 7. Jackson-only gates
-- **G1** GO to create the dedicated Supabase project ($10/month). Blocks P1 live E2E, not P1 code.
+- **G1** ~~GO to create the dedicated Supabase project ($10/month).~~ **DONE 2026-09-01 23:21 UTC (Jackson GO):** project `ops-customer-auth`, ref `icjklxkgajefqqbqhqyx`, region `us-west-1`, org `zfkuhfgkgfmaqakokedt`, status ACTIVE_HEALTHY at creation. Remaining configuration (dashboard/Management API, before Task 9): disable Data API exposure (no schemas exposed), Email OTP expiry 600s, email template body carries `{{ .Token }}` with no confirmation link, custom SMTP = SendGrid sender already used by ops-web, disable anonymous sign-ins and all OAuth providers, keep email signups enabled (OTP creates the account), set Site URL to `https://app.opsapp.co`. Secret key goes to Vercel env `OPS_CUSTOMER_AUTH_SECRET_KEY` (server-only) alongside `OPS_CUSTOMER_AUTH_URL=https://icjklxkgajefqqbqhqyx.supabase.co`. Its publishable key is never shipped to a browser.
 - **G2** DNS for a dedicated customer host (recommended later, P3: e.g. `book.opsapp.co`); P1/P2 run path-based on `app.opsapp.co` under `/c/`.
 - **G3** Approval of the custom-fields section before P4.
 - **G4** Pushes/deploys to `main`, as always.
