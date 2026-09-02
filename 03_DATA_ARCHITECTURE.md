@@ -2406,7 +2406,35 @@ Migration `20260818014340_project_tasks_returning_visibility.sql` (applied to pr
 
 **Parity evidence.** 1,383 task × user comparisons on live data (account owner + two crew members; every task of the operator company including soft-deleted rows, plus 300 foreign-company rows): 0 verdict mismatches between the by-id and row-based functions, re-run green post-apply. Live probes: the failing insert echoes its row; soft-deleted tasks remain invisible; owner-visible live rows unchanged.
 
-**Kept / unchanged.** The by-id functions remain for their existing callers (`persist_task_mutation_notification_as_system`, `private.agent_user_can_access_entity`). Shipped-client audit: iOS task updates and soft-deletes are minimal-returning (no RETURNING evaluation), and web does not write `project_tasks` via PostgREST — so the row-based `deleted_at IS NULL` arm cannot regress any live request. A future UPDATE that sets `deleted_at` AND requests representation will (correctly) refuse to echo a row the actor can no longer see — use minimal returning for soft-deletes.
+**Kept / unchanged.** The by-id functions remain for their existing callers (`persist_task_mutation_notification_as_system`, `private.agent_user_can_access_entity`).
+
+> **CORRECTION (2026-09-02).** The shipped-client audit recorded here was wrong on both counts, and its remedy does not work. It read: *"iOS task updates and soft-deletes are minimal-returning (no RETURNING evaluation), and web does not write `project_tasks` via PostgREST … use minimal returning for soft-deletes."* Web **does** write `project_tasks` via PostgREST (`TaskService.deleteTask`, `RecurrenceService.softDelete`), and **minimal returning does not save a soft-delete** — see the next section.
+
+### project_tasks soft-delete — no client role can set `deleted_at` (2026-09-02)
+
+Migrations `20260902160624_soft_delete_project_task_rpc.sql` + `20260902161850_soft_delete_rpc_service_role_revoke.sql` (applied to prod, mirrored in `migrations/`). Web bug found 2026-09-01 during TASK GROUPS Phase 4 verification: deleting a task in OPS-Web returned PostgREST 403, the row stayed live, and nothing was shown to the user.
+
+**The trigger is ACL_SELECT, not `RETURNING`.** Postgres attaches SELECT policies as `WITH CHECK` options to **any** UPDATE whose target relation requires `ACL_SELECT` — and `WHERE id = $1` requires it. `role_scope_read` is false for a row with `deleted_at` set, so the post-update row fails the check and the statement is refused `42501`. `Prefer: return=minimal` changes nothing, because the read permission is demanded by the WHERE clause, not by the echo. Proven on prod by rolled-back probe as an admin holding `tasks.edit all`:
+
+| Statement (role `authenticated`) | Result |
+|---|---|
+| `update project_tasks set updated_at = now() where id = $1` | accepted |
+| `update project_tasks set deleted_at = now() where id = $1` (no RETURNING) | `42501 role_scope_read` |
+| `with s as (update … set deleted_at = now() where id = $1 returning 1) select count(*) from s` | `42501 role_scope_read` |
+
+Before 2026-08-18 the by-id policy re-read the **old** row (`deleted_at` still NULL) under the statement snapshot, which is the only reason soft-deletes ever passed. Fixing the self-lookup removed that accident.
+
+**The fix — new capability, no RLS change.** Soft-delete moves into `SECURITY DEFINER` functions owned by the table owner, so the `WITH CHECK` never applies, and authorization is enforced explicitly by `private.user_can_edit_task` — the same ladder `role_scope_update` expresses. No policy was edited and no read was weakened.
+
+- `private.soft_delete_project_task_for_actor(p_actor_user_id, p_task_id)` — company-scoped lookup (a foreign or unknown id is refused `42501`, never disclosed as "already deleted"), idempotent when `deleted_at` is already set, sets `ops.task_mutation_actor_id` around the write so the automation triggers attribute the actor. postgres-only ACL.
+- `public.soft_delete_project_task(p_task_id uuid) → jsonb` — resolves the actor from the JWT, refuses any `auth.role()` other than `anon`/`authenticated`, EXECUTE to `anon` + `authenticated`. Returns `{ok, deleted, task_id, deleted_at}`; `deleted:false` means it was already gone.
+- `private.soft_delete_task_recurrence_for_actor` / `public.soft_delete_task_recurrence(p_recurrence_id uuid) → jsonb` — retires the template **and** its future, still-active occurrences in one transaction, skipping occurrences the actor may not edit (as row security skipped them before). Returns `{ok, recurrence_id, recurrence_deleted, deleted_count, skipped_count}`. The former two-step PATCH deleted the template and then stranded every occurrence on the same refusal.
+
+Row triggers (schedule version, parent-lifecycle guard, project team recompute, agent read revisions, reminders) fire exactly as they did for the PATCH. Behavioral contract: `ops-web tests/sql/soft-delete-project-task-rpc-contract.sql`, wired into the CI migration-contract job — it reproduces the refusal on the pre-migration shape before applying the migration, then exercises every branch of both RPCs.
+
+**Still open: the iOS twin.** `TaskRepository.softDelete` (`OPS/Network/Supabase/Repositories/TaskRepository.swift`) still PATCHes `deleted_at` directly and is refused the same way; reached from the `OutboundProcessor` `projectTask` delete lane. No parked `projectTask` **delete** op appears in `analytics_events` in the 20 days before 2026-09-02, so it is a latent break rather than an observed loss. Filed as bug `db15baf2`; the fix is to call `public.soft_delete_project_task`.
+
+**Rule for this class.** Any table whose read policy hides soft-deleted rows cannot have `deleted_at` set by a client role through PostgREST, with or without RETURNING. Route those soft-deletes through a definer RPC that re-states the authorization ladder — never by relaxing the read policy.
 
 ### clients + projects read policies — same row-based RETURNING fix (2026-08-19)
 
