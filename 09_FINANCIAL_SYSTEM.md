@@ -611,6 +611,80 @@ formatCurrency(amount, currency?)     // "USD" default → "$1,234.56"
 formatTaxRate(rate)                   // 0.0875 → "8.75%"
 ```
 
+### Line Item Calculator (web, 2026-08-31)
+
+A calculator inside the shared line-item editor
+(`ops-web/src/components/ops/line-item-editor.tsx`). Because that editor is
+rendered by the Books estimate dialog (`estimate-form-modal.tsx`), the floating
+create-estimate window (`create-estimate-modal.tsx`) **and** the invoice modal
+(`invoice-form-modal.tsx`), the calculator ships to all three at once. Origin:
+feature request `be25c30e`.
+
+**Entry point.** A `CALC` text chip in the editor's action row beside "Add Line
+Item" (28px compact tier). It is a text chip, not a glyph — lucide `Calculator`
+already means *estimate* in the FAB, the client-workspace tab and the finance
+nav.
+
+**Placement.** Radix popover rendered with `contentClassName="z-modal"` (3000).
+The default popover layer (`z-dropdown`, 1000) renders behind both the floating
+window (z 2000+) and the Books dialog (z 3000). Anchored to the action row, not
+to a row, so the floating window's `overflow-y-auto` shell cannot clip it.
+
+**Modes** — `CALC` (expression + keypad), `AREA` (length × width, count, waste),
+`LINEAR` (a run of lengths, waste), `CONVERT` (from/to within one dimension).
+
+**Math** (`ops-web/src/lib/utils/estimate-calc/`):
+
+- `expression.ts` — tokenizer → shunting-yard → RPN fold over `+ - * / ( ) %`
+  with unary minus, the `×`/`÷` glyphs and `12x16` as multiply. **No `eval` and
+  no `Function` constructor**; a test reads the module source to pin that.
+  Errors: `empty`, `malformed`, `divide_by_zero`, `out_of_range`.
+- `measure.ts` — `computeArea`, `computeLinear`, `convert`, `UNIT_GROUPS`.
+  Every conversion routes through one SI anchor per dimension using the exact
+  1959 international definitions (1 ft = 0.3048 m, 1 in = 0.0254 m,
+  1 yd = 0.9144 m); area and volume factors are derived, never restated.
+  Cross-dimension conversion throws.
+
+**Rounding.** `Number(value.toFixed(2))` — ties away from zero on the decimal
+expansion of the stored double. `2.345 → 2.35` and `0.125 → 0.13`, but
+`1.005 → 1.00` because it is stored as 1.00499999999999989. Correcting that
+needs a decimal library for an error of a hundredth of a cent. Display adds
+thousands grouping and trims trailing zeros (`192`, `1,240.57`); insertion
+passes the plain number.
+
+**Magnitude gate.** Results beyond `|1e12|` return `out_of_range` rather than a
+silently mangled number — past the safe-integer range the cent-rounding
+round-trip loses whole units.
+
+**Insertion rule.** The target is the last **focused** quantity or unit-price
+field, captured on `onFocus` and never cleared on blur (clicking the chip blurs
+the field the operator was just in). It is then derived against the `items`
+array, so deleting or reordering the targeted line resolves itself. The write
+always goes through `updateItem(id, field, value)` — the two numeric inputs
+commit via `parseFloat(e.target.value) || 0` on every keystroke, so a DOM-level
+write would be discarded on the next render, and a partial value would snap to
+0. After insert the popover yields focus control to the editor, which returns
+focus to the field that received the number.
+
+**i18n.** New `estimate-calculator` namespace (en + es), registered in
+`ops-web/src/i18n/types.ts`. The surrounding line-item editor remains
+un-internationalised.
+
+**Non-goals / known gaps:**
+
+- The calculator does **not** set a line's `unit` / `unitId`. The estimate row
+  exposes no unit control at all; that is a separate editor change.
+- **Shown work is displayed but never persisted.** `LineItemRow` carries no
+  description or notes field — only `name` is free text — so the editor
+  declares `descriptionSupported={false}` and the `[ ADD MATH TO DESCRIPTION ]`
+  toggle never renders. The DB-level `LineItem` type *does* have `description`,
+  but the editor's row model drops it and no submit path carries it. Wiring it
+  up means touching `LineItemRow`, both row factories and all three submit
+  paths.
+- Working strings (`12 ft × 16 ft = 192 sq ft`) are English-only, alongside the
+  editor's wider i18n debt.
+- No calculator history is persisted; state resets when the popover closes.
+
 ### Money Rendering Canon (cross-platform, 2026-07-28)
 
 Money renders in the **en_US locale on every device**, both platforms. Web:
