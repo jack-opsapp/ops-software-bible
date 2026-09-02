@@ -10226,4 +10226,20 @@ The feature is read-only and invisible: no setup screen, projection record, noti
 
 ---
 
+## 41. Invisible Office Recurring Price Preview (local release candidate, dormant)
+
+“Raise every [recurring service] account 8% starting [month], draft the notices, flag who’ll walk” is a bounded mass-action preview, not a permission to change prices or contact customers. The host supplies one service selector, exact percentage, and effective month. OPS resolves the current tenant, accounts, recurrence schedules, contractual policy, accepted price source, tax treatment, notice contact, provider correspondence, and risk rules.
+
+An account is included only when the service and client/service identity are unique, exactly one relevant recurrence resolves, the recurrence and customer are active, a private policy explicitly allows adjustment, grandfathering has ended, the pinned accepted estimate or delivered invoice line has not changed, optional-selection flags are explicit, line and parent-document discounts are zero, tax and company currency are valid, one verified recipient exists, correspondence is readable, and the first actual service occurrence in the requested month satisfies the notice period. Multiple recurrence rows produce one account exclusion with two hash-bound recurrence sources. Missing or invalid tax evidence preserves the verified price and produces `tax_unavailable`. Any ambiguity or missing evidence produces an exact exclusion; stale context or a reached source/result/work bound rejects the package.
+
+The database first returns a bounded recurrence catalog whose RRULEs have passed a non-expanding canonical uppercase alphabet gate. The service removes only histories it can prove ended before the month while sharing one aggregate work ceiling across the initial and revalidation classifications, then requests the exact selected IDs. That detail call recomputes the catalog and returns it with the source facts under one PostgreSQL statement snapshot. Catalog, selection, and account-evidence drift all fail as stale; invalid target-month exception data stays conservatively in scope. Authority is revalidated after the source phases, and the final SQL assertion occurs immediately before the ephemeral preview returns.
+
+The preview shows current and proposed rates, tax, exact RRULE, exact effective date, notice rule, complete email copy, fixed risk signals, and stable evidence references. Price and tax math use checked integer minor units and deterministic half-away-from-zero rounding. Churn risk is high only when the latest classified state is explicit cancellation or price objection, medium when the latest state is complaint/overcharge or there is coherent positive collectible late-payment evidence, and otherwise unknown. There is no low label; a later noun-bound explicit resolution supersedes older negative evidence, while an unrelated materials, logistics, or quantity message does not. Raw correspondence never enters the result, and every returned business value is serialized as untrusted data.
+
+The package is ephemeral and hash-bound for exact replay comparison. It persists no provider draft or preview/notice business content and creates no approval action, notification, routine, price write, contract edit, invoice change, service change, send path, or commit tool. Shared transport audit/rate metadata still applies. Active production remains v2. No v9 client/grant, deployment, migration application, canary, or activation exists. Canonical contract: `specs/2026-09-01-ops-mcp-recurring-price-preview-vertical.md`.
+
+Exposure v9's four inherited tools are callable only through their historical manifest/exposure pair or the exact v15/v9 authority bridge. The v15/v9 path additionally requires the exact registered 16-scope client ceiling and serialized scope, v4 consent, and exact accepted labels. This keeps additive discovery and real grant execution aligned without weakening historical grants.
+
+---
+
 **End of Document**

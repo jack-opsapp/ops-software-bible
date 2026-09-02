@@ -2042,6 +2042,24 @@ Open invoice balance is invoice total less non-void payments dated no later than
 
 ---
 
+## MCP Recurring Service Price Preview Definition (local candidate, 2026-09-01)
+
+`prepare_recurring_service_price_change` is the canonical preview for a percentage rate change across one exact recurring service. It is implemented locally under schema revision `2026-09-01.v1` and dormant MCP exposure v9. It is not deployed or customer-live, and no commit or send capability exists.
+
+The v9 bundle keeps inherited hiring and payroll analyses executable without broadening authority: each inherited tool accepts only its historical manifest/exposure pair or v15/v9, and every v15/v9 route binds the exact registered client ceiling/serialization, v4 consent, and accepted labels before reading finance or operating data.
+
+Current price comes only from the exact accepted estimate or delivered invoice line item pinned by an explicit private account policy. Its optional-selection flags must be non-null, and both its line-item discount and accepted parent-document discount must be zero. The policy must also state that adjustment is allowed, identify one notice contact, define the notice period, and disclose any grandfathering date. An active recurrence, matching client/project/task type, unchanged price-source hash, valid tax treatment, one verified email identity, readable provider correspondence, and a real service occurrence in the requested month are all required. Multiple recurrence rows for one client/service become one account exclusion with two hash-bound recurrence sources. Missing, inactive, unsafe, or out-of-range tax evidence preserves the verified price and produces `tax_unavailable`. Missing or ambiguous evidence excludes the account; a source overflow, stale request, or unsafe result fails the whole package.
+
+For each included account, the proposed unit price is the current minor-unit value multiplied by the exact decimal percentage and rounded half away from zero at the currency minor unit. Tax is recomputed from the pinned line-item treatment and active tax rate. The preview does not change quantity, discount, minimum charge, schedule, contract, invoice, or service. Its effective date is the first actual recurrence occurrence in the requested month after applying recorded skip/reschedule exceptions, and that date must satisfy the policy notice period.
+
+Each notice states the current rate, proposed rate, unit, tax treatment, effective date, and unchanged service schedule without inventing a rationale. Churn risk is an evidence label rather than a behavioral prediction: the latest explicit cancellation or price objection state is high; the latest complaint/overcharge state or coherent positive collectible late payment is medium; all other, resolved, contradictory, missing, unreadable, or insufficient history is unknown. There is no low label. A resolution must bind the same service/price/billing subject, so unrelated materials or logistics text cannot erase older evidence. Only fixed signal codes and hash-bound source references return—never raw correspondence.
+
+The source route reads a bounded recurrence catalog first. RRULEs must pass a non-expanding canonical uppercase alphabet gate, and both catalog classifications share one aggregate work ceiling. The service then asks for only the selected detail. That second RPC returns a fresh catalog and the detail under one PostgreSQL statement snapshot; catalog, selection, recurrence evidence, and authority drift fail closed. The final SQL authority assertion runs immediately before return.
+
+The package is ephemeral and expires after 24 hours. Stable context/source-bound per-account preview IDs and one canonical plan hash over every evaluated source revision allow exact replay comparison, but there is no persisted draft/preview business content, approval record, action queue, notice delivery, price write, or commit path. Shared transport audit/rate metadata still applies. Full contract: `specs/2026-09-01-ops-mcp-recurring-price-preview-vertical.md`.
+
+---
+
 **Last Updated**: 2026-09-01
 **Document Version**: 1.6
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
