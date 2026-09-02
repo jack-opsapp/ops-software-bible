@@ -2014,9 +2014,9 @@ Recipients lookup via `public.users_with_permission(company_id, 'finances.view')
 
 ---
 
-## MCP Hiring Break-Even Definition (local candidate, 2026-09-01)
+## MCP Hiring Break-Even Definition (production-released, dormant, 2026-09-02)
 
-`analyze_hiring_break_even` is the canonical read-only answer to “If I hire a second member in this role at this all-in hourly cost, when does it stop costing me money?” It is implemented locally under metric revision `hiring-break-even:2026-08-31.v1` and dormant MCP exposure v5. It is not deployed or customer-live.
+`analyze_hiring_break_even` is the canonical read-only answer to “If I hire a second member in this role at this all-in hourly cost, when does it stop costing me money?” It is production-released under metric revision `hiring-break-even:2026-08-31.v1` and dormant MCP exposure v5. It is not activated or customer-live.
 
 The submitted hourly cost is the complete employer cost per paid hour in the company currency. OPS adds no burden multiplier. The host boundary accepts at most four decimals, but the value must be exactly representable in the resolved currency's canonical minor unit; incompatible precision is rejected, never rounded. The shared currency helper includes current two-decimal CHF, XCG, and ZWG. The source window is the 13 complete company-local ISO weeks before the current local week, anchored from the exact requested observation instant; the contract independently reconstructs the local business date and ISO-week Monday. Revenue is non-void payment cash received in-window on project-linked invoices. Direct cost is the in-window company-currency allocation of expenses in `submitted`, `approved`, or `reimbursed` status. Null currency or allocation evidence forces an insufficient result rather than disappearing. Cash contribution is revenue less that direct expense before existing labour, payroll burden, and overhead.
 
@@ -2028,9 +2028,9 @@ The answer is not a forecast of future demand and assumes no ramp period, hiring
 
 ---
 
-## MCP Payroll Readiness Definition (local candidate, 2026-09-01)
+## MCP Payroll Readiness Definition (production-released, dormant, 2026-09-02)
 
-`check_payroll_readiness` is the canonical read-only answer to “Can I make payroll on the 15th?” It is implemented locally under metric revision `payroll-readiness:2026-09-01.v1` and dormant MCP exposure v8. It is not deployed or customer-live.
+`check_payroll_readiness` is the canonical read-only answer to “Can I make payroll on the 15th?” It is production-released under metric revision `payroll-readiness:2026-09-01.v1` and dormant MCP exposure v8. It is not activated or customer-live.
 
 Current cash is the signed operator-maintained `expense_settings.forecast_current_balance`, not a bank feed. A negative balance is a truthful deficit. It must be captured within 24 hours. Scheduled obligations must be confirmed complete through the target date within 24 hours and after every included recurrence update, with microsecond ordering preserved. Payroll is an explicitly classified recurring expense due on the requested date with an exact company-local due time; the cutoff is the latest payroll time that day, including six-digit fractional precision. A same-day request after that exact cutoff is insufficient evidence rather than a retrospective cash test.
 
@@ -2042,9 +2042,9 @@ Open invoice balance is invoice total less non-void payments dated no later than
 
 ---
 
-## MCP Recurring Service Price Preview Definition (local candidate, 2026-09-01)
+## MCP Recurring Service Price Preview Definition (production-released, dormant, 2026-09-02)
 
-`prepare_recurring_service_price_change` is the canonical preview for a percentage rate change across one exact recurring service. It is implemented locally under schema revision `2026-09-01.v1` and dormant MCP exposure v9. It is not deployed or customer-live, and no commit or send capability exists.
+`prepare_recurring_service_price_change` is the canonical preview for a percentage rate change across one exact recurring service. It is production-released under schema revision `2026-09-01.v1` and dormant MCP exposure v9. It is not activated or customer-live, and no commit or send capability exists.
 
 The v9 bundle keeps inherited hiring and payroll analyses executable without broadening authority: each inherited tool accepts only its historical manifest/exposure pair or v15/v9, and every v15/v9 route binds the exact registered client ceiling/serialization, v4 consent, and accepted labels before reading finance or operating data.
 
@@ -2060,6 +2060,6 @@ The package is ephemeral and expires after 24 hours. Stable context/source-bound
 
 ---
 
-**Last Updated**: 2026-09-01
-**Document Version**: 1.6
+**Last Updated**: 2026-09-02
+**Document Version**: 1.7
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.

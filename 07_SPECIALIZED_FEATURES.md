@@ -10200,7 +10200,7 @@ An eligible debtor receives one deterministic consolidated draft. The draft name
 
 ---
 
-## 39. Invisible Office Sales Truth (local release candidate, dormant)
+## 39. Invisible Office Sales Truth (production-released, dormant)
 
 “Why are we losing leads, and what should I fix first?” is a bounded sales control sheet, not a model opinion. OPS measures the last 180 company-local days of non-deleted, non-merged opportunities and returns resolved close rate, open-outcome sensitivity, source attribution, recorded loss reasons, first-response time, and completed pipeline velocity. Every metric exposes its population, coverage, sample, confidence, and source references. A source bound or evidence gap produces an insufficient result instead of false precision.
 
@@ -10208,11 +10208,11 @@ The first recommendation is the answer to what should be fixed first. It comes f
 
 The public tool accepts `{}` only. OAuth and current permission authority require operations/correspondence read scopes plus company-wide pipeline and email visibility. One service-role-only RPC rechecks the exact actor/company/client/grant/revision, manifest v13, and dormant exposure v7 before reading. No customer name, message body, note, title, email address, raw loss label, or transport secret is returned. The feature creates no durable result, action, notification, routine, draft, message, financial effect, model call, or UI.
 
-**Release boundary:** the implementation and migration are local only on the Phase 5 worktrees rooted at authoritative Phase 4 commit `cf858e0d`. Production remains on read-only exposure v2. No push, deployment, migration apply, client, grant, or v7 activation occurred. Canonical metric, data, proof, cost, and later release contracts: `specs/2026-09-01-ops-mcp-sales-truth-vertical.md`.
+**Release boundary:** the implementation and migration are production-released in OPS-Web `a763f1a0` and ledger `20260902194703_agent_sales_truth_read`. Production remains on read-only exposure v2, with no v7 client, grant, or activation. Canonical metric, data, proof, cost, and activation contracts: `specs/2026-09-01-ops-mcp-sales-truth-vertical.md`.
 
 ---
 
-## 40. Invisible Office Payroll Readiness (local release candidate, dormant)
+## 40. Invisible Office Payroll Readiness (production-released, dormant)
 
 “Can I make payroll on the 15th?” is a bounded cash control sheet, not a bank balance, collection promise, or general forecast. OPS reads the operator-maintained current cash balance, every recorded recurring obligation through the payroll cutoff, approved unpaid reimbursements, reconciled open invoices, and each payer's actual fully settled invoice history. The host supplies only the target date.
 
@@ -10222,11 +10222,11 @@ Payroll and other recurring expenses must be explicitly classified. Payroll requ
 
 Best and base receivable scenarios use the payer's empirical p25 and p50 delay from at least five durable net settlements. Non-void negative adjustments, same-day reversals, and later credits all affect the true settlement date; non-finite or overlong payment/invoice amounts never become settlement evidence. P75 is evidence only. Worst assumes zero receivable cash. Every money value is exact under the frozen ISO currency table, aggregates use checked integer arithmetic, every obligation occurrence and receivable prediction is itemized, and duplicate provider identities or stored-versus-calculated balance conflicts fail closed.
 
-The feature is read-only and invisible: no setup screen, projection record, notification, queue item, draft, message, payment, document, routine, or model call. Active production remains v2. No v8 client/grant, deployment, migration application, or activation exists. Canonical contract: `specs/2026-09-01-ops-mcp-payroll-readiness-vertical.md`.
+The feature is read-only and invisible: no setup screen, projection record, notification, queue item, draft, message, payment, document, routine, or model call. Its schema and application are production-released, while active production remains v2. No v8 client/grant or activation exists. Canonical contract: `specs/2026-09-01-ops-mcp-payroll-readiness-vertical.md`.
 
 ---
 
-## 41. Invisible Office Recurring Price Preview (local release candidate, dormant)
+## 41. Invisible Office Recurring Price Preview (production-released, dormant)
 
 “Raise every [recurring service] account 8% starting [month], draft the notices, flag who’ll walk” is a bounded mass-action preview, not a permission to change prices or contact customers. The host supplies one service selector, exact percentage, and effective month. OPS resolves the current tenant, accounts, recurrence schedules, contractual policy, accepted price source, tax treatment, notice contact, provider correspondence, and risk rules.
 
@@ -10236,7 +10236,7 @@ The database first returns a bounded recurrence catalog whose RRULEs have passed
 
 The preview shows current and proposed rates, tax, exact RRULE, exact effective date, notice rule, complete email copy, fixed risk signals, and stable evidence references. Price and tax math use checked integer minor units and deterministic half-away-from-zero rounding. Churn risk is high only when the latest classified state is explicit cancellation or price objection, medium when the latest state is complaint/overcharge or there is coherent positive collectible late-payment evidence, and otherwise unknown. There is no low label; a later noun-bound explicit resolution supersedes older negative evidence, while an unrelated materials, logistics, or quantity message does not. Raw correspondence never enters the result, and every returned business value is serialized as untrusted data.
 
-The package is ephemeral and hash-bound for exact replay comparison. It persists no provider draft or preview/notice business content and creates no approval action, notification, routine, price write, contract edit, invoice change, service change, send path, or commit tool. Shared transport audit/rate metadata still applies. Active production remains v2. No v9 client/grant, deployment, migration application, canary, or activation exists. Canonical contract: `specs/2026-09-01-ops-mcp-recurring-price-preview-vertical.md`.
+The package is ephemeral and hash-bound for exact replay comparison. It persists no provider draft or preview/notice business content and creates no approval action, notification, routine, price write, contract edit, invoice change, service change, send path, or commit tool. Shared transport audit/rate metadata still applies. Its schema and application are production-released, while active production remains v2. No v9 client/grant, canary, or activation exists. Canonical contract: `specs/2026-09-01-ops-mcp-recurring-price-preview-vertical.md`.
 
 Exposure v9's four inherited tools are callable only through their historical manifest/exposure pair or the exact v15/v9 authority bridge. The v15/v9 path additionally requires the exact registered 16-scope client ceiling and serialized scope, v4 consent, and exact accepted labels. This keeps additive discovery and real grant execution aligned without weakening historical grants.
 

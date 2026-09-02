@@ -6327,9 +6327,9 @@ The migration also admits the separate `mcp-collections-prepare:2026-08-31.v1` d
 
 Canonical behavior and release boundaries: `specs/2026-08-31-ops-mcp-collections-vertical.md`.
 
-## Invisible Office Hiring What-If State (local release candidate, dormant)
+## Invisible Office Hiring What-If State (production-released, dormant)
 
-Source migration `supabase/migrations/20260901045000_agent_hiring_what_if_read.sql` defines the database boundary for the third Invisible Office vertical, `analyze_hiring_break_even`. It is a local, unapplied release candidate. Active production MCP remains read-only v2; deployed dormant v3 day-closeout and v4 collections are unchanged; v5 has no client, grant, activation, or customer-live proof.
+Source migration `supabase/migrations/20260901045000_agent_hiring_what_if_read.sql` defines the database boundary for the third Invisible Office vertical, `analyze_hiring_break_even`. Production ledger `20260902194603_agent_hiring_what_if_read` is applied. Active production MCP remains read-only v2; v5 has no client, grant, activation, or customer-live authority.
 
 The migration creates no table, policy, trigger, action, notification, routine, or durable analytical record. It adds owner-only `private.assert_agent_hiring_what_if_authority(...)`, service-role-only `public.read_agent_hiring_what_if_as_system(...)`, and one partial covering index `idx_site_visits_agent_hiring_history_v1` on the booked, non-cancelled historical site-visit range. It also corrects the existing same-signature canonical ISO 4217 helper so CHF, XCG, and ZWG resolve to their current two-decimal minor unit through the existing nullable and money-conversion wrappers. Both hiring functions are security-definer functions with empty pinned search paths. The public RPC revokes execution from app roles and grants only `service_role`; the private helper has no app-role grant.
 
@@ -6337,9 +6337,9 @@ The read binds current actor, company, grant, client, grant revision, exact scop
 
 The site-visit index is necessary because the current availability index excludes completed visits and the general booked-order index is not ordered for this company + scheduled-time history scan. The query bounds scheduled time on both sides to the 13-week window plus a one-day maximum-duration overlap allowance. Migration postflight verifies the exact B-tree keys, included fields, options, readiness, uniqueness, and predicate. Its PostgreSQL 17 plan proof confirms both time comparisons are index conditions, while a negative case proves a wrong same-named index aborts the migration. A permanent SHA-256-pinned disposable-database runner also proves function ACLs, tenant/grant denial, completed-visit inclusion, one-member-only time-off removal, overlap merging, three-project financial attribution, current CHF/XCG/ZWG minor-unit handling, and fail-closed null currency/allocation behavior. The index consumes existing database storage and adds maintenance to qualifying site-visit writes if separately approved for deployment; there is no new paid service or storage product. Canonical definition and release boundaries: `specs/2026-08-31-ops-mcp-hiring-what-if-vertical.md`.
 
-## Invisible Office Sales Truth State (local release candidate, dormant)
+## Invisible Office Sales Truth State (production-released, dormant)
 
-Source migration `supabase/migrations/20260901153000_agent_sales_truth_read.sql` defines the database boundary for the fifth Invisible Office vertical, `analyze_sales_truth`. It is a local, unapplied release candidate. Active production MCP remains read-only v2; v7 has no client, grant, deployment, migration ledger entry, activation, or customer-live proof.
+Source migration `supabase/migrations/20260901153000_agent_sales_truth_read.sql` defines the database boundary for the fifth Invisible Office vertical, `analyze_sales_truth`. Production ledger `20260902194703_agent_sales_truth_read` is applied. Active production MCP remains read-only v2; v7 has no client, grant, activation, or customer-live authority.
 
 The migration creates no business table, policy, queue, action, notification, routine, or durable analytical result. It adds owner-only `private.assert_agent_sales_truth_authority(...)`, service-role-only `public.read_agent_sales_truth_as_system(...)`, the private `sales_truth` read domain seeded for every company, and one generic read-revision trigger on each source table: `opportunities`, `stage_transitions`, `opportunity_dispositions`, and `activities`. Existing company-context revisioning covers timezone and currency changes. Both functions are security-definer functions with empty pinned search paths. The public RPC revokes execution from app roles and grants only `service_role`; the private helper has no app-role grant.
 
@@ -6349,9 +6349,9 @@ The read binds current actor, company, OAuth client/grant/revision, exact scope 
 
 Canonical definition and release boundaries: `specs/2026-09-01-ops-mcp-sales-truth-vertical.md`.
 
-## Invisible Office Payroll Readiness State (local release candidate, dormant)
+## Invisible Office Payroll Readiness State (production-released, dormant)
 
-Source migration `supabase/migrations/20260901190000_agent_payroll_readiness.sql` defines the database boundary for the sixth Invisible Office vertical, `check_payroll_readiness`. It is a local, unapplied release candidate. Active production MCP remains read-only v2; v8 has no client, grant, deployment, migration ledger entry, activation, or customer-live proof. Live readback on 2026-09-01 confirmed the four proposed columns and payroll-readiness RPC are absent from production.
+Source migration `supabase/migrations/20260901190000_agent_payroll_readiness.sql` defines the database boundary for the sixth Invisible Office vertical, `check_payroll_readiness`. Production ledger `20260902194727_agent_payroll_readiness` is applied with all four guarded metadata columns. Active production MCP remains read-only v2; v8 has no client, grant, activation, or customer-live authority.
 
 The migration additively proposes nullable `recurring_expenses.obligation_kind`, `recurring_expenses.due_time_local`, `expense_settings.forecast_obligations_confirmed_through`, and `expense_settings.forecast_obligations_confirmed_at`. The coverage fields are constrained as a pair; obligation kind is closed to `payroll` or `other`. Existing rows remain valid and intentionally incomplete until classified and confirmed.
 
@@ -6361,9 +6361,9 @@ The read returns one fixed company-local as-of snapshot: signed operator-maintai
 
 Four exact partial/composite B-tree indexes support the source predicates. The invoice path is ordered `(company_id, due_date, id)` with included `client_id`, avoiding a global due-date sort. Migration postflight verifies exact metadata type/nullability/precision, no default/identity/generated behavior, exact validated constraint definitions/columns, and index key/include order, predicate, method, uniqueness, options, readiness, and validity. The SHA-256-pinned PostgreSQL 17.11 harness proves all four ordered query plans, authority and tenant denial, SQLSTATE target transport, future-payment exclusion, split/negative/same-day/reversed settlement, canonical reimbursement amounts, bounded numeric/text normalization, noncanonical temporal retention, microsecond/subsecond transport, invalid-history exclusion, revision triggers, source overflow, replay, and rejection of wrong same-named columns, defaults, generated expressions, precisions, constraints, and indexes. Canonical behavior and release boundaries: `specs/2026-09-01-ops-mcp-payroll-readiness-vertical.md`.
 
-## Invisible Office Recurring Price Preview State (local release candidate, dormant)
+## Invisible Office Recurring Price Preview State (production-released, dormant)
 
-Source migration `ops-web/supabase/migrations/20260902010000_agent_recurring_service_price_change.sql` defines the database boundary for the seventh Invisible Office vertical, `prepare_recurring_service_price_change`. It is a local, unapplied release candidate. Active production MCP remains read-only v2; v9 has no deployment, migration ledger entry, client, grant, activation, or customer-live proof. Live readback on 2026-09-01 found only v1/v2 clients and grants, zero active task recurrences, and no price-policy table or price-preview RPC.
+Source migration `supabase/migrations/20260902010000_agent_recurring_service_price_change.sql` defines the database boundary for the seventh Invisible Office vertical, `prepare_recurring_service_price_change`. Production ledgers `20260902194758_agent_recurring_service_price_change`, `20260902195149_agent_recurring_service_price_index_dedupe`, and `20260902195335_agent_recurring_service_price_fk_indexes` are applied. Active production MCP remains read-only v2; v9 has no client, grant, activation, or customer-live authority.
 
 The migration proposes private `agent_recurring_service_price_policies` rows as the only contractual authority for an account-level rate preview. Each row binds one company, client, recurring task type, accepted price-source line item and hash, exact notice contact, notice period, adjustment permission, optional grandfathering date, and source-pinned policy reference/hash. Missing or stale terms never become permission. The table enables RLS, has no browser policy, and grants no direct access to `public`, `anon`, `authenticated`, or `service_role`.
 

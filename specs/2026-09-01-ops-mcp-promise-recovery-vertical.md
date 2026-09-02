@@ -114,3 +114,7 @@ Production currently has 90 outbound provider sources, but none meet the stricte
 ## Verification contract
 
 Release-candidate proof must include strict schema/definition tests, repository binding and malformed-row tests, service chronology/classification and no-mutation tests, immutable manifest/exposure/runtime tests, SQL no-DML and tenant/actor/source-ledger contract tests, PostgreSQL runtime proof, full MCP regression tests, typechecking, linting, and a production build. Final live readback must prove v2 remains active, v3-v6 remain ungranted/inactive, and the candidate migration is absent.
+
+## Production release update — 2026-09-02
+
+The schema and application are production-released in OPS-Web `a763f1a0`, with production ledger `20260902194631_agent_promise_recovery_read`. The live function remains service-role-only, and v6 has zero clients and zero grants. Active production exposure remains read-only v2; this vertical is deployed but dormant, not host-accepted or customer-live. The release record in `specs/2026-09-02-ops-mcp-phases-3-7-production-release.md` supersedes the earlier local-only release boundary.

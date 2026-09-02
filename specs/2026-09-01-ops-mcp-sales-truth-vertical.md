@@ -115,3 +115,7 @@ The migration mirror has SHA-256 `88eb84718a015b7c5428fffafa087692b8890e8dc8fabd
 The candidate remains local on isolated worktrees. Production remains on read-only v2. No migration was applied, no branch was pushed, no deployment occurred, no client or grant was created, and v7 was not activated. Shipping requires separately approved push/deployment and migration gates; exposure activation and external-host acceptance are later, separately approved gates.
 
 There is no new subscription, scheduler, model call, or provider cost. If released later, runtime cost is ordinary existing Vercel request handling plus one bounded PostgreSQL read. The two partial indexes consume ordinary existing Supabase storage and add maintenance to qualifying source writes; exact byte cost depends on live qualifying rows and must be measured during an approved rollout.
+
+## Production release update — 2026-09-02
+
+The schema and application are production-released in OPS-Web `a763f1a0`, with production ledger `20260902194703_agent_sales_truth_read`. The live function remains service-role-only, and v7 has zero clients and zero grants. Active production exposure remains read-only v2; this vertical is deployed but dormant, not host-accepted or customer-live. The release record in `specs/2026-09-02-ops-mcp-phases-3-7-production-release.md` supersedes the earlier local-only release boundary.

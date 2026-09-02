@@ -123,3 +123,7 @@ This local candidate adds no paid service, model call, scheduled job, or durable
 As verified on 2026-09-01, production has one active v2 client and one active v2 grant, zero v8 clients/grants, none of the four proposed columns, and no payroll-readiness RPC. Phase 6 does not push, deploy, apply the migration, register a client, mint a grant, change OAuth discovery, or activate exposure v8.
 
 A later release requires separate explicit approval for push/deployment and migration application. Client registration, user consent/grant creation, controlled authenticated tool proof, activation, and customer-live status remain separate gates after release.
+
+## Production release update — 2026-09-02
+
+The schema and application are production-released in OPS-Web `a763f1a0`, with production ledger `20260902194727_agent_payroll_readiness`. The four guarded metadata columns are present, the live function remains service-role-only, and v8 has zero clients and zero grants. Active production exposure remains read-only v2; this vertical is deployed but dormant, not host-accepted or customer-live. The release record in `specs/2026-09-02-ops-mcp-phases-3-7-production-release.md` supersedes the earlier local-only release boundary.

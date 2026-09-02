@@ -38,6 +38,18 @@ select md5(statements[1]) from supabase_migrations.schema_migrations where versi
 
 All three are byte-exact against `supabase_migrations.schema_migrations.statements[1]`: 40,971 bytes / SHA-256 `ddc67ee5999b555cd3c6835ea408e66ce5764e9fef2b366f74b67c155947e7d7`; 27,377 bytes / `09a8649add196f172a1d68a0e862a91b59272d75c5f33a931228f1dd0c1d876a`; and 1,114 bytes / `2d1296ab7afeec4bd9fc96c0db04463d00e3d04b773893a3deeef59242669dc7`. They install the dormant, private day-closeout persistence/worker boundary and its covering foreign-key indexes. Application release does not register its cron, create or enable a routine, or activate MCP v3.
 
+## Invisible Office Phases 3–7 release (2026-09-02 UTC)
+
+- `20260902194603_agent_hiring_what_if_read.sql`
+- `20260902194631_agent_promise_recovery_read.sql`
+- `20260902194703_agent_sales_truth_read.sql`
+- `20260902194727_agent_payroll_readiness.sql`
+- `20260902194758_agent_recurring_service_price_change.sql`
+- `20260902195149_agent_recurring_service_price_index_dedupe.sql`
+- `20260902195335_agent_recurring_service_price_fk_indexes.sql`
+
+All seven are byte-identical to the corresponding committed source under `supabase/migrations/` and the SQL submitted to production. They install the dormant v5–v9 database boundaries, remove one definition-equivalent provider-delivery index, and cover every recurring-price policy foreign key. Release does not create an OAuth client or grant, activate an exposure, send a notice, change a price, or make a capability customer-live. Full proof: `specs/2026-09-02-ops-mcp-phases-3-7-production-release.md`.
+
 ## Ledger rows without stored SQL (file is the authority)
 
 These 6 CLI-era ledger rows have an empty `statements` array; the version-named file is the only record of their SQL:
