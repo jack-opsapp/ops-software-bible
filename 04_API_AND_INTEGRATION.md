@@ -4227,6 +4227,20 @@ Source: `migrations/20260901191611_conversion_grouped_tasks.sql`. `private.sync_
 
 `project_task_count` keeps its meaning: live tasks for this estimate on the project. Acceptance verification now counts a sold line as covered when it is carried **either** by a task's `source_line_item_id` **or** by a live scope's, so a grouped conversion no longer trips `accepted_estimate_task_sync_incomplete` (`23514`). Full conversion behavior: `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Conversion grouping — sold line items into visits (2026-09-01).
 
+## Staff "Portal access" routes — client dossier (2026-09-01, on `feat/public-api-identity-p1`, not deployed)
+
+Program: `specs/2026-09-01-public-api-customer-identity-design.md` § 5.4 (invariants I2 staff confirmation → full history, I7 companies can revoke). Plan: `specs/plans/2026-09-01-public-api-identity-P1-plan.md` Task 7. Code: `ops-web/src/lib/clients/portal-access.ts` (shared spine), `ops-web/src/app/api/clients/[id]/portal-access/**`, block `ops-web/src/components/clients/portal-access-block.tsx` mounted in the client workspace window's CONTACT tab (`contact-tab.tsx`, between Sub-contacts and Notes; the `/clients/[id]` page is a redirect shim into `/dashboard?openClient=`).
+
+Every route runs the same spine: `verifyAdminAuth` (Firebase staff token) → `findUserByAuth(uid, email, "id, company_id, is_active")` (the third argument is required — the default select omits `is_active`, so gating on it without asking for it can never pass) → `checkPermissionById` (granular, never a role name) → the client in the URL must exist in the caller's company (`clients.id = :id and company_id = :caller`), a non-uuid id is answered exactly like a foreign client: `404`. Only then does the route reach the customer identity system RPCs (service role; `private` tables per design D8).
+
+| Route | Gate | RPC | 200 body | Failures |
+|-------|------|-----|----------|----------|
+| `GET /api/clients/[id]/portal-access` | `clients.view` | `list_customer_memberships_for_client_as_system(p_company_id, p_client_id)` | `{ memberships: [{ membershipId, state, evidenceKind, maskedEmail, lastSeenAt }] }` — masked email only, never a client/company/identity id; a row that fails the masked-email shape is refused | `401`, `403`, `404`, `503 { error: "portal_access_unavailable" }` |
+| `POST /api/clients/[id]/portal-access/[membershipId]/confirm` | `clients.edit` | `confirm_customer_membership_as_system(p_membership_id, p_staff_user_id)` | `{ state }` (the RPC returns `active_full`) | `400` non-uuid membership id; `404` membership not among this client's (the route lists first and binds the id to the client in the URL); RPC `42501 access_denied` → `403 { error: "Forbidden" }`, `P0002` → `404`, `22023` (merged / revoked / bad argument) → `409 { error: "Conflict" }`; else `503` |
+| `POST /api/clients/[id]/portal-access/[membershipId]/revoke` | `clients.edit` | `revoke_customer_membership_as_system(p_membership_id, p_staff_user_id, p_reason)` with `p_reason = 'staff_revoked'` (fixed; the audit trail names the actor class, never free text) | `{ revoked: boolean }` (`false` when the membership was not live) | same as confirm |
+
+States rendered by the block: `active_full` (olive "Full history"), `active_forward_only` (tan "New work only" — the row that offers *Confirm access*), `revoked` / `merged` (dim, no actions). `evidence_kind` is carried in the listing but not rendered. Actions are two-step and revealed on hover / keyboard focus only for operators holding `clients.edit`; the listing is re-read after every change. Copy keys live under `portalAccess.*` in `ops-web/src/i18n/dictionaries/{en,es}/clients.json`. Tests: `ops-web/tests/unit/api/clients-portal-access-routes.test.ts`, `ops-web/tests/unit/components/portal-access-block.test.tsx`, `ops-web/tests/unit/components/contact-tab-portal-access.test.tsx`. Proof: `ops-web/docs/artifacts/public-api-p1-5-portal-access/`.
+
 ---
 
 **End of Document**
