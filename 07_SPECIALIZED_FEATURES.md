@@ -10469,6 +10469,8 @@ release gate.
 
 **Key files.** `src/app/(dashboard)/agent/queue/page.tsx` (surface), `src/components/agent/action-card.tsx` (card shell + per-type bodies), `src/components/agent/reject-dialog.tsx`, `src/lib/agent-queue/status-filter.ts` (`HISTORY_STATUSES`, `parseStatusesParam`), `src/lib/hooks/use-approval-queue.ts`, `src/app/api/agent/_lib/auth.ts`, `src/app/api/agent/queue/{route,[actionId]/route,bulk/route}.ts`, `src/lib/api/services/approval-queue-service.ts` (`getQueue`, `getStats`, `approveAction`, executors). Routes are documented in `04_API_AND_INTEGRATION.md` § "Agent Queue Routes".
 
+**Shipped.** ops-web `main` `f0c020f7` (fast-forward push 2026-09-02, after merging the 65 intervening main commits with no conflicts); Vercel production deployment `ops-3rg8q3ifs` Ready, serving `app.opsapp.co`. Gate on the pushed tree: `tsc --noEmit` clean except 8 pre-existing errors in the bug-report element-picker test files (sibling merge `5017459d`), which do not fail Vercel builds; 53/53 queue-related tests green.
+
 **Observed state at the rebuild (Canpro, 2026-09-01).** 54 pending, 292 expired, 1 rejected; the oldest pending row dated 2026-08-22; average review latency ≈ 35 h. Roughly five in six proposals had been expiring unreviewed because the page was unusable, not because the proposals were wrong — track the expired share after the rebuild before tuning any producer.
 
 **End of Document**
