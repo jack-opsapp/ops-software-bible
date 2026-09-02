@@ -4162,7 +4162,7 @@ The source route has two authorized phases. The first returns only a bounded rec
 
 This is an ephemeral preparation only. It persists no preview or notice business content, sends nothing, changes no price, contract, invoice, or service, and exposes no commit, send, confirm, or mutation sibling. Shared transport audit/rate-limit metadata is still recorded. Its schema and application are production-released; there is no DCR client, grant, canary, or activation for v9. Full contract: `specs/2026-09-01-ops-mcp-recurring-price-preview-vertical.md`.
 
-**Phases 3–7 release proof:** OPS-Web `a763f1a0` is `READY` at production deployment `dpl_8F3LWncCSY2b8WEBoXuYPoXV87Ev` and owns `app.opsapp.co`. Seven production ledgers are applied and mirrored byte-exact. Live metadata still advertises only the established 20 read scopes, unauthenticated MCP returns 401, and v5–v9 have zero clients and zero grants. Full release evidence: `specs/2026-09-02-ops-mcp-phases-3-7-production-release.md`.
+**Phases 3–7 release proof:** OPS-Web release `a763f1a0` is contained by current production descendant `dd187ba3`, which is `READY` at deployment `dpl_AQfJGzTsQ6XS65RWptFBgD4isQXR` and owns `app.opsapp.co`. Seven production ledgers are applied and mirrored byte-exact. Fresh live probes show that metadata still advertises only the established 20 read scopes, unauthenticated MCP returns 401, and v5–v9 have zero clients and zero grants. Full release evidence: `specs/2026-09-02-ops-mcp-phases-3-7-production-release.md`.
 
 **End of Document**
 

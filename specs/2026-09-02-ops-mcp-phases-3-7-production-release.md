@@ -1,8 +1,9 @@
 # OPS MCP Phases 3–7 Production Release
 
 - **Release date:** 2026-09-02
-- **OPS-Web commit:** `a763f1a0e4cc431abd4e9e7bc873a69470c0379f`
-- **Vercel deployment:** `dpl_8F3LWncCSY2b8WEBoXuYPoXV87Ev` (`READY`)
+- **OPS-Web release commit:** `a763f1a0e4cc431abd4e9e7bc873a69470c0379f`
+- **Current production descendant:** `dd187ba32d1c0e8dcee21f0ea1434eb948357393`
+- **Current Vercel deployment:** `dpl_AQfJGzTsQ6XS65RWptFBgD4isQXR` (`READY`)
 - **Production alias:** `app.opsapp.co`
 
 ## Outcome
@@ -54,7 +55,7 @@ Supabase security advice contains one release-related informational notice: the 
 
 The combined changed-file release suite passed 426 tests across 39 files, with 12 intentionally skipped disposable-database cases. TypeScript, changed-file ESLint, `git diff --check`, the focused Phase 3/7 repair regressions, and the complete Next.js production build passed. Earlier broad-suite runs retained machine-contention timeouts in unrelated fixed-timeout tests; focused reruns and the release suite passed.
 
-Vercel built the exact main commit successfully in deployment `dpl_8F3LWncCSY2b8WEBoXuYPoXV87Ev` and attached `app.opsapp.co`. Live probes verified:
+Vercel built the exact release commit successfully in deployment `dpl_8F3LWncCSY2b8WEBoXuYPoXV87Ev`. A concurrent, unrelated mainline integration then advanced production to descendant `dd187ba32d1c0e8dcee21f0ea1434eb948357393`; ancestry verification proves that descendant contains the complete release. Vercel built the descendant successfully in deployment `dpl_AQfJGzTsQ6XS65RWptFBgD4isQXR`, marked it `READY`, and attached `app.opsapp.co`. Fresh live probes against that current production deployment verified:
 
 - OAuth authorization-server metadata: HTTP 200 with only the established 20 read scopes;
 - OAuth protected-resource metadata: HTTP 200 with the same read ceiling;
