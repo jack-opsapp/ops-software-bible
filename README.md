@@ -271,6 +271,23 @@ Start with the Executive Summary to understand the business context, then procee
 
 ---
 
+### 🧩 [22_TASK_GROUPS.md](22_TASK_GROUPS.md)
+**Task Groups: One Visit, Many Scopes — schema, status law, composition, iOS/web surfaces, ship sequence**
+
+- The law: the visit is the schedulable unit; scopes are checkable units inside it; single-type tasks carry zero scope rows and stay byte-identical
+- `task_scopes` table + RLS + status-law trigger (task completed by ANY path stamps open scopes), `set_task_scope_completion`, `compose_task_scopes` (deterministic visit composition with reasons), creation RPCs with `scopes[]`
+- Conversion grouping gated per company by `companies.task_groups_conversion_enabled` (default OFF until crew builds render scopes)
+- iOS: `TaskScope` (schema V26, no SwiftData relationship — fetch-backed projections), both sync mirrors, `ADD SCOPES` composer sheet, combo Quick Add chips, detail `SCOPES` section with `COMPLETE ALL` and split-off, `+N` badges
+- Web: state-aware multi-select picker, scope check-off, calendar badges, conversion preview; agent task reads with `scopes` (STAGED — ships with the web deploy)
+- Agent contract: scope existence from job evidence only, never habit
+- Ship sequence and known follow-ups
+
+**Start here for:** Anything about grouped tasks / scopes on any surface, the conversion gate, or shipping the initiative
+
+**Lines:** ~90 | **Migrations:** 8 | **Spec:** `specs/2026-09-01-task-groups-design.md`
+
+---
+
 ### 🚀 [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)
 **Production deployment and operations**
 
@@ -342,6 +359,9 @@ Start with the Executive Summary to understand the business context, then procee
 
 **"I need to write copy / marketing / email / app store listing for a feature"**
 → Read [14_FEATURE_POSITIONING.md](14_FEATURE_POSITIONING.md)
+
+**"I need to understand or ship task groups (one visit, many scopes) — schema, RPCs, iOS/web behavior, the conversion gate"**
+→ Read [22_TASK_GROUPS.md](22_TASK_GROUPS.md)
 
 **"I need to deploy to production"**
 → Read [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)
