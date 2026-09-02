@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: August 7, 2026
+**Last Updated**: September 2, 2026
 **iOS Reference**: `ops-ios/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -35,6 +35,7 @@
 21. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
 22. [Email Pipeline Integration Routes (24 Routes)](#email-pipeline-integration-routes-24-routes)
 23. [OpenAI API Key Separation](#openai-api-key-separation)
+24. [External Lead API — `/v1/intake` + `/v1/analytics` (production-live; credential issuing path)](#external-lead-api--v1intake--v1analytics-production-live-2026-07-26-credential-issuing-path-documented-2026-09-02)
 
 ---
 
@@ -4226,6 +4227,60 @@ Source: `migrations/20260901191611_conversion_grouped_tasks.sql`. `private.sync_
 - `grouping_enabled` — the resolved value of `companies.task_groups_conversion_enabled` for the estimate's company, so a caller can tell a legacy result from a grouped one without inferring it from counts.
 
 `project_task_count` keeps its meaning: live tasks for this estimate on the project. Acceptance verification now counts a sold line as covered when it is carried **either** by a task's `source_line_item_id` **or** by a live scope's, so a grouped conversion no longer trips `accepted_estimate_task_sync_incomplete` (`23514`). Full conversion behavior: `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Conversion grouping — sold line items into visits (2026-09-01).
+
+## External Lead API — `/v1/intake` + `/v1/analytics` (production-live 2026-07-26; credential issuing path documented 2026-09-02)
+
+**Status:** production-live on `app.opsapp.co` since `a0d18e12` (2026-07-26). Public developer reference at `https://app.opsapp.co/developers/api` (server-rendered, indexable, no session required) with the OpenAPI 3.1 contract at `/developers/api/openapi.json` (served byte-for-byte from `ops-web/docs/api/openapi-v1.json`). Design authority: `specs/2026-07-23-lead-intake-and-analytics-api-design.md` (canonical copy in `ops-web/.worktrees/lead-intake-api/docs/superpowers/specs/`). **As of 2026-09-02 zero sources, principals, or credentials exist in prod** — the surface is live but unused; the docs page had never said where a credential is issued (fixed 2026-09-02, see "Discoverability" below).
+
+### Published operations
+
+| Operation | Method + path | Required scope |
+|---|---|---|
+| `getIntakeConfig` | `GET /v1/intake/config` | `intake.write` |
+| `createUploadBatch` | `POST /v1/intake/uploads` | `intake.write` |
+| `createIntakeSubmission` | `POST /v1/intake/submissions` | `intake.write` |
+| `getIntakeSubmission` | `GET /v1/intake/submissions/{publicSubmissionId}` | `intake.write` |
+| `getLeadFeed` | `GET /v1/analytics/leads` | `analytics.leads.read` |
+| `getLeadMetrics` | `GET /v1/analytics/metrics` | `analytics.leads.read` (+ `analytics.financial.read` for monetary metrics) |
+
+Routes live at `ops-web/src/app/v1/{intake,analytics}/**/route.ts`. Every request authenticates with `Authorization: Bearer <secret>`; `src/lib/external-api/auth/credential-auth.ts` resolves company, credential class, scopes, and allowed source IDs through `authenticate_external_api_credential_as_system` before any business logic runs. The request body never chooses `company_id`.
+
+### Credential model (exactly as the spec defines it)
+
+Two credential classes; one credential can never combine them.
+
+| Class | Scopes | Bound to | Purpose |
+|---|---|---|---|
+| Intake | `intake.write` | one or more registered intake sources (`private.lead_intake_sources`) | discover intake config, reserve uploads, submit the original inquiry, read own submission status |
+| Analytics | `analytics.leads.read`, optionally `analytics.financial.read` | the whole company (never a source) | pseudonymous lead feed + versioned metrics |
+
+`analytics.financial.read` is additive and invalid without `analytics.leads.read`. Secrets are stored hashed with a visible prefix (`opsx_…`), shown in full **exactly once** at creation, optionally expiring, rotatable with a 1-hour overlap, immediately revocable, and fully audited (`private.external_api_credentials`, `private.external_api_principals`, `private.external_api_principal_sources`, `private.external_api_security_events`, `private.external_api_request_audit`).
+
+### Credential issuing path (the only way to get a credential)
+
+There is no request-to-OPS path. An operator issues credentials inside the product:
+
+1. **Gate — company feature flag `external_api`.** A row in `public.admin_feature_overrides` with `feature_key = 'external_api'` and `enabled = true` for the company. Surfaced to the client as a synthetic flag by `GET /api/feature-flags` (`src/app/api/feature-flags/route.ts`; carries no routes so it gates only the Website section, not all of `/settings`). Enforced again server-side by `requireExternalApiSettingsActor` (`src/lib/external-api/settings/actor.ts`), which returns **404** when the flag is off and **403** when the actor lacks the permission. MAVERICK PROJECTS LTD (`ddee107c-…`) has the flag on as of 2026-09-02; no other company does.
+2. **Gate — permission `settings.integrations` at scope `all`** (catalog label "Integration settings", `src/lib/types/permissions.ts`). Typically the owner. The actor must also be a UID-linked, active, non-deleted `public.users` row — the settings surface deliberately refuses the legacy email fallback.
+3. **Screen — Settings → Comms → Website.** Section id `website` in `src/components/settings/settings-domains.tsx` (`permission: "settings.integrations"`, `flag: "external_api"`, legacy tab ids `website` / `external-api`). Deep link: **`/settings?section=website`** (the settings shell keeps state in `?section=<leaf>`; legacy `?tab=` canonicalizes to it). Component `src/components/settings/website-integration-tab.tsx` with `website-integration/{source-register,source-dialog,credential-register,credential-dialog,secret-reveal-dialog}.tsx`.
+4. **Step 1 — register the website as a source** (`CONNECT WEBSITE`): site label, canonical host, phone region, allowed HTTPS browser origins. `POST /api/settings/external-api/sources` → `private.lead_intake_sources` (+ a default row in `private.lead_intake_forms`). Empty state on the tab now lists the two steps (register site → create key) before the single `CONNECT WEBSITE` action.
+5. **Step 2 — create an intake credential bound to that source** (`CREATE INTAKE KEY` → `ISSUE INTAKE KEY`): `POST /api/settings/external-api/credentials` with `{ name, class: "intake", scopes: ["intake.write"], sourceIds: [sourceId], expiresAt }` → RPC `create_external_api_credential_as_system` → `201 { credential, secret }`. The secret is rendered once in `SecretRevealDialog` and never persisted client-side. Analytics credentials use the separate `CREATE ANALYTICS KEY` flow on the same screen with `class: "analytics"` and no `sourceIds`; the dialog warns that `analytics.leads.read` grants company-wide row-level lead visibility and warns again when `analytics.financial.read` is added.
+6. **Lifecycle:** `PATCH /api/settings/external-api/credentials/:id` (name/expiry, optimistic `expectedUpdatedAt`), `POST …/:id/rotate` (`overlapSeconds: 3600`), `POST …/:id/revoke` (`reasonCode: "owner_revoked"`). Sources: `PATCH /api/settings/external-api/sources/:id` (incl. `active: false`); the settings list is `GET /api/settings/external-api`. All settings writes cross `*_as_system` guarded RPCs in `src/lib/external-api/settings/settings-service.ts`.
+
+### Discoverability (2026-09-02, branch `feat/external-api-discoverability`)
+
+- `/developers/api` gained a **"Get a credential"** section between Overview and Authentication (`src/app/developers/api/_components/credential-issuing.tsx`): who issues (Integration settings permission, usually the owner), where (Settings → Comms → Website), the three steps using the real button labels, the once-only secret rule, the separate analytics-credential rule, and a direct link to `/settings?section=website`. The Authentication scope list now names all three scopes. Copy in `src/i18n/dictionaries/{en,es}/external-api-docs.json`; parity locked by `tests/unit/i18n/external-api-docs-parity.test.ts`; section behaviour by `tests/unit/external-api/docs-credential-issuing.test.tsx`.
+- Website tab empty state explains the two steps (`website.empty.step*` keys in `settings.json`, en + es).
+
+### Verified live (2026-09-02)
+
+The whole issuing path was exercised end-to-end against production Supabase as a MAVERICK staff user: settings read `200` (`featureEnabled=true`) → `POST /sources` `201` → `POST /credentials` `201` (`scopes=["intake.write"]`, secret returned once) → `GET /v1/intake/config` with that bearer **`200`** returning the live source/form/file-policy payload → revoke `200` → same call **`401`**. Evidence: `ops-web/docs/artifacts/external-api-discoverability/`.
+
+Three operational facts came out of that run:
+
+- **Test rows cannot be fully deleted, by design.** `private.external_api_security_events` is append-only (`reject_external_api_audit_mutation`, `42501`) and holds an FK to `external_api_credentials`, so an issued credential row is permanent; and `assert_external_api_principal_source_policy` (`23514`) forbids removing an intake principal's last source grant, so its source row is permanent too. Revocation — not deletion — is the terminal state. Anything created while testing stays as `status='revoked'` and is unreachable (inactive source accepts nothing; revoked credential returns 401). Maverick currently carries one revoked source (`p1-6-verification.example.com`) and two revoked intake credentials from this verification; zero submissions were created.
+- **A local preview needs the external-API secret family**, none of which are in the shared `.env.local`: without `EXTERNAL_API_CREDENTIAL_HMAC_KEYS`, `POST /api/settings/external-api/credentials` returns `500 "Settings unavailable"`; without `EXTERNAL_API_NETWORK_HMAC_KEYS`, every `/v1/*` call returns `503 rate_limit_unavailable` (the limiter cannot derive its identity). Production has both — `app.opsapp.co/v1/intake/config` answers `401 invalid_credentials`, which is the correct "admitted by the limiter, rejected by auth" signal. The other members of the family are `EXTERNAL_API_IDEMPOTENCY_HMAC_KEYS`, `EXTERNAL_API_ATTRIBUTION_HMAC_KEYS` and `EXTERNAL_API_CURSOR_ENCRYPTION_KEYS`; each is a `{"activeKid":"1","keys":{"1":"<32-64 bytes base64url>"}}` ring.
+- **Clear `.next-dev` before testing these routes.** A stale Turbopack dev manifest returns the HTML 404 page for every route deeper than two segments — `/api/settings/external-api` resolves while `/api/settings/external-api/sources` 404s, which reads exactly like a missing route.
 
 ## Staff "Portal access" routes — client dossier (2026-09-01, on `feat/public-api-identity-p1`, not deployed)
 
