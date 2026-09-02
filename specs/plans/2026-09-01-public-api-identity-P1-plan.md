@@ -32,7 +32,7 @@
 ## Architecture decisions settled here
 
 1. Env vars (server-only, never `NEXT_PUBLIC_`): `OPS_CUSTOMER_AUTH_URL`, `OPS_CUSTOMER_AUTH_SECRET_KEY` (service/secret key of the customer project), `OPS_CUSTOMER_IDENTITY_HMAC_KEYS` (key ring, same format as the intake credential ring). Blank in prod until G1 → the broker fails closed with `customer_identity_unavailable`.
-2. Session cookie: `ops-customer-session`, httpOnly, Secure, SameSite=Lax, Path=`/c`. Value = opaque 256-bit `ops_cs_` prefixed credential; stored as SHA-256 digest only.
+2. Session cookie: `ops-customer-session`, httpOnly, Secure, SameSite=Lax, Path=`/` (ruled 2026-09-02: `/c` would never reach `/api/customer/*`; the guardrail test proves no staff route or middleware prefix consults this cookie). Value = opaque 256-bit `ops_cs_` prefixed credential; stored as SHA-256 digest only.
 3. Route namespace: hosted pages `/c/[handle]/...`; broker API `/api/customer/...`. Middleware: `/c` and `/api/customer` are public prefixes (no staff cookie), and the staff dashboard never reads `ops-customer-session`.
 4. OTP: Supabase issues and checks the code; OPS owns attempt accounting (`private.customer_otp_challenges`) and refuses before proxying when exhausted. Customer project config: OTP expiry 600s, email template carries `{{ .Token }}` (no link), custom SMTP = SendGrid, Data API disabled, signups via OTP only.
 5. Membership evidence promotion (I2) is a SQL function `private.customer_membership_evidence(company_id, client_id, normalized_email) → text` returning `on_file_transacted | none`, evaluated inside `resolve_customer_membership_as_system` and by the staff confirm RPC.
@@ -57,6 +57,7 @@ Objects:
   - `confirm_customer_membership_as_system(p_membership_id uuid, p_staff_user_id uuid) → text` and `revoke_customer_membership_as_system(p_membership_id uuid, p_staff_user_id uuid, p_reason text) → boolean` — staff actions; both verify the staff user belongs to the membership's company.
   - `list_customer_memberships_for_client_as_system(p_company_id uuid, p_client_id uuid) → setof (membership_id, state, evidence_kind, contact_email_masked, last_seen_at)` — masked email only.
   - `ensure_customer_pairwise_ref_as_system(p_identity_id uuid, p_integration_id uuid) → text`.
+  - `read_customer_profile_as_system(p_identity_id uuid, p_company_id uuid) → (display_name text, contact_email_masked text, membership_state text)` (added 2026-09-02 for `GET /api/customer/me`): `display_name` = live membership's `sub_clients.name` if set, else `clients.name`, else NULL with no live membership in that company; `contact_email_masked` = the identity's live verified email masked by the same private function the listing RPC uses; `membership_state` = live state or `'none'`.
   - `append_customer_identity_event_as_system(...)` — single writer for the audit table.
 - Dormancy job (I7): `private.customer_identity_dormancy_sweep()` scheduled daily via `pg_cron`, demotes `active_full` → `active_forward_only` for identities with `last_seen_at < now() - interval '180 days'`, re-runs evidence promotion, appends events.
 
