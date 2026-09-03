@@ -10260,4 +10260,18 @@ Exposure v10 keeps all v9 tools callable only through their historical pair or t
 
 ---
 
+## 43. Invisible Office Weather Reschedule (locally built, unreleased)
+
+“Rain Thursday. Slide the outdoor work, keep the indoor job, tell everyone” is one exact schedule-and-copy preview, not permission to change work or contact clients. The operator supplies one company-local date. OPS determines current target work, outdoor classification, crews, conflicts, fresh weather evidence, and exact recipients from current authoritative records.
+
+Outdoor status comes only from the company's explicit task-type settings. `rain-reschedule-policy:v1` treats at least 60% precipitation probability or at least 10 mm precipitation as rain and accepts a destination only when both values are below their thresholds. Evidence must be complete for every project/date, come from the existing `open-meteo` cache, and be no more than 12 hours old. Weather condition words never drive the rule.
+
+Each project's outdoor work moves together to the first clear, conflict-free date inside the company's bounded optimization window, preserving times and crew. Indoor work stays put. UUID assignment identities are canonicalized and multi-day future commitments participate in collision detection. The vertical refuses locked, recurring, paired, dependency-bearing, multi-day, malformed, or unstaffed target work. It also rejects malformed setting types, missing/shared/suppressed recipients, merged parent clients, inactive crew, incomplete weather, project or crew conflicts, partial task coverage, source drift, and reached bounds. It never returns a partial plan.
+
+The result presents current facts, forecast evidence, an exact proposal, and one email draft per project/recipient. Every draft says that the dates are proposed and nothing has changed yet. Names and conditions remain marked untrusted data. Stable source/proposal/draft/package hashes make unchanged replay comparable, while double application reauthorization and a final same-observation PostgreSQL rebuild reject any intervening change.
+
+The truthful effect envelope is zero project, task, calendar, provider-draft, and message writes, with zero messages sent. No commit/apply/send sibling, approval, notification, routine, provider call, or durable preview exists. Manifest v17, exposure v11, and consent v6 are committed only in an isolated local OPS-Web worktree; the candidate migration is not applied and active production remains v2. Canonical contract: `specs/2026-09-03-ops-mcp-weather-reschedule-vertical.md`.
+
+---
+
 **End of Document**
