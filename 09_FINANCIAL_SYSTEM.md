@@ -7,8 +7,6 @@
 **Last Updated**: August 7, 2026
 **Source Reference**: `C:\OPS\ops-web\src\lib\types\pipeline.ts`, `src\lib\api\services\`, iOS source at `ops-ios/OPS/`
 
----
-
 ## Table of Contents
 
 1. [Dual-Database Architecture](#dual-database-architecture)
@@ -24,6 +22,7 @@
 11. [Service Layer Patterns](#service-layer-patterns)
 12. [Business Rules & Constraints](#business-rules--constraints)
 13. [iOS Implementation](#ios-implementation)
+14. [Supplier Bills and Accounts Payable](#supplier-bills-and-accounts-payable-2026-09-03)
 
 ---
 
@@ -2074,6 +2073,16 @@ This vertical is production-released under result schema v1, capability manifest
 
 ---
 
+## Supplier Bills and Accounts Payable (2026-09-03)
+
+OPS distinguishes an unpaid supplier obligation from a paid purchase. An unpaid invoice creates an AP bill at its full total and starts with the same balance. Each settlement is a separate payment record; the database recomputes the balance and moves status from `open` to `partial` to `paid`. Overpayment, payment against a void/paid bill, negative money, inconsistent line math, incomplete job allocation, and cross-company project allocation all fail before commit. Voiding preserves the bill, PDF, events, and provider history while setting the remaining balance to zero.
+
+The source invoice remains in immutable document custody by company, storage key, content length, and SHA-256. Multi-job cost splits are exact currency allocations on individual bill lines, not floating percentages. Provider posting preserves the supplier, invoice and due dates, account/category, tax code, and project/customer split. If the needed accounting mapping is absent, the queue stops for human review rather than inventing an account or silently flattening job cost.
+
+The three DeksMart invoices supplied for implementation were verified as unpaid shape fixtures: invoice dates and invoice numbers are captured, missing due dates remain missing, and the one-job/two-job layouts are supported. Their real documents and identifying contents are not committed to source control and were not written to production. Paid invoices continue through the established expense workflow and inherit its existing approval and policy constraints.
+
+---
+
 **Last Updated**: 2026-09-03
 **Document Version**: 1.9
-**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
+**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`, `e902a800`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
