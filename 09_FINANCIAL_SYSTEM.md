@@ -2060,7 +2060,7 @@ The package is ephemeral and expires after 24 hours. Stable context/source-bound
 
 ---
 
-## MCP Estimate Draft Definition (local candidate, dormant and unapplied, 2026-09-02)
+## MCP Estimate Draft Definition (production-released and dormant, 2026-09-03)
 
 `prepare_estimate_from_past_job` is the canonical answer to “Quote this new lead like that past job, plus 8%.” Its input identifies one open target opportunity, one exact approved/converted source estimate, and one positive canonical percentage no greater than 100. The target and source are never inferred.
 
@@ -2070,10 +2070,10 @@ Unit price and minimum charge are increased by the requested percentage using ch
 
 The result is an ephemeral `draft_preview`, not an `Estimate` entity. It does not call `get_next_document_number`, insert an estimate or line item, write an opportunity, reserve a sequence, persist preview content, issue/approve/publish/send a document, or commit pricing. The `estimates.create` permission is required to prepare under the current actor, but the tool exposes no create/commit RPC. Exact target/source/current-tax/line hashes and one stable preview hash make unchanged replay comparable while a final database assertion rejects any intervening source or authority change.
 
-This vertical is locally implemented under result schema v1, capability manifest v16, dormant exposure v10, and consent catalogue v5. The migration is not applied, no v10 OAuth client or grant exists, and active production remains read-only v2. Full contract: `specs/2026-09-02-ops-mcp-estimate-draft-vertical.md`.
+This vertical is production-released under result schema v1, capability manifest v16, dormant exposure v10, and consent catalogue v5. OPS-Web release `1cacc2df` is on production main, and production ledger `20260903110828_agent_estimate_draft_preview` is applied and mirrored byte-exact. No v10 OAuth client or grant exists, and active production remains read-only v2. Full contract: `specs/2026-09-02-ops-mcp-estimate-draft-vertical.md`.
 
 ---
 
-**Last Updated**: 2026-09-02
-**Document Version**: 1.8
+**Last Updated**: 2026-09-03
+**Document Version**: 1.9
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.

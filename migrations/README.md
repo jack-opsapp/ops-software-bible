@@ -50,6 +50,12 @@ All three are byte-exact against `supabase_migrations.schema_migrations.statemen
 
 All seven are byte-identical to the corresponding committed source under `supabase/migrations/` and the SQL submitted to production. They install the dormant v5–v9 database boundaries, remove one definition-equivalent provider-delivery index, and cover every recurring-price policy foreign key. Release does not create an OAuth client or grant, activate an exposure, send a notice, change a price, or make a capability customer-live. Full proof: `specs/2026-09-02-ops-mcp-phases-3-7-production-release.md`.
 
+## Invisible Office Phase 8 release (2026-09-03 UTC)
+
+- `20260903110828_agent_estimate_draft_preview.sql`
+
+The archive is byte-identical to the committed source `supabase/migrations/20260902231632_agent_estimate_draft_preview.sql` and the one statement stored in production ledger `20260903110828`: 42,223 bytes, MD5 `a180b8ef634f6aec19b6734d3601a0bf`, SHA-256 `a24282619e24c5f0d14135940e7f88a226b93b237c71842d97e779f44c8ce9f7`. It installs only the dormant v10 estimate-draft snapshot and final authority functions. Release creates no estimate or preview row, reserves no number, sends nothing, and creates no v10 client or grant. Full proof: `specs/2026-09-02-ops-mcp-estimate-draft-vertical.md`.
+
 ## Ledger rows without stored SQL (file is the authority)
 
 These 6 CLI-era ledger rows have an empty `statements` array; the version-named file is the only record of their SQL:

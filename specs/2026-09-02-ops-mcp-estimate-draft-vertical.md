@@ -1,11 +1,16 @@
 # OPS MCP Estimate Draft Vertical
 
 - **Designed:** 2026-09-02
-- **Status:** Local release candidate; dormant and unapplied
+- **Released:** 2026-09-03
+- **Status:** Production-released; dormant and unactivated
 - **Authoritative Web base:** `dd187ba32`
 - **Authoritative Bible base:** `35284e5`
-- **Local Web commits:** `8accd449`, `16221d55`, `7a6f8542`, `46840d55`, `e091b648`
+- **OPS-Web release commit:** `1cacc2df8b483689cc4f3cd183c5be981ad0c9f2`
+- **Component commits:** `8accd449`, `16221d55`, `7a6f8542`, `46840d55`, `e091b648`, `1cacc2df`
 - **Source migration:** `ops-web/supabase/migrations/20260902231632_agent_estimate_draft_preview.sql`
+- **Production ledger:** `20260903110828_agent_estimate_draft_preview`
+- **Production archive:** `migrations/20260903110828_agent_estimate_draft_preview.sql`
+- **Vercel deployment:** `dpl_2tZT6cbyw1eBuWAAbSAwP1xc1obA` (`READY`, owns `app.opsapp.co`)
 
 ## Purpose
 
@@ -34,7 +39,7 @@ This is preparation only. It creates no estimate row, reserves no estimate numbe
 
 Manifest v16 re-mints v15 and adds only this high-risk preparation capability. Exposure v10 is additive to v9: the four inherited analyses, recurring-service price preview, and estimate draft preview remain callable. Every inherited tool accepts its historical manifest/exposure pair or the exact v16/v10 bridge. The v16/v10 route additionally requires the exact registered 17-scope client ceiling and serialization, v5 consent, and exact accepted labels. Historical grants retain their prior behavior.
 
-Active production exposure remains read-only v2. Exposure v10 is registered only in code and has no production client, grant, canary, or activation.
+Active production exposure remains read-only v2. Exposure v10 is deployed in application code and its service-role-only database boundary is applied, but it has no production client, grant, canary, or activation.
 
 ## Explicit target and source
 
@@ -115,14 +120,18 @@ The permanent TypeScript suite proves strict three-field input, canonical percen
 
 The SHA-256-pinned PostgreSQL 17 runner creates only a disposable non-default-port database. It compiles Phase 7 then Phase 8 in order and proves exact consent labels, exact authority, deterministic snapshots, final source binding, source-status rejection, cross-tenant denial, merged-target denial, ambiguous-current-tax denial, 101-line rejection, changed-price rejection, service-role-only ACL/catalog shape, zero estimate creation, zero target numbering, zero business mutation, rollback cleanliness, and two complete replays against the same database.
 
-The final post-integration focused run passed 322 tests across 29 Phase 8 contract/service/runtime, principal-boundary, registry, OAuth, and inherited compatibility files. The separate live PostgreSQL 17 run passed both its lifecycle guard and full disposable-database proof. A repository-wide test run exposed no further Phase 8 failure: its remaining 16 failing assertions and seven test-file load errors are confined to unchanged baseline surfaces (sandbox-denied loopback canaries, date-sensitive timezone fixtures, build/permission/button/approval assertions, and declared dependencies absent from the local install). The repository-wide TypeScript compiler exceeded its default 4 GB Node heap without emitting a diagnostic; the Phase 8 dependency graph passed TypeScript compilation independently and every changed TypeScript file passed ESLint.
+The final post-integration focused run passed 322 tests across 29 Phase 8 contract/service/runtime, principal-boundary, registry, OAuth, and inherited compatibility files. The separate live PostgreSQL 17 run passed both its lifecycle guard and full disposable-database proof. A repository-wide test run exposed no further Phase 8 failure: its remaining 16 failing assertions and seven test-file load errors are confined to unchanged baseline surfaces (sandbox-denied loopback canaries, date-sensitive timezone fixtures, build/permission/button/approval assertions, and declared dependencies absent from the original stale local install). Restoring the package-lock-defined install changed no source or dependency version. The production build then passed with the repository's established 8 GB Node heap, after the default 4 GB TypeScript process reached its memory ceiling. Every changed TypeScript file passed ESLint. Independent release verification reran all 14 changed non-database test files: 130 tests passed.
+
+The production ledger stores one 42,223-byte statement whose MD5 `a180b8ef634f6aec19b6734d3601a0bf` matches the committed source and archive exactly; their SHA-256 is `a24282619e24c5f0d14135940e7f88a226b93b237c71842d97e779f44c8ce9f7`. Live catalog readback confirms both public functions are owned by `postgres`, are `SECURITY DEFINER`, pin `search_path` to empty, and grant execution only to `postgres` and `service_role`. Post-apply advisors report no Phase 8-related finding and no error-level finding. Exposure v10 has zero active clients and zero active grants.
+
+Vercel built the exact release commit in six minutes, marked deployment `dpl_2tZT6cbyw1eBuWAAbSAwP1xc1obA` `READY`, and attached `app.opsapp.co`. Fresh live probes returned HTTP 200 from both OAuth metadata resources with only the established 20 read scopes, rejected unauthenticated `POST /api/mcp` with HTTP 401 and a Bearer challenge, and found no `/api/mcp` runtime error cluster in the release window.
 
 ## Cost boundary
 
-This local candidate introduces no new subscription, vendor, model call, provider send, scheduled job, or durable preview-content storage. If release is later approved, each call adds bounded Supabase compute for the source snapshot and final revalidation plus the existing MCP transport audit/rate-limit writes. There is no new table or index storage and no new external-provider charge.
+This production release introduces no new subscription, vendor, model call, provider send, scheduled job, or durable preview-content storage. If exposure v10 is separately activated later, each call adds bounded Supabase compute for the source snapshot and final revalidation plus the existing MCP transport audit/rate-limit writes. There is no new table or index storage and no new external-provider charge.
 
 ## Release boundary
 
-Phase 8 does not push either repository, deploy OPS-Web, apply the migration, register or edit an OAuth client, mint a grant, run a production canary, change active OAuth metadata, activate exposure v10, create an estimate, reserve a number, or contact a customer. It is local, verified, and dormant.
+Phase 8 is pushed to OPS-Web production main and its exact database migration is applied. The release does not register or edit an OAuth client, mint a grant, run a production canary, change active OAuth metadata, activate exposure v10, create an estimate, reserve a number, or contact a customer. It is production-released, verified, and dormant.
 
-A later release requires separate explicit approval for push/deployment and production migration application. Client registration, v5 consent/grant creation, authenticated synthetic proof, host acceptance, active-exposure change, and customer-live status remain separate approval gates after release.
+Client registration, v5 consent/grant creation, authenticated synthetic proof, host acceptance, active-exposure change, and customer-live status remain separate approval gates after release.

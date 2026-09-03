@@ -10242,7 +10242,7 @@ Exposure v9's four inherited tools are callable only through their historical ma
 
 ---
 
-## 42. Invisible Office Estimate Draft (local candidate, dormant and unapplied)
+## 42. Invisible Office Estimate Draft (production-released and dormant)
 
 “Quote this new lead like that past job, plus 8%” is one exact estimate preview, not permission to create or send a financial document. The host supplies the open target opportunity id, the specific approved source estimate id, and one canonical percentage. OPS never guesses the intended lead or past job.
 
@@ -10254,7 +10254,7 @@ The v16/v10/v5 boundary requires current actor/company authority, the exact live
 
 The receipt says `ready` only for an ephemeral calculation. It explicitly proves no estimate was created, no number was reserved, nothing was issued/approved/published, zero messages were sent, and no price was committed. There is no commit tool, approval item, notification, routine, provider request, or persisted preview body; only ordinary shared transport audit/rate metadata remains.
 
-**Release boundary:** Phase 8 exists only in isolated local Web/Bible branches. Its migration is not applied and exposure v10 has no client, grant, canary, activation, or customer use. Active production remains read-only v2. Canonical contract: `specs/2026-09-02-ops-mcp-estimate-draft-vertical.md`.
+**Release boundary:** OPS-Web release `1cacc2df` is `READY` at production deployment `dpl_2tZT6cbyw1eBuWAAbSAwP1xc1obA`, which owns `app.opsapp.co`; ledger `20260903110828_agent_estimate_draft_preview` is applied and mirrored byte-exact. Both public database functions are service-role-only, security-definer, and empty-search-path pinned. Exposure v10 has zero clients, grants, canaries, activation, or customer use; active production remains read-only v2. Fresh live metadata exposes only the established 20 read scopes, unauthenticated MCP returns 401, and the release window has no MCP runtime error cluster. Canonical contract: `specs/2026-09-02-ops-mcp-estimate-draft-vertical.md`.
 
 Exposure v10 keeps all v9 tools callable only through their historical pair or the exact v16/v10 authority bridge. The v16/v10 path binds the exact 17-scope registered client ceiling and serialization, v5 consent, and accepted labels without weakening historical grants.
 
