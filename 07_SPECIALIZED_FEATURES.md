@@ -10260,7 +10260,7 @@ Exposure v10 keeps all v9 tools callable only through their historical pair or t
 
 ---
 
-## 43. Invisible Office Weather Reschedule (locally built, unreleased)
+## 43. Invisible Office Weather Reschedule (production-released and dormant)
 
 “Rain Thursday. Slide the outdoor work, keep the indoor job, tell everyone” is one exact schedule-and-copy preview, not permission to change work or contact clients. The operator supplies one company-local date. OPS determines current target work, outdoor classification, crews, conflicts, fresh weather evidence, and exact recipients from current authoritative records.
 
@@ -10270,7 +10270,9 @@ Each project's outdoor work moves together to the first clear, conflict-free dat
 
 The result presents current facts, forecast evidence, an exact proposal, and one email draft per project/recipient. Every draft says that the dates are proposed and nothing has changed yet. Names and conditions remain marked untrusted data. Stable source/proposal/draft/package hashes make unchanged replay comparable, while double application reauthorization and a final same-observation PostgreSQL rebuild reject any intervening change.
 
-The truthful effect envelope is zero project, task, calendar, provider-draft, and message writes, with zero messages sent. No commit/apply/send sibling, approval, notification, routine, provider call, or durable preview exists. Manifest v17, exposure v11, and consent v6 are committed only in an isolated local OPS-Web worktree; the candidate migration is not applied and active production remains v2. Canonical contract: `specs/2026-09-03-ops-mcp-weather-reschedule-vertical.md`.
+The truthful effect envelope is zero project, task, calendar, provider-draft, and message writes, with zero messages sent. No commit/apply/send sibling, approval, notification, routine, provider call, or durable preview exists.
+
+**Release boundary:** Phase 9 is contained by OPS-Web production main `dcfa2d64e68860d31798303ed0ce30f7dc5acfd1` and READY deployment `dpl_22TEbgu5UfmCEiAio1aiQn8D6ZmM`, which owns `app.opsapp.co`. Supabase ledger versions `20260903194613_agent_weather_reschedule_preview` and `20260903194749_agent_weather_reschedule_preview` are a byte-identical concurrent replay of the same tested additive migration and are both mirrored exactly. The five functions have the intended owner, empty-search-path, and service-role-only boundary; the inherited v1 consent label remains unchanged. Manifest v17, exposure v11, and consent v6 remain inactive: production has zero active v11 clients/grants, public metadata remains on the established 20 read-only v2 scopes, and unauthenticated MCP fails closed with `401`. No schedule or message changed. Zero weather rows satisfy the required 12-hour freshness gate, so no business-data canary was fabricated. Canonical contract: `specs/2026-09-03-ops-mcp-weather-reschedule-vertical.md`.
 
 ---
 

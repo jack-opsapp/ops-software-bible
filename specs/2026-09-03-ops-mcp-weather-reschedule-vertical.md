@@ -1,11 +1,14 @@
 # OPS MCP Weather Reschedule Vertical
 
 - **Designed and built:** 2026-09-03
-- **Status:** Locally implemented and verified; unreleased, unapplied, dormant
+- **Status:** Production-released and verified; dormant, not activated
 - **Authoritative Web base:** `1cacc2df8b483689cc4f3cd183c5be981ad0c9f2`
 - **Authoritative Bible base:** `6839b6f`
 - **OPS-Web component commits:** `53ed2a08`, `3e212eae`, `315c6b41`, `a8ed67a1`, `d0f1b2bd`, `74fc4682`, `f27f57fa`, `a9c83ab5`, `5c8f99b0`
-- **Candidate migration:** `ops-web/supabase/migrations/20260903123200_agent_weather_reschedule_preview.sql`
+- **Production release:** OPS-Web `dcfa2d64e68860d31798303ed0ce30f7dc5acfd1`
+- **Production deployment:** `dpl_22TEbgu5UfmCEiAio1aiQn8D6ZmM` (`READY`, owns `app.opsapp.co`)
+- **Production migrations:** `20260903194613_agent_weather_reschedule_preview` and byte-identical replay `20260903194749_agent_weather_reschedule_preview`
+- **Migration bytes / SHA-256:** `47596` / `6809661f9c7a22665786e975773ce38455dffafc59410c8099efa6ce95311e45`
 
 ## Purpose
 
@@ -81,16 +84,18 @@ The response keeps current facts, forecast evidence, proposal, and drafts separa
 
 ## Verification evidence
 
-The focused application suite passes 82 tests across strict contract calculation, exact copy, exposure/manifest/grant pinning, inherited dispatch compatibility, repository envelopes and cancellation, double reauthorization, source drift, ambiguity, output bounds, and SQL shape. The entire TypeScript project passes `tsc --noEmit` with the established 8 GB heap.
+The focused application suite passes 82 tests across strict contract calculation, exact copy, exposure/manifest/grant pinning, inherited dispatch compatibility, repository envelopes and cancellation, double reauthorization, source drift, ambiguity, output bounds, and SQL shape. The entire TypeScript project passes `tsc --noEmit` with the established 8 GB heap, and the reconciled production descendant generated all 440 application pages successfully.
 
-The SHA-256-pinned PostgreSQL 17 harness compiles Phases 7, 8, and 9 in order against a uniquely named disposable database. It runs the Phase 9 proof twice and verifies deterministic source replay, exact v17/v11/v6 authority, full-registry actor-revision parity, current typed settings/forecast/recipient/task facts, case-insensitive UUID collision identity, multi-day future conflict capture, final revision binding, missing-scope and truncated-registry rejection, changed-forecast rejection, shared-recipient rejection, parent-client drift and merge rejection, locked-task rejection, multi-day target rejection, missing task-type rejection, string-impostor settings rejection, service-role-only ACL/catalog shape, zero business mutation, transaction rollback, safe database naming, and isolated non-default-port cleanup.
+The SHA-256-pinned PostgreSQL 17 harness compiles Phases 7, 8, and both exact Phase 9 production ledger entries in order against a uniquely named disposable database. It runs the Phase 9 proof twice and verifies deterministic source replay, exact v17/v11/v6 authority, full-registry actor-revision parity, current typed settings/forecast/recipient/task facts, case-insensitive UUID collision identity, multi-day future conflict capture, final revision binding, missing-scope and truncated-registry rejection, changed-forecast rejection, shared-recipient rejection, parent-client drift and merge rejection, locked-task rejection, multi-day target rejection, missing task-type rejection, string-impostor settings rejection, service-role-only ACL/catalog shape, zero business mutation, transaction rollback, safe database naming, and isolated non-default-port cleanup.
+
+Production readback proves both ledger rows are one statement, 47,596 bytes, and byte-identical to the tested source. The five installed functions are owned by `postgres` and empty-search-path pinned. Browser roles cannot execute any of them; `service_role` can execute only the two public entry points. The v6 labels read back exactly while the inherited v1 label remains unchanged. Security and performance advisors report no Phase 9 finding. The business-row control totals remained 64 companies, 217 users, 465 active tasks, and 354 weather forecasts across the apply window.
 
 ## Cost boundary
 
-This local build introduces no subscription, external provider request, model call, scheduled job, table, index, durable preview storage, or fixed vendor cost. If separately released and activated later, a call uses existing Vercel MCP execution plus two bounded Supabase reads. Forecast population remains the responsibility and cost profile of the existing OPS weather cache; this tool adds no Open-Meteo request.
+This release introduces no subscription, external provider request, model call, scheduled job, table, index, durable preview storage, or fixed vendor cost. If separately activated later, a call uses existing Vercel MCP execution plus two bounded Supabase reads. Forecast population remains the responsibility and cost profile of the existing OPS weather cache; this tool adds no Open-Meteo request.
 
 ## Release boundary
 
-Phase 9 is committed only in isolated local OPS-Web and Bible worktrees. The migration is not applied. Nothing is pushed or deployed. No OAuth client is registered or edited, no v6 consent or grant is minted, no production canary or outside-host acceptance is run, and active exposure remains v2. The capability is not customer-live.
+Phase 9 is contained by OPS-Web production main `dcfa2d64e68860d31798303ed0ce30f7dc5acfd1` and READY production deployment `dpl_22TEbgu5UfmCEiAio1aiQn8D6ZmM`, which owns `app.opsapp.co` with no alias error. The approved database apply was replayed concurrently: Supabase recorded versions `20260903194613` and `20260903194749`, both with the exact tested 47,596-byte statement and SHA-256 above. The migration is intentionally replay-safe; the second execution changed no business row and both truthful ledger entries are mirrored byte-for-byte in OPS-Web and this Bible.
 
-Push, production deployment, migration apply, migration archive mirroring, client registration, grant creation, authenticated canary, host acceptance, and any active-exposure change are separate Jackson-approved gates.
+The release remains dormant. Production has zero active v11 clients and zero active v11 grants, while public OAuth metadata still advertises exactly the established 20 read-only v2 scopes and no `.prepare` scope. An unauthenticated MCP tools-list request returns `401`, and the release window has no `/api/mcp` runtime error cluster. No OAuth client was registered or edited, no v6 consent or grant was minted, no schedule was changed, and no provider draft or message was created or sent. There are zero fresh forecast rows inside the required 12-hour horizon, so an authenticated business-data canary would fail closed and was deliberately not fabricated. Client registration, grant creation, authenticated canary, outside-host acceptance, and any active-exposure change remain separate Jackson-approved activation gates.
