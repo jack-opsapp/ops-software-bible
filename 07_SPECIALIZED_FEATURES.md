@@ -10242,4 +10242,22 @@ Exposure v9's four inherited tools are callable only through their historical ma
 
 ---
 
+## 42. Invisible Office Estimate Draft (local candidate, dormant and unapplied)
+
+“Quote this new lead like that past job, plus 8%” is one exact estimate preview, not permission to create or send a financial document. The host supplies the open target opportunity id, the specific approved source estimate id, and one canonical percentage. OPS never guesses the intended lead or past job.
+
+The target must be current, open, unmerged, and tied to one active same-company client. The source must be an approved/converted estimate tied unambiguously to a completed/closed same-company project for its active client. Document-level discounts are unsupported. Every line must have complete quantity, price, discount, minimum-charge, optional-selection, tax, order, and stored-total evidence. More than 100 lines, duplicate order, missing hierarchy, inconsistent mirrors, malformed money, source-total drift, or any tenant/status ambiguity fails closed.
+
+The requested percentage changes only unit price and minimum charge. Checked integer minor-unit math rounds half away from zero; quantity, discount, minimum-charge floor, tax, total, and percentage deposit are recomputed deterministically. Fixed deposits stay fixed. Unselected optional lines remain visible but contribute zero. The historical tax validates historical totals; the draft uses exactly one current active company-default fractional tax rate. Missing current tax for a taxable line, multiple defaults, or an out-of-range rate rejects the request.
+
+The v16/v10/v5 boundary requires current actor/company authority, the exact live grant and consent labels, five OAuth scopes, and company-wide client/estimate/pipeline/project/company permissions. Authority is resolved before the read, again after calculation, and finally inside PostgreSQL while rebuilding the exact source revision. Every business string is untrusted data. A stable hash binds source, target, percentage, tax, lines, and totals but excludes request and observation identifiers.
+
+The receipt says `ready` only for an ephemeral calculation. It explicitly proves no estimate was created, no number was reserved, nothing was issued/approved/published, zero messages were sent, and no price was committed. There is no commit tool, approval item, notification, routine, provider request, or persisted preview body; only ordinary shared transport audit/rate metadata remains.
+
+**Release boundary:** Phase 8 exists only in isolated local Web/Bible branches. Its migration is not applied and exposure v10 has no client, grant, canary, activation, or customer use. Active production remains read-only v2. Canonical contract: `specs/2026-09-02-ops-mcp-estimate-draft-vertical.md`.
+
+Exposure v10 keeps all v9 tools callable only through their historical pair or the exact v16/v10 authority bridge. The v16/v10 path binds the exact 17-scope registered client ceiling and serialization, v5 consent, and accepted labels without weakening historical grants.
+
+---
+
 **End of Document**

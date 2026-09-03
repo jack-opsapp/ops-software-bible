@@ -2060,6 +2060,20 @@ The package is ephemeral and expires after 24 hours. Stable context/source-bound
 
 ---
 
+## MCP Estimate Draft Definition (local candidate, dormant and unapplied, 2026-09-02)
+
+`prepare_estimate_from_past_job` is the canonical answer to “Quote this new lead like that past job, plus 8%.” Its input identifies one open target opportunity, one exact approved/converted source estimate, and one positive canonical percentage no greater than 100. The target and source are never inferred.
+
+The source estimate must belong to the current company and an active client, be tied to a completed/closed project for that same client, have no document-level discount, and carry complete internally reproducible totals. Every line retains its hierarchy, business labels, quantity, unit, discount, optional selection, taxable state, category/type, product/task/unit references, and ordering. Client messages, internal notes, terms, estimate notes, project notes, and lead descriptions are not copied.
+
+Unit price and minimum charge are increased by the requested percentage using checked integer minor-unit arithmetic and half-away-from-zero rounding. Quantity extension, line discount, minimum-charge floor, line total, tax, estimate totals, and percentage deposit are then recomputed. A fixed deposit stays fixed. An unselected optional line remains in the preview but contributes zero. The source estimate's stored tax rate validates history; the draft uses the company's single current active default fractional tax rate. Missing or ambiguous required evidence rejects the entire request.
+
+The result is an ephemeral `draft_preview`, not an `Estimate` entity. It does not call `get_next_document_number`, insert an estimate or line item, write an opportunity, reserve a sequence, persist preview content, issue/approve/publish/send a document, or commit pricing. The `estimates.create` permission is required to prepare under the current actor, but the tool exposes no create/commit RPC. Exact target/source/current-tax/line hashes and one stable preview hash make unchanged replay comparable while a final database assertion rejects any intervening source or authority change.
+
+This vertical is locally implemented under result schema v1, capability manifest v16, dormant exposure v10, and consent catalogue v5. The migration is not applied, no v10 OAuth client or grant exists, and active production remains read-only v2. Full contract: `specs/2026-09-02-ops-mcp-estimate-draft-vertical.md`.
+
+---
+
 **Last Updated**: 2026-09-02
-**Document Version**: 1.7
+**Document Version**: 1.8
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
