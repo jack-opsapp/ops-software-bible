@@ -2526,6 +2526,101 @@ routes the `/api/setup/progress` privileged write through the sub-resolving
 All RLS policies use these helpers (e.g. `private.get_current_user_id()`,
 `private.get_user_company_id()`) instead of `auth.uid()` directly.
 
+### Index-Expression Execution Contract on `public` Writes (incident 2026-09-03)
+
+**Postgres evaluates an index expression with the privileges of the writing role, and the
+requirement is transitive through every `SECURITY INVOKER` callee.** So an expression index
+on a `public` table may only call `private` functions that `anon`, `authenticated`, and
+`service_role` can all execute — including functions the index definition never names, but
+which the named function calls.
+
+**What went wrong.** `20260829063450_agent_team_sources.sql` created the partial expression
+index `public.idx_users_agent_team_directory_v1` on `public.users`, whose key expression
+calls `private.agent_p2_optional_canonical_text(...)`. That function, and its nested callee
+`private.agent_prompt_text_is_safe(...)`, granted `EXECUTE` only to `postgres` — while their
+two siblings in the same family (`agent_trim_discovery_display_text`,
+`agent_discovery_unicode15_text_is_supported`) were already granted to the three API roles.
+From 2026-08-29 21:14 UTC every non-`postgres` `INSERT` into `public.users`, and every
+`UPDATE` that could not be applied HOT, failed `42501 permission denied for function
+agent_p2_optional_canonical_text`. Zero users were created for five days. The migration's
+own postflight asserted index validity, key count, collation, and predicate — but never the
+execution contract. Repaired by
+`ops-web/supabase/migrations/20260903200000_users_team_directory_index_execute_contract.sql`,
+which grants the two validators and adds the generalized postflight below so the class
+cannot ship again.
+
+**Canonical check.** This recomputes, from the live catalog, every `private` function
+reachable from a `public` index expression and returns any the API roles cannot execute. It
+must return **zero rows**. It descends only through `SECURITY INVOKER` functions, because a
+`SECURITY DEFINER` boundary switches execution to the owner and its callees no longer need
+caller privileges.
+
+```sql
+with recursive idx as (
+  select pg_get_indexdef(x.indexrelid) as def
+  from pg_index x
+  join pg_class c on c.oid = x.indrelid
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public' and pg_get_indexdef(x.indexrelid) like '%private.%'
+),
+pf as (
+  select p.oid, p.proname, p.prosrc, p.prosecdef
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private'
+),
+reach as (
+  select distinct f.oid, f.proname, f.prosecdef
+  from idx, pf f
+  where idx.def like '%private.' || f.proname || '(%'
+  union
+  select f2.oid, f2.proname, f2.prosecdef
+  from reach r
+  join pf f1 on f1.oid = r.oid and f1.prosecdef = false
+  join pf f2 on f1.prosrc like '%private.' || f2.proname || '(%' and f2.oid <> f1.oid
+)
+select r.proname, pg_get_function_identity_arguments(r.oid) as args
+from reach r
+where not (
+      has_function_privilege('service_role',  r.oid, 'EXECUTE')
+  and has_function_privilege('authenticated', r.oid, 'EXECUTE')
+  and has_function_privilege('anon',          r.oid, 'EXECUTE')
+);
+```
+
+**`SECURITY DEFINER` does not bypass the `EXECUTE` ACL.** The two are orthogonal: Postgres
+checks `EXECUTE` on the function *before* it honours `SECURITY DEFINER`, so marking an
+index-expression helper definer fails with the identical `42501`. Proven live in this
+database — `private.current_user_is_admin()` has `prosecdef = true`, yet evaluated under
+`set local role service_role`, `has_function_privilege(...,'EXECUTE')` returns false. A
+`SECURITY DEFINER` function inside an index expression is also a documented
+privilege-escalation hazard. **The correct pattern for privileged work reached from a write
+path is a `SECURITY DEFINER` *trigger* function owned by `postgres`** — exactly what
+`private.bump_agent_read_domain_revision` (installed by the same migration, on this same
+table) already does, which is why that trigger never blocked a write.
+
+**HOT updates mask this class of bug — a partial outage is the expected signature, not
+evidence against the diagnosis.** `pg_stat_user_tables` for `public.users` at incident time:
+`n_tup_upd = 1444`, `n_tup_hot_upd = 1340` (**92.8 % HOT**). A HOT update writes no index
+entries, so the expression is never evaluated and the ACL is never checked. HOT is impossible
+when an indexed column changes — and on `public.users` that includes `auth_id`,
+`firebase_uid`, `first_name`/`last_name` (the key expression), `company_id`, `is_active`,
+`deleted_at`, and `onesignal_player_id`. **Every identity-repair write is therefore guaranteed
+non-HOT and guaranteed to fail, while a bare `updated_at` bump usually succeeds.** The
+failures land precisely on the writes that matter, so the surface looks intermittent while
+the underlying grant is unconditionally broken. The six `SECURITY DEFINER` functions owned by
+`postgres` that write `public.users` (`create_company_for_owner`,
+`create_company_for_owner_by_id`, `heal_user_identity`, `join_user_to_company`,
+`replace_user_role_as_system`, `update_company_setup_for_member`) evaluate the expression as
+`postgres` and kept working throughout — which is the other half of why the outage looked
+partial.
+
+**Client-side corollary.** A write path that discards a rejected write's error and answers
+success turns this into silent corruption of client belief. `/api/auth/sync-user` did exactly
+that — it logged the failed `users` update and returned `200` carrying a JavaScript merge of
+the values the database had refused — so a caller proceeded holding an `auth_id` /
+`firebase_uid` the database never stored, and stayed permanently unresolvable under RLS.
+Both that route and `/api/setup/progress` now read back or check every write and fail loudly.
+
 ### Expense / Payment / Opportunity RLS Hardening (2026-05-31)
 
 **Context**: A Books-tab review surfaced a critical multi-tenant data-exposure surface on the expense tables. `expenses`, `expense_project_allocations`, and `expense_categories` each carried a single permissive `USING (true)` policy for role `public` with full CRUD granted to `anon` + `authenticated` — meaning the shipped anon key (no login) could read, insert, update, and delete **every company's** expense data. `payments` and `opportunities` were company-isolated but had **no** permission scoping, so a same-company user without finances / pipeline access could still read them via a direct query.
