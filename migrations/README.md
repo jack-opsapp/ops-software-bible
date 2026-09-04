@@ -257,6 +257,15 @@ prefer the canonical file:
 - `20260805190000_add_email_connections_signature_logo_url.sql` → canonical `20260805185129`
 - `20260805230000_fix_email_signature_hash_check_null_character.sql` → canonical `20260805224149`
 
+## Accounting sync release — 2026-09-04
+
+- `20260904025000_qbo_bidirectional_sync_hardening.sql` ← ledger `20260904182523_qbo_bidirectional_sync_hardening`
+- `20260904040000_sage_connection_identity_and_oauth.sql` ← ledger `20260904182539_sage_connection_identity_and_oauth`
+- `20260904050000_sage_queue_hardening.sql` ← ledger `20260904182556_sage_queue_hardening`
+- `20260904060000_sage_reconciliation.sql` ← ledger `20260904182615_sage_reconciliation`
+
+These four files are byte-identical to the OPS-Web release sources. Supabase assigned apply-time ledger versions; the source filenames retain the dependency order used by the application repository.
+
 ## Provenance of the 2026-08-12 backfill
 
 552 files were reconstructed from `supabase_migrations.schema_migrations.statements` (read-only export) and

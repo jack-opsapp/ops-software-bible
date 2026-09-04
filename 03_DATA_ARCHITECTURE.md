@@ -6408,4 +6408,12 @@ Affected work preserves current versions, timing, assignment, project status, sc
 
 Every context, crew, role, item, recipient, reschedule option, history, availability, and commitment record is SHA-256 bound. One source revision covers the complete snapshot. The final assertion rebuilds the same observed source and rejects any intervening crew, schedule, recipient, authority, grant, label, manifest, or exposure change. Production ledger `20260904033119_agent_crew_callout_recovery_preview` is applied from the byte-exact 66,665-byte migration with SHA-256 `0d9e7b34baf465e9c62deab84f41d36de0de11e85e29d065da3dd368ecfbe4bc`. Post-apply catalog and ACL assertions pass, v12 remains at zero clients/grants, and business control totals are unchanged. Canonical behavior and release gates: `specs/2026-09-03-ops-mcp-crew-callout-recovery-vertical.md`.
 
+## QuickBooks and Sage sync hardening (production-applied 2026-09-04)
+
+OPS-Web release `162f76f7538c81b6c32ce6ac8c68fa35449f9550` introduced one QuickBooks correctness migration and three Sage identity, queue, and reconciliation migrations. Supabase recorded them as `20260904182523_qbo_bidirectional_sync_hardening`, `20260904182539_sage_connection_identity_and_oauth`, `20260904182556_sage_queue_hardening`, and `20260904182615_sage_reconciliation`. Canonical SQL is mirrored under `migrations/` using the source filenames.
+
+The Sage schema adds encrypted business identity plus a deterministic ownership lookup, one-time OAuth and business-selection tables, six service-managed mapping tables, durable provider-acceptance evidence on `accounting_sync_queue`, payment timestamps, fair reconciliation indexes, exact-scope apply functions, and payment/bill balance triggers. Every new exposed-schema table enables RLS and denies browser access. Every targeted `SECURITY DEFINER` function pins `search_path`, denies `anon` and `authenticated`, and grants execution only to `service_role`.
+
+Production postflight proved all four ledger entries; every required table, column, constraint, and index; zero release-scoped security-advisor findings; and unchanged accounting connection counts. The only connected accounting row remains an existing QuickBooks sandbox connection. No Sage connection exists, so Sage is schema/code-live but dormant and cannot write until the explicit shared, Sage-specific, production-specific, environment, and exact-business gates all pass.
+
 **End of Data Architecture Documentation**

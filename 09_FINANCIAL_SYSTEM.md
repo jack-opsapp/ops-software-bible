@@ -716,7 +716,7 @@ The `amount_paid`, `balance_due`, and `status` on invoices are **maintained by S
 2. Void a payment (set `voided_at`) → trigger recalculates again
 3. Never call `updateInvoice` to change payment amounts
 
-**Local hardening awaiting release approval (2026-09-03):** OPS-Web migration `20260904025000_qbo_bidirectional_sync_hardening.sql` repairs the trigger's move/void edge behavior before rollout. It recalculates both the old and new invoice when a payment moves, restores a zero-paid invoice to `past_due` or `awaiting_payment`, preserves intentional draft/sent/void/written-off states, clamps overpayment balance to zero, and ignores `qb_id`-only updates. Its invoice writes use the existing QuickBooks-origin transaction marker so payment-derived balances do not enqueue redundant QBO invoice updates. This contract is proven on PostgreSQL 17 but is not production-applied yet.
+**Production hardening (2026-09-04):** OPS-Web migration `20260904025000_qbo_bidirectional_sync_hardening.sql` repairs the trigger's move/void edge behavior. It recalculates both the old and new invoice when a payment moves, restores a zero-paid invoice to `past_due` or `awaiting_payment`, preserves intentional draft/sent/void/written-off states, clamps overpayment balance to zero, and ignores `qb_id`-only updates. Its invoice writes use the existing QuickBooks-origin transaction marker so payment-derived balances do not enqueue redundant QBO invoice updates. PostgreSQL 17 proof passed; production ledger `20260904182523_qbo_bidirectional_sync_hardening` is applied and OPS-Web release `162f76f75` is live.
 
 ### Invoice Helpers
 
@@ -2088,6 +2088,16 @@ Production ledger entries `20260903210504_supplier_bills_ap_vertical`, `20260903
 
 ---
 
-**Last Updated**: 2026-09-03
-**Document Version**: 1.9
-**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`, `217b4655`, `323bbfaf`, `62e51d3e`, `ac51e50b`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
+## Sage Accounting Sync (production deployed, dormant, 2026-09-04)
+
+Sage now uses one exact selected Sage business per OPS connection, encrypted rotating OAuth credentials, a durable queue for all sales and purchasing mutations, and bounded inbound reconciliation for customers, products, estimates/quotes, invoices, AR payments, suppliers, purchase invoices, and AP payments. Complete line graphs and payment allocations reconcile atomically; stale work recovers safely; uncertain provider acceptance is quarantined instead of retried blindly; and provider-origin transaction markers prevent echo writes.
+
+Production ledgers `20260904182539_sage_connection_identity_and_oauth`, `20260904182556_sage_queue_hardening`, and `20260904182615_sage_reconciliation` are applied. OPS-Web commit `162f76f75` is `READY` at `app.opsapp.co`. Live readback found zero Sage connections, so the integration is deployed but dormant. Sage writes require the shared accounting gate, the Sage gate, the production-only Sage gate for production traffic, the exact active profile, and the selected business identity; deployment alone grants none of them.
+
+The release passed 288 changed-surface application tests, 7 PostgreSQL 17 cases, two production builds, live schema/ACL/security postflight, authentication-boundary route probes, and a zero-error Vercel release window. The real Sage sandbox create/update/read/reconcile/cleanup war game remains a separate activation proof requiring the dedicated renewable sandbox credentials and exact allow-listed test-business identities.
+
+---
+
+**Last Updated**: 2026-09-04
+**Document Version**: 1.10
+**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`, `217b4655`, `323bbfaf`, `62e51d3e`, `ac51e50b`, `162f76f75`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
