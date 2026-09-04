@@ -6396,7 +6396,7 @@ Prepare/commit intents are company-, actor-, action-, request-, payload-hash-, a
 
 Production ledger entries `20260903210504_supplier_bills_ap_vertical`, `20260903211009_supplier_bill_immutable_acl_repair`, and `20260903211311_supplier_bill_fk_indexes` are the authoritative release sequence. The first live readback caught Supabase default table grants allowing server-role update/delete on the two immutable records; the forward ACL repair revoked those inherited privileges before any AP row or provider queue item existed. Independent readback now proves only `SELECT` and `INSERT` on `supplier_bill_documents` and `supplier_bill_events`, no update/delete/truncate, RLS on all 11 public AP tables, zero AP business rows, zero AP queue rows, and covering indexes for every new foreign key.
 
-## Invisible Office Crew Call-Out Recovery State (completed and production-deployed, dormant)
+## Invisible Office Crew Call-Out Recovery State (completed and production-released, dormant)
 
 Source migration `supabase/migrations/20260903220000_agent_crew_callout_recovery_preview.sql` defines the read-only database boundary for the tenth Invisible Office vertical, `prepare_crew_callout_recovery`. It adds no table, index, business row, assignment, calendar record, draft, message, delivery, or mutation RPC. Active production MCP remains read-only v2; dormant exposure v12 has no client, grant, activation, or customer-live authority.
 
@@ -6408,7 +6408,7 @@ Affected work preserves current versions, timing, assignment, project status, sc
 
 Every context, crew, role, item, recipient, reschedule option, history, availability, and commitment record is SHA-256 bound. One source revision covers the complete snapshot. The final assertion rebuilds the same observed source and rejects any intervening crew, schedule, recipient, authority, grant, label, manifest, or exposure change. Production ledger `20260904033119_agent_crew_callout_recovery_preview` is applied from the byte-exact 66,665-byte migration with SHA-256 `0d9e7b34baf465e9c62deab84f41d36de0de11e85e29d065da3dd368ecfbe4bc`. Post-apply catalog and ACL assertions pass, v12 remains at zero clients/grants, and business control totals are unchanged. Canonical behavior and release gates: `specs/2026-09-03-ops-mcp-crew-callout-recovery-vertical.md`.
 
-Jackson confirmed the Phase 10 application deployment complete on 2026-09-04. Source commits, the exact production migration, focused tests, public active-v2 metadata, and zero v12 OAuth clients/grants were independently verified. Exact private Vercel commit binding was not available. No authenticated external-host acceptance or customer-live crew-recovery authority exists; production deployment remains distinct from activation.
+No-code deployment carrier `2a086736ee7bad081caf6cdf753094b3f35967af` promoted the Phase 10 source through Vercel deployment `7sgYzredXDaeHfJGK3oEQcSHCrYk`, which completed successfully at `2026-09-04T04:05:34Z`. Post-deployment public probes still advertise only read-only v2. No authenticated external-host acceptance or customer-live crew-recovery authority exists; production deployment remains distinct from activation.
 
 ## Invisible Office Canpro Control-Room Task State (local-only, dormant)
 
