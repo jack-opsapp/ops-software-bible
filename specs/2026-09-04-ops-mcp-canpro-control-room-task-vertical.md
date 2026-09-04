@@ -88,7 +88,7 @@ The migration is additive and declares no policy seed, OAuth client, grant, expo
 
 ## Phase 10 boundary carried forward
 
-Phase 10 implementation commit `464a8cbf42b515ff4845852ab4f566366874ce14` and pushed main `1ea480b0e38d3a1b920395cbe4c91309901659b6` are present in source. Its focused release evidence records 93 changed-vertical tests and a successful production build. Production ledger `20260904033119_agent_crew_callout_recovery_preview` is applied from the exact Phase 10 migration. Jackson confirms the application deployment is complete; private Vercel commit-to-deployment binding was not independently available to this verification. Public production metadata still exposes only read-only v2.
+Phase 10 implementation commit `464a8cbf42b515ff4845852ab4f566366874ce14` and pushed main `1ea480b0e38d3a1b920395cbe4c91309901659b6` are present in source. No-code carrier `2a086736ee7bad081caf6cdf753094b3f35967af` retriggered the same source tree; Vercel deployment `7sgYzredXDaeHfJGK3oEQcSHCrYk` completed successfully at `2026-09-04T04:05:34Z`. Its focused release evidence records 93 changed-vertical tests and a successful 371-route production build. Production ledger `20260904033119_agent_crew_callout_recovery_preview` is applied from the exact Phase 10 migration. Post-deployment public production metadata still exposes only read-only v2.
 
 Phase 10 remains dormant authority: no v12 OAuth client, grant, activation, authenticated host acceptance, commit/apply/send capability, or customer-live mutation authority exists. “Production-deployed” therefore means dormant code and database source are present, not that any assistant can use crew-recovery authority for a customer.
 
