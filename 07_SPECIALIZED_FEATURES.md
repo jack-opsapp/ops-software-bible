@@ -52,7 +52,7 @@
 42. [Invisible Office Estimate Draft](#42-invisible-office-estimate-draft-production-released-and-dormant)
 43. [Invisible Office Weather Reschedule](#43-invisible-office-weather-reschedule-production-released-and-dormant)
 44. [Invisible Office Crew Call-Out Recovery](#44-invisible-office-crew-call-out-recovery-production-database-released-web-deployment-confirmation-pending-and-dormant)
-45. [Supplier Bill Capture and Field Review](#45-supplier-bill-capture-and-field-review-localunreleased-2026-09-04)
+45. [Supplier Bill Capture and Field Review](#45-supplier-bill-capture-and-field-review-web-released-ios-unreleased-2026-09-04)
 
 ---
 
@@ -10299,7 +10299,7 @@ Manifest v18, exposure v12, and consent v7 remain dormant; active production rem
 
 ---
 
-## 45. Supplier Bill Capture and Field Review (local/unreleased, 2026-09-04)
+## 45. Supplier Bill Capture and Field Review (web released, iOS unreleased, 2026-09-04)
 
 The iOS Books surface adds a Bills section for operators with `accounting.view`; capture is independently gated by `accounting.bills.capture`. The field workflow supports Files PDF import and VisionKit paper scanning. Scans are converted to PDF locally and enter the same durable queue. iOS never presents local scan output as authoritative extraction; the server returns the final invoice facts and stable intake identity.
 
@@ -10307,7 +10307,7 @@ The iOS Books surface adds a Bills section for operators with `accounting.view`;
 
 The field UI exposes `review`, `to_pay`, `paid`, `held`, and `payroll` filters, source PDF access, clearance results, line/job status, and an explicit offline-copy indicator. Approval, hold disposition, payroll handoff, payment scheduling, and payment recording remain in OPS Web where the full evidence and independent permissions are available. This prevents a compact field screen from hiding consequential accounting context.
 
-Primary iOS sources are `OPS/DataModels/SupplierBillIntake.swift`, `OPS/Services/SupplierBills/SupplierBillCaptureQueue.swift`, `SupplierBillCache.swift`, `SupplierBillIntakeService.swift`, `OPS/ViewModels/SupplierBillIntakeViewModel.swift`, and `OPS/Views/Books/Bills/SupplierBillsView.swift`. The implementation is local commit `c6269763`; it has not been pushed or released. The matching web console is local commit `bf3610e3e`. Canonical contract: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
+Primary iOS sources are `OPS/DataModels/SupplierBillIntake.swift`, `OPS/Services/SupplierBills/SupplierBillCaptureQueue.swift`, `SupplierBillCache.swift`, `SupplierBillIntakeService.swift`, `OPS/ViewModels/SupplierBillIntakeViewModel.swift`, and `OPS/Views/Books/Bills/SupplierBillsView.swift`. The implementation is local commit `c6269763`; it has not been pushed or released. The matching web console is live at OPS-Web commit `f0464eedf`, while its source branch remains local/unpushed. Canonical contract: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
 
 ---
 
