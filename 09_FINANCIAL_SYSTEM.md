@@ -716,6 +716,8 @@ The `amount_paid`, `balance_due`, and `status` on invoices are **maintained by S
 2. Void a payment (set `voided_at`) → trigger recalculates again
 3. Never call `updateInvoice` to change payment amounts
 
+**Production hardening (2026-09-04):** OPS-Web migration `20260904025000_qbo_bidirectional_sync_hardening.sql` repairs the trigger's move/void edge behavior. It recalculates both the old and new invoice when a payment moves, restores a zero-paid invoice to `past_due` or `awaiting_payment`, preserves intentional draft/sent/void/written-off states, clamps overpayment balance to zero, and ignores `qb_id`-only updates. Its invoice writes use the existing QuickBooks-origin transaction marker so payment-derived balances do not enqueue redundant QBO invoice updates. PostgreSQL 17 proof passed; production ledger `20260904182523_qbo_bidirectional_sync_hardening` is applied and OPS-Web release `162f76f75` is live.
+
 ### Invoice Helpers
 
 ```typescript
@@ -1128,6 +1130,7 @@ Financial-data view:
 - **Stable identity and replay safety** — QBO import/webhook writes no longer use PostgREST live-table upsert for `clients`, `sub_clients`, `estimates`, `invoices`, or `payments`; insert conflicts reselect the existing row and update non-identity columns only, so duplicate webhooks/import retries cannot mutate primary keys under child rows. QBO line replacement runs through service-role-only `replace_qbo_line_items_locked`, which takes a transaction-scoped advisory lock and parent `FOR UPDATE` before delete/reinsert.
 - **Outbound safety** — legacy manual sync/cron cannot push QuickBooks writes; Full CRUD writes are queue-owned, environment/connection-scoped, and terminally marked `needs_review` rather than retried when provider write succeeds but local finalization fails. Contact (`sub_clients`) changes queue against the parent customer, not the contact row id; sub-client tombstones update the QBO customer rather than inactivating it. Only one QuickBooks environment can be writable for a company at a time. Queue stale-claim and retry duplicate checks are connection-scoped, so sandbox and production rows cannot cancel each other. OPS estimate soft-delete maps to QBO Estimate delete; invoice/payment tombstones map to supported QBO void operations.
 - **Inbound payment safety** — linked QBO payments are canonicalized as `paymentQbId:invoiceQbId` in OPS, while outbound void/update calls parse the raw payment id before calling QBO and then refresh the local composite key. Delayed inbound payment webhooks update a legacy raw payment row instead of inserting a duplicate. QuickBooks Payment `Void` webhooks mark matching OPS payments `voided_at`; Payment `Update` also voids stale composite rows that disappeared from QBO's latest split and reconciles affected invoices to QBO `Balance`, so QBO-side payment edits/reversals do not leave OPS A/R overstated.
+- **Local bidirectional hardening awaiting release approval (2026-09-03)** — create queue rows now fence dependent updates; reconcile candidates are selected across all four entity lanes by least-recently-reconciled order and exclude tombstoned/terminal records; payment reconciliation strips the OPS invoice suffix before QBO lookup; and overlength invoice/estimate numbers receive a deterministic OPS-id suffix inside QBO's 21-character limit. The migration and web route are locally verified only, not production-live.
 
 ### Edge Functions (3)
 
@@ -2085,6 +2088,16 @@ Production ledger entries `20260903210504_supplier_bills_ap_vertical`, `20260903
 
 ---
 
-**Last Updated**: 2026-09-03
-**Document Version**: 1.9
-**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`, `217b4655`, `323bbfaf`, `62e51d3e`, `ac51e50b`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
+## Sage Accounting Sync (production deployed, dormant, 2026-09-04)
+
+Sage now uses one exact selected Sage business per OPS connection, encrypted rotating OAuth credentials, a durable queue for all sales and purchasing mutations, and bounded inbound reconciliation for customers, products, estimates/quotes, invoices, AR payments, suppliers, purchase invoices, and AP payments. Complete line graphs and payment allocations reconcile atomically; stale work recovers safely; uncertain provider acceptance is quarantined instead of retried blindly; and provider-origin transaction markers prevent echo writes.
+
+Production ledgers `20260904182539_sage_connection_identity_and_oauth`, `20260904182556_sage_queue_hardening`, and `20260904182615_sage_reconciliation` are applied. OPS-Web release `162f76f75` is contained by current production descendant `c3c7cc58`, which is `READY` in Vercel deployment `dpl_8hFhpgtvYdfBEeUWPvWk2eMxhzFh` and owns `app.opsapp.co` with no alias error. Live readback found zero Sage connections, so the integration is deployed but dormant. Sage writes require the shared accounting gate, the Sage gate, the production-only Sage gate for production traffic, the exact active profile, and the selected business identity; deployment alone grants none of them.
+
+The release passed 288 changed-surface application tests, 7 PostgreSQL 17 cases, two production builds, live schema/ACL/security postflight, authentication-boundary route probes, and a zero-error Vercel release window. The real Sage sandbox create/update/read/reconcile/cleanup war game remains a separate activation proof requiring the dedicated renewable sandbox credentials and exact allow-listed test-business identities.
+
+---
+
+**Last Updated**: 2026-09-04
+**Document Version**: 1.10
+**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`, `217b4655`, `323bbfaf`, `62e51d3e`, `ac51e50b`, `162f76f75`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.

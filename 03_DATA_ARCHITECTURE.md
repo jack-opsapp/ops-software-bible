@@ -6429,4 +6429,12 @@ All six public entry points are stable security-definer functions with empty sea
 
 Evidence rows retain only structured OPS identities, versions, hashes, and bounded display labels. Legal hold prevents redaction. Operator and expiry redaction replace labels with `[redacted]` while preserving source identities, hashes, timestamps, result/receipt truth, and tombstones. Raw policy documents, correspondence bodies, browser data, and indiscriminate company corpora are excluded. Canonical behavior and release gates: `specs/2026-09-04-ops-mcp-canpro-control-room-task-vertical.md`.
 
+## QuickBooks and Sage sync hardening (production-applied 2026-09-04)
+
+OPS-Web release `162f76f7538c81b6c32ce6ac8c68fa35449f9550` introduced one QuickBooks correctness migration and three Sage identity, queue, and reconciliation migrations. Supabase recorded them as `20260904182523_qbo_bidirectional_sync_hardening`, `20260904182539_sage_connection_identity_and_oauth`, `20260904182556_sage_queue_hardening`, and `20260904182615_sage_reconciliation`. Canonical SQL is mirrored under `migrations/` using the source filenames.
+
+The Sage schema adds encrypted business identity plus a deterministic ownership lookup, one-time OAuth and business-selection tables, six service-managed mapping tables, durable provider-acceptance evidence on `accounting_sync_queue`, payment timestamps, fair reconciliation indexes, exact-scope apply functions, and payment/bill balance triggers. Every new exposed-schema table enables RLS and denies browser access. Every targeted `SECURITY DEFINER` function pins `search_path`, denies `anon` and `authenticated`, and grants execution only to `service_role`.
+
+Production postflight proved all four ledger entries; every required table, column, constraint, and index; zero release-scoped security-advisor findings; and unchanged accounting connection counts. The only connected accounting row remains an existing QuickBooks sandbox connection. No Sage connection exists, so Sage is schema/code-live but dormant and cannot write until the explicit shared, Sage-specific, production-specific, environment, and exact-business gates all pass.
+
 **End of Data Architecture Documentation**
