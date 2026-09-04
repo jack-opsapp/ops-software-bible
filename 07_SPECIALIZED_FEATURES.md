@@ -10276,4 +10276,18 @@ The truthful effect envelope is zero project, task, calendar, provider-draft, an
 
 ---
 
+## 44. Invisible Office Crew Call-Out Recovery (production database released; web deployment confirmation pending and dormant)
+
+“Mike called out tomorrow. Cover his jobs and tell the crew and clients” is one exact recovery-and-copy preview, not permission to alter the schedule or contact anyone. The operator supplies one crew name and one company-local date. OPS resolves the exact active crew identity, affected authorized tasks and booked site visits, current crew and role evidence, same-task completion history, work hours, approved or neutral time off, task/site-visit/personal-event conflicts, project continuity, and current exact recipients.
+
+The planner first maximizes same-day coverage, then minimizes the number of replacement people and assignment changes before preferring continuity, stronger same-task history, lower existing workload, and stable identity order. It never double-books a replacement across overlapping recovery items. A task replacement requires both overlapping role evidence and completed history for that task type. A site visit uses overlapping role evidence and explicitly reports that no requirement record is available. OPS does not hold authoritative crew licensing or certification data, so the vertical never presents role or history as licensure.
+
+For work without proven same-day coverage, an unlocked, non-recurring, unpaired, dependency-free item may move to its earliest bounded future date only when every retained assignee is free of time off and all task, site-visit, and personal-event conflicts. Everything else remains visibly uncovered. Existing assignees are preserved except for the called-out member; timing and duration are preserved. Missing, suppressed, shared, merged, unauthorized, or malformed recipient evidence produces a blocker rather than a guessed contact.
+
+The result separates current facts, evidence-limited candidate assessments, exact assignment/date proposals, internal crew draft previews, client draft previews, blockers, future-confirmation requirements, and a truthful all-zero effect envelope. Every source and result carries deterministic hashes. No commit, apply, assignment edit, reschedule, calendar write, OPS/provider draft, message, delivery, notification, routine, or durable preview exists.
+
+Manifest v18, exposure v12, and consent v7 remain dormant; active production remains read-only v2. The database boundary is live under ledger `20260904033119_agent_crew_callout_recovery_preview`, while exact Vercel deployment binding for pushed web main `1ea480b0e38d3a1b920395cbe4c91309901659b6` awaits an authorized source read. Canonical contract: `specs/2026-09-03-ops-mcp-crew-callout-recovery-vertical.md`.
+
+---
+
 **End of Document**
