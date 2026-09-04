@@ -6396,7 +6396,7 @@ Prepare/commit intents are company-, actor-, action-, request-, payload-hash-, a
 
 Production ledger entries `20260903210504_supplier_bills_ap_vertical`, `20260903211009_supplier_bill_immutable_acl_repair`, and `20260903211311_supplier_bill_fk_indexes` are the authoritative release sequence. The first live readback caught Supabase default table grants allowing server-role update/delete on the two immutable records; the forward ACL repair revoked those inherited privileges before any AP row or provider queue item existed. Independent readback now proves only `SELECT` and `INSERT` on `supplier_bill_documents` and `supplier_bill_events`, no update/delete/truncate, RLS on all 11 public AP tables, zero AP business rows, zero AP queue rows, and covering indexes for every new foreign key.
 
-## Invisible Office Crew Call-Out Recovery State (production database released; web deployment confirmation pending, dormant)
+## Invisible Office Crew Call-Out Recovery State (completed and production-deployed, dormant)
 
 Source migration `supabase/migrations/20260903220000_agent_crew_callout_recovery_preview.sql` defines the read-only database boundary for the tenth Invisible Office vertical, `prepare_crew_callout_recovery`. It adds no table, index, business row, assignment, calendar record, draft, message, delivery, or mutation RPC. Active production MCP remains read-only v2; dormant exposure v12 has no client, grant, activation, or customer-live authority.
 
@@ -6407,5 +6407,26 @@ The source resolves exactly one active same-company crew identity by exact full 
 Affected work preserves current versions, timing, assignment, project status, schedule locks, recurrence/pairing/dependency facts, and exact recipient lineage. Safe future date options preserve duration and crew and are emitted only when the item is unlocked and dependency-free and every retained assignee is free of time off, task, visit, and personal-event conflicts. Missing or ambiguous recipients remain explicit draft blockers rather than guessed contacts. Bounds are 25 affected items, 250 candidates, 500 relevant schedule sources, 50 assignees per item, a 14-day recovery horizon, and a 2,000,000-byte source snapshot.
 
 Every context, crew, role, item, recipient, reschedule option, history, availability, and commitment record is SHA-256 bound. One source revision covers the complete snapshot. The final assertion rebuilds the same observed source and rejects any intervening crew, schedule, recipient, authority, grant, label, manifest, or exposure change. Production ledger `20260904033119_agent_crew_callout_recovery_preview` is applied from the byte-exact 66,665-byte migration with SHA-256 `0d9e7b34baf465e9c62deab84f41d36de0de11e85e29d065da3dd368ecfbe4bc`. Post-apply catalog and ACL assertions pass, v12 remains at zero clients/grants, and business control totals are unchanged. Canonical behavior and release gates: `specs/2026-09-03-ops-mcp-crew-callout-recovery-vertical.md`.
+
+Jackson confirmed the Phase 10 application deployment complete on 2026-09-04. Source commits, the exact production migration, focused tests, public active-v2 metadata, and zero v12 OAuth clients/grants were independently verified. Exact private Vercel commit binding was not available. No authenticated external-host acceptance or customer-live crew-recovery authority exists; production deployment remains distinct from activation.
+
+## Invisible Office Canpro Control-Room Task State (local-only, dormant)
+
+Source migration `supabase/migrations/20260904050000_agent_dispatch_confirmation_task.sql` defines the proposed persistence and authority boundary for the eleventh Invisible Office vertical. It is locally implemented and verified but has not been pushed, deployed, or applied to production. Active production MCP remains read-only v2; v13 has no client, grant, activation, host acceptance, or customer-live authority.
+
+| Relation | Purpose |
+|---|---|
+| `private.agent_company_policy_versions` | Generic, tenant-bound, immutable-version policy slice with SOP/system ids, versions, digests, exact rule fields, approver, assignee, task type/title, and retention. |
+| `private.agent_internal_task_runs` | Actor/grant/permission/manifest/exposure/policy/source/idempotency snapshot for one bounded preparation. |
+| `private.agent_internal_task_evidence` | Three structured OPS proof references plus schedule/project/task source hashes, retention, legal hold, redaction, and tombstone state. |
+| `private.agent_internal_task_change_sets` | One immutable proposed task and exact preview digest, expiry, policy/source binding, and confirmation state. |
+| `private.agent_internal_task_confirmations` | Single-use actor confirmation bound to action, change set, preview, and idempotency. |
+| `private.agent_internal_task_receipts` | Replay-safe committed or rejected outcome with exact effect counts and independent task readback digest. |
+
+The source accepts only the earliest active `confirmation_required` work-queue item for the company, an exact expected schedule version, and three current same-tenant proof references. Missing/duplicate/inactive policy, wrong approver or assignee, cross-tenant evidence, later-priority selection, authority drift, policy drift, task drift, or expired approval fails closed. Preparation persists one run/evidence/change-set/action/notification package but performs zero task mutation. The dedicated approval commit locks all identities, rechecks current authority and source, calls `create_task_with_event_as_system`, reads the task back, records the receipt, marks the action, and resolves the notification atomically.
+
+All six public entry points are stable security-definer functions with empty search paths and service-role-only execution: prepare, commit, reject, manual evidence redaction, expired evidence redaction, and the dedicated preparation rate limiter. Private helpers and all private relations have no application-role access. The migration contains no policy seed, OAuth registration/grant, exposure activation, routine, retention schedule, Canpro identifier, or customer row.
+
+Evidence rows retain only structured OPS identities, versions, hashes, and bounded display labels. Legal hold prevents redaction. Operator and expiry redaction replace labels with `[redacted]` while preserving source identities, hashes, timestamps, result/receipt truth, and tombstones. Raw policy documents, correspondence bodies, browser data, and indiscriminate company corpora are excluded. Canonical behavior and release gates: `specs/2026-09-04-ops-mcp-canpro-control-room-task-vertical.md`.
 
 **End of Data Architecture Documentation**

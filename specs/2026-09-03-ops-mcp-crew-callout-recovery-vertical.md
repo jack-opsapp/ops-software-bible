@@ -1,7 +1,7 @@
 # OPS MCP Crew Call-Out Recovery Vertical
 
 - **Designed and built:** 2026-09-03
-- **Status:** Production database released; web main pushed; exact Vercel deployment binding pending; dormant, not activated
+- **Status:** Completed and production-deployed; dormant, not activated
 - **OPS-Web base:** `dcfa2d64e68860d31798303ed0ce30f7dc5acfd1`
 - **OPS-Web implementation:** `464a8cbf42b515ff4845852ab4f566366874ce14`
 - **OPS-Web pushed main:** `1ea480b0e38d3a1b920395cbe4c91309901659b6`
@@ -116,7 +116,7 @@ Production release evidence captured 2026-09-04:
 - The broad suite records 16,755 passing, 15 failing, and 22 skipped tests across 1,658 files. Every failing file is byte-identical to the then-current `origin/main`; failures are existing MCP loopback-sandbox, timezone, registry, template-sync, and queue-order baselines rather than this vertical.
 - GitHub Actions run `33831854081` fails only the pre-existing delivery-source normalization SQL contract in an unchanged file; no Phase 10 test fails.
 - `https://app.opsapp.co/.well-known/oauth-authorization-server` returns 200 and exactly the established 20 read scopes. Unauthenticated `POST /api/mcp` returns 401 and the same read-only scope challenge.
-- GitHub has no Vercel commit status or deployment object for `1ea480b0e38d3a1b920395cbe4c91309901659b6`. The public HTTP proof establishes current active-v2 behavior but cannot bind the running Vercel build to that source commit. Private Vercel dashboard access was not authorized, so application deployment is not claimed.
+- Jackson confirmed the application deployment complete on 2026-09-04. The public HTTP proof independently establishes current active-v2 behavior but cannot bind the running Vercel build to source commit `1ea480b0e38d3a1b920395cbe4c91309901659b6`; exact private Vercel commit binding was not available to this verification.
 
 ## Cost boundary
 
@@ -124,4 +124,4 @@ This vertical adds no subscription, paid provider, model request, external API c
 
 ## Activation boundary
 
-This release is dormant. It does not create or edit an OAuth client or grant, mint v7 consent, perform an authenticated business-data canary, change `ACTIVE_MCP_EXPOSURE_REVISION`, or prove external-host acceptance. Those remain separate Jackson-approved activation gates. Public OAuth metadata and unauthenticated MCP behavior must remain on the established read-only v2 surface after release.
+This completed deployment remains dormant. It does not create or edit an OAuth client or grant, mint v7 consent, perform an authenticated business-data canary, change `ACTIVE_MCP_EXPOSURE_REVISION`, or prove external-host acceptance. Those remain separate Jackson-approved activation gates. Public OAuth metadata and unauthenticated MCP behavior must remain on the established read-only v2 surface after release.
