@@ -34,7 +34,7 @@
 - **No new dependencies.** Uses existing Supabase client libraries on each platform.
 - **Offline-first.** Mobile platforms queue events locally and flush when connectivity returns.
 - **Firebase Analytics stays for Google Ads only.** The 5 conversion events that feed Google Ads attribution continue to fire via Firebase Analytics. Everything else goes to Supabase.
-- **GA4 handles visit + traffic data on web surfaces only (added 2026-05-25).** Both ops-site (marketing) and OPS-Web (logged-in product) fire the GA4 gtag.js snippet client-side via `src/components/layout/GoogleAnalytics.tsx`. Captures sessions, page_view, device, geography, referrer — the visit-grade surface that product analytics is not designed to expose. Does NOT receive product-analytics events; those still go to Supabase. iOS and Android do NOT use GA4. Env var: `NEXT_PUBLIC_GA_MEASUREMENT_ID`. Operator can share one property (two data streams — recommended) or split. See § 7 for the OPS-Web install.
+- **GA4 handles visit + traffic data on web surfaces only (added 2026-05-25).** ops-site (marketing), try-ops (acquisition landing), and OPS-Web (logged-in product) fire the GA4 gtag.js snippet client-side. Captures sessions, page_view, device, geography, referrer — the visit-grade surface that product analytics is not designed to expose. Does NOT receive product-analytics events; those still go to Supabase. iOS and Android do NOT use GA4. Env var: `NEXT_PUBLIC_GA_MEASUREMENT_ID`. See § 7 for the OPS-Web install and production-host boundary.
 
 ### Data Flow
 
@@ -540,15 +540,21 @@ In addition to the Supabase `analytics_events` pipeline above, OPS-Web fires the
 | Component | `src/components/layout/GoogleAnalytics.tsx` (mirror of the ops-site implementation) |
 | Mount point | `src/app/layout.tsx`, inside `<body>`, after `<Providers>` |
 | Env var | `NEXT_PUBLIC_GA_MEASUREMENT_ID` (same name as ops-site) |
-| Conditional render | Component returns `null` if env var is unset — no leakage in local dev or preview branches without the var |
+| Conditional render | Component returns `null` if the env var is unset; runtime configuration also exits unless the browser hostname exactly matches the surface's production allowlist |
 | Load strategy | `next/script` with `strategy="afterInteractive"` (post-hydration, non-blocking) |
 | Identity attachment | None. GA4 manages its own client_id cookie. Do not pipe Supabase `user_id` into `gtag('config', ..., { user_id })` without an explicit privacy review — internal UUIDs in GA dimension data create downstream PII handling obligations. |
 
-**Property strategy.** Operator decides:
-- **Same property as ops-site, two data streams** (recommended). Unified reporting across marketing + product. Filter by data stream in GA exploration.
-- **Separate property.** Cleaner audience segmentation but loses the marketing-to-product handoff in GA's funnels.
+**Production property registry.** Property selection is explicit and fail-closed:
 
-The `@google-analytics/data` server SDK already wired into `src/lib/analytics/ga4-client.ts` reads from whichever property `GA4_PROPERTY_ID` points to — independent of which write target `NEXT_PUBLIC_GA_MEASUREMENT_ID` resolves to. Admin dashboards keep working either way.
+| Registry key | Surface | GA property ID | Measurement ID |
+|---|---|---:|---|
+| `marketing` | `opsapp.co` + `try.opsapp.co` | `475051117` | `G-HKM7RWVTDV` |
+| `web_app` | `app.opsapp.co` | `539494652` | `G-JJP5SN122V` |
+| `ios_app` | Firebase iOS app | `514229717` | Managed by Firebase |
+
+**Production-host boundary (prepared locally 2026-09-03; not production-live until OPS-Web, ops-site, and try-ops are pushed and deployed).** Browser configuration has an exact allowlist before `dataLayer` is created or `gtag('config')` is called. The primary marketing deployment accepts only `opsapp.co` and `www.opsapp.co`; the acquisition landing app accepts only `try.opsapp.co`; the logged-in product accepts only `app.opsapp.co`. Localhost, loopback addresses, Vercel previews, and arbitrary aliases do not configure GA or Google Ads. The acquisition landing app also suppresses its `onboarding_events` and `tutorial_analytics` writes outside `try.opsapp.co`, at both the client and API-route boundaries. Preview analytics require a separate QA property rather than writing into production reporting.
+
+**GA4 hostname filter and repair replay (prepared locally 2026-09-03; not production-live).** `src/lib/analytics/ga4-report-filter.ts` composes each web property's exact production `hostName` allowlist into the acquisition warehouse request and every direct admin, blog, shared, and SPEC GA4 Data API report. Filtering occurs before aggregation and does not add hostname to persisted fact grain. Native iOS conversion QA has no hostname and remains unchanged; the analytics-health property-permission probe is intentionally unfiltered because it tests access, not traffic. GA4 sync metadata carries `hostname_filter_version: 1`; older state restarts at the 14-month retention boundary. The existing atomic replacement RPC removes contaminated `ga4_daily_acquisition` and derived `channel_metrics` rows as each date replays, while D-8 through D-2 are restated on the first post-release run.
 
 **Privacy.** OPS-Web URLs can contain resource UUIDs (project IDs, client IDs) which are not direct PII but should not be retained indefinitely. `anonymize_ip` is GA4-default. Query-param exclusion + path scrubbing for resource UUIDs is configured at the GA4 admin level for the OPS-Web data stream — **do not encode** this in the client-side component, since admin-level config is overridable per-stream while code changes require a redeploy.
 
