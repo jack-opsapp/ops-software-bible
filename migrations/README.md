@@ -22,6 +22,18 @@ select md5(statements[1]) from supabase_migrations.schema_migrations where versi
 -- equals md5 of the file with its single trailing newline stripped
 ```
 
+## Pending (checked in, NOT yet applied)
+
+A file here with no ledger row is an exception to the 1:1 coverage guarantee and must be listed below
+until it is applied. On apply, read the stamped version back from `supabase_migrations.schema_migrations`
+and rename the file to `<ledger_version>_<ledger_name>.sql`, then delete its entry here.
+
+- `20260904200000_deck_design_geometry_regression_log.sql` — bug `9f4aeaf8` deck save-loss. Diagnostic
+  only: an `after update of drawing_data` trigger logs any write that reduces a deck's vertex or edge
+  count into `public.deck_design_geometry_regressions`, so silent geometry loss becomes visible. Blocks
+  nothing (the `clearDesign()` path is a legitimate user action) and swallows its own errors so it can
+  never fail a user's save. Post-apply probes are in the file's tail — verify by OBJECT, never by ledger row.
+
 ## Naming quirks (historical)
 
 - Ledger names sometimes embed an older working name, giving double-stamped or dated filenames, e.g.
