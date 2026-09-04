@@ -56,6 +56,13 @@ All seven are byte-identical to the corresponding committed source under `supaba
 
 The archive is byte-identical to the committed source `supabase/migrations/20260902231632_agent_estimate_draft_preview.sql` and the one statement stored in production ledger `20260903110828`: 42,223 bytes, MD5 `a180b8ef634f6aec19b6734d3601a0bf`, SHA-256 `a24282619e24c5f0d14135940e7f88a226b93b237c71842d97e779f44c8ce9f7`. It installs only the dormant v10 estimate-draft snapshot and final authority functions. Release creates no estimate or preview row, reserves no number, sends nothing, and creates no v10 client or grant. Full proof: `specs/2026-09-02-ops-mcp-estimate-draft-vertical.md`.
 
+## Canpro supplier bill clearance release (2026-09-04 UTC)
+
+- `20260904171301_supplier_bill_intake_clearance.sql` — 52,199 bytes, MD5 `c1999781a038c5b4669780f3b0f02c9a`.
+- `20260904171632_supplier_bill_intake_fk_indexes.sql` — 2,249 bytes, MD5 `7ebe982a2e7d05e1d6054f673a7c84a4`.
+
+Both archives are byte-exact against `supabase_migrations.schema_migrations.statements[1]` and their committed OPS-Web source migrations. They install the pre-AP evidence, review, clearance, guarded mutation, and permission boundary plus covering indexes for all 13 introduced foreign keys. Release created no intake, write-intent, canonical AP link, or provider queue row. Full proof: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
+
 ## Ledger rows without stored SQL (file is the authority)
 
 These 6 CLI-era ledger rows have an empty `statements` array; the version-named file is the only record of their SQL:
@@ -265,6 +272,12 @@ prefer the canonical file:
 - `20260904060000_sage_reconciliation.sql` ← ledger `20260904182615_sage_reconciliation`
 
 These four files are byte-identical to the OPS-Web release sources. Supabase assigned apply-time ledger versions; the source filenames retain the dependency order used by the application repository.
+
+## Supplier bill account-closure integration — 2026-09-04
+
+- `20260904184303_supplier_bill_company_data_lifecycle.sql` ← OPS-Web source `20260904190000_supplier_bill_company_data_lifecycle.sql`
+
+The archive file is byte-identical to the OPS-Web source. Supabase assigned apply-time ledger version `20260904184303`.
 
 ## Invisible Office Phase 11 release — 2026-09-04 UTC
 
