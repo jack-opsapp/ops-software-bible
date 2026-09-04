@@ -6406,7 +6406,7 @@ Line items preserve SKU, description, ordered and invoiced quantities, unit of m
 
 `accounting.view` owns tenant-scoped reads. `accounting.bills.capture`, `accounting.bills.approve`, and `accounting.bills.pay` independently own capture/review, approval, and payment lanes. The two public mutation functions are service-role-only security-definer RPCs with an empty `search_path`; browser roles have no direct write or RPC execution. Approval revalidates required checks, exact allocations, payment owner, and planned date before it promotes a material or subcontractor intake exactly once into the production `suppliers` / `supplier_bills` model and creates provider queue work. Held or payroll-routed intakes cannot create canonical AP or provider rows. Release readback proved RLS and ACL shape, zero intake/canonical-link rows, and no intake warnings or errors from the security or performance advisors. Canonical contract: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
 
-## Invisible Office Crew Call-Out Recovery State (production database released; web deployment confirmation pending, dormant)
+## Invisible Office Crew Call-Out Recovery State (production-released, dormant)
 
 Source migration `supabase/migrations/20260903220000_agent_crew_callout_recovery_preview.sql` defines the read-only database boundary for the tenth Invisible Office vertical, `prepare_crew_callout_recovery`. It adds no table, index, business row, assignment, calendar record, draft, message, delivery, or mutation RPC. Active production MCP remains read-only v2; dormant exposure v12 has no client, grant, activation, or customer-live authority.
 

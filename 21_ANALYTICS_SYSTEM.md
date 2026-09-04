@@ -61,7 +61,7 @@ Property selection is explicit and fail-closed.
 
 | Registry key | Surface | GA property ID | Measurement ID |
 |---|---|---:|---|
-| `marketing` | `opsapp.co` | `475051117` | `G-HKM7RWVTDV` |
+| `marketing` | `opsapp.co` + `try.opsapp.co` | `475051117` | `G-HKM7RWVTDV` |
 | `web_app` | `app.opsapp.co` | `539494652` | `G-JJP5SN122V` |
 | `ios_app` | Firebase iOS app | `514229717` | Managed by Firebase |
 
@@ -71,7 +71,7 @@ OPS-Web must reject a valid-looking ID if it belongs to the wrong registry key. 
 
 ### Web visit analytics
 
-Both web surfaces load `gtag.js` only when a valid GA4 measurement ID exists. The initial configuration:
+The production web deployments load `gtag.js` only when a valid GA4 measurement ID exists. The initial configuration:
 
 - excludes the query string from `page_location` and `page_path`;
 - templates logged-in UUID and numeric resource segments as `:id`;
@@ -79,6 +79,8 @@ Both web surfaces load `gtag.js` only when a valid GA4 measurement ID exists. Th
 - leaves `analytics_storage` enabled for the approved first-party analytics purpose.
 
 Advertising storage or personalization must not be enabled until the privacy policy and consent implementation explicitly approve it.
+
+**Production-host boundary (prepared locally 2026-09-03; not production-live until OPS-Web, ops-site, and try-ops are pushed and deployed).** Browser configuration now has an exact allowlist before `dataLayer` is created or `gtag('config')` is called. The primary marketing deployment accepts only `opsapp.co` and `www.opsapp.co`; the acquisition landing app accepts only `try.opsapp.co`; the logged-in product accepts only `app.opsapp.co`. Localhost, loopback addresses, Vercel previews, and arbitrary aliases do not configure GA or Google Ads. The acquisition landing app also suppresses its `onboarding_events` and `tutorial_analytics` writes outside `try.opsapp.co`, at both the client and API-route boundaries. Preview analytics require a separate QA property rather than writing into production reporting.
 
 ### First-party product events
 
@@ -133,6 +135,8 @@ Production uses one `analytics_sync_runs` row per source invocation. A source re
 | Analytics health | Evaluates all sources after source jobs | 10:46 UTC |
 
 Search Console and GA4 date partitions are replaced atomically. A restatement either replaces one complete date or leaves the prior facts intact. A bounded App Store walk remains `running` while a cursor is present and becomes `complete` only when the cycle closes.
+
+**GA4 hostname filter and repair replay (prepared locally 2026-09-03; not production-live).** `src/lib/analytics/ga4-report-filter.ts` composes each web property's exact production `hostName` allowlist into the acquisition warehouse request and every direct admin, blog, shared, and SPEC GA4 Data API report. Filtering occurs before aggregation and does not add hostname to persisted fact grain. Native iOS conversion QA has no hostname and remains unchanged; the analytics-health property-permission probe is also intentionally unfiltered because it tests access, not traffic. GA4 sync metadata carries `hostname_filter_version: 1`; older state restarts at the 14-month retention boundary. The existing atomic replacement RPC removes contaminated `ga4_daily_acquisition` and derived `channel_metrics` rows as each date replays, while D-8 through D-2 are restated on the first post-release run.
 
 Before 10:15 UTC, a running/partial source or a normal finalized-date lag is `expected_latency`, not a failure. A denied permission, invalid property mapping, explicit failed run, or stale source after the window is a failure.
 

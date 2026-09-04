@@ -1,10 +1,12 @@
 # OPS MCP Crew Call-Out Recovery Vertical
 
 - **Designed and built:** 2026-09-03
-- **Status:** Production database released; web main pushed; exact Vercel deployment binding pending; dormant, not activated
+- **Status:** Production-released; dormant, not activated
 - **OPS-Web base:** `dcfa2d64e68860d31798303ed0ce30f7dc5acfd1`
 - **OPS-Web implementation:** `464a8cbf42b515ff4845852ab4f566366874ce14`
 - **OPS-Web pushed main:** `1ea480b0e38d3a1b920395cbe4c91309901659b6`
+- **Production deployment carrier:** `2a086736ee7bad081caf6cdf753094b3f35967af`
+- **Vercel deployment:** `7sgYzredXDaeHfJGK3oEQcSHCrYk` (`success`, `2026-09-04T04:05:34Z`)
 - **Bible base:** `a87480ff869dd742182b655cdf57809532a347ec`
 - **Production migration:** `20260903220000_agent_crew_callout_recovery_preview`
 - **Production ledger:** `20260904033119_agent_crew_callout_recovery_preview`
@@ -115,8 +117,8 @@ Production release evidence captured 2026-09-04:
 - The focused changed-vertical suite passes all 93 tests. The production Next.js build succeeds and emits all 371 routes.
 - The broad suite records 16,755 passing, 15 failing, and 22 skipped tests across 1,658 files. Every failing file is byte-identical to the then-current `origin/main`; failures are existing MCP loopback-sandbox, timezone, registry, template-sync, and queue-order baselines rather than this vertical.
 - GitHub Actions run `33831854081` fails only the pre-existing delivery-source normalization SQL contract in an unchanged file; no Phase 10 test fails.
-- `https://app.opsapp.co/.well-known/oauth-authorization-server` returns 200 and exactly the established 20 read scopes. Unauthenticated `POST /api/mcp` returns 401 and the same read-only scope challenge.
-- GitHub has no Vercel commit status or deployment object for `1ea480b0e38d3a1b920395cbe4c91309901659b6`. The public HTTP proof establishes current active-v2 behavior but cannot bind the running Vercel build to that source commit. Private Vercel dashboard access was not authorized, so application deployment is not claimed.
+- Vercel did not create a deployment status for the initial `1ea480b0e38d3a1b920395cbe4c91309901659b6` push. No-code main commit `2a086736ee7bad081caf6cdf753094b3f35967af` retriggered the same source tree; Vercel deployment `7sgYzredXDaeHfJGK3oEQcSHCrYk` completed successfully at `2026-09-04T04:05:34Z` and binds the production build to a descendant containing the Phase 10 implementation.
+- After deployment, `https://app.opsapp.co/.well-known/oauth-authorization-server` returns 200 and exactly the established 20 read scopes. Unauthenticated `POST /api/mcp` returns 401 with the same read-only scope challenge, proving the active v2 boundary remains unchanged on the promoted build.
 
 ## Cost boundary
 
