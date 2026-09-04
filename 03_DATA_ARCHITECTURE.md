@@ -6396,7 +6396,7 @@ Prepare/commit intents are company-, actor-, action-, request-, payload-hash-, a
 
 Production ledger entries `20260903210504_supplier_bills_ap_vertical`, `20260903211009_supplier_bill_immutable_acl_repair`, and `20260903211311_supplier_bill_fk_indexes` are the authoritative release sequence. The first live readback caught Supabase default table grants allowing server-role update/delete on the two immutable records; the forward ACL repair revoked those inherited privileges before any AP row or provider queue item existed. Independent readback now proves only `SELECT` and `INSERT` on `supplier_bill_documents` and `supplier_bill_events`, no update/delete/truncate, RLS on all 11 public AP tables, zero AP business rows, zero AP queue rows, and covering indexes for every new foreign key.
 
-## Invisible Office Crew Call-Out Recovery State (production database released; web deployment confirmation pending, dormant)
+## Invisible Office Crew Call-Out Recovery State (production-released, dormant)
 
 Source migration `supabase/migrations/20260903220000_agent_crew_callout_recovery_preview.sql` defines the read-only database boundary for the tenth Invisible Office vertical, `prepare_crew_callout_recovery`. It adds no table, index, business row, assignment, calendar record, draft, message, delivery, or mutation RPC. Active production MCP remains read-only v2; dormant exposure v12 has no client, grant, activation, or customer-live authority.
 

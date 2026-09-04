@@ -4199,7 +4199,7 @@ Already-paid captures call the existing `save_expense_atomic` contract and prese
 
 The production application release is OPS-Web `ac51e50b` (implementation `217b4655`, privilege/index hardening `323bbfaf`, ES2017 target repair `62e51d3e`, and ledger alignment `ac51e50b`). The matching database ledger is `20260903210504_supplier_bills_ap_vertical`, `20260903211009_supplier_bill_immutable_acl_repair`, and `20260903211311_supplier_bill_fk_indexes`.
 
-### MCP crew call-out recovery preview v12 (production database released; web deployment confirmation pending, dormant)
+### MCP crew call-out recovery preview v12 (production-released, dormant)
 
 The tenth Invisible Office vertical answers “Mike called out tomorrow. Cover his jobs and tell the crew and clients” through high-risk preparation tool `prepare_crew_callout_recovery`. Input is exactly one `crew_member_name` and one canonical company-local `target_date`. Tenant, actor, observation time, crew identity, schedule facts, projects, role evidence, experience evidence, working hours, time off, conflicts, recipients, optimization, copy, and bounds remain server-owned.
 
@@ -4209,7 +4209,7 @@ The application reauthorizes before the bounded source read and again after dete
 
 TypeScript finds the highest complete same-day coverage plan, then minimizes distinct replacement people and assignment changes before preferring project continuity, more same-task history, lower existing workload, and stable identity order. A replacement needs overlapping role evidence; a task also needs same-task completion history. Site visits explicitly use `no_requirement_recorded`. None of this is licence or certificate evidence. Remaining work takes the earliest conflict-free safe reschedule option; anything else is returned as uncovered. Internal and client text remains an ephemeral exact-recipient preview and states that nothing has changed yet.
 
-The result exposes zero assignment, task, site-visit, calendar, OPS/provider-draft, message, and delivery writes. Stable source, proposal, draft, and preview hashes make unchanged replay comparable. OPS-Web implementation `464a8cbf42b515ff4845852ab4f566366874ce14` is contained by pushed main commit `1ea480b0e38d3a1b920395cbe4c91309901659b6`; production database ledger `20260904033119_agent_crew_callout_recovery_preview` is applied. Exact Vercel source/deployment binding remains unverified because GitHub exposes no Vercel status or deployment for the commit and private dashboard access was not authorized. Exact contract and release evidence: `specs/2026-09-03-ops-mcp-crew-callout-recovery-vertical.md`.
+The result exposes zero assignment, task, site-visit, calendar, OPS/provider-draft, message, and delivery writes. Stable source, proposal, draft, and preview hashes make unchanged replay comparable. OPS-Web implementation `464a8cbf42b515ff4845852ab4f566366874ce14` is contained by pushed main commit `1ea480b0e38d3a1b920395cbe4c91309901659b6` and no-code deployment carrier `2a086736ee7bad081caf6cdf753094b3f35967af`; Vercel deployment `7sgYzredXDaeHfJGK3oEQcSHCrYk` completed successfully at `2026-09-04T04:05:34Z`. Production database ledger `20260904033119_agent_crew_callout_recovery_preview` is applied. Exact contract and release evidence: `specs/2026-09-03-ops-mcp-crew-callout-recovery-vertical.md`.
 
 **End of Document**
 
