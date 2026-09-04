@@ -4197,6 +4197,8 @@ Unpaid captures enqueue `supplier`, `supplier_bill`, and later `supplier_bill_pa
 
 Already-paid captures call the existing `save_expense_atomic` contract and preserve its category, allocation, approval, notification, and provider-expense behavior. The AP contract does not expose MCP tools or permissions. It is deliberately narrow so a later separately authorized MCP phase can prepare and commit against the same accounting boundary without changing accounting semantics. Canonical implementation details: `docs/accounting/supplier-bills-contract.md` in OPS-Web.
 
+The production application release is OPS-Web `ac51e50b` (implementation `217b4655`, privilege/index hardening `323bbfaf`, ES2017 target repair `62e51d3e`, and ledger alignment `ac51e50b`). The matching database ledger is `20260903210504_supplier_bills_ap_vertical`, `20260903211009_supplier_bill_immutable_acl_repair`, and `20260903211311_supplier_bill_fk_indexes`.
+
 **End of Document**
 
 This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, email pipeline integration, and error management with full fidelity to the current implementation.

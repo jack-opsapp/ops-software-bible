@@ -2081,8 +2081,10 @@ The source invoice remains in immutable document custody by company, storage key
 
 The three DeksMart invoices supplied for implementation were verified as unpaid shape fixtures: invoice dates and invoice numbers are captured, missing due dates remain missing, and the one-job/two-job layouts are supported. Their real documents and identifying contents are not committed to source control and were not written to production. Paid invoices continue through the established expense workflow and inherit its existing approval and policy constraints.
 
+Production ledger entries `20260903210504_supplier_bills_ap_vertical`, `20260903211009_supplier_bill_immutable_acl_repair`, and `20260903211311_supplier_bill_fk_indexes` are applied. Live readback confirms all new AP tables are empty, the AP provider queue is empty, every public AP table has RLS, the guarded RPCs are service-role-only, immutable document/event records are insert/read-only even for the service role, and every new foreign key has a covering index. No supplier, invoice, payment, expense, notification, provider, MCP, Invisible Office, or vinyl-order customer record was created by the release.
+
 ---
 
 **Last Updated**: 2026-09-03
 **Document Version**: 1.9
-**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`, `e902a800`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
+**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`, `217b4655`, `323bbfaf`, `62e51d3e`, `ac51e50b`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
