@@ -6654,7 +6654,7 @@ Live verification after apply (`docs/artifacts/public-api-booking-p2-1/verify_li
 
 ## Sage Accounting sync hardening (local source only — awaiting release approval, 2026-09-04)
 
-Source: OPS-Web commit `954a3a641`. The three migrations named below are mirrored byte-for-byte in this Bible but are **not production-applied**. Their runtime contract has been exercised on disposable PostgreSQL 17.
+Source: OPS-Web commit `d0879395f`. The three migrations named below are mirrored byte-for-byte in this Bible but are **not production-applied**. Their runtime contract has been exercised on disposable PostgreSQL 17.
 
 ### Exact connection and OAuth identity
 
