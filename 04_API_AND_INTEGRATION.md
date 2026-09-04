@@ -1653,7 +1653,7 @@ Live apply status must be verified during rollout. Supabase MCP records its own 
 
 ## Sage Accounting — exact-business OAuth, queue-owned writes, and reconciliation (local only, 2026-09-04)
 
-**Release state:** implemented and locally verified in OPS-Web commit `deb093ebc`; no Sage migration in this section is production-applied, and no code has been pushed or deployed. The provider contract is Sage Business Cloud Accounting API v3.1. Sage has no separate API host for sandbox traffic, so OPS treats `sandbox` as a fail-closed logical profile: dedicated app credentials, an exact test-business allow-list, distinct OPS connection/company ids, and disabled write gates by default.
+**Release state:** implemented and locally verified in OPS-Web commit `954a3a641`; no Sage migration in this section is production-applied, and no code has been pushed or deployed. The provider contract is Sage Business Cloud Accounting API v3.1. Sage has no separate API host for sandbox traffic, so OPS treats `sandbox` as a fail-closed logical profile: dedicated app credentials, an exact test-business allow-list, distinct OPS connection/company ids, and disabled write gates by default.
 
 ### OAuth and exact business selection
 
@@ -1675,7 +1675,7 @@ All OPS-originated Sage writes are queue-owned. The legacy `/api/sync` and prior
 
 ### Required gates and acceptance proof
 
-Runtime configuration is documented in `.env.example`: `SAGE_ACTIVE_PROFILE`, shared `ACCOUNTING_WRITE_ENABLED`, Sage-specific `SAGE_WRITE_ENABLED`, production-only `SAGE_PRODUCTION_WRITE_ENABLED`, profile-specific client credentials/redirect URI, and `SAGE_SANDBOX_BUSINESS_IDS`. The local-only acceptance runner additionally requires the exact refresh token, Sage business, OPS company/connection/user/category ids, ledger/tax/bank/payment ids, and a private manifest directory.
+Runtime configuration is documented in `.env.example`: `SAGE_ACTIVE_PROFILE`, shared `ACCOUNTING_WRITE_ENABLED`, Sage-specific `SAGE_WRITE_ENABLED`, production-only `SAGE_PRODUCTION_WRITE_ENABLED`, profile-specific client credentials/redirect URI, and `SAGE_SANDBOX_BUSINESS_IDS`. The local-only acceptance runner (`npm run sage:sandbox:war-game`) additionally requires the exact refresh token, Sage business, OPS company/connection/user/category ids, ledger/tax/bank/payment ids, and a private manifest directory. The package command supplies Node's server export condition; its executable preflight is regression-tested.
 
 The runner fails before network or database access unless every sandbox identity and both write gates are explicit. Its deterministic graph creates a tagged customer, supplier, estimate, quote, two sales invoices, AR payment, purchase invoice, AP payment, and multiple lines; forces one 401 refresh/replay; replays an idempotent write; moves a payment allocation; reconciles through production services/RPCs; reads every object back; and cleans provider objects in reverse dependency order plus exact-id OPS rows with a zero-row proof. Without credentials, the observed live preflight result was `BLOCKED :: SAGE_ACTIVE_PROFILE must be explicitly set to sandbox.` No provider or OPS write was attempted.
 
