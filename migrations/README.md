@@ -266,6 +266,12 @@ prefer the canonical file:
 
 These four files are byte-identical to the OPS-Web release sources. Supabase assigned apply-time ledger versions; the source filenames retain the dependency order used by the application repository.
 
+## Invisible Office Phase 11 release — 2026-09-04 UTC
+
+- `20260904222406_agent_dispatch_confirmation_task.sql`
+
+The 65,696-byte archive is byte-identical to OPS-Web source `supabase/migrations/20260904070000_agent_dispatch_confirmation_task.sql` and the single production ledger statement: MD5 `ebc6b9469538a2a459ede98d29a5f368`, SHA-256 `65e20ccedcc5792b76a646857c308538112d8b40e1d763ddc24cd1b0b00d3498`. It installs the dormant control-room internal-task persistence, policy, evidence, confirmation, receipt, ACL, and service-role function boundary. It creates no policy row, OAuth client or grant, exposure activation, schedule, Canpro identifier, or business mutation. Full release proof: `specs/2026-09-04-ops-mcp-canpro-control-room-task-vertical.md`.
+
 ## Provenance of the 2026-08-12 backfill
 
 552 files were reconstructed from `supabase_migrations.schema_migrations.statements` (read-only export) and

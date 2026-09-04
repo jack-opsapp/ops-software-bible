@@ -1,9 +1,11 @@
 # OPS MCP Canpro Control-Room Task Vertical
 
 - **Designed and built:** 2026-09-03/04
-- **Status:** Local implementation and verification complete; not pushed, deployed, migrated, seeded, granted, activated, scheduled, or customer-live
+- **Status:** Production-deployed and deliberately dormant; not seeded, granted, activated, scheduled, host-accepted, or customer-live
 - **OPS-Web branch:** `feat/ops-mcp-canpro-control-room-p11`
-- **Source migration:** `20260904050000_agent_dispatch_confirmation_task.sql`
+- **OPS-Web production commit:** `6a2a7c94b0ca64b207d8ab035db30f77d2311342`
+- **Source migration:** `20260904070000_agent_dispatch_confirmation_task.sql`
+- **Production ledger/archive:** `20260904222406_agent_dispatch_confirmation_task.sql`
 - **Active production exposure:** unchanged read-only v2
 
 ## Purpose
@@ -68,7 +70,7 @@ Rejection records an auditable no-effect receipt, leaves the source task unchang
 
 Evidence persistence contains only typed OPS references, display labels, versions, hashes, and proof ids. It never stores raw policy documents, correspondence bodies, browser content, or an indiscriminate tenant corpus. Every run, evidence row, proposal, action, confirmation, receipt, and task identity is tenant-bound.
 
-Each evidence row carries a policy-defined retention date, legal-hold flag, redaction state, and tombstone. Manual redaction requires current `agent.review` authority. The retention primitive redacts expired evidence only when no legal hold exists. Redaction replaces retained display labels with `[redacted]` while preserving hashes, ids, timestamps, result identity, and audit tombstones. No schedule activates automatic retention in this local build.
+Each evidence row carries a policy-defined retention date, legal-hold flag, redaction state, and tombstone. Manual redaction requires current `agent.review` authority. The retention primitive redacts expired evidence only when no legal hold exists. Redaction replaces retained display labels with `[redacted]` while preserving hashes, ids, timestamps, result identity, and audit tombstones. No schedule activates automatic retention in production.
 
 Learning is tenant-local and limited to the exact policy/evidence/outcome trail. No cross-tenant corpus, shared tenant memory, or external-host memory is created.
 
@@ -80,11 +82,15 @@ Free-form SQL is not exposed. QuickBooks capability in OPS is separate from a li
 
 ## Verification evidence
 
-The final focused suite passes 105 tests across contracts, deterministic shadow orchestration, service/repository behavior, OAuth labels and exposure pinning, principal/runtime dispatch, exact approval UI, bulk/autonomous rejection, and SQL/ACL contracts. The broad agent-control-plane suite records 3,318 passing and 12 failing tests across 253 files; all failures are the unchanged loopback-bind sandbox and schedule-timezone baselines, while every Phase 11 test passes. Changed files have zero ESLint errors, the repository type check emits no error from the Phase 11 surface, and the reconciled source completes an optimized Next.js production build with all 382 static pages generated. Unrelated historical social-test TypeScript errors and inherited build warnings remain separate baselines.
+After reconciling OPS-Web through remote main `f901c6d9c0e1bd63abddcb616a697f7fb9115ad6`, the final focused suite passes 111 tests across 15 contract, orchestration, service/repository, OAuth, exposure, principal/runtime, approval UI, and SQL/ACL files. Changed files have zero ESLint errors. The exact release tree completes the optimized Next.js build and type-validity gate locally with all 384 local-environment static pages generated; Vercel generated all 461 production-environment static pages. The first local build attempt exhausted Node's default 4 GB heap at type validation; the identical build passed with an 8 GB heap. Inherited `twitter-image`, `libheif`, `async_hooks`, Browserslist, `metadataBase`, and `url.parse` warnings remain unchanged.
 
 A disposable PostgreSQL 17.11 cluster compiled the migration against production-shaped prerequisites and exercised real transactions. It proved tenant isolation, earliest-item priority, zero-effect preparation, marked prompt-injection text, same-input replay, changed-input rejection, changed-preview rejection, exact one-task commit, independent readback, persistent-notification resolution, identical double-commit replay, changed commit-key rejection, task-write rollback atomicity, schedule-version stale rejection, policy-mutation rejection, no-effect rejection, legal-hold blocking, manual redaction, automatic retention redaction, and durable tombstones. The cluster and all temporary data were removed after proof.
 
-The migration is additive and declares no policy seed, OAuth client, grant, exposure activation, routine, retention schedule, accounting connection, or customer-live business mutation. It has not been applied to production.
+The additive migration was applied once as production ledger `20260904222406_agent_dispatch_confirmation_task`. Its archived 65,696-byte statement is byte-identical to the OPS-Web source: MD5 `ebc6b9469538a2a459ede98d29a5f368`, SHA-256 `65e20ccedcc5792b76a646857c308538112d8b40e1d763ddc24cd1b0b00d3498`. Live readback proves all six private relations and eight functions, empty `search_path` on every security-definer function, browser-role denial, service-role execution only on the six public entry points, and no application-role DML on any private relation. RLS is disabled on those private-schema relations because total table ACL denial plus the security-definer function boundary is the access model.
+
+Every new relation contains zero rows. Exposure v13 has zero clients and grants; Phase 11 has zero policies, runs, evidence rows, change sets, confirmations, receipts, actions, notifications, rate-limit buckets, and audit rows. No Phase 11 cron job exists. Business control totals remained exactly 492 project tasks, 362 agent actions, and 1,998 notifications across the apply. Supabase security advisors report zero Phase 11 findings; performance advisors report 13 informational missing-foreign-key-index suggestions on the empty dormant tables. Postgres logs contain the migration statement and zero Phase 11 errors; the apply wrapper emitted only its expected nested `begin`/`commit` transaction warnings.
+
+OPS-Web production main `6a2a7c94b0ca64b207d8ab035db30f77d2311342` deployed through Vercel deployment `dpl_7o1YGSZ79cyBiQxWaag9dgoTPL1j` (`ops-2h8hpyw25-jacksons-projects-f76fa6e8.vercel.app`). It started at `2026-09-04T22:25:48Z`, reached `READY` at `2026-09-04T22:32:54Z`, and aliases `app.opsapp.co`. The deployment event stream has zero errors after readiness. Public authorization-server and protected-resource metadata both return the same exact 20 read-only scopes; `ops.operations.prepare` is absent. An unauthenticated `tools/list` request returns the expected `401` bearer challenge with those same 20 read-only scopes.
 
 ## Phase 10 boundary carried forward
 
@@ -94,6 +100,6 @@ Phase 10 remains dormant authority: no v12 OAuth client, grant, activation, auth
 
 ## Activation boundary
 
-Before this vertical can leave the local proving state, separate explicit approvals are required for each consequential step: production migration, application push/deployment, versioned Canpro policy seed, OAuth client and grant, v13 activation, host acceptance, routine/retention scheduling, or customer-live run. Activation must first prove a no-effect shadow preparation and exact authenticated readback against Canpro without changing the active read-only v2 contract for existing clients.
+Before this vertical can leave its dormant production state, separate explicit approvals are still required for each consequential step: versioned Canpro policy seed, OAuth client and grant, v13 activation, host acceptance, routine/retention scheduling, or customer-live run. Activation must first prove a no-effect shadow preparation and exact authenticated readback against Canpro without changing the active read-only v2 contract for existing clients.
 
 There is no new subscription or paid provider in this build. If later activated, the vertical uses existing OPS Web and Supabase execution; any incremental model or durable-worker cost must be measured and disclosed at that separate activation gate.

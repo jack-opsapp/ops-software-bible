@@ -6410,9 +6410,9 @@ Every context, crew, role, item, recipient, reschedule option, history, availabi
 
 No-code deployment carrier `2a086736ee7bad081caf6cdf753094b3f35967af` promoted the Phase 10 source through Vercel deployment `7sgYzredXDaeHfJGK3oEQcSHCrYk`, which completed successfully at `2026-09-04T04:05:34Z`. Post-deployment public probes still advertise only read-only v2. No authenticated external-host acceptance or customer-live crew-recovery authority exists; production deployment remains distinct from activation.
 
-## Invisible Office Canpro Control-Room Task State (local-only, dormant)
+## Invisible Office Canpro Control-Room Task State (production-deployed, dormant)
 
-Source migration `supabase/migrations/20260904050000_agent_dispatch_confirmation_task.sql` defines the proposed persistence and authority boundary for the eleventh Invisible Office vertical. It is locally implemented and verified but has not been pushed, deployed, or applied to production. Active production MCP remains read-only v2; v13 has no client, grant, activation, host acceptance, or customer-live authority.
+Source migration `supabase/migrations/20260904070000_agent_dispatch_confirmation_task.sql` defines the persistence and authority boundary for the eleventh Invisible Office vertical. It is applied as production ledger `20260904222406_agent_dispatch_confirmation_task` and OPS-Web production commit `6a2a7c94b0ca64b207d8ab035db30f77d2311342` is live through Vercel deployment `dpl_7o1YGSZ79cyBiQxWaag9dgoTPL1j`. Active production MCP remains read-only v2; v13 has no client, grant, activation, host acceptance, or customer-live authority.
 
 | Relation | Purpose |
 |---|---|
@@ -6428,6 +6428,8 @@ The source accepts only the earliest active `confirmation_required` work-queue i
 All six public entry points are stable security-definer functions with empty search paths and service-role-only execution: prepare, commit, reject, manual evidence redaction, expired evidence redaction, and the dedicated preparation rate limiter. Private helpers and all private relations have no application-role access. The migration contains no policy seed, OAuth registration/grant, exposure activation, routine, retention schedule, Canpro identifier, or customer row.
 
 Evidence rows retain only structured OPS identities, versions, hashes, and bounded display labels. Legal hold prevents redaction. Operator and expiry redaction replace labels with `[redacted]` while preserving source identities, hashes, timestamps, result/receipt truth, and tombstones. Raw policy documents, correspondence bodies, browser data, and indiscriminate company corpora are excluded. Canonical behavior and release gates: `specs/2026-09-04-ops-mcp-canpro-control-room-task-vertical.md`.
+
+Production readback proves all six relations are empty, all six public entry points are service-role-only security-definer functions with empty search paths, both private helpers deny application-role execution, and no application role has DML access to any new relation. RLS is disabled on the private relations because the total ACL denial and audited function boundary are the access model. Exposure v13 has zero clients and grants, no Phase 11 schedule exists, business totals were unchanged across apply, and public OAuth/MCP metadata still exposes the exact read-only v2 scope set. The byte-exact production archive is `migrations/20260904222406_agent_dispatch_confirmation_task.sql`.
 
 ## QuickBooks and Sage sync hardening (production-applied 2026-09-04)
 
