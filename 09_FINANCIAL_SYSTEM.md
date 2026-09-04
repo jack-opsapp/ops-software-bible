@@ -1209,7 +1209,7 @@ Financial-data view:
 
 ### Sage Accounting sync — full sales and purchasing graph (local only, 2026-09-04)
 
-OPS-Web commit `cdceafef7` replaces the partial Sage path with one exact-business, bidirectional model. This work is **not production-applied, pushed, deployed, or customer-live**.
+OPS-Web commit `deb093ebc` replaces the partial Sage path with one exact-business, bidirectional model. This work is **not production-applied, pushed, deployed, or customer-live**.
 
 - **One accounting reality** — a company still connects either QuickBooks or Sage, never both. Sage authorization explicitly selects and encrypts one business identity; every request carries that exact `X-Business` value. Sandbox is a logical, allow-listed profile using dedicated credentials because Sage does not expose a separate sandbox API host.
 - **Complete sales documents** — customers/contacts, products, estimates, quotes, invoices, line items, and AR payments move through the durable queue and reconciliation engine. `sage_document_kind` keeps estimates and quotes distinct. Account, tax, bank, and payment-method mappings are scoped to the exact connection/environment.

@@ -1651,7 +1651,7 @@ Live apply status must be verified during rollout. Supabase MCP records its own 
 
 ## Sage Accounting — exact-business OAuth, queue-owned writes, and reconciliation (local only, 2026-09-04)
 
-**Release state:** implemented and locally verified in OPS-Web commit `cdceafef7`; no Sage migration in this section is production-applied, and no code has been pushed or deployed. The provider contract is Sage Business Cloud Accounting API v3.1. Sage has no separate API host for sandbox traffic, so OPS treats `sandbox` as a fail-closed logical profile: dedicated app credentials, an exact test-business allow-list, distinct OPS connection/company ids, and disabled write gates by default.
+**Release state:** implemented and locally verified in OPS-Web commit `deb093ebc`; no Sage migration in this section is production-applied, and no code has been pushed or deployed. The provider contract is Sage Business Cloud Accounting API v3.1. Sage has no separate API host for sandbox traffic, so OPS treats `sandbox` as a fail-closed logical profile: dedicated app credentials, an exact test-business allow-list, distinct OPS connection/company ids, and disabled write gates by default.
 
 ### OAuth and exact business selection
 
