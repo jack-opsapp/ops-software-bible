@@ -3550,3 +3550,21 @@ Production state at documentation time: `task_scopes` holds 0 rows and no compan
 ---
 
 *This document supersedes any prior informal notes about entity relationships. All implementation decisions should reference this document.*
+
+## Public booking in the lead lifecycle (2026-09-03, built, NOT deployed)
+
+A homeowner booking from a trades business's own website enters the **existing** lifecycle — it does not open a parallel one. Design: `specs/2026-09-02-public-api-availability-and-guest-booking-design.md`; routes in `04_API_AND_INTEGRATION.md` § Customer identity broker + public booking.
+
+**The spine, in order.** Verified end-to-end against production 2026-09-03 (MAVERICK test company, both modes, all artefacts removed afterwards):
+
+1. The homeowner picks a slot OPS offered, holds it (≤ 5 min), enters contact details, and proves one channel with a six-digit code. No OPS account is created — "guest" means no account, not an unverified person.
+2. `confirm_guest_booking_as_system` runs **one atomic step under the company advisory lock**: re-validate the slot against live policy, bookings and holds; resolve the client company-scoped (§ 5.3 of the identity design — exact verified email only, never name or address); create the lead through **`create_opportunity_guarded`** with `source='website'`; then branch on the company's booking mode.
+3. **`instant`** → `book_site_visit_as_system` writes a real `site_visits` row (`booked_at` set, `status='scheduled'`, duration and assignee from policy), logs one `site_visit_scheduled` activity, nudges a `new_lead` opportunity to `qualifying` via `move_opportunity_stage`, and lets the existing status trigger enqueue Google Calendar sync. Staff get a `schedule_change` notification "Site visit booked online" plus the ordinary lead-assignment notification.
+4. **`request`** → the lead is created and the intent settles at `submitted`. **No `site_visits` row, no calendar sync row, no reminder** (I14). Staff get a *persistent* `schedule_change` notification (dedupe `booking_request:<intent_id>`) linking to the lead, and accept — optionally moving the time — through `confirm_booking_request_as_system`, which is what actually books the visit.
+
+**Consequences for existing behaviour.**
+
+- A publicly booked visit is an ordinary `site_visits` row: it renders on both calendars as the third source alongside `project_tasks` and `calendar_user_events`, obeys the **one-open-booking-per-lead** rule shared with the staff-actor `book_site_visit`, and is never materialised as a task.
+- The staff-actor RPCs (`book_site_visit`, `reschedule_site_visit`, `cancel_site_visit_booking`) are **untouched** and are never called from a public path — they resolve their actor from `private.get_current_user_id()`, which no public caller has. The `_as_system` twins mirror every guard except the actor gate, and take the assignee from policy rather than caller input.
+- Calendar sync stays silent for a company with no calendar-scoped Google connection (`skip_reason='missing_calendar_scope'`), exactly as for staff bookings.
+- The client a public booking creates is an ordinary client. If that person later signs in, they are matched to it and see **only what they created** (`active_forward_only`) until the business confirms them or the on-file-and-transacted evidence rule is met — see `03_DATA_ARCHITECTURE.md` § Customer identity & memberships.

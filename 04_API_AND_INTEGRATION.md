@@ -4331,3 +4331,40 @@ States rendered by the block: `active_full` (olive "Full history"), `active_forw
 **End of Document**
 
 This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, email pipeline integration, and error management with full fidelity to the current implementation.
+
+## Customer identity broker + public booking — `/api/customer/*` (2026-09-03, on `feat/public-api-booking-p2`, NOT deployed)
+
+The public boundary a homeowner touches. Design: `specs/2026-09-01-public-api-customer-identity-design.md` (identity, invariants I1–I18) and `specs/2026-09-02-public-api-availability-and-guest-booking-design.md` (availability, booking, I11–I16). Hosted pages live at `/c/<companies.public_handle>/…`; `/c` and `/api/customer` are public middleware prefixes and the staff dashboard never reads the customer cookie.
+
+**Posture, common to every route below.** Responses are `Cache-Control: no-store`, carry **no UUID, no clear email, no crew or assignee, and no internal id of any kind** (I4), and are enumeration-safe — an unknown company handle, an inactive integration and a malformed handle all answer the same `404 not_found` (I5). Error bodies are fixed: `invalid_request` 400, `unauthenticated` 401, `access_denied` 403, `not_found` 404, `slot_no_longer_available` 409, `rate_limited` 429 (+`Retry-After`), `customer_identity_failed` 500, `customer_identity_unavailable` 503. Per-IP limits ride `src/lib/utils/ratelimit.ts` keyed `customer-api:<route>:<ip>`. Every store call reaches `private` tables only through `*_as_system` SECURITY DEFINER RPCs.
+
+### Sign-in
+
+| Route | Body / query | Answers |
+|-------|--------------|---------|
+| `POST /api/customer/auth/start` | `{handle, email}` | `{challengeId: "ch_…", retryAfterSeconds}` — **identical for a known email, an unknown email and a refused send** |
+| `POST /api/customer/auth/verify` | `{handle, challengeId, code, email}` | `{ok, next}` + sets the session cookie; `400 invalid_code {attemptsRemaining}` / `challenge_exhausted` / `challenge_closed` |
+| `POST /api/customer/auth/signout` | — | `204`, cookie cleared (a 5xx keeps the cookie) |
+| `GET /api/customer/me` | `?handle=` | `{displayName, maskedEmail, membership:{state}}`; `401` (+clear) for a dead session |
+
+- **The challenge ref is a capability, not an id.** `ch_` + base64url(`uuid`‖`kid`‖HMAC-SHA256(ring key, `uuid`‖normalized email)) — 46 chars. `/verify` recomputes the tag and so **proves the supplied email is the one the code was sent to before proxying to Supabase**. A mismatch is charged as an attempt, logged `otp_failed{binding:"mismatch"}`, never proxied, and answered **byte-identically to a wrong code** (verified live 2026-09-03). Supabase's `verifyOtp` requires the email; the broker stores only its HMAC digest, which is why the email rides the body.
+- Session cookie `ops-customer-session`: opaque `ops_cs_`-prefixed 256-bit credential, **stored only as a SHA-256 digest**, httpOnly, Secure, SameSite=Lax, **Path=`/`** (Path=`/c` would never reach `/api/customer/*`).
+- **`/me` is read-only (I17).** It calls `read_customer_membership_as_system`, never the resolve-or-create twin. Naming a company's public handle is not an act of intent and must never make a row appear in that company's data — see the 2026-09-03 defect note in `03_DATA_ARCHITECTURE.md` § Customer identity & memberships.
+- **Sign-in never creates a client (I18).** It creates the identity and the verified contact; matching an existing client establishes a membership (`active_forward_only` until I2 evidence or staff confirmation), matching nothing yields `membership.state: null` and the hosted home says so plainly.
+
+### Booking
+
+| Route | Body / query | Answers |
+|-------|--------------|---------|
+| `GET /api/customer/booking/availability` | `?handle&from&to` | `{mode, timezone, durationMinutes, slots:[{startAt, ref:"sl_…"}]}` |
+| `POST /api/customer/booking/hold` | `{handle, slot}` | `{intentRef:"in_…", holdExpiresAt}` |
+| `POST /api/customer/booking/contact` | `{handle, intentRef, name, email, phone?, answers?}` | `{challengeId, retryAfterSeconds}` |
+| `POST /api/customer/booking/verify` | `{handle, intentRef, challengeId, code, email}` | `{outcome:"confirmed"\|"submitted", bookingRef:"bk_…", scheduledAt}` |
+| `POST /api/customer/booking/manage/{start,verify}` | — | reschedule / cancel behind a fresh code (I15) |
+
+- Slots are **expanded from the owner's declared windows, never read off the crew calendar** (D10), already net of notice, horizon, existing bookings, live holds and the per-day cap. The `sl_` descriptor is HMAC-signed and 10-minute-lived; **a valid signature proves only that OPS offered the slot, never that it is still free** — confirmation re-checks under the company lock and answers `409 slot_no_longer_available` on a replay (I12, verified live 2026-09-03).
+- `outcome` follows the company's one three-state control (D9): `instant` books a real `site_visits` row and returns `scheduledAt`; `request` creates the lead and a pending request, returns `scheduledAt: null`, and **puts nothing on any calendar and enqueues no calendar sync** until staff accept (I14, verified live 2026-09-03).
+- Either way the lead is created through `create_opportunity_guarded` with `source='website'` and the visit, when it exists, is attached to it — there is no parallel booking-only record (I16). Assignment comes from the policy's `default_owner_id` or falls to the unassigned queue; **the public never selects or sees crew** (I11).
+- Guest booking creates **no identity and no membership** — the account is optional. A later sign-in with the same verified email matches the client the booking created and yields `active_forward_only`.
+
+**Staff-side counterparts:** booking policy read/write and the request accept/decline live behind `settings.company` / the lead surface; the client-dossier membership routes are documented in § Staff "Portal access" routes above.

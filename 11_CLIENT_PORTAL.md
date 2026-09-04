@@ -1,6 +1,15 @@
 # 11_CLIENT_PORTAL.md
 
-**Last Updated**: March 25, 2026
+**Last Updated**: September 3, 2026
+
+> ## ⚠ Magic-link authentication is FROZEN (2026-09-03, PUBLIC API P1)
+>
+> **Everything in this chapter describing how a client gets *into* the portal is historical.** The auth half is retired; the portal's *content* (branding, line-item questions, phase timeline, photo gallery, messaging, document visibility) is unchanged and still accurate.
+>
+> - `POST /api/portal/share` returns **`410 portal_link_sharing_retired`** to every caller. It no longer mints tokens. `SharePortalButton` and the `sendMagicLink` sender are deleted; the `PortalMagicLink` email template and its version-ledger row are deliberately retained until P3.
+> - `portal_tokens` / `portal_sessions` still exist in production but are **dead**: 4 rows ever, all `is_preview = true` against the all-zeros client id, 0 live sessions. **No customer has ever authenticated through them.** They are dropped in P3.
+> - Known defects being retired with the system, not fixed: the 7-day link was reusable without limit (`verified_at` was recorded but never enforced), revoking a token did not end its sessions, sessions had no revocation state at all, token and session values were stored raw, `company_id`/`client_id` were TEXT with no foreign keys, and the verify route returned raw internal ids to the browser.
+> - **Replacement:** the customer identity broker — `specs/2026-09-01-public-api-customer-identity-design.md`, routes in `04_API_AND_INTEGRATION.md` § Customer identity broker. P3 rebuilds `/portal` on broker sessions and drops the legacy tables.
 
 ## Document Purpose
 
