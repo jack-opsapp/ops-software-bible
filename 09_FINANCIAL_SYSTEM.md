@@ -4,7 +4,7 @@
 
 **Purpose**: Complete documentation of the OPS financial system — pipeline/CRM, estimates, invoices, payments, products catalog, and accounting integrations. All financial data lives in **Supabase** (PostgreSQL), separate from operational data in Bubble.io.
 
-**Last Updated**: August 7, 2026
+**Last Updated**: September 4, 2026
 **Source Reference**: `C:\OPS\ops-web\src\lib\types\pipeline.ts`, `src\lib\api\services\`, iOS source at `ops-ios/OPS/`
 
 ---
@@ -1189,7 +1189,7 @@ interface AccountingConnection {
 }
 ```
 
-Located at `src/lib/api/services/accounting-service.ts`. Stores OAuth connections for QuickBooks and Sage. Expense push runs via Supabase Edge Functions (below); the QuickBooks import, webhook apply, and full-CRUD queue run in `ops-web` (see *QuickBooks Sync*).
+Located at `src/lib/api/services/accounting-service.ts`. Stores OAuth connections for QuickBooks and Sage. Legacy expense push runs via Supabase Edge Functions (below); QuickBooks import/webhook/queue and the hardened Sage OAuth/queue/reconciliation paths run in `ops-web` (see *QuickBooks Sync* and *Sage Accounting sync*).
 
 **Additional columns (2026-06, not in the legacy interface above):** `provider_environment text NOT NULL DEFAULT 'production'` (CHECK ∈ {`production`, `sandbox`}) lets one company hold separate QuickBooks production and sandbox rows; uniqueness is `(company_id, provider, provider_environment)`. `sync_direction text NOT NULL DEFAULT 'pull_only'` (CHECK ∈ {`pull_only`, `push_only`, `bidirectional`}) governs which half of the sync engine may run — a `pull_only` connection can never push to the provider; `realm_id_lookup text` (SHA-256 hex of the realm id) is the deterministic routing column for inbound webhooks, since `realm_id` itself is encrypted. **Token security:** `access_token` / `refresh_token` / `realm_id` are AES-256-GCM encrypted at rest (`token-cipher.ts`, key env `QB_TOKEN_ENC_KEY`, fail-closed); decryption is centralized in `AccountingTokenService.getValidToken`, which refreshes with the credential bundle matching the connection's `provider_environment`. The web client reads this table as the anon role, so an anon company-scoped `SELECT` policy gated on `accounting.view` exists alongside the `service_role` write policy (migration `20260603010000_accounting_connections_read_policy.sql`, bug `eb70d803`).
 
@@ -1207,13 +1207,24 @@ Financial-data view:
 - **Inbound payment safety** — linked QBO payments are canonicalized as `paymentQbId:invoiceQbId` in OPS, while outbound void/update calls parse the raw payment id before calling QBO and then refresh the local composite key. Delayed inbound payment webhooks update a legacy raw payment row instead of inserting a duplicate. QuickBooks Payment `Void` webhooks mark matching OPS payments `voided_at`; Payment `Update` also voids stale composite rows that disappeared from QBO's latest split and reconciles affected invoices to QBO `Balance`, so QBO-side payment edits/reversals do not leave OPS A/R overstated.
 - **Local bidirectional hardening awaiting release approval (2026-09-03)** — create queue rows now fence dependent updates; reconcile candidates are selected across all four entity lanes by least-recently-reconciled order and exclude tombstoned/terminal records; payment reconciliation strips the OPS invoice suffix before QBO lookup; and overlength invoice/estimate numbers receive a deterministic OPS-id suffix inside QBO's 21-character limit. The migration and web route are locally verified only, not production-live.
 
+### Sage Accounting sync — full sales and purchasing graph (local only, 2026-09-04)
+
+OPS-Web commit `deb093ebc` replaces the partial Sage path with one exact-business, bidirectional model. This work is **not production-applied, pushed, deployed, or customer-live**.
+
+- **One accounting reality** — a company still connects either QuickBooks or Sage, never both. Sage authorization explicitly selects and encrypts one business identity; every request carries that exact `X-Business` value. Sandbox is a logical, allow-listed profile using dedicated credentials because Sage does not expose a separate sandbox API host.
+- **Complete sales documents** — customers/contacts, products, estimates, quotes, invoices, line items, and AR payments move through the durable queue and reconciliation engine. `sage_document_kind` keeps estimates and quotes distinct. Account, tax, bank, and payment-method mappings are scoped to the exact connection/environment.
+- **Complete purchasing documents** — suppliers, purchase invoices, full line items, expense-category/purchase-account mappings, and AP payments use the same queue ownership and inbound apply rules as sales documents.
+- **Money stays canonical** — moving or voiding an AR/AP payment locks and recalculates every old/new invoice or bill. Provider-origin suppression prevents the derived balance update from echoing back into the outbound queue. Provider tombstones never silently erase financial history; terminal discrepancies become review work.
+- **Failure recovery** — stable provider idempotency keys, create-before-update fences, stale-claim recovery, fair entity selection, serialized Sage writes, and `needs_review` after provider-success/local-finalization failure make retries safe across timeouts and process loss.
+- **Proof boundary** — the deterministic fake-Sage war game and PostgreSQL 17 runtime are green, including full graphs and payment reallocation. The real runner correctly stopped at missing explicit sandbox profile before any write; exact-credential Sage sandbox proof remains pending.
+
 ### Edge Functions (3)
 
 All deployed to Supabase, invoked via `SUPABASE_URL/functions/v1/<function-name>`. All use `verify_jwt: false` with manual auth header validation internally.
 
 #### `accounting-oauth`
 
-Handles OAuth flows for QuickBooks and Sage.
+Handles the legacy Edge Function OAuth flows. The hardened Sage connector uses the authenticated OPS-Web `/api/integrations/sage*` routes documented above; those routes are authoritative for new Sage connections.
 
 **Actions** (via `action` field in JSON body):
 - `authorize` — Returns OAuth redirect URL for the provider
@@ -1223,7 +1234,7 @@ Handles OAuth flows for QuickBooks and Sage.
 
 **Token management**:
 - QuickBooks: Access tokens expire every 60 minutes, refresh tokens every 100 days
-- Sage: Access tokens expire every 60 minutes
+- Sage: access tokens expire after 5 minutes; rotating refresh tokens last 31 days and are persisted encrypted on refresh
 - Token refresh called automatically by `accounting-sync-expense` before sync operations
 
 **Required env vars**: `QB_CLIENT_ID`, `QB_CLIENT_SECRET`, `QB_REDIRECT_URI`, `SAGE_CLIENT_ID`, `SAGE_CLIENT_SECRET`, `SAGE_REDIRECT_URI`
