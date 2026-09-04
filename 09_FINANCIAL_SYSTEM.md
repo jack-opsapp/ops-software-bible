@@ -2083,8 +2083,18 @@ The three DeksMart invoices supplied for implementation were verified as unpaid 
 
 Production ledger entries `20260903210504_supplier_bills_ap_vertical`, `20260903211009_supplier_bill_immutable_acl_repair`, and `20260903211311_supplier_bill_fk_indexes` are applied. Live readback confirms all new AP tables are empty, the AP provider queue is empty, every public AP table has RLS, the guarded RPCs are service-role-only, immutable document/event records are insert/read-only even for the service role, and every new foreign key has a covering index. No supplier, invoice, payment, expense, notification, provider, MCP, Invisible Office, or vinyl-order customer record was created by the release.
 
+### Canpro clearance before AP (local/unreleased, 2026-09-04)
+
+A captured supplier document is not yet an approved liability. The intake layer separates evidence collection from canonical AP: `review` and `held` have no canonical bill or provider queue row; approval is the first permitted transition to `to_pay` and atomically creates the supplier bill, line allocations, source-document link, audit event, and provider queue work. `paid` requires recorded settlement. Employee documents route to `payroll` and can never be approved into AP.
+
+Material documents require explicit dispositions for rate applicability, duplicate billing, quantity/scope, order/specification, and receipt. The Canpro labour card is never applied to material prices; material rate compliance is resolved as not applicable with operator evidence. Subcontractor documents require rate, duplicate, and quantity/scope review. The local suggestion policy uses CAD 2.25/sq ft for slick/smooth vinyl, CAD 2.00/sq ft for fuzzy vinyl, CAD 25 each for diverter/scupper work, and CAD 15 each for drain work. These values are review ceilings, not autonomous approvals. Employee documents require duplicate review before payroll routing.
+
+Suggested job matches by normalized address or purchase order remain unconfirmed until an operator selects the project. Shared costs are suggested in exact cents in proportion to material subtotals, with deterministic remainder assignment and a supported manual override. Approval requires every line to have exact confirmed same-company allocation, every required check to have a disposition, exceptions to carry notes, and both a payment owner and planned payment date. A missing supplier due date remains null and never becomes the planned payment date.
+
+The clearance migration and both clients are local only. No production table, permission, route, web surface, or iOS release from this layer exists yet. Canonical rules, code references, and the release gate are in `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
+
 ---
 
-**Last Updated**: 2026-09-03
-**Document Version**: 1.9
+**Last Updated**: 2026-09-04
+**Document Version**: 1.10
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`, `217b4655`, `323bbfaf`, `62e51d3e`, `ac51e50b`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.

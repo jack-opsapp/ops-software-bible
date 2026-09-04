@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** August 21, 2026
+**Last Updated:** September 4, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -44,6 +44,15 @@
 34. [PENDING WORK — Sync Recovery Surface](#34-pending-work--sync-recovery-surface-ios-2026-07-22)
 35. [Trash — Recovery Ledger](#35-trash--recovery-ledger-ios-2026-08-06)
 36. [Overdue Review](#36-overdue-review-ios-main-2026-08-21-signed-distribution-pending)
+37. [Invisible Office Day Closeout](#37-invisible-office-day-closeout-production-released-dormant-not-activated)
+38. [Invisible Office Collections](#38-invisible-office-collections-production-released-and-dormant)
+39. [Invisible Office Sales Truth](#39-invisible-office-sales-truth-production-released-dormant)
+40. [Invisible Office Payroll Readiness](#40-invisible-office-payroll-readiness-production-released-dormant)
+41. [Invisible Office Recurring Price Preview](#41-invisible-office-recurring-price-preview-production-released-dormant)
+42. [Invisible Office Estimate Draft](#42-invisible-office-estimate-draft-production-released-and-dormant)
+43. [Invisible Office Weather Reschedule](#43-invisible-office-weather-reschedule-production-released-and-dormant)
+44. [Invisible Office Crew Call-Out Recovery](#44-invisible-office-crew-call-out-recovery-production-database-released-web-deployment-confirmation-pending-and-dormant)
+45. [Supplier Bill Capture and Field Review](#45-supplier-bill-capture-and-field-review-localunreleased-2026-09-04)
 
 ---
 
@@ -10287,6 +10296,18 @@ For work without proven same-day coverage, an unlocked, non-recurring, unpaired,
 The result separates current facts, evidence-limited candidate assessments, exact assignment/date proposals, internal crew draft previews, client draft previews, blockers, future-confirmation requirements, and a truthful all-zero effect envelope. Every source and result carries deterministic hashes. No commit, apply, assignment edit, reschedule, calendar write, OPS/provider draft, message, delivery, notification, routine, or durable preview exists.
 
 Manifest v18, exposure v12, and consent v7 remain dormant; active production remains read-only v2. The database boundary is live under ledger `20260904033119_agent_crew_callout_recovery_preview`, while exact Vercel deployment binding for pushed web main `1ea480b0e38d3a1b920395cbe4c91309901659b6` awaits an authorized source read. Canonical contract: `specs/2026-09-03-ops-mcp-crew-callout-recovery-vertical.md`.
+
+---
+
+## 45. Supplier Bill Capture and Field Review (local/unreleased, 2026-09-04)
+
+The iOS Books surface adds a Bills section for operators with `accounting.view`; capture is independently gated by `accounting.bills.capture`. The field workflow supports Files PDF import and VisionKit paper scanning. Scans are converted to PDF locally and enter the same durable queue. iOS never presents local scan output as authoritative extraction; the server returns the final invoice facts and stable intake identity.
+
+`SupplierBillCaptureQueue` stores a maximum of 25 PDFs, each no larger than 20 MB, under company-isolated Application Support storage with complete file protection and atomic manifests. A queued file survives relaunch and transient connectivity failure. It is removed only after the server confirms the exact request identity; permanent server rejection leaves the source recoverable and presents required attention. `SupplierBillCache` independently stores company-scoped summaries and details so the five lifecycle lists and already-opened bills remain readable offline. Switching company clears in-memory state before loading the new company's queue and cache.
+
+The field UI exposes `review`, `to_pay`, `paid`, `held`, and `payroll` filters, source PDF access, clearance results, line/job status, and an explicit offline-copy indicator. Approval, hold disposition, payroll handoff, payment scheduling, and payment recording remain in OPS Web where the full evidence and independent permissions are available. This prevents a compact field screen from hiding consequential accounting context.
+
+Primary iOS sources are `OPS/DataModels/SupplierBillIntake.swift`, `OPS/Services/SupplierBills/SupplierBillCaptureQueue.swift`, `SupplierBillCache.swift`, `SupplierBillIntakeService.swift`, `OPS/ViewModels/SupplierBillIntakeViewModel.swift`, and `OPS/Views/Books/Bills/SupplierBillsView.swift`. The implementation is local commit `c6269763`; it has not been pushed or released. The matching web console is local commit `bf3610e3e`. Canonical contract: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
 
 ---
 
