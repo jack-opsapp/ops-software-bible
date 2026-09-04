@@ -10307,7 +10307,7 @@ The iOS Books surface adds a Bills section for operators with `accounting.view`;
 
 The field UI exposes `review`, `to_pay`, `paid`, `held`, and `payroll` filters, source PDF access, clearance results, line/job status, and an explicit offline-copy indicator. Approval, hold disposition, payroll handoff, payment scheduling, and payment recording remain in OPS Web where the full evidence and independent permissions are available. This prevents a compact field screen from hiding consequential accounting context.
 
-Primary iOS sources are `OPS/DataModels/SupplierBillIntake.swift`, `OPS/Services/SupplierBills/SupplierBillCaptureQueue.swift`, `SupplierBillCache.swift`, `SupplierBillIntakeService.swift`, `OPS/ViewModels/SupplierBillIntakeViewModel.swift`, and `OPS/Views/Books/Bills/SupplierBillsView.swift`. The implementation is local commit `c6269763`; it has not been pushed or released. The matching web console is live at OPS-Web commit `f0464eedf`, while its source branch remains local/unpushed. Canonical contract: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
+Primary iOS sources are `OPS/DataModels/SupplierBillIntake.swift`, `OPS/Services/SupplierBills/SupplierBillCaptureQueue.swift`, `SupplierBillCache.swift`, `SupplierBillIntakeService.swift`, `OPS/ViewModels/SupplierBillIntakeViewModel.swift`, and `OPS/Views/Books/Bills/SupplierBillsView.swift`. The implementation is local commit `c6269763`; it has not been pushed or released. The matching web console and account-closure integration are published on production main at OPS-Web commit `f901c6d9c` through `READY` Vercel deployment `dpl_7BCJY52J5SB6KwmY7qdCrLSzCUH3` on `app.opsapp.co`. Canonical contract: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
 
 ---
 

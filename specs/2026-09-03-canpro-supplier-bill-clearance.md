@@ -2,7 +2,7 @@
 
 **Designed:** 2026-09-03
 **Documented:** 2026-09-04
-**Status:** Production database and OPS-Web released 2026-09-04. Web source branch remains local/unpushed. iOS remains local/unreleased.
+**Status:** Production database and OPS-Web source are released on production main as of 2026-09-04. iOS remains local/unreleased.
 
 ## Purpose
 
@@ -71,11 +71,15 @@ OPS-Web source migrations:
 
 - `ops-web/supabase/migrations/20260904040358_supplier_bill_intake_clearance.sql`
 - `ops-web/supabase/migrations/20260904171534_supplier_bill_intake_fk_indexes.sql`
+- `ops-web/supabase/migrations/20260904190000_supplier_bill_company_data_lifecycle.sql`
 
 Production ledger mirrors:
 
 - `migrations/20260904171301_supplier_bill_intake_clearance.sql` — 52,199 bytes, MD5 `c1999781a038c5b4669780f3b0f02c9a`.
 - `migrations/20260904171632_supplier_bill_intake_fk_indexes.sql` — 2,249 bytes, MD5 `7ebe982a2e7d05e1d6054f673a7c84a4`.
+- `migrations/20260904184303_supplier_bill_company_data_lifecycle.sql` — 5,396 bytes, MD5 `a83e020320704457be9c7abd749f0e44`.
+
+Production ledger `20260904184303_supplier_bill_company_data_lifecycle` is a byte-exact mirror of the third source migration. It keeps all four immutable supplier document/event tables non-deletable during ordinary service work while allowing the service-role-only `purge_company_rows` account-closure transaction to erase them. Deleting either supplier event ledger also erases its matching private prepared-write intents in the same transaction. The helper now covers the complete 42-table delete-blocked set, and the optional site-visit handoff provenance clears instead of blocking a company purge.
 
 Public tables:
 
@@ -94,7 +98,7 @@ All writes pass through `prepare_supplier_bill_intake_write` and `commit_supplie
 
 ## HTTP contract
 
-Source routes introduced in OPS-Web commit `ca7f46f3c` and released in commit `f0464eedf`:
+Source routes introduced in OPS-Web commit `ca7f46f3c`, first deployed in `f0464eedf`, and published on production main in `f901c6d9c`:
 
 - `POST src/app/api/internal/accounting/supplier-bills/intakes/route.ts` — multipart capture.
 - `GET src/app/api/internal/accounting/supplier-bills/intakes/route.ts` — lifecycle summaries.
@@ -106,7 +110,7 @@ Authentication uses the current Firebase actor. Repository reads and writes rema
 
 ## Client behavior
 
-OPS-Web commit `bf3610e3e` adds Bills to Books, lifecycle filters, a capture surface, list/detail review, clearance checks, lines and allocations, hold/release, approval, payroll routing, and payment work. Action visibility follows the independent permissions. The production release is Vercel deployment `dpl_EFoN3TvLL1rMTvWqtRD2zSAdEnT1` at commit `f0464eedf5574ca20d20203999ca473b5d9f8949`, aliased to `app.opsapp.co`.
+OPS-Web commit `bf3610e3e` adds Bills to Books, lifecycle filters, a capture surface, list/detail review, clearance checks, lines and allocations, hold/release, approval, payroll routing, and payment work. Action visibility follows the independent permissions. The source and its account-closure integration are published on production main at `f901c6d9c0e1bd63abddcb616a697f7fb9115ad6` through Git-triggered Vercel deployment `dpl_7BCJY52J5SB6KwmY7qdCrLSzCUH3`, which is `READY` and owns `app.opsapp.co`.
 
 OPS iOS local commit `c6269763` adds Bills to Books, PDF import, VisionKit scan-to-PDF, a protected company-scoped capture queue, a protected company-scoped summary/detail cache, five lifecycle filters, and read-only detail. Each queued PDF has a stable capture identity, survives relaunch and transient connectivity, and is removed only after the same identity is confirmed by the server. Permanent rejection retains the local source and requires attention. Cached data remains explicitly marked as an offline copy.
 
@@ -121,8 +125,8 @@ Key iOS files:
 
 ## Release boundary and cost
 
-Jackson approved the production database migration and OPS-Web deployment on 2026-09-04. Both migrations are applied and the web deployment is `READY`; the production alias resolves to the released commit. Release readback proved all six public intake tables have RLS, browser roles have company-scoped reads and no direct writes, guarded RPC execution is service-role-only, immutable documents/events remain insert/read-only for the service role, and every intake foreign key has a covering index. Security and performance advisors report no intake warning or error. All intake, intent, and canonical-link counts remained zero at release.
+Jackson approved the production database migration, source publication, Bible publication, and OPS-Web deployment on 2026-09-04. All three supplier-intake migrations are applied and the Git-triggered web deployment is `READY` at exact production-main commit `f901c6d9c0e1bd63abddcb616a697f7fb9115ad6` on `app.opsapp.co`. Release readback proved all six public intake tables have RLS, browser roles have company-scoped reads and no direct writes, guarded RPC execution is service-role-only, immutable documents/events remain insert/read-only for ordinary service work, and all 37 supplier-bill foreign-key repair indexes are present. The 267-table company-data scope and the 42-table delete-blocked snapshot match production exactly. Both private intent tables and all 17 public supplier/intake tables remained empty. Security advisors report no finding related to supplier bills, `purge_company_rows`, or the site-visit handoff foreign key.
 
-The OPS-Web source branch and this bible branch remain local/unpushed because source pushes were not part of the approval. The iOS implementation remains local and unreleased. A later deployment from GitHub can supersede the live web release until its source commit is integrated and pushed under a separate approval.
+The OPS-Web source is on production main. The iOS implementation remains local and unreleased; it still requires a separate iOS release approval.
 
 `pdfjs-dist`, PDFKit, and VisionKit run locally and add no usage-priced vendor. The release introduces no new subscription; it uses the existing S3, Vercel, and Supabase infrastructure and is subject only to their ordinary storage, transfer, function, and database consumption.

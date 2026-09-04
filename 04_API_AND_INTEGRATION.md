@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: August 30, 2026
+**Last Updated**: September 4, 2026
 **iOS Reference**: `ops-ios/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -28,13 +28,14 @@
 14. [Stripe Subscription Integration](#stripe-subscription-integration)
 15. [Accounting Edge Functions (Expense Push)](#accounting-edge-functions)
 16. [QuickBooks Read-Only Sync — Pull → Stage → Review → Apply](#quickbooks-read-only-sync--pull--stage--review--apply-2026-06-04)
-17. [Error Handling & Retry Logic](#error-handling--retry-logic)
-18. [Rate Limiting & Debouncing](#rate-limiting--debouncing)
-19. [Supabase Table Reference](#supabase-table-reference)
-20. [Bubble.io (Legacy)](#bubbleio-legacy)
-21. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
-22. [Email Pipeline Integration Routes (24 Routes)](#email-pipeline-integration-routes-24-routes)
-23. [OpenAI API Key Separation](#openai-api-key-separation)
+17. [Sage Accounting — exact-business OAuth, queue-owned writes, and reconciliation](#sage-accounting--exact-business-oauth-queue-owned-writes-and-reconciliation-production-deployed-dormant-2026-09-04)
+18. [Error Handling & Retry Logic](#error-handling--retry-logic)
+19. [Rate Limiting & Debouncing](#rate-limiting--debouncing)
+20. [Supabase Table Reference](#supabase-table-reference)
+21. [Bubble.io (Legacy)](#bubbleio-legacy)
+22. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
+23. [Email Pipeline Integration Routes (24 Routes)](#email-pipeline-integration-routes-24-routes)
+24. [OpenAI API Key Separation](#openai-api-key-separation)
 
 ---
 
@@ -1571,6 +1572,17 @@ All routes under `src/app/api/integrations/quickbooks/`:
 - **Worker scheduling** (2026-06-30, commit `07b1d587`): the push-queue route is registered in `OPS-Web/vercel.json` crons at `*/5 13-23,0-4 * * *`. Before this it existed but was unscheduled, so the queue drained only on manual `POST`/test invocation (which is why outbound sync silently stalled between manual runs); outbound writes still require `ACCOUNTING_WRITE_ENABLED=true`.
 - **Inbound webhook** (`webhook/route.ts` + `quickbooks-webhook-apply-service.ts`): verifies base64 `HMAC-SHA256(rawBody)` keyed by the active profile's verifier token (`QB_WEBHOOK_VERIFIER_TOKEN` or `QB_SANDBOX_WEBHOOK_VERIFIER_TOKEN`) against the `intuit-signature` header with `timingSafeEqual` (fail-closed: missing verifier → 500, bad/missing signature → 401). Routes by `realm_id_lookup` + active `provider_environment`. For changed `Customer`/`Invoice`/`Payment`/`Estimate` it GET-fetches the one record (`fetchEntityById`, asserts `qbWriteCalls === 0`) and applies it via the **same** canonical mapping as `applyImport` (`applyCustomer` writes both `clients` and a contact `sub_clients`, including `Active=false` tombstones and `Active=true` reactivation; invoice/estimate line replacement uses QBO ItemRef→OPS product mapping). Delete/Void are soft: invoice→`status='void'`, customer→`deleted_at` on both parent client and mirrored contact, estimate→`deleted_at`, and payment→matching OPS payments `voided_at` (matching both direct `qb_id` and composite `<paymentQbId>:<invoiceQbId>` rows, with invoice/payment suppressions before the balance trigger fires). Payment updates also void stale composite rows no longer present in QBO's latest split and reconcile affected invoices back to QBO `Balance`. Accepted QBO estimates (`TxnStatus='Accepted'`) are treated as `approved`: OPS ensures a QBO estimate→opportunity link, writes the mapped line items, then calls `accept_estimate_to_job_from_quickbooks`. If any ItemRef lacks a product mapping, the webhook returns `needs_review` with `missingQboItemMappings` even when the estimate row itself is stored; mapped accepted estimates proceed to project/task/material-demand creation. Verified requests always `200 {received, processed}` (per-entity errors caught + logged to `accounting_sync_log` so a poison record can't trigger Intuit's retry storm); all responses send `Cache-Control: no-store`. **Never writes to QB.**
 
+#### Bidirectional correctness hardening (production live, 2026-09-04)
+
+Maverick sandbox stress tests exposed five edge failures. The complete repair is authored in OPS-Web migration `20260904025000_qbo_bidirectional_sync_hardening.sql` and its reconcile route. It was production-applied as ledger `20260904182523_qbo_bidirectional_sync_hardening` and deployed in OPS-Web commit `162f76f7538c81b6c32ce6ac8c68fa35449f9550` through Vercel deployment `dpl_7KCkhyVzqgeKuPQprnK7jhdRVTY8`, which reached `READY`. The current production descendant, OPS-Web commit `c3c7cc585424895cee86bd7f07054b0a869b82f4` in `READY` deployment `dpl_8hFhpgtvYdfBEeUWPvWk2eMxhzFh`, contains that release and owns `app.opsapp.co` with no alias error.
+
+- **Payment state is atomic across moves.** `update_invoice_balance()` locks and recalculates every distinct old/new invoice affected by a payment insert, balance-field update, move, void, or delete. A zero-paid invoice returns to `past_due` or `awaiting_payment` according to its due date; `draft`, `sent`, `void`, and `written_off` remain intentional states. Overpayments cannot make `balance_due` negative. The trigger fires only for `invoice_id`, `amount`, or `voided_at` changes, so a `qb_id` writeback does not touch the invoice. Payment-derived invoice updates run under the existing transaction-local QuickBooks-origin suppression marker, preventing redundant outbound invoice queue rows while leaving direct invoice edits queue-visible.
+- **Creates fence their dependents.** `claim_accounting_sync_queue` prioritizes `create` and withholds later operations for the same company + connection + provider + entity until no create is unfinished and the identity is either already external, has no create history, or has a succeeded create. Existing stale-claim recovery, connection scoping, lock ownership, and service-role-only execution remain intact.
+- **Reconciliation is fair and tombstone-safe.** Service-role-only `list_quickbooks_reconcile_candidates(provider_environment, limit)` validates the exact sandbox/production environment, clamps batches to 1–100, excludes deleted clients/estimates/invoices, terminal void/written-off invoices, and voided payments, then interleaves least-recently-reconciled customer/invoice/estimate/payment lanes. Payment candidates expose the raw QBO payment id rather than OPS's composite `paymentQbId:invoiceQbId`. The cron consumes this single bounded batch instead of exhausting customers first.
+- **Long document numbers remain unique.** Invoice/estimate numbers at or below QBO's 21-character limit remain unchanged. Longer values map deterministically to the first eight characters plus `-` plus twelve hexadecimal characters from the OPS UUID, avoiding collisions between values with the same truncated prefix.
+
+Proof is executable against an isolated PostgreSQL 17 server in `tests/integration/qbo-bidirectional-sync-postgres-runtime.test.ts`; route and mapper cases remain in the focused Vitest suite. No test requires or mutates production data.
+
 **Env vars:** production uses unsuffixed `QB_CLIENT_ID`, `QB_CLIENT_SECRET`, `QB_REDIRECT_URI` (default `${appUrl}/api/integrations/quickbooks/callback`), and `QB_WEBHOOK_VERIFIER_TOKEN`; sandbox uses `QB_SANDBOX_CLIENT_ID`, `QB_SANDBOX_CLIENT_SECRET`, optional `QB_SANDBOX_REDIRECT_URI` (falls back to `QB_REDIRECT_URI`), and `QB_SANDBOX_WEBHOOK_VERIFIER_TOKEN`. The single switch is `QB_ACTIVE_PROFILE=production|sandbox` (legacy `QB_ENVIRONMENT` still works as fallback). Financial push line fallback mirrors the same split: production may use unsuffixed `QBO_FALLBACK_SERVICE_ITEM_ID` / `QBO_FALLBACK_SERVICE_ITEM_NAME`, while sandbox may override with `QBO_SANDBOX_FALLBACK_SERVICE_ITEM_ID` / `QBO_SANDBOX_FALLBACK_SERVICE_ITEM_NAME` (legacy `QB_*` aliases remain accepted). `QB_TOKEN_ENC_KEY` is the shared 32-byte base64 token-encryption key and fails closed. Sage shares the same connection table/token service/cipher and is scoped as `provider_environment='production'`.
 
 ### Review UI & access control
@@ -1604,8 +1616,48 @@ The **"QuickBooks Import"** tab of `/accounting` (`src/app/(dashboard)/accountin
 | `20260608010000_qbo_estimate_delete_operation.sql` | extends queue/audit operation checks with `delete`; maps estimate tombstones to QBO estimate delete while invoices remain void |
 | `20260608011000_qbo_subclient_delete_updates_customer.sql` | maps sub-client tombstones to parent customer update instead of QBO customer inactivation |
 | `20260608012000_qbo_single_writable_connection.sql` | enforces one connected, sync-enabled, non-`pull_only` QuickBooks row per company/provider |
+| `20260904025000_qbo_bidirectional_sync_hardening.sql` | **Production-applied as `20260904182523_qbo_bidirectional_sync_hardening`.** Atomic payment moves/voids, payment-derived invoice echo suppression, create-before-update claims, and fair active-only reconcile candidates |
 
 Live apply status must be verified during rollout. Supabase MCP records its own apply-time version in `supabase_migrations.schema_migrations`, so tracked versions can differ from these filenames — **treat the repo files as canonical**. Every migration is additive (nullable columns / new tables / new indexes / CHECK replacement), hence iOS-sync-safe and idempotent. Archived in `migrations/`.
+
+---
+
+## Sage Accounting — exact-business OAuth, queue-owned writes, and reconciliation (production deployed, dormant 2026-09-04)
+
+**Release state:** OPS-Web commit `162f76f7538c81b6c32ce6ac8c68fa35449f9550` reached production through Vercel deployment `dpl_7KCkhyVzqgeKuPQprnK7jhdRVTY8`. The current production descendant, commit `c3c7cc585424895cee86bd7f07054b0a869b82f4` in `READY` deployment `dpl_8hFhpgtvYdfBEeUWPvWk2eMxhzFh`, contains that release and owns `app.opsapp.co` with no alias error. The three Sage migrations are applied as ledgers `20260904182539_sage_connection_identity_and_oauth`, `20260904182556_sage_queue_hardening`, and `20260904182615_sage_reconciliation`. Production readback found zero Sage connections, so the code and schema are live while Sage remains operationally dormant. Writes remain fail-closed behind `ACCOUNTING_WRITE_ENABLED`, `SAGE_WRITE_ENABLED`, the production-only `SAGE_PRODUCTION_WRITE_ENABLED`, and exact environment/business identity checks.
+
+### OAuth and exact business selection
+
+- `POST /api/integrations/sage` authenticates the operator, checks `accounting.manage_connections`, rejects a conflicting active provider, chooses an explicit `sandbox` or `production` profile, and starts authorization code + PKCE.
+- The callback consumes one short-lived OAuth attempt before token exchange, encrypts rotating tokens, retrieves the authorized Sage businesses, and requires the initiating operator to choose one exact business from a one-time selection session.
+- The chosen Sage business id is encrypted at rest; its deterministic lookup hash prevents cross-company reuse. Every provider request carries the selected business in `X-Business`.
+- The temporary OAuth and business-selection tables have RLS enabled, no browser grants, and service-role-only access. Their consume functions are `SECURITY DEFINER`, pin `search_path`, and deny `anon` and `authenticated` execution.
+
+### Queue-owned writes and reconciliation
+
+`SageApiClient` owns the API base, mandatory business header, token refresh-and-replay, bounded pagination, `429` timing, provider request ids, and stable idempotency keys. All OPS-originated Sage mutations are queue-owned. `POST /api/cron/accounting/sage/push-queue` processes customers, products, estimates/quotes, invoices, AR payments, suppliers, purchase invoices, and AP payments with exact connection scope, create-before-update dependencies, stale-claim recovery, and uncertain-provider-acceptance quarantine.
+
+`POST /api/cron/accounting/sage/reconcile` reads bounded provider changes and applies them through service-role-only RPCs. Candidate selection rotates fairly across sales and purchasing lanes. Full document graphs are replaced under row locks; payment allocation moves recalculate both old and new documents; provider-origin transaction markers suppress outbound echoes; and tombstones or ambiguous financial changes become explicit reconciliation decisions rather than silent deletion.
+
+### Release verification
+
+- 288 changed-surface application tests and all 7 PostgreSQL 17 runtime cases passed against the release merge.
+- The Next.js production build completed locally and again on Vercel with the repository-declared Node 22 runtime.
+- Live schema readback found every required table, column, constraint, index, and service-only function. All six new exposed-schema tables have RLS enabled and deny `anon`/`authenticated` table access. All nine targeted privileged functions deny `anon`/`authenticated`, grant only `service_role`, and pin `search_path`.
+- Accounting connection counts were unchanged by migration. Read-only reconcile smoke calls returned one existing QuickBooks sandbox candidate and zero Sage candidates. Supabase reported no new release-scoped security advisories.
+- Live route probes confirmed the Books authentication redirect, `401` on unauthenticated Sage connect/business selection, and `401` on both Sage cron endpoints. Vercel reported no errors for the release routes in the deployment window.
+
+The real Sage sandbox create/update/read/reconcile/cleanup war game remains a separate activation proof requiring the dedicated renewable sandbox credentials and exact test-business identities. Deployment does not grant production-provider write authority.
+
+### Migration chain
+
+| File | Production ledger | Purpose |
+|---|---|---|
+| `20260904040000_sage_connection_identity_and_oauth.sql` | `20260904182539_sage_connection_identity_and_oauth` | encrypted business identity, PKCE attempts, one-time business selection, and scoped mappings |
+| `20260904050000_sage_queue_hardening.sql` | `20260904182556_sage_queue_hardening` | queue-owned writes, exact connection scope, acceptance evidence, dependency ordering, and recovery |
+| `20260904060000_sage_reconciliation.sql` | `20260904182615_sage_reconciliation` | fair candidates, exact-scope inbound apply, full graphs, payment movement, and echo suppression |
+
+Canonical migration copies are archived under `migrations/` with the QuickBooks companion migration. Supabase assigns apply-time ledger versions; the repository filenames remain the source ordering.
 
 ---
 
@@ -4209,7 +4261,7 @@ Every route resolves the current Firebase actor and active company before reposi
 
 Extraction in `src/lib/accounting/supplier-bills/pdf-extraction.ts` is conservative and records provenance instead of inventing missing dates, purchase orders, job identities, quantities, or units. `src/lib/accounting/supplier-bills/canpro-reconciliation.ts` creates review suggestions only. The routes do not let extraction output bypass operator disposition. The service and repository live in `src/lib/accounting/supplier-bills/intake-service.ts` and `intake-repository.ts`; route implementation is under `src/app/api/internal/accounting/supplier-bills/intakes/` in OPS-Web commit `ca7f46f3c`, with the review console completed in `bf3610e3e`.
 
-The database and web endpoints are live in production. Vercel deployment `dpl_EFoN3TvLL1rMTvWqtRD2zSAdEnT1` is `READY` at commit `f0464eedf5574ca20d20203999ca473b5d9f8949` and serves `app.opsapp.co`; unauthenticated intake list and capture calls fail closed with HTTP 401, and no intake-route runtime error was observed after release. The source branch remains local/unpushed and iOS remains local/unreleased. No new external extraction vendor or usage-priced API is introduced; PDF parsing is local through `pdfjs-dist`. Existing S3, Vercel, and Supabase usage remains subject to the account's ordinary consumption costs. Exact contract and release boundary: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
+The database and web endpoints are live in production. OPS-Web source is published on production main at `f901c6d9c0e1bd63abddcb616a697f7fb9115ad6` through Git-triggered Vercel deployment `dpl_7BCJY52J5SB6KwmY7qdCrLSzCUH3`, which is `READY` and owns `app.opsapp.co`; unauthenticated intake list and capture calls fail closed with HTTP 401. Production ledger `20260904184303_supplier_bill_company_data_lifecycle` completes the account-closure path without granting ordinary delete access to immutable supplier documents, events, or private intents. The 267-table company-data manifest and 42-table privilege snapshot match production, all 37 supplier-bill foreign-key repair indexes exist, and all supplier/intake public rows plus both private intent tables were empty at final readback. iOS remains local/unreleased. No new external extraction vendor or usage-priced API is introduced; PDF parsing is local through `pdfjs-dist`. Existing S3, Vercel, and Supabase usage remains subject to the account's ordinary consumption costs. Exact contract and release boundary: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
 
 ### MCP crew call-out recovery preview v12 (production-released, dormant)
 
