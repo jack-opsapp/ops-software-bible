@@ -4065,6 +4065,22 @@ The database callback policy is production-applied as ledger version `2026083000
 
 No further release gate remains for the Claude-first read-only P1. Expanding to another host, enabling site-visit tools, adding any write capability, or changing the Phase C customer-facing context path is a separate initiative with its own authorization and proof gates.
 
+### Public MCP developer guide — `/developers/mcp` (2026-09-03; release pending)
+
+OPS-Web branch `feat/mcp-developer-guide` adds a public, server-rendered and indexable MCP reference at `/developers/mcp`. It requires no OPS session and shares the developer header with `/developers/api`. This subsection records the current contract and supersedes the historical 11-tool capability and host-status snapshots above; the guide itself is not production-live until its OPS-Web commit is pushed and a READY production deployment is verified.
+
+The guide does not maintain a handwritten tool list. `src/lib/agent-control-plane/mcp/docs/reference.ts` resolves the same active immutable exposure, capability manifest, OAuth configuration, scope-operation registry, and consent labels used by `/api/mcp`, then emits an explicitly whitelisted public view model. The active revision remains `2026-08-29.mcp-exposure.v2`: **34 available read tools and 20 read scopes**. Every tool must be implemented, read-only, non-destructive, and assigned to exactly one public group; every scope must be a labelled read scope. Resolution fails closed on unknown, unavailable, non-read, duplicated, omitted, or unlabelled entries. Internal rollout flags, permission requirements, risk tiers, evidence policy, audit classes, rate-limit buckets, and confirmation policy are not serialized to the page.
+
+The published contract is read-only: authorized jobs, customers, schedules, tasks, correspondence, artifacts, site visits, deck-design geometry, financial records, catalog, purchasing, company, team, integration health, and operational summaries. It grants no send, edit, generic database, arbitrary export, scheduling mutation, financial mutation, or dormant v3+ prepare/analyze capability. Company and operator identity continue to derive from the OAuth grant, with current record-level authority checked on every call.
+
+| Host | Verification state shown by the guide |
+|------|---------------------------------------|
+| Codex | Full active 34-tool catalogue authenticated and verified end to end. |
+| Claude | OAuth and the original 11-tool catalogue authenticated and verified; current 34-tool acceptance remains pending. |
+| ChatGPT | Registration/callback path verified; no authenticated 34-tool acceptance pass. OPS is not listed in the public plugin directory. |
+
+A supported connection path is not an OPS acceptance pass; these labels must advance only after live authenticated proof. The guide's `Request a tool` section opens `mailto:support@opsapp.co?subject=OPS%20MCP%20tool%20request` with a structured workflow template and instructs users not to include passwords, access tokens, or customer records. Primary sources: `src/app/developers/mcp/page.tsx`, `src/app/developers/mcp/_components/mcp-guide-page.tsx`, `src/app/developers/_components/developers-header.tsx`, `src/lib/agent-control-plane/mcp/docs/{reference,copy}.ts`, and `src/i18n/dictionaries/{en,es}/mcp-docs.json`. Contract coverage: `tests/unit/mcp/guide-reference.test.ts`, `tests/unit/mcp/guide-page.test.tsx`, and `tests/e2e/mcp-guide.spec.ts`.
+
 ### Current MCP boundary and Invisible Office Foundation Zero (production-released dormant, 2026-08-30/31)
 
 The production route has since advanced to immutable read-only exposure `2026-08-29.mcp-exposure.v2`: 34 read tools, 20 grantable read scopes, current-grant/current-permission reauthorization, and the durable request audit/rate-limit path. Historical v1 grants remain pinned to v1. Production metadata and the unauthenticated bearer challenge advertise only the active read ceiling. The older P1 numbers above are historical release evidence, not the present catalogue size.
