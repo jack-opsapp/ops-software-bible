@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: September 2, 2026
+**Last Updated**: September 4, 2026
 **iOS Reference**: `ops-ios/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -28,14 +28,15 @@
 14. [Stripe Subscription Integration](#stripe-subscription-integration)
 15. [Accounting Edge Functions (Expense Push)](#accounting-edge-functions)
 16. [QuickBooks Read-Only Sync — Pull → Stage → Review → Apply](#quickbooks-read-only-sync--pull--stage--review--apply-2026-06-04)
-17. [Error Handling & Retry Logic](#error-handling--retry-logic)
-18. [Rate Limiting & Debouncing](#rate-limiting--debouncing)
-19. [Supabase Table Reference](#supabase-table-reference)
-20. [Bubble.io (Legacy)](#bubbleio-legacy)
-21. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
-22. [Email Pipeline Integration Routes (24 Routes)](#email-pipeline-integration-routes-24-routes)
-23. [OpenAI API Key Separation](#openai-api-key-separation)
-24. [External Lead API — `/v1/intake` + `/v1/analytics` (production-live; credential issuing path)](#external-lead-api--v1intake--v1analytics-production-live-2026-07-26-credential-issuing-path-documented-2026-09-02)
+17. [Sage Accounting — exact-business OAuth, queue-owned writes, and reconciliation](#sage-accounting--exact-business-oauth-queue-owned-writes-and-reconciliation-local-only-2026-09-04)
+18. [Error Handling & Retry Logic](#error-handling--retry-logic)
+19. [Rate Limiting & Debouncing](#rate-limiting--debouncing)
+20. [Supabase Table Reference](#supabase-table-reference)
+21. [Bubble.io (Legacy)](#bubbleio-legacy)
+22. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
+23. [Email Pipeline Integration Routes (24 Routes)](#email-pipeline-integration-routes-24-routes)
+24. [OpenAI API Key Separation](#openai-api-key-separation)
+25. [External Lead API — `/v1/intake` + `/v1/analytics` (production-live; credential issuing path)](#external-lead-api--v1intake--v1analytics-production-live-2026-07-26-credential-issuing-path-documented-2026-09-02)
 
 ---
 
@@ -1640,8 +1641,43 @@ The **"QuickBooks Import"** tab of `/accounting` (`src/app/(dashboard)/accountin
 | `20260608011000_qbo_subclient_delete_updates_customer.sql` | maps sub-client tombstones to parent customer update instead of QBO customer inactivation |
 | `20260608012000_qbo_single_writable_connection.sql` | enforces one connected, sync-enabled, non-`pull_only` QuickBooks row per company/provider |
 | `20260904025000_qbo_bidirectional_sync_hardening.sql` | **Local only; not applied.** Atomic payment moves/voids, payment-derived invoice echo suppression, create-before-update claims, and fair active-only reconcile candidates |
+| `20260904040000_sage_connection_identity_and_oauth.sql` | **Local only; not applied.** Exact encrypted Sage business identity, PKCE OAuth attempts, one-time business selection, and scoped mapping tables |
+| `20260904050000_sage_queue_hardening.sql` | **Local only; not applied.** Queue-owned Sage writes, dependency ordering, stale-claim recovery, fair selection, and supplier/AP support |
+| `20260904060000_sage_reconciliation.sql` | **Local only; not applied.** Exact-scope inbound reconciliation, complete document graphs, provider tombstones, AR/AP payment reallocation, and echo suppression |
 
 Live apply status must be verified during rollout. Supabase MCP records its own apply-time version in `supabase_migrations.schema_migrations`, so tracked versions can differ from these filenames — **treat the repo files as canonical**. Every migration is additive (nullable columns / new tables / new indexes / CHECK replacement), hence iOS-sync-safe and idempotent. Archived in `migrations/`.
+
+---
+
+## Sage Accounting — exact-business OAuth, queue-owned writes, and reconciliation (local only, 2026-09-04)
+
+**Release state:** implemented and locally verified in OPS-Web commit `cdceafef7`; no Sage migration in this section is production-applied, and no code has been pushed or deployed. The provider contract is Sage Business Cloud Accounting API v3.1. Sage has no separate API host for sandbox traffic, so OPS treats `sandbox` as a fail-closed logical profile: dedicated app credentials, an exact test-business allow-list, distinct OPS connection/company ids, and disabled write gates by default.
+
+### OAuth and exact business selection
+
+- `POST /api/integrations/sage` authenticates the OPS operator, checks `accounting.manage_connections`, rejects a conflicting active accounting provider, selects the explicit Sage profile, and starts authorization code + PKCE. State, verifier, company, user, profile, and credential bundle are recorded in a short-lived one-time attempt.
+- `GET /api/integrations/sage/callback` consumes that attempt before token exchange, encrypts rotating tokens, fetches the authorized business list, and redirects into an expiring one-time selection session. It does not silently accept Sage's lead/default business.
+- `GET /api/integrations/sage/businesses` returns only the callback-bound businesses; `POST` consumes the selection and writes the chosen encrypted business id, lookup hash, and display name. Every subsequent provider request sets that exact id in `X-Business`.
+- `DELETE /api/integrations/sage` disconnects only the requested profile. Token reads and refreshes are centralized; refresh-token rotation is encrypted and persisted before the new access token is returned.
+- The Books SYNC surface remains one compact connect entry point. During Sage setup it shows a keyboard-operable business picker; once connected, the small badge shows business name and sandbox state without giving once-ever setup permanent page acreage.
+
+### Provider client and durable outbound queue
+
+`SageApiClient` owns base URL, mandatory `X-Business`, bearer auth, pagination, response parsing, 401 refresh-and-replay, `429` retry timing, and provider request-id capture. Mutating requests receive a stable 32-character hyphenless idempotency key. Concurrent writes are serialized for Sage resource families that do not permit parallel POST operations.
+
+All OPS-originated Sage writes are queue-owned. The legacy `/api/sync` and prior AP-only worker cannot call Sage directly; the compatibility AP endpoint delegates to the same sequential worker. `POST /api/cron/accounting/sage/push-queue` claims exact connection-scoped work, honors create-before-update dependencies, recovers stale claims, and processes customers/contacts, products, estimates/quotes, invoices, AR payments, suppliers, purchase invoices, and AP payments. Provider success followed by local-finalization failure becomes `needs_review`, not a blind retry that could duplicate money.
+
+### Inbound reconciliation
+
+`POST /api/cron/accounting/sage/reconcile` pulls changed resources in bounded pages using provider timestamps, normalizes them, and applies them through service-role-only RPCs scoped to exact company, connection, and provider environment. Candidate selection rotates fairly across entity lanes. Complete document lines are replaced under locks; provider-origin suppression prevents echoes; payment allocation moves recalculate both old and new invoices/bills. Provider deletions and financial mismatches surface as explicit reconciliation decisions rather than silent destructive changes.
+
+### Required gates and acceptance proof
+
+Runtime configuration is documented in `.env.example`: `SAGE_ACTIVE_PROFILE`, shared `ACCOUNTING_WRITE_ENABLED`, Sage-specific `SAGE_WRITE_ENABLED`, production-only `SAGE_PRODUCTION_WRITE_ENABLED`, profile-specific client credentials/redirect URI, and `SAGE_SANDBOX_BUSINESS_IDS`. The local-only acceptance runner additionally requires the exact refresh token, Sage business, OPS company/connection/user/category ids, ledger/tax/bank/payment ids, and a private manifest directory.
+
+The runner fails before network or database access unless every sandbox identity and both write gates are explicit. Its deterministic graph creates a tagged customer, supplier, estimate, quote, two sales invoices, AR payment, purchase invoice, AP payment, and multiple lines; forces one 401 refresh/replay; replays an idempotent write; moves a payment allocation; reconciles through production services/RPCs; reads every object back; and cleans provider objects in reverse dependency order plus exact-id OPS rows with a zero-row proof. Without credentials, the observed live preflight result was `BLOCKED :: SAGE_ACTIVE_PROFILE must be explicitly set to sandbox.` No provider or OPS write was attempted.
+
+Verification: 160 Sage-focused assertions passed (with the PostgreSQL case executed separately), 492 accounting/QuickBooks regression assertions passed, and 7/7 Sage+QBO PostgreSQL 17 runtime assertions passed. The fake provider war game covers 401 refresh, 429 timing, idempotent response loss, queue recovery, complete graphs, tombstones, mappings, and AR/AP allocation movement. Real Sage sandbox proof remains a release prerequisite once the exact dedicated credentials and identities are provisioned.
 
 ---
 

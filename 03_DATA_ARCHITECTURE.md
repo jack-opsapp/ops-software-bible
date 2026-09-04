@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: 2026-08-04
+**Last Updated**: 2026-09-04
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -6651,6 +6651,36 @@ Contract suite `ops-web/docs/artifacts/public-api-booking-p2-1/contract_tests.sq
 - **Isolation** — RLS enabled with 3 policies in the documented shape; anon with no company identity reads 0 rows and its write is refused `42501`.
 
 Live verification after apply (`docs/artifacts/public-api-booking-p2-1/verify_live.log`): ledger md5 matches the file; 0 non-owner grants; RLS on with 0 policies on both `private` tables; the gate live-fired 11/11 as role `anon`; anon reads 0 policy rows and cannot write; inventory 2 private tables + 1 public table + 11 RPCs + 10 helpers with 0 rows anywhere; `book_site_visit` / `reschedule_site_visit` / `cancel_site_visit_booking` still actor-bound and still gated; cron job active; the new assignment source present in all four allowlists; all 21 new functions carry a pinned `search_path`. Security advisor delta = two INFO `rls_enabled_no_policy` rows (the intended shape, same class as the P1 tables) and **zero** `anon_/authenticated_security_definer_function_executable` or `function_search_path_mutable` findings on any new function. Performance advisor delta after `20260902193000` = `unused_index` only, the expected artifact of brand-new empty tables.
+
+## Sage Accounting sync hardening (local source only — awaiting release approval, 2026-09-04)
+
+Source: OPS-Web commit `cdceafef7`. The three migrations named below are mirrored byte-for-byte in this Bible but are **not production-applied**. Their runtime contract has been exercised on disposable PostgreSQL 17.
+
+### Exact connection and OAuth identity
+
+- `accounting_connections` gains encrypted `sage_business_id`, deterministic SHA-256 `sage_business_id_lookup`, and display-only `sage_business_name`. The lookup is unique per provider environment and prevents one Sage business from being attached to two OPS companies. A partial unique index permits only one writable Sage connection per OPS company.
+- `accounting_oauth_attempts` stores one-time, expiring OAuth state plus the PKCE verifier, initiating OPS company/user, provider environment, and encrypted credential-bundle snapshot. `sage_business_selection_sessions` stores the short-lived post-callback business list until the operator explicitly selects one exact business.
+- Both temporary OAuth tables are server-only: RLS is enabled, browser grants are revoked, and only `service_role` receives table access. Consume helpers are `SECURITY DEFINER` with a fixed `search_path` and one-time row locks.
+
+### Provider mapping and document fidelity
+
+- Sage mapping tables bind OPS sales accounts, purchase accounts, tax rates, payment methods, bank accounts, and expense categories to one exact `(company_id, connection_id, provider_environment)` scope. They are service-role managed and carry foreign-key covering indexes.
+- Estimates preserve whether the remote document is a Sage `estimate` or `quote` through `sage_document_kind`. Invoices, estimates/quotes, and purchase invoices reconcile complete line graphs rather than header-only totals.
+- `payments.updated_at` participates in change detection. The payment-balance triggers lock and recalculate every distinct old and new invoice/bill after insert, amount change, allocation move, void, or delete, while transaction-local provider-origin suppression prevents echo queue rows.
+
+### Durable queue and inbound apply
+
+- `accounting_sync_queue` accepts Sage sales documents, contacts, products, AR payments, suppliers, purchase invoices, and AP payments. Claims are connection-scoped, recover stale work, enforce dependency fences, and select fairly instead of allowing one entity lane to starve the rest. Retry and idempotency state remains durable across response loss.
+- Sage-origin writes run under exact company/connection/environment suppressions so inbound reconciliation cannot enqueue an outbound echo. Reconcile candidate RPCs exclude deleted and terminal rows and order by least-recently-reconciled state.
+- Service-role apply RPCs lock the canonical parent, validate exact tenancy and connection identity, replace the full line graph, and then apply payments. Provider tombstones remain explicit reconciliation decisions; financial documents are never silently hard-deleted.
+
+### Local-only migration chain
+
+| File | Purpose | Release state |
+|---|---|---|
+| `20260904040000_sage_connection_identity_and_oauth.sql` | encrypted business identity, PKCE attempts, one-time business selection, mapping tables, document-kind identity | Local only; not applied |
+| `20260904050000_sage_queue_hardening.sql` | queue-owned provider writes, exact connection scope, stale recovery, dependency/fairness rules, AP balance support | Local only; not applied |
+| `20260904060000_sage_reconciliation.sql` | fair candidates, exact-scope inbound apply, complete line replacement, payment reallocation and echo suppression | Local only; not applied |
 
 ---
 
