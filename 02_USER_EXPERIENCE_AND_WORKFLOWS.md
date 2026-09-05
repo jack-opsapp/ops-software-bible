@@ -2077,3 +2077,9 @@ identified as not included and cannot be silently represented as selectable.
 **Last Updated:** May 20, 2026
 **Document Version:** 1.4
 **iOS App Version:** 207+ Swift files, iOS 17+, SwiftData + SwiftUI
+
+## Invisible Office Phase 12 approval workflow
+
+**Release boundary:** implementation and local verification complete; dormant code deployed and verified. The exact production database migration is unapplied pending Jackson's approval after automatic review rejection. This workflow is not activated.
+
+An evidence-backed customer/lead update appears in the existing approval queue for its named operator. Review changed before/after fields, the linked customer, quoted evidence/provenance and expiry, then SAVE CHANGES or reject. Approval sends the exact displayed proposal seal, and a durable readback receipt proves the changes. Stale records, changed authority, expired previews or unsupported effects require a fresh proposal. Another reviewer cannot read its business text, and lost record permission masks details while preserving safe rejection. No external messages, provider drafts, schedules or accounting actions are authorized. [Canonical contract](specs/2026-09-04-ops-mcp-customer-opportunity-updates.md).

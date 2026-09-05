@@ -4287,6 +4287,13 @@ The minimal company policy table is generic and versioned; the migration contain
 
 This phase reuses the established overview, queue, task, approval, notification, mutation, audit, confirmation, and receipt foundations and does not duplicate Phase 10 crew recovery. It exposes no free-form SQL, accounting scope, QuickBooks action, provider call, message delivery, financial mutation, or browser automation. Source migration `20260904070000_agent_dispatch_confirmation_task.sql` is production ledger `20260904222406_agent_dispatch_confirmation_task`; OPS-Web production main `6a2a7c94b0ca64b207d8ab035db30f77d2311342` is live through Vercel deployment `dpl_7o1YGSZ79cyBiQxWaag9dgoTPL1j`. Production has no policy seed, v13 client or grant, exposure activation, host acceptance, schedule, or customer-live action. Public MCP remains read-only v2. Full contract and release proof: `specs/2026-09-04-ops-mcp-canpro-control-room-task-vertical.md`.
 
+
+## Invisible Office Phase 12 exact customer/opportunity updates
+
+**Release boundary:** implementation and local verification complete; dormant code deployed and verified. The exact production database migration is unapplied pending Jackson's approval after automatic review rejection. This workflow is not activated.
+
+Dormant `prepare_customer_update` adds one evidence-backed existing-opportunity preview (title, description, owner, follow-up reminder), optionally linked customer notes. Exposure v14 contains the 34 established reads plus this prepare tool; commit remains exclusively inside the existing OPS approval queue. Current named actor, company, scopes, permissions, source, policy and exact displayed seal are rechecked by service-only atomic RPCs. v20 read calls reauthorize the identical principal under preserved v8 read contracts; no credential or scope changes occur. Active production remains read-only v2. See [full contract and release proof](specs/2026-09-04-ops-mcp-customer-opportunity-updates.md).
+
 **End of Document**
 
 This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, email pipeline integration, and error management with full fidelity to the current implementation.

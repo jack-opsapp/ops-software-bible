@@ -6449,4 +6449,11 @@ The Sage schema adds encrypted business identity plus a deterministic ownership 
 
 Production postflight proved all four ledger entries; every required table, column, constraint, and index; zero release-scoped security-advisor findings; and unchanged accounting connection counts. The only connected accounting row remains an existing QuickBooks sandbox connection. No Sage connection exists, so Sage is schema/code-live but dormant and cannot write until the explicit shared, Sage-specific, production-specific, environment, and exact-business gates all pass.
 
+
+## Invisible Office Phase 12 customer/opportunity update state
+
+**Release boundary:** implementation and local verification complete; dormant code deployed and verified. The exact production database migration is unapplied pending Jackson's approval after automatic review rejection. This workflow is not activated.
+
+The dormant v20/v14/v9 vertical stores exact actor/grant/source/evidence-bound proposals, 30-minute single-use confirmations and durable independently read-back receipts in private.agent_customer_updates. Private technical policy agent_customer_update_policy seals the installed trigger/helper effects. Notes-only customer edits reject companies with any accounting connection; owner changes use the canonical assignment core with permanent provider-draft suppression. All business changes and receipt/queue/notification writes are atomic. Application roles have no private-table access. Restrictive action RLS and an actor-aware service queue protect preview text from other reviewers. Source migration: `20260904233000_agent_customer_opportunity_update.sql`. Full contract, verification and release status: [Phase 12](specs/2026-09-04-ops-mcp-customer-opportunity-updates.md).
+
 **End of Data Architecture Documentation**
