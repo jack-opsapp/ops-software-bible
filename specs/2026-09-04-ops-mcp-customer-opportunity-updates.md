@@ -82,3 +82,7 @@ Activation verification passed 104 real PostgreSQL OAuth assertions and 44 autho
 Existing connectors do not gain new authority automatically. To use the new tool, remove/recreate the OPS connector so it registers against v14 and complete signed-in OPS consent for `ops.customers.prepare`. Read-only scopes may still be selected. Customer business changes remain exact per-action OPS approvals. Host-specific approval/write acceptance for Codex, Claude and ChatGPT is not claimed by code/database release alone.
 
 The release uses existing OPS hosting/database resources and introduces no paid service or tier. Existing plan usage applies.
+
+## September 5 authenticated Maverick findings
+
+The subsequent authenticated connection has an active v14/v9 grant with all 21 scopes. Its 40-call test exposed valid-grant ordering, conversation runtime and all-day task-date defects plus hidden input rules. Four repairs are now verified locally and await separate production migration/push approval; they have not changed the activation state above. See [Maverick repair contract, proof and release gate](2026-09-05-maverick-mcp-read-repairs.md), including the separate existing production timezone-data mismatch. Maverick still has zero proposals; real business approval/commit acceptance is not claimed.

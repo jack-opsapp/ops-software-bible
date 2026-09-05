@@ -6456,4 +6456,8 @@ Production postflight proved all four ledger entries; every required table, colu
 
 The approved v20/v14/v9 vertical stores exact actor/grant/source/evidence-bound proposals, 30-minute single-use confirmations and durable independently read-back receipts in private.agent_customer_updates. Private technical policy agent_customer_update_policy seals the installed trigger/helper effects. Notes-only customer edits reject companies with any accounting connection; owner changes use the canonical assignment core with permanent provider-draft suppression. All business changes and receipt/queue/notification writes are atomic. Application roles have no private-table access. Restrictive action RLS and an actor-aware service queue protect preview text from other reviewers. Source migration: `20260904233000_agent_customer_opportunity_update.sql`. Full contract, verification and release status: [Phase 12](specs/2026-09-04-ops-mcp-customer-opportunity-updates.md).
 
+### September 5 Maverick repair follow-up — local, awaiting release approval
+
+The full-scope principal ordering repair, conversation alias/raw-snapshot compatibility repair, canonical all-day task boundaries and advertised read-input improvements are verified locally. Production is unchanged; the exact forward migration, security proof, 892 application checks, 60 SQL assertions, release gate and separate unresolved B.C. timezone-data mismatch are recorded in [Maverick MCP repairs](specs/2026-09-05-maverick-mcp-read-repairs.md).
+
 **End of Data Architecture Documentation**
