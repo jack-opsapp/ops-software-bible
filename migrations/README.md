@@ -311,3 +311,9 @@ the pre-booking-gate version, later replaced by `20260810194251_site_visit_booki
 - `20260905034603_agent_customer_update_oauth_activation.sql` — exact OPS-Web source `20260905033621_agent_customer_update_oauth_activation.sql`; 11,528 bytes, MD5 `0b90bfba5c959e281a502efeb3e757b7`, SHA-256 `b1d8423379a94c2dbf0d0b5b3d694769ac4637a0d8af77f7b409e5533da8bbac`.
 
 Both archives are byte-identical to the committed, locally tested sources and the production ledger statements. Jackson explicitly approved the original migration and enabling write access. The first installs guarded customer/lead preparation and exact OPS approval; the second preserves old read tokens while enabling exact v14/v9 OAuth authority and least-privilege client ceilings. No client, grant, consent, business update, provider message or routine was created by either migration. One technical effect-fingerprint row seals the reviewed business trigger/helper graph. Full proof: `specs/2026-09-04-ops-mcp-customer-opportunity-updates.md`.
+
+## Maverick MCP read repairs — production-applied 2026-09-05
+
+`20260905191357_agent_maverick_read_repairs.sql` is the exact 16,199-byte archive of OPS-Web source `20260905184652_agent_maverick_read_repairs.sql` and the production ledger's single statement. MD5 `4107d02fa009cb9d992dbee953586e96`; SHA-256 `4c4022d54ba0278ca4d0d33705ce10c358242a00d4dfdb3bbb3a54aace40838d`.
+
+Jackson explicitly approved application and release. Live readback verified all seven function hashes, preserved owners/OIDs/ACLs/security settings, denied application execution on the new helper, unchanged Maverick task/grant state and zero proposals. Full release and authenticated acceptance evidence: [Maverick MCP repairs](../specs/2026-09-05-maverick-mcp-read-repairs.md).

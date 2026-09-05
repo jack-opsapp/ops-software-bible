@@ -4349,9 +4349,9 @@ This phase reuses the established overview, queue, task, approval, notification,
 Approved `prepare_customer_update` adds one evidence-backed existing-opportunity preview (title, description, owner, follow-up reminder), optionally linked customer notes. Exposure v14 contains the 34 established reads plus this prepare tool; commit remains exclusively inside the existing OPS approval queue. Current named actor, company, scopes, permissions, source, policy and exact displayed seal are rechecked by service-only atomic RPCs. v20 read calls reauthorize the identical principal under preserved v8 read contracts; no credential or scope changes occur. New registrations use v14/v9; old grants retain their scopes. See [full contract and release proof](specs/2026-09-04-ops-mcp-customer-opportunity-updates.md).
 
 
-### September 5 Maverick repair follow-up — local, awaiting release approval
+### September 5 Maverick repairs — initial release live; precision follow-up pending
 
-The full-scope principal ordering repair, conversation alias/raw-snapshot compatibility repair, canonical all-day task boundaries and advertised read-input improvements are verified locally. Production is unchanged; the exact forward migration, security proof, 892 application checks, 60 SQL assertions, release gate and separate unresolved B.C. timezone-data mismatch are recorded in [Maverick MCP repairs](specs/2026-09-05-maverick-mcp-read-repairs.md).
+The approved scope-order, conversation, all-day task and read-input repairs are live on OPS-Web `2a349d8182e449af8891332f5b9636f3121df652`, with production migration `20260905191357_agent_maverick_read_repairs`. Authenticated reads pass and task detail agrees with project summary. The unchanged-title probe exposed lost timestamp precision and misleading no-change handling; the additional repair is locally verified and requires separate release approval. Production readback confirms unchanged business/grant state and zero proposals. Exact release evidence, local verification and the separate unresolved B.C. timezone-data mismatch are recorded in [Maverick MCP repairs](specs/2026-09-05-maverick-mcp-read-repairs.md).
 
 ## Task scope and composition RPCs (2026-09-01)
 
