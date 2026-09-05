@@ -38,6 +38,39 @@ _None._
 - Files dated `2026-05-*.sql` (no 14-digit stamp) predate this convention. Each is mapped below; where its content
   drifted from the applied text, the canonical `<version>_<name>.sql` produced by the backfill sits alongside it.
 
+## Invisible Office day-closeout release (2026-08-31 UTC)
+
+- `20260831042518_agent_day_closeout_foundation_zero.sql`
+- `20260831042631_agent_day_closeout_routine_worker.sql`
+- `20260831042924_agent_day_closeout_fk_indexes.sql`
+
+All three are byte-exact against `supabase_migrations.schema_migrations.statements[1]`: 40,971 bytes / SHA-256 `ddc67ee5999b555cd3c6835ea408e66ce5764e9fef2b366f74b67c155947e7d7`; 27,377 bytes / `09a8649add196f172a1d68a0e862a91b59272d75c5f33a931228f1dd0c1d876a`; and 1,114 bytes / `2d1296ab7afeec4bd9fc96c0db04463d00e3d04b773893a3deeef59242669dc7`. They install the dormant, private day-closeout persistence/worker boundary and its covering foreign-key indexes. Application release does not register its cron, create or enable a routine, or activate MCP v3.
+
+## Invisible Office Phases 3–7 release (2026-09-02 UTC)
+
+- `20260902194603_agent_hiring_what_if_read.sql`
+- `20260902194631_agent_promise_recovery_read.sql`
+- `20260902194703_agent_sales_truth_read.sql`
+- `20260902194727_agent_payroll_readiness.sql`
+- `20260902194758_agent_recurring_service_price_change.sql`
+- `20260902195149_agent_recurring_service_price_index_dedupe.sql`
+- `20260902195335_agent_recurring_service_price_fk_indexes.sql`
+
+All seven are byte-identical to the corresponding committed source under `supabase/migrations/` and the SQL submitted to production. They install the dormant v5–v9 database boundaries, remove one definition-equivalent provider-delivery index, and cover every recurring-price policy foreign key. Release does not create an OAuth client or grant, activate an exposure, send a notice, change a price, or make a capability customer-live. Full proof: `specs/2026-09-02-ops-mcp-phases-3-7-production-release.md`.
+
+## Invisible Office Phase 8 release (2026-09-03 UTC)
+
+- `20260903110828_agent_estimate_draft_preview.sql`
+
+The archive is byte-identical to the committed source `supabase/migrations/20260902231632_agent_estimate_draft_preview.sql` and the one statement stored in production ledger `20260903110828`: 42,223 bytes, MD5 `a180b8ef634f6aec19b6734d3601a0bf`, SHA-256 `a24282619e24c5f0d14135940e7f88a226b93b237c71842d97e779f44c8ce9f7`. It installs only the dormant v10 estimate-draft snapshot and final authority functions. Release creates no estimate or preview row, reserves no number, sends nothing, and creates no v10 client or grant. Full proof: `specs/2026-09-02-ops-mcp-estimate-draft-vertical.md`.
+
+## Canpro supplier bill clearance release (2026-09-04 UTC)
+
+- `20260904171301_supplier_bill_intake_clearance.sql` — 52,199 bytes, MD5 `c1999781a038c5b4669780f3b0f02c9a`.
+- `20260904171632_supplier_bill_intake_fk_indexes.sql` — 2,249 bytes, MD5 `7ebe982a2e7d05e1d6054f673a7c84a4`.
+
+Both archives are byte-exact against `supabase_migrations.schema_migrations.statements[1]` and their committed OPS-Web source migrations. They install the pre-AP evidence, review, clearance, guarded mutation, and permission boundary plus covering indexes for all 13 introduced foreign keys. Release created no intake, write-intent, canonical AP link, or provider queue row. Full proof: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
+
 ## Ledger rows without stored SQL (file is the authority)
 
 These 6 CLI-era ledger rows have an empty `statements` array; the version-named file is the only record of their SQL:
@@ -243,6 +276,27 @@ prefer the canonical file:
 - `20260805190000_add_email_connections_signature_logo_url.sql` → canonical `20260805185129`
 - `20260805230000_fix_email_signature_hash_check_null_character.sql` → canonical `20260805224149`
 
+## Accounting sync release — 2026-09-04
+
+- `20260904025000_qbo_bidirectional_sync_hardening.sql` ← ledger `20260904182523_qbo_bidirectional_sync_hardening`
+- `20260904040000_sage_connection_identity_and_oauth.sql` ← ledger `20260904182539_sage_connection_identity_and_oauth`
+- `20260904050000_sage_queue_hardening.sql` ← ledger `20260904182556_sage_queue_hardening`
+- `20260904060000_sage_reconciliation.sql` ← ledger `20260904182615_sage_reconciliation`
+
+These four files are byte-identical to the OPS-Web release sources. Supabase assigned apply-time ledger versions; the source filenames retain the dependency order used by the application repository.
+
+## Supplier bill account-closure integration — 2026-09-04
+
+- `20260904184303_supplier_bill_company_data_lifecycle.sql` ← OPS-Web source `20260904190000_supplier_bill_company_data_lifecycle.sql`
+
+The archive file is byte-identical to the OPS-Web source. Supabase assigned apply-time ledger version `20260904184303`.
+
+## Invisible Office Phase 11 release — 2026-09-04 UTC
+
+- `20260904222406_agent_dispatch_confirmation_task.sql`
+
+The 65,696-byte archive is byte-identical to OPS-Web source `supabase/migrations/20260904070000_agent_dispatch_confirmation_task.sql` and the single production ledger statement: MD5 `ebc6b9469538a2a459ede98d29a5f368`, SHA-256 `65e20ccedcc5792b76a646857c308538112d8b40e1d763ddc24cd1b0b00d3498`. It installs the dormant control-room internal-task persistence, policy, evidence, confirmation, receipt, ACL, and service-role function boundary. It creates no policy row, OAuth client or grant, exposure activation, schedule, Canpro identifier, or business mutation. Full release proof: `specs/2026-09-04-ops-mcp-canpro-control-room-task-vertical.md`.
+
 ## Provenance of the 2026-08-12 backfill
 
 552 files were reconstructed from `supabase_migrations.schema_migrations.statements` (read-only export) and
@@ -250,3 +304,10 @@ md5-verified row-by-row; 4 came from local checkouts (the 3 empty-ledger 0604 fi
 0527 file, cross-checked across 42 identical working copies). The six 2026-08-07 google-calendar migrations and
 `20260807152233` carry their original applied definitions — in particular `enqueue_google_calendar_sync()` here is
 the pre-booking-gate version, later replaced by `20260810194251_site_visit_booking.sql`.
+
+## Invisible Office Phase 12 release and activation — 2026-09-05 UTC
+
+- `20260905033402_agent_customer_opportunity_update.sql` — exact OPS-Web source `20260904233000_agent_customer_opportunity_update.sql`; 77,521 bytes, MD5 `2b6326f6bc1c63706c9b20d0b1cdfa41`, SHA-256 `e478142143fe9ebde253a1231cba34255a8d9757556187a6f324677c981831b2`.
+- `20260905034603_agent_customer_update_oauth_activation.sql` — exact OPS-Web source `20260905033621_agent_customer_update_oauth_activation.sql`; 11,528 bytes, MD5 `0b90bfba5c959e281a502efeb3e757b7`, SHA-256 `b1d8423379a94c2dbf0d0b5b3d694769ac4637a0d8af77f7b409e5533da8bbac`.
+
+Both archives are byte-identical to the committed, locally tested sources and the production ledger statements. Jackson explicitly approved the original migration and enabling write access. The first installs guarded customer/lead preparation and exact OPS approval; the second preserves old read tokens while enabling exact v14/v9 OAuth authority and least-privilege client ceilings. No client, grant, consent, business update, provider message or routine was created by either migration. One technical effect-fingerprint row seals the reviewed business trigger/helper graph. Full proof: `specs/2026-09-04-ops-mcp-customer-opportunity-updates.md`.

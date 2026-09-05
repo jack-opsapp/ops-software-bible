@@ -1,6 +1,6 @@
 # 07 - Specialized Features
 
-**Last Updated:** August 21, 2026
+**Last Updated:** September 4, 2026
 **OPS Version:** iOS v1.7, Android Planning Phase
 **Purpose:** Complete reference for specialized features including navigation, tutorial system, calendar scheduling, image management, PIN security, projects spatial canvas, spreadsheet view, project notes system, photo annotations, inventory management, notifications, crew location tracking, and advanced UI patterns.
 
@@ -44,6 +44,15 @@
 34. [PENDING WORK — Sync Recovery Surface](#34-pending-work--sync-recovery-surface-ios-2026-07-22)
 35. [Trash — Recovery Ledger](#35-trash--recovery-ledger-ios-2026-08-06)
 36. [Overdue Review](#36-overdue-review-ios-main-2026-08-21-signed-distribution-pending)
+37. [Invisible Office Day Closeout](#37-invisible-office-day-closeout-production-released-dormant-not-activated)
+38. [Invisible Office Collections](#38-invisible-office-collections-production-released-and-dormant)
+39. [Invisible Office Sales Truth](#39-invisible-office-sales-truth-production-released-dormant)
+40. [Invisible Office Payroll Readiness](#40-invisible-office-payroll-readiness-production-released-dormant)
+41. [Invisible Office Recurring Price Preview](#41-invisible-office-recurring-price-preview-production-released-dormant)
+42. [Invisible Office Estimate Draft](#42-invisible-office-estimate-draft-production-released-and-dormant)
+43. [Invisible Office Weather Reschedule](#43-invisible-office-weather-reschedule-production-released-and-dormant)
+44. [Invisible Office Crew Call-Out Recovery](#44-invisible-office-crew-call-out-recovery-production-database-released-web-deployment-confirmation-pending-and-dormant)
+45. [Supplier Bill Capture and Field Review](#45-supplier-bill-capture-and-field-review-web-released-ios-unreleased-2026-09-04)
 
 ---
 
@@ -10473,7 +10482,143 @@ release gate.
 
 ---
 
-## 37. Agent Queue — Approval Desk (Web, 2026-09-01)
+## 37. Invisible Office Day Closeout (production-released dormant, not activated)
+
+“Close out my day. What did I forget?” is the first complete reactive Invisible Office vertical. The inactive MCP v3 exposes one composite prepare tool. OPS calculates the answer from the current operator's authorized schedule, work queue, pipeline, invoices, and normalized correspondence; the host does not define metrics, tenant identity, or authority.
+
+The result is a compact operator brief: tomorrow's work and readiness gaps, due work, stalled leads, outstanding balances grouped by currency, correspondence coverage, and bounded communication briefs. Every section names its coverage and source revisions. If any relevant delivery source is rejected, missing, or truncated, the correspondence section is `not_evaluated`; the result suppresses correspondence-dependent findings and briefs instead of claiming the inbox is clear.
+
+A result with findings creates one immutable `file_day_closeout` item in the existing approval queue and one persistent rail notification. Its queue card shows the business date, exact connected OAuth client, grouped findings, currency balances, correspondence truth boundary, and the exact filing statement. The card cannot be edited or bulk-approved. `FILE CLOSEOUT` records only the closeout inside OPS; `LEAVE OPEN` creates no effect. The receipt states **no messages sent · no money moved**. A clear result remains inspectable without creating an interruption.
+
+Approval never trusts a host-side boolean. The existing Firebase-authenticated OPS route supplies the current actor to the database commit boundary, which rechecks current membership, grant, scopes, permissions, company, action, change set, preview digest, and expiry before consuming one confirmation. Exact retries return the stored receipt; changed or cross-tenant retries fail closed. Autonomous and bulk executors reject this action family.
+
+OPS also owns the private routine record and dormant worker. It claims one leased occurrence immediately before execution, using `FOR UPDATE SKIP LOCKED`, and takes another only while at least 60 seconds remain in its 240-second budget; unstarted work never spends an attempt. Routine work is cancelled at 210 seconds, preserving the final 30 seconds for truthful finalization. The trusted auth adapter obtains the exact current actor/company/client/grant/scope binding from the database before minting authority, and persistence checks it again. The deterministic idempotency key binds routine + schedule revision + occurrence. Finalization first recovers any exact run that committed before its response was lost, then advances the stored local wall-clock schedule through the IANA timezone, including DST changes. It records server-owned source cursors, retries transient execution failure or work-budget expiry after 5 then 15 minutes, pauses on authority loss, stores blocked/terminal failures in a separate typed ledger rather than fabricating partial closeout results, and raises persistent partial/blocked/terminal-failure notifications. Clear runs remain quiet. It invokes no model or external provider.
+
+Routine activation is production-dormant rather than structurally absent. Rows default disabled and tables have no direct API grants. Service-role-only list/upsert RPCs and one authenticated Connected agents control bind the current actor/company to an exact eligible v3 grant, require `settings.integrations: all`, and recheck all seven closeout permissions before create/enable. With zero production v3 grants, the control is invisible and no routine can be configured. `/api/cron/day-closeout-routines` is registered on the offset five-minute lane, but `OPS_DAY_CLOSEOUT_ROUTINES_ENABLED` is absent, so the route remains fail-closed. The shared OPS workload lease keeps the MCP host out of scheduling authority.
+
+**Release boundary:** active production v2 remains read-only and byte-stable. The dormant schema is live under ledger versions `20260831042518_agent_day_closeout_foundation_zero`, `20260831042631_agent_day_closeout_routine_worker`, `20260831042924_agent_day_closeout_fk_indexes`, `20260831061700_agent_day_closeout_routine_configuration`, and `20260901012208_mcp_v3_synthetic_canary`; OPS-Web exact release `f0dd81be` is contained by verified Ready deployment descendant `d3d51884` / `dpl_H7ncZ6jA7dyN8k4xcGMx6XUGczPU`. Live proof shows the closeout and canary tables are RLS-enabled, policy-free, direct-grant-free, and empty; public RPCs are service-role-only; v3/v4 clients and grants remain zero; the worker flag is absent; and active metadata still advertises only the twenty read-only v2 scopes. The offset cron adds ordinary function invocations but no scheduled closeout work or model/provider call while disabled.
+
+Synthetic-canary release `f0dd81be` and production ledger version `20260901012208_mcp_v3_synthetic_canary` are deployed but dormant. The release admits one short-lived exact synthetic v3 subject without changing public registration or the active exposure; preserves rolling v2 bearer compatibility; requires the exact host-prepared run/action/change-set/preview, Firebase-authenticated filing receipt, exact idempotent commit replay, and OPS-owned routine enablement; then simulates spent-refresh theft and proves grant/token revocation, routine de-leasing, bearer rejection, and independent zero-authority cleanup. All canary authority mutations and shutdown serialize on one client lock, and real two-session tests prove shutdown remains final across concurrent provision, refresh, routine enablement, and durable authority creation. Service-role proof surfaces return booleans only; their calls have hard abort deadlines, cleanup is independently bounded, and dual failures are preserved without leaking detail. The runner prints no secrets, identifiers, or business content. Live readback proves the private table is RLS-enabled and direct-grant-free, all canary RPCs are service-role-only and search-path pinned, four enforcement triggers are active, and there are zero bindings, v3 clients/grants, v4 clients/grants, or enabled routines. The remaining acceptance step requires a dedicated synthetic company/operator plus safe finding fixture, Jackson's signed-in consent/filing/routine actions, and a green cleanup readback. This is host-neutral production-protocol proof, not external-host acceptance; the chosen launch host, global v3, and the worker remain separate explicit activation decisions. Canonical contracts, costs, release proof, and remaining gates: `specs/2026-08-30-ops-mcp-day-closeout-foundation-zero.md`.
+
+---
+
+## 38. Invisible Office Collections (production-released and dormant)
+
+“Who owes me money?” is a bounded receivables control sheet, not a general email agent. OPS calculates the exact answer from authorized invoice records using server-owned date arithmetic, groups it by canonical debtor, preserves separate currency totals, and shows every included invoice and aging bucket. The host cannot choose the tenant, metric, recipient, authority, or sorting rule. A source catalogue that exceeds the fixed 100-invoice bound fails closed instead of reporting a partial balance as complete.
+
+For each debtor, OPS resolves the current canonical contact and inspects immutable correspondence coverage. Missing, ambiguous, blocked, duplicate-review, or shared recipients produce facts only. Unreadable coverage, outbound contact inside seven days, or inbound contact inside three days also blocks preparation. A blocked debtor has an exact reason and no queue action. No model infers an address or reads free-text invoice fields as contact authority.
+
+An eligible debtor receives one deterministic consolidated draft. The draft names the exact currency-separated balances and invoices, escalates factual tone by the oldest aging bucket, and asks for payment or a firm payment date without legal threats. The queue card exposes the debtor, recipient, invoice dates, days overdue, buckets, balances, complete subject/body, truth boundary, and SHA-256 approval seal. It has no editor or send control and cannot be selected for bulk approval.
+
+`APPROVE DRAFT` records only that the exact immutable draft was approved inside OPS. It sends no message, moves no money, and issues no invoice, estimate, credit note, or other financial document. The receipt states those zero effects explicitly and is stable under exact retry. `LEAVE OPEN` keeps the public action and private draft decision coherent without contacting the customer. Autonomous executors reject this action family.
+
+**Release boundary:** the implementation is contained by OPS-Web production main `d5b0911b` and Ready deployment `dpl_3XHPSsdaLJSXgZQF6tu6Uzof8gAf`; production ledger versions `20260831215642_agent_collections_vertical` and `20260831222256_agent_collections_fk_indexes` are applied and mirrored byte-exact. V4 and capability manifest v10 remain inactive. Production MCP remains read-only v2, with zero enabled v4 clients and zero live v4 grants. No collection draft, approval, delivery, payment, or financial document exists because of release alone. Canonical contract: `specs/2026-08-31-ops-mcp-collections-vertical.md`.
+
+---
+
+## 39. Invisible Office Sales Truth (production-released, dormant)
+
+“Why are we losing leads, and what should I fix first?” is a bounded sales control sheet, not a model opinion. OPS measures the last 180 company-local days of non-deleted, non-merged opportunities and returns resolved close rate, open-outcome sensitivity, source attribution, recorded loss reasons, first-response time, and completed pipeline velocity. Every metric exposes its population, coverage, sample, confidence, and source references. A source bound or evidence gap produces an insufficient result instead of false precision.
+
+The first recommendation is the answer to what should be fixed first. It comes from a fixed server-owned priority: repair bounded sources, capture missing outcomes or loss reasons, restore stage history or correspondence linkage, reduce measured response delay, review a dominant recorded loss reason or weak measured source, or clear the slowest sufficiently observed stage. At most three items are returned. They carry structured threshold facts and `causal_claim: false`; the tool never says a source, delay, or stage caused a loss.
+
+The public tool accepts `{}` only. OAuth and current permission authority require operations/correspondence read scopes plus company-wide pipeline and email visibility. One service-role-only RPC rechecks the exact actor/company/client/grant/revision, manifest v13, and dormant exposure v7 before reading. No customer name, message body, note, title, email address, raw loss label, or transport secret is returned. The feature creates no durable result, action, notification, routine, draft, message, financial effect, model call, or UI.
+
+**Release boundary:** the implementation and migration are production-released in OPS-Web `a763f1a0` and ledger `20260902194703_agent_sales_truth_read`. Production remains on read-only exposure v2, with no v7 client, grant, or activation. Canonical metric, data, proof, cost, and activation contracts: `specs/2026-09-01-ops-mcp-sales-truth-vertical.md`.
+
+---
+
+## 40. Invisible Office Payroll Readiness (production-released, dormant)
+
+“Can I make payroll on the 15th?” is a bounded cash control sheet, not a bank balance, collection promise, or general forecast. OPS reads the operator-maintained current cash balance, every recorded recurring obligation through the payroll cutoff, approved unpaid reimbursements, reconciled open invoices, and each payer's actual fully settled invoice history. The host supplies only the target date.
+
+The first answer is `yes`, `no`, `at_risk`, or `insufficient_evidence`. `yes` requires fresh, complete decision-critical evidence and enough current cash to cover payroll plus every other recorded obligation due by cutoff without a receivable. `no` requires complete evidence and a negative best modeled case. `at_risk` means modeled receipts bridge a negative cash-only floor. Missing, stale, ambiguous, inconsistent, or bounded evidence returns precise gaps instead of a guess.
+
+Payroll and other recurring expenses must be explicitly classified. Payroll requires an exact company-local due time, preserved to microsecond precision; a same-day check after that cutoff fails closed. Recorded overdue obligations remain owed. Malformed active schedules remain visible and force insufficiency instead of disappearing; invalid/oversized database scalars become bounded sentinels rather than a transport failure. Approved unpaid reimbursements use the product's canonical amount rule across partial/full/automatic approval and null/zero/positive approved amounts. Same-day obligations after payroll cutoff do not count; date-only receivables arriving on payroll day do not count because their intraday timing is unknown. Future-dated payments or delivery timestamps do not alter an as-of snapshot. A receipt date that is missed or outside canonical years 0001-9999 is not recycled into future cash.
+
+Best and base receivable scenarios use the payer's empirical p25 and p50 delay from at least five durable net settlements. Non-void negative adjustments, same-day reversals, and later credits all affect the true settlement date; non-finite or overlong payment/invoice amounts never become settlement evidence. P75 is evidence only. Worst assumes zero receivable cash. Every money value is exact under the frozen ISO currency table, aggregates use checked integer arithmetic, every obligation occurrence and receivable prediction is itemized, and duplicate provider identities or stored-versus-calculated balance conflicts fail closed.
+
+The feature is read-only and invisible: no setup screen, projection record, notification, queue item, draft, message, payment, document, routine, or model call. Its schema and application are production-released, while active production remains v2. No v8 client/grant or activation exists. Canonical contract: `specs/2026-09-01-ops-mcp-payroll-readiness-vertical.md`.
+
+---
+
+## 41. Invisible Office Recurring Price Preview (production-released, dormant)
+
+“Raise every [recurring service] account 8% starting [month], draft the notices, flag who’ll walk” is a bounded mass-action preview, not a permission to change prices or contact customers. The host supplies one service selector, exact percentage, and effective month. OPS resolves the current tenant, accounts, recurrence schedules, contractual policy, accepted price source, tax treatment, notice contact, provider correspondence, and risk rules.
+
+An account is included only when the service and client/service identity are unique, exactly one relevant recurrence resolves, the recurrence and customer are active, a private policy explicitly allows adjustment, grandfathering has ended, the pinned accepted estimate or delivered invoice line has not changed, optional-selection flags are explicit, line and parent-document discounts are zero, tax and company currency are valid, one verified recipient exists, correspondence is readable, and the first actual service occurrence in the requested month satisfies the notice period. Multiple recurrence rows produce one account exclusion with two hash-bound recurrence sources. Missing or invalid tax evidence preserves the verified price and produces `tax_unavailable`. Any ambiguity or missing evidence produces an exact exclusion; stale context or a reached source/result/work bound rejects the package.
+
+The database first returns a bounded recurrence catalog whose RRULEs have passed a non-expanding canonical uppercase alphabet gate. The service removes only histories it can prove ended before the month while sharing one aggregate work ceiling across the initial and revalidation classifications, then requests the exact selected IDs. That detail call recomputes the catalog and returns it with the source facts under one PostgreSQL statement snapshot. Catalog, selection, and account-evidence drift all fail as stale; invalid target-month exception data stays conservatively in scope. Authority is revalidated after the source phases, and the final SQL assertion occurs immediately before the ephemeral preview returns.
+
+The preview shows current and proposed rates, tax, exact RRULE, exact effective date, notice rule, complete email copy, fixed risk signals, and stable evidence references. Price and tax math use checked integer minor units and deterministic half-away-from-zero rounding. Churn risk is high only when the latest classified state is explicit cancellation or price objection, medium when the latest state is complaint/overcharge or there is coherent positive collectible late-payment evidence, and otherwise unknown. There is no low label; a later noun-bound explicit resolution supersedes older negative evidence, while an unrelated materials, logistics, or quantity message does not. Raw correspondence never enters the result, and every returned business value is serialized as untrusted data.
+
+The package is ephemeral and hash-bound for exact replay comparison. It persists no provider draft or preview/notice business content and creates no approval action, notification, routine, price write, contract edit, invoice change, service change, send path, or commit tool. Shared transport audit/rate metadata still applies. Its schema and application are production-released, while active production remains v2. No v9 client/grant, canary, or activation exists. Canonical contract: `specs/2026-09-01-ops-mcp-recurring-price-preview-vertical.md`.
+
+Exposure v9's four inherited tools are callable only through their historical manifest/exposure pair or the exact v15/v9 authority bridge. The v15/v9 path additionally requires the exact registered 16-scope client ceiling and serialized scope, v4 consent, and exact accepted labels. This keeps additive discovery and real grant execution aligned without weakening historical grants.
+
+---
+
+## 42. Invisible Office Estimate Draft (production-released and dormant)
+
+“Quote this new lead like that past job, plus 8%” is one exact estimate preview, not permission to create or send a financial document. The host supplies the open target opportunity id, the specific approved source estimate id, and one canonical percentage. OPS never guesses the intended lead or past job.
+
+The target must be current, open, unmerged, and tied to one active same-company client. The source must be an approved/converted estimate tied unambiguously to a completed/closed same-company project for its active client. Document-level discounts are unsupported. Every line must have complete quantity, price, discount, minimum-charge, optional-selection, tax, order, and stored-total evidence. More than 100 lines, duplicate order, missing hierarchy, inconsistent mirrors, malformed money, source-total drift, or any tenant/status ambiguity fails closed.
+
+The requested percentage changes only unit price and minimum charge. Checked integer minor-unit math rounds half away from zero; quantity, discount, minimum-charge floor, tax, total, and percentage deposit are recomputed deterministically. Fixed deposits stay fixed. Unselected optional lines remain visible but contribute zero. The historical tax validates historical totals; the draft uses exactly one current active company-default fractional tax rate. Missing current tax for a taxable line, multiple defaults, or an out-of-range rate rejects the request.
+
+The v16/v10/v5 boundary requires current actor/company authority, the exact live grant and consent labels, five OAuth scopes, and company-wide client/estimate/pipeline/project/company permissions. Authority is resolved before the read, again after calculation, and finally inside PostgreSQL while rebuilding the exact source revision. Every business string is untrusted data. A stable hash binds source, target, percentage, tax, lines, and totals but excludes request and observation identifiers.
+
+The receipt says `ready` only for an ephemeral calculation. It explicitly proves no estimate was created, no number was reserved, nothing was issued/approved/published, zero messages were sent, and no price was committed. There is no commit tool, approval item, notification, routine, provider request, or persisted preview body; only ordinary shared transport audit/rate metadata remains.
+
+**Release boundary:** OPS-Web release `1cacc2df` is `READY` at production deployment `dpl_2tZT6cbyw1eBuWAAbSAwP1xc1obA`, which owns `app.opsapp.co`; ledger `20260903110828_agent_estimate_draft_preview` is applied and mirrored byte-exact. Both public database functions are service-role-only, security-definer, and empty-search-path pinned. Exposure v10 has zero clients, grants, canaries, activation, or customer use; active production remains read-only v2. Fresh live metadata exposes only the established 20 read scopes, unauthenticated MCP returns 401, and the release window has no MCP runtime error cluster. Canonical contract: `specs/2026-09-02-ops-mcp-estimate-draft-vertical.md`.
+
+Exposure v10 keeps all v9 tools callable only through their historical pair or the exact v16/v10 authority bridge. The v16/v10 path binds the exact 17-scope registered client ceiling and serialization, v5 consent, and accepted labels without weakening historical grants.
+
+---
+
+## 43. Invisible Office Weather Reschedule (production-released and dormant)
+
+“Rain Thursday. Slide the outdoor work, keep the indoor job, tell everyone” is one exact schedule-and-copy preview, not permission to change work or contact clients. The operator supplies one company-local date. OPS determines current target work, outdoor classification, crews, conflicts, fresh weather evidence, and exact recipients from current authoritative records.
+
+Outdoor status comes only from the company's explicit task-type settings. `rain-reschedule-policy:v1` treats at least 60% precipitation probability or at least 10 mm precipitation as rain and accepts a destination only when both values are below their thresholds. Evidence must be complete for every project/date, come from the existing `open-meteo` cache, and be no more than 12 hours old. Weather condition words never drive the rule.
+
+Each project's outdoor work moves together to the first clear, conflict-free date inside the company's bounded optimization window, preserving times and crew. Indoor work stays put. UUID assignment identities are canonicalized and multi-day future commitments participate in collision detection. The vertical refuses locked, recurring, paired, dependency-bearing, multi-day, malformed, or unstaffed target work. It also rejects malformed setting types, missing/shared/suppressed recipients, merged parent clients, inactive crew, incomplete weather, project or crew conflicts, partial task coverage, source drift, and reached bounds. It never returns a partial plan.
+
+The result presents current facts, forecast evidence, an exact proposal, and one email draft per project/recipient. Every draft says that the dates are proposed and nothing has changed yet. Names and conditions remain marked untrusted data. Stable source/proposal/draft/package hashes make unchanged replay comparable, while double application reauthorization and a final same-observation PostgreSQL rebuild reject any intervening change.
+
+The truthful effect envelope is zero project, task, calendar, provider-draft, and message writes, with zero messages sent. No commit/apply/send sibling, approval, notification, routine, provider call, or durable preview exists.
+
+**Release boundary:** Phase 9 is contained by OPS-Web production main `dcfa2d64e68860d31798303ed0ce30f7dc5acfd1` and READY deployment `dpl_22TEbgu5UfmCEiAio1aiQn8D6ZmM`, which owns `app.opsapp.co`. Supabase ledger versions `20260903194613_agent_weather_reschedule_preview` and `20260903194749_agent_weather_reschedule_preview` are a byte-identical concurrent replay of the same tested additive migration and are both mirrored exactly. The five functions have the intended owner, empty-search-path, and service-role-only boundary; the inherited v1 consent label remains unchanged. Manifest v17, exposure v11, and consent v6 remain inactive: production has zero active v11 clients/grants, public metadata remains on the established 20 read-only v2 scopes, and unauthenticated MCP fails closed with `401`. No schedule or message changed. Zero weather rows satisfy the required 12-hour freshness gate, so no business-data canary was fabricated. Canonical contract: `specs/2026-09-03-ops-mcp-weather-reschedule-vertical.md`.
+
+---
+
+## 44. Invisible Office Crew Call-Out Recovery (production-released and dormant)
+
+“Mike called out tomorrow. Cover his jobs and tell the crew and clients” is one exact recovery-and-copy preview, not permission to alter the schedule or contact anyone. The operator supplies one crew name and one company-local date. OPS resolves the exact active crew identity, affected authorized tasks and booked site visits, current crew and role evidence, same-task completion history, work hours, approved or neutral time off, task/site-visit/personal-event conflicts, project continuity, and current exact recipients.
+
+The planner first maximizes same-day coverage, then minimizes the number of replacement people and assignment changes before preferring continuity, stronger same-task history, lower existing workload, and stable identity order. It never double-books a replacement across overlapping recovery items. A task replacement requires both overlapping role evidence and completed history for that task type. A site visit uses overlapping role evidence and explicitly reports that no requirement record is available. OPS does not hold authoritative crew licensing or certification data, so the vertical never presents role or history as licensure.
+
+For work without proven same-day coverage, an unlocked, non-recurring, unpaired, dependency-free item may move to its earliest bounded future date only when every retained assignee is free of time off and all task, site-visit, and personal-event conflicts. Everything else remains visibly uncovered. Existing assignees are preserved except for the called-out member; timing and duration are preserved. Missing, suppressed, shared, merged, unauthorized, or malformed recipient evidence produces a blocker rather than a guessed contact.
+
+The result separates current facts, evidence-limited candidate assessments, exact assignment/date proposals, internal crew draft previews, client draft previews, blockers, future-confirmation requirements, and a truthful all-zero effect envelope. Every source and result carries deterministic hashes. No commit, apply, assignment edit, reschedule, calendar write, OPS/provider draft, message, delivery, notification, routine, or durable preview exists.
+
+Manifest v18, exposure v12, and consent v7 remain dormant; active production remains read-only v2. The database boundary is live under ledger `20260904033119_agent_crew_callout_recovery_preview`. No-code carrier `2a086736ee7bad081caf6cdf753094b3f35967af`, which contains the Phase 10 implementation and pushed main merge, is live through successful Vercel deployment `7sgYzredXDaeHfJGK3oEQcSHCrYk`. Canonical contract: `specs/2026-09-03-ops-mcp-crew-callout-recovery-vertical.md`.
+
+---
+
+## 45. Supplier Bill Capture and Field Review (web released, iOS unreleased, 2026-09-04)
+
+The iOS Books surface adds a Bills section for operators with `accounting.view`; capture is independently gated by `accounting.bills.capture`. The field workflow supports Files PDF import and VisionKit paper scanning. Scans are converted to PDF locally and enter the same durable queue. iOS never presents local scan output as authoritative extraction; the server returns the final invoice facts and stable intake identity.
+
+`SupplierBillCaptureQueue` stores a maximum of 25 PDFs, each no larger than 20 MB, under company-isolated Application Support storage with complete file protection and atomic manifests. A queued file survives relaunch and transient connectivity failure. It is removed only after the server confirms the exact request identity; permanent server rejection leaves the source recoverable and presents required attention. `SupplierBillCache` independently stores company-scoped summaries and details so the five lifecycle lists and already-opened bills remain readable offline. Switching company clears in-memory state before loading the new company's queue and cache.
+
+The field UI exposes `review`, `to_pay`, `paid`, `held`, and `payroll` filters, source PDF access, clearance results, line/job status, and an explicit offline-copy indicator. Approval, hold disposition, payroll handoff, payment scheduling, and payment recording remain in OPS Web where the full evidence and independent permissions are available. This prevents a compact field screen from hiding consequential accounting context.
+
+Primary iOS sources are `OPS/DataModels/SupplierBillIntake.swift`, `OPS/Services/SupplierBills/SupplierBillCaptureQueue.swift`, `SupplierBillCache.swift`, `SupplierBillIntakeService.swift`, `OPS/ViewModels/SupplierBillIntakeViewModel.swift`, and `OPS/Views/Books/Bills/SupplierBillsView.swift`. The implementation is local commit `c6269763`; it has not been pushed or released. The matching web console and account-closure integration are published on production main at OPS-Web commit `f901c6d9c` through `READY` Vercel deployment `dpl_7BCJY52J5SB6KwmY7qdCrLSzCUH3` on `app.opsapp.co`. Canonical contract: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
+
+---
+
+## 46. Agent Queue — Approval Desk (Web, 2026-09-01)
 
 **What it is.** `/agent/queue` is the single human approval gate for everything the automation proposes. Every proposal is a `public.agent_actions` row (`status = pending`) with an `action_type`, a `context_summary`, an `action_data` payload, a `priority`, a `confidence`, and an `expires_at`. Nothing executes until an operator approves it on this page (or through the same API); rejected rows record `review_notes`; rows nobody reviews before `expires_at` are flipped to `expired` by the expiry sweep. Approval runs the type's executor inside `ApprovalQueueService.approveAction` and lands the row on `executed` (or `failed` with `error_message`).
 

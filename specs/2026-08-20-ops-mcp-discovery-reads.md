@@ -2,6 +2,8 @@
 
 **Status:** **PRODUCTION-LIVE AND OPERATIONAL — 2026-08-22 UTC.** Capability manifest `2026-08-20.capability-manifest.v7` externally exposes `search_customers` and `search_jobs` alongside the existing nine reads. Production migration `20260822015049_agent_discovery_reads_20260820220000`, indexed-writer ACL repair `20260822015939_agent_discovery_index_writer_acl_20260822015828`, OPS-Web release commit `5eb4b561c14cf8dace2b906d50ebcd34a0ba13db`, and READY Vercel deployment `dpl_6ZMAhdXuweX9jSuVG8T58Z5gzWko` completed the database-first rollout. Every write and site-visit capability remains disabled.
 
+**Current boundary (2026-08-29 UTC):** Production now runs capability manifest `2026-08-22.capability-manifest.v8`, while immutable exposure `2026-08-22.mcp-exposure.v1` continues to advertise exactly this eleven-tool/seven-scope surface. The additional twenty-three reads are production-present and externally dark, no thirty-four-read exposure revision exists, and no external write is available.
+
 **Parent architecture:** `specs/2026-08-07-ops-agent-control-plane-mcp-foundation.md`
 
 **Historical production baseline:** Before this rollout, the remote OPS MCP endpoint was live at `https://app.opsapp.co/api/mcp` with nine exact-reference or bounded-list reads. It could not begin with ordinary language such as “find Acme” or “the Cedar Street job.”

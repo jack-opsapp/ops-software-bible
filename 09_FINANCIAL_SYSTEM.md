@@ -7,8 +7,6 @@
 **Last Updated**: September 4, 2026
 **Source Reference**: `C:\OPS\ops-web\src\lib\types\pipeline.ts`, `src\lib\api\services\`, iOS source at `ops-ios/OPS/`
 
----
-
 ## Table of Contents
 
 1. [Dual-Database Architecture](#dual-database-architecture)
@@ -24,6 +22,7 @@
 11. [Service Layer Patterns](#service-layer-patterns)
 12. [Business Rules & Constraints](#business-rules--constraints)
 13. [iOS Implementation](#ios-implementation)
+14. [Supplier Bills and Accounts Payable](#supplier-bills-and-accounts-payable-2026-09-03)
 
 ---
 
@@ -791,7 +790,7 @@ The `amount_paid`, `balance_due`, and `status` on invoices are **maintained by S
 2. Void a payment (set `voided_at`) → trigger recalculates again
 3. Never call `updateInvoice` to change payment amounts
 
-**Local hardening awaiting release approval (2026-09-03):** OPS-Web migration `20260904025000_qbo_bidirectional_sync_hardening.sql` repairs the trigger's move/void edge behavior before rollout. It recalculates both the old and new invoice when a payment moves, restores a zero-paid invoice to `past_due` or `awaiting_payment`, preserves intentional draft/sent/void/written-off states, clamps overpayment balance to zero, and ignores `qb_id`-only updates. Its invoice writes use the existing QuickBooks-origin transaction marker so payment-derived balances do not enqueue redundant QBO invoice updates. This contract is proven on PostgreSQL 17 but is not production-applied yet.
+**Production hardening (2026-09-04):** OPS-Web migration `20260904025000_qbo_bidirectional_sync_hardening.sql` repairs the trigger's move/void edge behavior. It recalculates both the old and new invoice when a payment moves, restores a zero-paid invoice to `past_due` or `awaiting_payment`, preserves intentional draft/sent/void/written-off states, clamps overpayment balance to zero, and ignores `qb_id`-only updates. Its invoice writes use the existing QuickBooks-origin transaction marker so payment-derived balances do not enqueue redundant QBO invoice updates. PostgreSQL 17 proof passed; production ledger `20260904182523_qbo_bidirectional_sync_hardening` is applied and OPS-Web release `162f76f75` is live.
 
 ### Invoice Helpers
 
@@ -1207,9 +1206,9 @@ Financial-data view:
 - **Inbound payment safety** — linked QBO payments are canonicalized as `paymentQbId:invoiceQbId` in OPS, while outbound void/update calls parse the raw payment id before calling QBO and then refresh the local composite key. Delayed inbound payment webhooks update a legacy raw payment row instead of inserting a duplicate. QuickBooks Payment `Void` webhooks mark matching OPS payments `voided_at`; Payment `Update` also voids stale composite rows that disappeared from QBO's latest split and reconciles affected invoices to QBO `Balance`, so QBO-side payment edits/reversals do not leave OPS A/R overstated.
 - **Local bidirectional hardening awaiting release approval (2026-09-03)** — create queue rows now fence dependent updates; reconcile candidates are selected across all four entity lanes by least-recently-reconciled order and exclude tombstoned/terminal records; payment reconciliation strips the OPS invoice suffix before QBO lookup; and overlength invoice/estimate numbers receive a deterministic OPS-id suffix inside QBO's 21-character limit. The migration and web route are locally verified only, not production-live.
 
-### Sage Accounting sync — full sales and purchasing graph (local only, 2026-09-04)
+### Sage Accounting sync — full sales and purchasing graph (production deployed, dormant 2026-09-04)
 
-OPS-Web commit `d0879395f` replaces the partial Sage path with one exact-business, bidirectional model. This work is **not production-applied, pushed, deployed, or customer-live**.
+OPS-Web commit `d0879395f` replaces the partial Sage path with one exact-business, bidirectional model. The release reached production dormant on 2026-09-04; see `04_API_AND_INTEGRATION.md` § Sage Accounting for the deployment and ledger record.
 
 - **One accounting reality** — a company still connects either QuickBooks or Sage, never both. Sage authorization explicitly selects and encrypts one business identity; every request carries that exact `X-Business` value. Sandbox is a logical, allow-listed profile using dedicated credentials because Sage does not expose a separate sandbox API host.
 - **Complete sales documents** — customers/contacts, products, estimates, quotes, invoices, line items, and AR payments move through the durable queue and reconciliation engine. `sage_document_kind` keeps estimates and quotes distinct. Account, tax, bank, and payment-method mappings are scoped to the exact connection/environment.
@@ -2102,6 +2101,98 @@ Recipients lookup via `public.users_with_permission(company_id, 'finances.view')
 
 ---
 
-**Last Updated**: 2026-05-25
-**Document Version**: 1.5
-**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
+## MCP Hiring Break-Even Definition (production-released, dormant, 2026-09-02)
+
+`analyze_hiring_break_even` is the canonical read-only answer to “If I hire a second member in this role at this all-in hourly cost, when does it stop costing me money?” It is production-released under metric revision `hiring-break-even:2026-08-31.v1` and dormant MCP exposure v5. It is not activated or customer-live.
+
+The submitted hourly cost is the complete employer cost per paid hour in the company currency. OPS adds no burden multiplier. The host boundary accepts at most four decimals, but the value must be exactly representable in the resolved currency's canonical minor unit; incompatible precision is rejected, never rounded. The shared currency helper includes current two-decimal CHF, XCG, and ZWG. The source window is the 13 complete company-local ISO weeks before the current local week, anchored from the exact requested observation instant; the contract independently reconstructs the local business date and ISO-week Monday. Revenue is non-void payment cash received in-window on project-linked invoices. Direct cost is the in-window company-currency allocation of expenses in `submitted`, `approved`, or `reimbursed` status. Null currency or allocation evidence forces an insufficient result rather than disappearing. Cash contribution is revenue less that direct expense before existing labour, payroll burden, and overhead.
+
+OPS allocates each project's cash contribution to the selected role by that role's share of merged scheduled project minutes among active assigned members, then distributes the amount across weeks by the role's project minutes. Base utilization and contribution per productive hour use complete-window aggregates. Low/base/high sensitivity uses the 25th/50th/75th percentile of weekly contribution per paid-capacity hour.
+
+Weekly hire cost is the configured standard paid week times the submitted hourly cost. Required productive hours are weekly cost divided by contribution per productive hour; required revenue is weekly cost divided by contribution margin; required utilization is hourly cost divided by contribution per productive hour. A break-even date is returned only when observed contribution yield can cover the entire standard week's hire cost, and identifies the first configured working day in the next week when that cumulative amount is reached.
+
+The answer is not a forecast of future demand and assumes no ramp period, hiring fee, overtime, or additional work. Missing or ambiguous role data, incomplete/bounded source coverage, fewer than eight usable weeks, fewer than three financially observed role projects, invalid schedule/currency records, or non-positive revenue/contribution return an explicit insufficient result with no scenario numbers. Full contract: `specs/2026-08-31-ops-mcp-hiring-what-if-vertical.md`.
+
+---
+
+## MCP Payroll Readiness Definition (production-released, dormant, 2026-09-02)
+
+`check_payroll_readiness` is the canonical read-only answer to “Can I make payroll on the 15th?” It is production-released under metric revision `payroll-readiness:2026-09-01.v1` and dormant MCP exposure v8. It is not activated or customer-live.
+
+Current cash is the signed operator-maintained `expense_settings.forecast_current_balance`, not a bank feed. A negative balance is a truthful deficit. It must be captured within 24 hours. Scheduled obligations must be confirmed complete through the target date within 24 hours and after every included recurrence update, with microsecond ordering preserved. Payroll is an explicitly classified recurring expense due on the requested date with an exact company-local due time; the cutoff is the latest payroll time that day, including six-digit fractional precision. A same-day request after that exact cutoff is insufficient evidence rather than a retrospective cash test.
+
+All recorded overdue recurrence occurrences, scheduled obligations due before cutoff, and approved unpaid reimbursements reduce cash. Malformed active recurrence metadata remains visible and forces `obligation_schedule_invalid`; it cannot filter money out. Reimbursement amounts use the same partial/full/automatic approval and null/zero/positive fallback rule as `batchOwedAmount`. Same-day obligations after cutoff do not. Amounts must be at most 64 transport characters and exactly representable under the version-frozen ISO 4217 currency exponent table; non-finite or wider values become explicit invalid evidence. Totals accumulate as checked integers and overflow is an explicit evidence gap. Missing classifications, timing, coverage, currency, amounts, or a reached source bound prevent a confident answer.
+
+Open invoice balance is invoice total less non-void payments dated no later than the company-local business date and must agree with stored amount-paid and balance-due fields. Future delivery timestamps are invalid. Historical payer delay aggregates those payments of either sign by date and uses the first date from which cumulative net payment stays above invoice total through every later adjustment. Same-day plus/minus entries net together; a later reversal invalidates the earlier apparent settlement until durable recovery; invalid invoice/payment amounts remain visible but never enter the distribution. Legitimate imported delays have no arbitrary ten-year cap. A payer needs five unique valid settlements. Best uses nearest-rank p25 delay, base uses p50, p75 is disclosed, and worst assumes no receivable arrives. A date-only arrival on payroll day is excluded. A modeled arrival already missed or outside canonical years 0001-9999 becomes unknown instead of being moved forward. The output itemizes each obligation occurrence and each receivable's balance and p25/p50 arrival attribution, then independently verifies provenance, sums, timing, completeness, and decision semantics.
+
+`yes` means current cash alone covers all obligations through cutoff. `no` means even the complete best case is negative. `at_risk` means modeled receivables bridge a negative cash-only floor. If an unknown receivable could change a negative cash-only outcome, the result is `insufficient_evidence`. Full contract: `specs/2026-09-01-ops-mcp-payroll-readiness-vertical.md`.
+
+---
+
+## MCP Recurring Service Price Preview Definition (production-released, dormant, 2026-09-02)
+
+`prepare_recurring_service_price_change` is the canonical preview for a percentage rate change across one exact recurring service. It is production-released under schema revision `2026-09-01.v1` and dormant MCP exposure v9. It is not activated or customer-live, and no commit or send capability exists.
+
+The v9 bundle keeps inherited hiring and payroll analyses executable without broadening authority: each inherited tool accepts only its historical manifest/exposure pair or v15/v9, and every v15/v9 route binds the exact registered client ceiling/serialization, v4 consent, and accepted labels before reading finance or operating data.
+
+Current price comes only from the exact accepted estimate or delivered invoice line item pinned by an explicit private account policy. Its optional-selection flags must be non-null, and both its line-item discount and accepted parent-document discount must be zero. The policy must also state that adjustment is allowed, identify one notice contact, define the notice period, and disclose any grandfathering date. An active recurrence, matching client/project/task type, unchanged price-source hash, valid tax treatment, one verified email identity, readable provider correspondence, and a real service occurrence in the requested month are all required. Multiple recurrence rows for one client/service become one account exclusion with two hash-bound recurrence sources. Missing, inactive, unsafe, or out-of-range tax evidence preserves the verified price and produces `tax_unavailable`. Missing or ambiguous evidence excludes the account; a source overflow, stale request, or unsafe result fails the whole package.
+
+For each included account, the proposed unit price is the current minor-unit value multiplied by the exact decimal percentage and rounded half away from zero at the currency minor unit. Tax is recomputed from the pinned line-item treatment and active tax rate. The preview does not change quantity, discount, minimum charge, schedule, contract, invoice, or service. Its effective date is the first actual recurrence occurrence in the requested month after applying recorded skip/reschedule exceptions, and that date must satisfy the policy notice period.
+
+Each notice states the current rate, proposed rate, unit, tax treatment, effective date, and unchanged service schedule without inventing a rationale. Churn risk is an evidence label rather than a behavioral prediction: the latest explicit cancellation or price objection state is high; the latest complaint/overcharge state or coherent positive collectible late payment is medium; all other, resolved, contradictory, missing, unreadable, or insufficient history is unknown. There is no low label. A resolution must bind the same service/price/billing subject, so unrelated materials or logistics text cannot erase older evidence. Only fixed signal codes and hash-bound source references return—never raw correspondence.
+
+The source route reads a bounded recurrence catalog first. RRULEs must pass a non-expanding canonical uppercase alphabet gate, and both catalog classifications share one aggregate work ceiling. The service then asks for only the selected detail. That second RPC returns a fresh catalog and the detail under one PostgreSQL statement snapshot; catalog, selection, recurrence evidence, and authority drift fail closed. The final SQL authority assertion runs immediately before return.
+
+The package is ephemeral and expires after 24 hours. Stable context/source-bound per-account preview IDs and one canonical plan hash over every evaluated source revision allow exact replay comparison, but there is no persisted draft/preview business content, approval record, action queue, notice delivery, price write, or commit path. Shared transport audit/rate metadata still applies. Full contract: `specs/2026-09-01-ops-mcp-recurring-price-preview-vertical.md`.
+
+---
+
+## MCP Estimate Draft Definition (production-released and dormant, 2026-09-03)
+
+`prepare_estimate_from_past_job` is the canonical answer to “Quote this new lead like that past job, plus 8%.” Its input identifies one open target opportunity, one exact approved/converted source estimate, and one positive canonical percentage no greater than 100. The target and source are never inferred.
+
+The source estimate must belong to the current company and an active client, be tied to a completed/closed project for that same client, have no document-level discount, and carry complete internally reproducible totals. Every line retains its hierarchy, business labels, quantity, unit, discount, optional selection, taxable state, category/type, product/task/unit references, and ordering. Client messages, internal notes, terms, estimate notes, project notes, and lead descriptions are not copied.
+
+Unit price and minimum charge are increased by the requested percentage using checked integer minor-unit arithmetic and half-away-from-zero rounding. Quantity extension, line discount, minimum-charge floor, line total, tax, estimate totals, and percentage deposit are then recomputed. A fixed deposit stays fixed. An unselected optional line remains in the preview but contributes zero. The source estimate's stored tax rate validates history; the draft uses the company's single current active default fractional tax rate. Missing or ambiguous required evidence rejects the entire request.
+
+The result is an ephemeral `draft_preview`, not an `Estimate` entity. It does not call `get_next_document_number`, insert an estimate or line item, write an opportunity, reserve a sequence, persist preview content, issue/approve/publish/send a document, or commit pricing. The `estimates.create` permission is required to prepare under the current actor, but the tool exposes no create/commit RPC. Exact target/source/current-tax/line hashes and one stable preview hash make unchanged replay comparable while a final database assertion rejects any intervening source or authority change.
+
+This vertical is production-released under result schema v1, capability manifest v16, dormant exposure v10, and consent catalogue v5. OPS-Web release `1cacc2df` is on production main, and production ledger `20260903110828_agent_estimate_draft_preview` is applied and mirrored byte-exact. No v10 OAuth client or grant exists, and active production remains read-only v2. Full contract: `specs/2026-09-02-ops-mcp-estimate-draft-vertical.md`.
+
+---
+
+## Supplier Bills and Accounts Payable (2026-09-03)
+
+OPS distinguishes an unpaid supplier obligation from a paid purchase. An unpaid invoice creates an AP bill at its full total and starts with the same balance. Each settlement is a separate payment record; the database recomputes the balance and moves status from `open` to `partial` to `paid`. Overpayment, payment against a void/paid bill, negative money, inconsistent line math, incomplete job allocation, and cross-company project allocation all fail before commit. Voiding preserves the bill, PDF, events, and provider history while setting the remaining balance to zero.
+
+The source invoice remains in immutable document custody by company, storage key, content length, and SHA-256. Multi-job cost splits are exact currency allocations on individual bill lines, not floating percentages. Provider posting preserves the supplier, invoice and due dates, account/category, tax code, and project/customer split. If the needed accounting mapping is absent, the queue stops for human review rather than inventing an account or silently flattening job cost.
+
+The three DeksMart invoices supplied for implementation were verified as unpaid shape fixtures: invoice dates and invoice numbers are captured, missing due dates remain missing, and the one-job/two-job layouts are supported. Their real documents and identifying contents are not committed to source control and were not written to production. Paid invoices continue through the established expense workflow and inherit its existing approval and policy constraints.
+
+Production ledger entries `20260903210504_supplier_bills_ap_vertical`, `20260903211009_supplier_bill_immutable_acl_repair`, and `20260903211311_supplier_bill_fk_indexes` are applied. Live readback confirms all new AP tables are empty, the AP provider queue is empty, every public AP table has RLS, the guarded RPCs are service-role-only, immutable document/event records are insert/read-only even for the service role, and every new foreign key has a covering index. No supplier, invoice, payment, expense, notification, provider, MCP, Invisible Office, or vinyl-order customer record was created by the release.
+
+### Canpro clearance before AP (database and web released, 2026-09-04)
+
+A captured supplier document is not yet an approved liability. The intake layer separates evidence collection from canonical AP: `review` and `held` have no canonical bill or provider queue row; approval is the first permitted transition to `to_pay` and atomically creates the supplier bill, line allocations, source-document link, audit event, and provider queue work. `paid` requires recorded settlement. Employee documents route to `payroll` and can never be approved into AP.
+
+Material documents require explicit dispositions for rate applicability, duplicate billing, quantity/scope, order/specification, and receipt. The Canpro labour card is never applied to material prices; material rate compliance is resolved as not applicable with operator evidence. Subcontractor documents require rate, duplicate, and quantity/scope review. The local suggestion policy uses CAD 2.25/sq ft for slick/smooth vinyl, CAD 2.00/sq ft for fuzzy vinyl, CAD 25 each for diverter/scupper work, and CAD 15 each for drain work. These values are review ceilings, not autonomous approvals. Employee documents require duplicate review before payroll routing.
+
+Suggested job matches by normalized address or purchase order remain unconfirmed until an operator selects the project. Shared costs are suggested in exact cents in proportion to material subtotals, with deterministic remainder assignment and a supported manual override. Approval requires every line to have exact confirmed same-company allocation, every required check to have a disposition, exceptions to carry notes, and both a payment owner and planned payment date. A missing supplier due date remains null and never becomes the planned payment date.
+
+Production ledger entries `20260904171301_supplier_bill_intake_clearance`, `20260904171632_supplier_bill_intake_fk_indexes`, and `20260904184303_supplier_bill_company_data_lifecycle` are applied. OPS-Web source is published on production main at `f901c6d9c0e1bd63abddcb616a697f7fb9115ad6` through Git-triggered Vercel deployment `dpl_7BCJY52J5SB6KwmY7qdCrLSzCUH3`, which is `READY` and owns `app.opsapp.co`. Live readback confirms RLS on all six intake tables, company-scoped browser reads with no direct writes, service-role-only guarded RPCs, immutable document/event ACLs during ordinary service work, all 37 supplier-bill foreign-key repair indexes, an exact 267-table company-data scope, and the exact 42-table delete-blocked privilege snapshot. All 17 public supplier/intake tables and both private prepared-intent tables were empty; security advisors report no supplier-bill or account-closure finding. iOS commit `c6269763` remains local and unreleased. Canonical rules, code references, and the remaining release boundaries are in `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
+
+---
+
+## Sage Accounting Sync (production deployed, dormant, 2026-09-04)
+
+Sage now uses one exact selected Sage business per OPS connection, encrypted rotating OAuth credentials, a durable queue for all sales and purchasing mutations, and bounded inbound reconciliation for customers, products, estimates/quotes, invoices, AR payments, suppliers, purchase invoices, and AP payments. Complete line graphs and payment allocations reconcile atomically; stale work recovers safely; uncertain provider acceptance is quarantined instead of retried blindly; and provider-origin transaction markers prevent echo writes.
+
+Production ledgers `20260904182539_sage_connection_identity_and_oauth`, `20260904182556_sage_queue_hardening`, and `20260904182615_sage_reconciliation` are applied. OPS-Web release `162f76f75` is contained by current production descendant `c3c7cc58`, which is `READY` in Vercel deployment `dpl_8hFhpgtvYdfBEeUWPvWk2eMxhzFh` and owns `app.opsapp.co` with no alias error. Live readback found zero Sage connections, so the integration is deployed but dormant. Sage writes require the shared accounting gate, the Sage gate, the production-only Sage gate for production traffic, the exact active profile, and the selected business identity; deployment alone grants none of them.
+
+The release passed 288 changed-surface application tests, 7 PostgreSQL 17 cases, two production builds, live schema/ACL/security postflight, authentication-boundary route probes, and a zero-error Vercel release window. The real Sage sandbox create/update/read/reconcile/cleanup war game remains a separate activation proof requiring the dedicated renewable sandbox credentials and exact allow-listed test-business identities.
+
+---
+
+**Last Updated**: 2026-09-04
+**Document Version**: 1.12
+**Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`, `217b4655`, `323bbfaf`, `62e51d3e`, `ac51e50b`, `162f76f75`, `f901c6d9c`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.

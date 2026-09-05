@@ -1,7 +1,7 @@
 # Task Groups — One Visit, Many Scopes
 
 **Date:** 2026-09-01
-**Status:** BUILT 2026-09-02 (db LIVE with conversion gate OFF; iOS `feat/task-groups` @ d2fe5641; web `feat/task-groups-web` @ 047f9bb4; agent reads STAGED) — see `22_TASK_GROUPS.md` §9 for the ship sequence
+**Status:** BUILT 2026-09-02 (db LIVE with conversion gate OFF; iOS `feat/task-groups` @ d2fe5641; web `feat/task-groups-web` @ 047f9bb4; agent reads STAGED) — see `23_TASK_GROUPS.md` §9 for the ship sequence
 **Origin:** bug_reports `b99a7659-d087-46ef-9578-94bcf0e10c0f` (2026-08-22): "Figure out bundling tasks or making tasks into subtasks. Eg rail install: glass, picket and 6' tall, all separate tasks? Or sub tasks to a single rail install? Or bundled?"
 **Surfaces:** Supabase (schema + composition rules), iOS, OPS-Web, Agent Control Plane (Phase C task composition)
 

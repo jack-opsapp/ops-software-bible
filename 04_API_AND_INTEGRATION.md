@@ -28,7 +28,7 @@
 14. [Stripe Subscription Integration](#stripe-subscription-integration)
 15. [Accounting Edge Functions (Expense Push)](#accounting-edge-functions)
 16. [QuickBooks Read-Only Sync — Pull → Stage → Review → Apply](#quickbooks-read-only-sync--pull--stage--review--apply-2026-06-04)
-17. [Sage Accounting — exact-business OAuth, queue-owned writes, and reconciliation](#sage-accounting--exact-business-oauth-queue-owned-writes-and-reconciliation-local-only-2026-09-04)
+17. [Sage Accounting — exact-business OAuth, queue-owned writes, and reconciliation](#sage-accounting--exact-business-oauth-queue-owned-writes-and-reconciliation-production-deployed-dormant-2026-09-04)
 18. [Error Handling & Retry Logic](#error-handling--retry-logic)
 19. [Rate Limiting & Debouncing](#rate-limiting--debouncing)
 20. [Supabase Table Reference](#supabase-table-reference)
@@ -1179,76 +1179,23 @@ In `NotificationManager.swift`:
 
 ## Firebase Analytics
 
-Firebase is used **only for analytics** (Google Ads conversion tracking). It is NOT used for authentication or database.
+Firebase serves two distinct roles in OPS: verified identity for legacy/bridged API flows and a deliberately narrow iOS conversion feed. Supabase remains the database and business source of truth.
 
-**SDK**: `FirebaseCore` + `FirebaseAnalytics`
-**Config File**: `GoogleService-Info.plist`
-**Initialization**: `FirebaseApp.configure()` in `AppDelegate.didFinishLaunchingWithOptions` (must be first)
+**SDK:** `FirebaseCore` + `FirebaseAnalytics`
+**Config:** `GoogleService-Info.plist`
+**Initialization:** `FirebaseApp.configure()` in `AppDelegate.didFinishLaunchingWithOptions`
 
-### AnalyticsManager
+`ops-ios/OPS/Utilities/AnalyticsManager.swift` is the conversion boundary. The locally verified release candidate allows exactly:
 
-**Source**: `OPS/Utilities/AnalyticsManager.swift`
-Singleton for tracking conversion events via Firebase Analytics. Events flow to Google Ads via the Firebase Analytics integration.
+1. `sign_up`
+2. `begin_trial`
+3. `complete_onboarding`
+4. `create_first_project`
+5. `purchase`
 
-### Event Categories
+Screen views, app opens, logins, navigation, CRUD telemetry, sync failures, and product-friction events go to first-party Supabase product analytics instead. They are not Firebase key conversions. Business conversion truth still comes from Supabase company/project/billing records.
 
-#### Authentication Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `sign_up` | `method`, `user_type` | New user account creation |
-| `login` | `method`, `user_type` | Returning user login |
-
-#### Onboarding Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `complete_onboarding` | `user_type`, `has_company` | User completes onboarding |
-| `begin_trial` | `user_type`, `trial_days` | Company owner starts trial |
-
-#### Subscription Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `purchase` | `item_name`, `price`, `currency`, `user_type` | Subscription purchase |
-| `subscribe` | `item_name`, `price`, `currency`, `user_type` | Custom subscription event |
-
-#### CRUD Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `create_project` | `project_count`, `user_type` | Project created |
-| `create_first_project` | `user_type` | First project (high-intent) |
-| `project_edited` | `project_id` | Project updated |
-| `project_deleted` | - | Project deleted |
-| `task_created` | `task_type`, `has_schedule`, `team_size` | Task created |
-| `task_edited` | `task_id` | Task updated |
-| `task_completed` | `task_type` | Task marked complete |
-| `client_created` | `has_email`, `has_phone`, `import_method` | Client created |
-
-#### Screen View Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `screen_view` | `screen_name`, `screen_class` | Screen viewed |
-| `tab_selected` | `tab_name`, `tab_index` | Tab navigation |
-
-#### Engagement Events
-
-| Event | Parameters | Description |
-|-------|------------|-------------|
-| `navigation_started` | `project_id` | User starts navigation |
-| `search_performed` | `section`, `results_count` | Search executed |
-| `image_uploaded` | `image_count`, `context` | Photo uploaded |
-
-### Google Ads Conversion Events
-
-These events are automatically sent to Google Ads:
-1. `sign_up` - Primary acquisition conversion
-2. `purchase` - Revenue conversion
-3. `create_first_project` - High-intent engagement
-4. `complete_onboarding` - Onboarding completion
-5. `task_completed` - Productivity signal
+**Deployment warning (verified August 30, 2026):** the narrowed iOS contract is locally committed and tested but is not an App Store release. Firebase/GA key-event configuration is a separate Google-admin state and has not been changed by this work. See `21_ANALYTICS_SYSTEM.md` and `22_GROWTH_MEASUREMENT_CONTRACT.md`.
 
 ### Google Ads Reporting Integration (admin analytics)
 
@@ -1378,6 +1325,34 @@ iOS writes it as a follow-up update after `create_company_for_owner` returns (th
 Seven Bubble-era companies carry legacy free-text values (`Instagram`, `Word of Mouth (Onsite)`, `Internet Advertisement`, `Other`). These are **intentionally not migrated** — `Internet Advertisement` cannot be mapped to a slug without guessing. **Normalize at read time in P4.**
 
 **Known coverage limit.** Every primary CTA on `ops-site` points at the App Store, and no click id survives an install. Measured over companies created since 2026-03-01, only ~26% (5 of 19) were born through web setup. Cookie-based attribution therefore covers a minority of signups by construction; the referral question is what covers the rest. `try-ops` (ad landing pages) does not yet write the cookie — a `.opsapp.co` cookie written there would reach the app, so that remains an open follow-up.
+
+---
+
+### Cross-platform growth integrations — local release candidate, not live
+
+The August 30 analytics hardening branch adds these server-only integrations. Their existence in code is not a production-deployment claim.
+
+| Route | Schedule / auth | Responsibility |
+|---|---|---|
+| `GET /api/cron/search-console-sync` | Daily 09:24 UTC; `CRON_SECRET`; fenced workload lease | Pull finalized D-3 Search Console facts and atomically replace each reporting date. |
+| `GET /api/cron/ga4-acquisition-sync` | Daily 09:44 UTC; `CRON_SECRET`; fenced workload lease | Pull D-2 marketing and web-app GA4 acquisition facts by explicit registry key. |
+| `GET /api/cron/app-store-sync` | Daily 09:04 UTC; `CRON_SECRET`; fenced workload lease | Resume Apple's report walk. Status stays `running` while `cursorAfter` exists and becomes `complete` only after the cycle closes. |
+| `GET /api/cron/analytics-health` | Daily 10:49 UTC; `CRON_SECRET`; fenced workload lease | Check permissions, freshness, warehouse completeness, event quality, attribution reasons, and business reconciliation; apply transition-only admin alerts. |
+| `GET /api/admin/acquisition/overview`, `/search`, `/app-store`, `/health` | OPS admin session | Return normalized source envelopes with `asOf`, `finalizedThrough`, coverage, and source state. |
+
+The Google reader uses a dedicated read-only service account when `GA4_SERVICE_ACCOUNT_*` or Search Console-specific credentials are configured. The exact property registry is fixed in code. Required production configuration before deployment:
+
+- `GA4_MARKETING_PROPERTY_ID=475051117`
+- `GA4_WEB_APP_PROPERTY_ID=539494652`
+- `GA4_IOS_PROPERTY_ID=514229717`
+- `GA4_MARKETING_MEASUREMENT_ID=G-HKM7RWVTDV`
+- `GA4_WEB_APP_MEASUREMENT_ID=G-JJP5SN122V`
+- `NEXT_PUBLIC_GA_MEASUREMENT_ID=G-JJP5SN122V`
+- exact, verified `SEARCH_CONSOLE_SITE_URL`
+- dedicated Google reader credentials with access to all three GA properties and Search Console
+- valid `OPS_PLATFORM_ALERT_USER_ID` and matching `OPS_PLATFORM_ALERT_COMPANY_ID`
+
+The current production reader is denied on the two web GA properties and granted on iOS. Search Console identity is unconfigured. Those are credential gates, not zero-valued analytics.
 
 ---
 
@@ -1611,9 +1586,9 @@ All routes under `src/app/api/integrations/quickbooks/`:
 - **Worker scheduling** (2026-06-30, commit `07b1d587`): the push-queue route is registered in `OPS-Web/vercel.json` crons at `*/5 13-23,0-4 * * *`. Before this it existed but was unscheduled, so the queue drained only on manual `POST`/test invocation (which is why outbound sync silently stalled between manual runs); outbound writes still require `ACCOUNTING_WRITE_ENABLED=true`.
 - **Inbound webhook** (`webhook/route.ts` + `quickbooks-webhook-apply-service.ts`): verifies base64 `HMAC-SHA256(rawBody)` keyed by the active profile's verifier token (`QB_WEBHOOK_VERIFIER_TOKEN` or `QB_SANDBOX_WEBHOOK_VERIFIER_TOKEN`) against the `intuit-signature` header with `timingSafeEqual` (fail-closed: missing verifier → 500, bad/missing signature → 401). Routes by `realm_id_lookup` + active `provider_environment`. For changed `Customer`/`Invoice`/`Payment`/`Estimate` it GET-fetches the one record (`fetchEntityById`, asserts `qbWriteCalls === 0`) and applies it via the **same** canonical mapping as `applyImport` (`applyCustomer` writes both `clients` and a contact `sub_clients`, including `Active=false` tombstones and `Active=true` reactivation; invoice/estimate line replacement uses QBO ItemRef→OPS product mapping). Delete/Void are soft: invoice→`status='void'`, customer→`deleted_at` on both parent client and mirrored contact, estimate→`deleted_at`, and payment→matching OPS payments `voided_at` (matching both direct `qb_id` and composite `<paymentQbId>:<invoiceQbId>` rows, with invoice/payment suppressions before the balance trigger fires). Payment updates also void stale composite rows no longer present in QBO's latest split and reconcile affected invoices back to QBO `Balance`. Accepted QBO estimates (`TxnStatus='Accepted'`) are treated as `approved`: OPS ensures a QBO estimate→opportunity link, writes the mapped line items, then calls `accept_estimate_to_job_from_quickbooks`. If any ItemRef lacks a product mapping, the webhook returns `needs_review` with `missingQboItemMappings` even when the estimate row itself is stored; mapped accepted estimates proceed to project/task/material-demand creation. Verified requests always `200 {received, processed}` (per-entity errors caught + logged to `accounting_sync_log` so a poison record can't trigger Intuit's retry storm); all responses send `Cache-Control: no-store`. **Never writes to QB.**
 
-#### Bidirectional correctness hardening (local source only — awaiting release approval, 2026-09-03)
+#### Bidirectional correctness hardening (production live, 2026-09-04)
 
-Maverick sandbox stress tests exposed five edge failures. The complete repair is authored in OPS-Web migration `20260904025000_qbo_bidirectional_sync_hardening.sql` and its reconcile route, but is **not production-applied or customer-live** until the database migration and web deployment receive explicit approval.
+Maverick sandbox stress tests exposed five edge failures. The complete repair is authored in OPS-Web migration `20260904025000_qbo_bidirectional_sync_hardening.sql` and its reconcile route. It was production-applied as ledger `20260904182523_qbo_bidirectional_sync_hardening` and deployed in OPS-Web commit `162f76f7538c81b6c32ce6ac8c68fa35449f9550` through Vercel deployment `dpl_7KCkhyVzqgeKuPQprnK7jhdRVTY8`, which reached `READY`. The current production descendant, OPS-Web commit `c3c7cc585424895cee86bd7f07054b0a869b82f4` in `READY` deployment `dpl_8hFhpgtvYdfBEeUWPvWk2eMxhzFh`, contains that release and owns `app.opsapp.co` with no alias error.
 
 - **Payment state is atomic across moves.** `update_invoice_balance()` locks and recalculates every distinct old/new invoice affected by a payment insert, balance-field update, move, void, or delete. A zero-paid invoice returns to `past_due` or `awaiting_payment` according to its due date; `draft`, `sent`, `void`, and `written_off` remain intentional states. Overpayments cannot make `balance_due` negative. The trigger fires only for `invoice_id`, `amount`, or `voided_at` changes, so a `qb_id` writeback does not touch the invoice. Payment-derived invoice updates run under the existing transaction-local QuickBooks-origin suppression marker, preventing redundant outbound invoice queue rows while leaving direct invoice edits queue-visible.
 - **Creates fence their dependents.** `claim_accounting_sync_queue` prioritizes `create` and withholds later operations for the same company + connection + provider + entity until no create is unfinished and the identity is either already external, has no create history, or has a succeeded create. Existing stale-claim recovery, connection scoping, lock ownership, and service-role-only execution remain intact.
@@ -1655,44 +1630,48 @@ The **"QuickBooks Import"** tab of `/accounting` (`src/app/(dashboard)/accountin
 | `20260608010000_qbo_estimate_delete_operation.sql` | extends queue/audit operation checks with `delete`; maps estimate tombstones to QBO estimate delete while invoices remain void |
 | `20260608011000_qbo_subclient_delete_updates_customer.sql` | maps sub-client tombstones to parent customer update instead of QBO customer inactivation |
 | `20260608012000_qbo_single_writable_connection.sql` | enforces one connected, sync-enabled, non-`pull_only` QuickBooks row per company/provider |
-| `20260904025000_qbo_bidirectional_sync_hardening.sql` | **Local only; not applied.** Atomic payment moves/voids, payment-derived invoice echo suppression, create-before-update claims, and fair active-only reconcile candidates |
-| `20260904040000_sage_connection_identity_and_oauth.sql` | **Local only; not applied.** Exact encrypted Sage business identity, PKCE OAuth attempts, one-time business selection, and scoped mapping tables |
-| `20260904050000_sage_queue_hardening.sql` | **Local only; not applied.** Queue-owned Sage writes, dependency ordering, stale-claim recovery, fair selection, and supplier/AP support |
-| `20260904060000_sage_reconciliation.sql` | **Local only; not applied.** Exact-scope inbound reconciliation, complete document graphs, provider tombstones, AR/AP payment reallocation, and echo suppression |
+| `20260904025000_qbo_bidirectional_sync_hardening.sql` | **Production-applied as `20260904182523_qbo_bidirectional_sync_hardening`.** Atomic payment moves/voids, payment-derived invoice echo suppression, create-before-update claims, and fair active-only reconcile candidates |
 
 Live apply status must be verified during rollout. Supabase MCP records its own apply-time version in `supabase_migrations.schema_migrations`, so tracked versions can differ from these filenames — **treat the repo files as canonical**. Every migration is additive (nullable columns / new tables / new indexes / CHECK replacement), hence iOS-sync-safe and idempotent. Archived in `migrations/`.
 
 ---
 
-## Sage Accounting — exact-business OAuth, queue-owned writes, and reconciliation (local only, 2026-09-04)
+## Sage Accounting — exact-business OAuth, queue-owned writes, and reconciliation (production deployed, dormant 2026-09-04)
 
-**Release state:** implemented and locally verified in OPS-Web commit `d0879395f`; no Sage migration in this section is production-applied, and no code has been pushed or deployed. The provider contract is Sage Business Cloud Accounting API v3.1. Sage has no separate API host for sandbox traffic, so OPS treats `sandbox` as a fail-closed logical profile: dedicated app credentials, an exact test-business allow-list, distinct OPS connection/company ids, and disabled write gates by default.
+**Release state:** OPS-Web commit `162f76f7538c81b6c32ce6ac8c68fa35449f9550` reached production through Vercel deployment `dpl_7KCkhyVzqgeKuPQprnK7jhdRVTY8`. The current production descendant, commit `c3c7cc585424895cee86bd7f07054b0a869b82f4` in `READY` deployment `dpl_8hFhpgtvYdfBEeUWPvWk2eMxhzFh`, contains that release and owns `app.opsapp.co` with no alias error. The three Sage migrations are applied as ledgers `20260904182539_sage_connection_identity_and_oauth`, `20260904182556_sage_queue_hardening`, and `20260904182615_sage_reconciliation`. Production readback found zero Sage connections, so the code and schema are live while Sage remains operationally dormant. Writes remain fail-closed behind `ACCOUNTING_WRITE_ENABLED`, `SAGE_WRITE_ENABLED`, the production-only `SAGE_PRODUCTION_WRITE_ENABLED`, and exact environment/business identity checks.
 
 ### OAuth and exact business selection
 
-- `POST /api/integrations/sage` authenticates the OPS operator, checks `accounting.manage_connections`, rejects a conflicting active accounting provider, selects the explicit Sage profile, and starts authorization code + PKCE. State, verifier, company, user, profile, and credential bundle are recorded in a short-lived one-time attempt.
-- `GET /api/integrations/sage/callback` consumes that attempt before token exchange, encrypts rotating tokens, fetches the authorized business list, and redirects into an expiring one-time selection session. It does not silently accept Sage's lead/default business.
-- `GET /api/integrations/sage/businesses` returns only the callback-bound businesses; `POST` consumes the selection and writes the chosen encrypted business id, lookup hash, and display name. Every subsequent provider request sets that exact id in `X-Business`.
-- `DELETE /api/integrations/sage` disconnects only the requested profile. Token reads and refreshes are centralized; refresh-token rotation is encrypted and persisted before the new access token is returned.
-- The Books SYNC surface remains one compact connect entry point. During Sage setup it shows a keyboard-operable business picker; once connected, the small badge shows business name and sandbox state without giving once-ever setup permanent page acreage.
+- `POST /api/integrations/sage` authenticates the operator, checks `accounting.manage_connections`, rejects a conflicting active provider, chooses an explicit `sandbox` or `production` profile, and starts authorization code + PKCE.
+- The callback consumes one short-lived OAuth attempt before token exchange, encrypts rotating tokens, retrieves the authorized Sage businesses, and requires the initiating operator to choose one exact business from a one-time selection session.
+- The chosen Sage business id is encrypted at rest; its deterministic lookup hash prevents cross-company reuse. Every provider request carries the selected business in `X-Business`.
+- The temporary OAuth and business-selection tables have RLS enabled, no browser grants, and service-role-only access. Their consume functions are `SECURITY DEFINER`, pin `search_path`, and deny `anon` and `authenticated` execution.
 
-### Provider client and durable outbound queue
+### Queue-owned writes and reconciliation
 
-`SageApiClient` owns base URL, mandatory `X-Business`, bearer auth, pagination, response parsing, 401 refresh-and-replay, `429` retry timing, and provider request-id capture. Mutating requests receive a stable 32-character hyphenless idempotency key. Concurrent writes are serialized for Sage resource families that do not permit parallel POST operations.
+`SageApiClient` owns the API base, mandatory business header, token refresh-and-replay, bounded pagination, `429` timing, provider request ids, and stable idempotency keys. All OPS-originated Sage mutations are queue-owned. `POST /api/cron/accounting/sage/push-queue` processes customers, products, estimates/quotes, invoices, AR payments, suppliers, purchase invoices, and AP payments with exact connection scope, create-before-update dependencies, stale-claim recovery, and uncertain-provider-acceptance quarantine.
 
-All OPS-originated Sage writes are queue-owned. The legacy `/api/sync` and prior AP-only worker cannot call Sage directly; the compatibility AP endpoint delegates to the same sequential worker. `POST /api/cron/accounting/sage/push-queue` claims exact connection-scoped work, honors create-before-update dependencies, recovers stale claims, and processes customers/contacts, products, estimates/quotes, invoices, AR payments, suppliers, purchase invoices, and AP payments. Provider success followed by local-finalization failure becomes `needs_review`, not a blind retry that could duplicate money.
+`POST /api/cron/accounting/sage/reconcile` reads bounded provider changes and applies them through service-role-only RPCs. Candidate selection rotates fairly across sales and purchasing lanes. Full document graphs are replaced under row locks; payment allocation moves recalculate both old and new documents; provider-origin transaction markers suppress outbound echoes; and tombstones or ambiguous financial changes become explicit reconciliation decisions rather than silent deletion.
 
-### Inbound reconciliation
+### Release verification
 
-`POST /api/cron/accounting/sage/reconcile` pulls changed resources in bounded pages using provider timestamps, normalizes them, and applies them through service-role-only RPCs scoped to exact company, connection, and provider environment. Candidate selection rotates fairly across entity lanes. Complete document lines are replaced under locks; provider-origin suppression prevents echoes; payment allocation moves recalculate both old and new invoices/bills. Provider deletions and financial mismatches surface as explicit reconciliation decisions rather than silent destructive changes.
+- 288 changed-surface application tests and all 7 PostgreSQL 17 runtime cases passed against the release merge.
+- The Next.js production build completed locally and again on Vercel with the repository-declared Node 22 runtime.
+- Live schema readback found every required table, column, constraint, index, and service-only function. All six new exposed-schema tables have RLS enabled and deny `anon`/`authenticated` table access. All nine targeted privileged functions deny `anon`/`authenticated`, grant only `service_role`, and pin `search_path`.
+- Accounting connection counts were unchanged by migration. Read-only reconcile smoke calls returned one existing QuickBooks sandbox candidate and zero Sage candidates. Supabase reported no new release-scoped security advisories.
+- Live route probes confirmed the Books authentication redirect, `401` on unauthenticated Sage connect/business selection, and `401` on both Sage cron endpoints. Vercel reported no errors for the release routes in the deployment window.
 
-### Required gates and acceptance proof
+The real Sage sandbox create/update/read/reconcile/cleanup war game remains a separate activation proof requiring the dedicated renewable sandbox credentials and exact test-business identities. Deployment does not grant production-provider write authority.
 
-Runtime configuration is documented in `.env.example`: `SAGE_ACTIVE_PROFILE`, shared `ACCOUNTING_WRITE_ENABLED`, Sage-specific `SAGE_WRITE_ENABLED`, production-only `SAGE_PRODUCTION_WRITE_ENABLED`, profile-specific client credentials/redirect URI, and `SAGE_SANDBOX_BUSINESS_IDS`. The local-only acceptance runner (`npm run sage:sandbox:war-game`) additionally requires the exact refresh token, Sage business, OPS company/connection/user/category ids, ledger/tax/bank/payment ids, and a private manifest directory. The package command supplies Node's server export condition; its executable preflight is regression-tested.
+### Migration chain
 
-The runner fails before network or database access unless every sandbox identity and both write gates are explicit. Its deterministic graph creates a tagged customer, supplier, estimate, quote, two sales invoices, AR payment, purchase invoice, AP payment, and multiple lines; forces one 401 refresh/replay; replays an idempotent write; moves a payment allocation; reconciles through production services/RPCs; reads every object back; and cleans provider objects in reverse dependency order plus exact-id OPS rows with a zero-row proof. Without credentials, the observed live preflight result was `BLOCKED :: SAGE_ACTIVE_PROFILE must be explicitly set to sandbox.` No provider or OPS write was attempted.
+| File | Production ledger | Purpose |
+|---|---|---|
+| `20260904040000_sage_connection_identity_and_oauth.sql` | `20260904182539_sage_connection_identity_and_oauth` | encrypted business identity, PKCE attempts, one-time business selection, and scoped mappings |
+| `20260904050000_sage_queue_hardening.sql` | `20260904182556_sage_queue_hardening` | queue-owned writes, exact connection scope, acceptance evidence, dependency ordering, and recovery |
+| `20260904060000_sage_reconciliation.sql` | `20260904182615_sage_reconciliation` | fair candidates, exact-scope inbound apply, full graphs, payment movement, and echo suppression |
 
-Verification: 160 Sage-focused assertions passed (with the PostgreSQL case executed separately), 492 accounting/QuickBooks regression assertions passed, and 7/7 Sage+QBO PostgreSQL 17 runtime assertions passed. The fake provider war game covers 401 refresh, 429 timing, idempotent response loss, queue recovery, complete graphs, tombstones, mappings, and AR/AP allocation movement. Real Sage sandbox proof remains a release prerequisite once the exact dedicated credentials and identities are provisioned.
+Canonical migration copies are archived under `migrations/` with the QuickBooks companion migration. Supabase assigns apply-time ledger versions; the repository filenames remain the source ordering.
 
 ---
 
@@ -4030,6 +4009,18 @@ The dedicated `mcp.opsapp.co` hostname from the foundation design is deliberatel
 
 **Claude-side facts verified live on 2026-08-18** (Anthropic docs, not cached knowledge): Claude clients still speak the 2025-era handshake (they send `initialize`); 2026-07-28 is announced but not confirmed shipped in any Claude surface. Claude sends RFC 8707 `resource` on authorize and token requests and requires PKCE S256 on every request. Connector callback: `https://claude.ai/api/mcp/auth_callback`. Discovery documents are cached ~5 minutes globally. Tool results cap at ~150,000 characters (our contract's 60,000-char ceiling sits inside it); tool calls time out at 300s. On Team/Enterprise plans only an Owner may add a connector, and there is no staging surface — connector testing happens against production claude.ai.
 
+#### Codex desktop OAuth compatibility (production-accepted read-only, 2026-08-29)
+
+The production authorization server now contains the tested compatibility repair for Codex desktop's MCP connector. The first real Codex DCR attempt reached the former Claude-only registration gate and exposed the incompatibility. A loopback capture then proved Codex first binds an ephemeral local port and registers that complete URI—for example `http://127.0.0.1:51759/callback/lwaKvnR9ZEom`—in the DCR request. Codex carries the same bytes through authorization and token exchange, so wildcard or port-equivalent matching is neither required nor allowed.
+
+The production database policy now keeps three callback families exact: Claude's two hosted HTTPS strings; ChatGPT's single stable callback `https://chatgpt.com/connector_platform_oauth_redirect`; or one raw Codex callback with literal `http`, literal host `127.0.0.1`, one explicit decimal port from 1 through 65535, exact path `/callback/`, and a bounded base64url callback identifier. A registration must use one family only. It rejects `localhost`, IPv6, alternate numeric/encoded loopback spellings, userinfo, query, fragment, path encoding, missing or padded ports, mixed families, multiple ChatGPT/Codex callbacks, and callback aliases/templates. Consent preview, approval/denial redirect, authorization code, and token exchange continue to compare the complete registered URI byte-for-byte. CIMD remains unadvertised.
+
+Application and PostgreSQL tests cover the captured Codex payload, ChatGPT's exact callback, cross-family/adversarial redirect shapes, exact storage, consent/code binding, wrong-port rejection without consuming the code, exact retry, and migration replay. Codex migration `20260829192448_mcp_oauth_codex_dcr_callbacks.sql` and ChatGPT/RFC 9207 source migration `20260830113800_mcp_oauth_chatgpt_rfc9207_callback.sql` are production-applied; the latter is ledger version `20260830004843`, name `20260830113800_mcp_oauth_chatgpt_rfc9207_callback`. OPS-Web commit `d5befc466c7dbf3d67b76cde698c9a9aa4df719c` advertises `authorization_response_iss_parameter_supported: true` and returns the exact issuer `iss=https://app.opsapp.co` on successful code responses and explicit authorization denials. READY production deployment `dpl_3DWhhcueWxeFW2AJnEmxT1bFhfNu` serves that exact Git SHA at `app.opsapp.co` with no alias error; canonical and cache-bypass metadata expose the RFC 9207 flag and exact twenty-scope v2 surface. Historical Codex v1 acceptance remains valid only for the verified v1 path and does not prove ChatGPT or any host's v2 grant.
+
+The untouched `ops_-_maverick_projects` connector authenticated with its existing v1 grant and returned exactly `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, `get_job_conversation_context`, `list_customer_jobs`, `get_job_summary`, `search_job_history`, `get_correspondence_evidence`, `search_customers`, `search_jobs`, and `resolve_job_participants`. The canary made no business tool call. This proves the deployed grant-pinned v1 catalogue without reading company data.
+
+Two fresh v2 Codex DCR attempts each requested the exact twenty scopes, but both OAuth callbacks expired before approval or token exchange. Both clients had zero grants and were guarded-disabled; local config `ops_-_maverick_projects_v2` remains present but unauthenticated. A separate production ChatGPT DCR canary posted the exact stable callback and received HTTP 201 with `token_endpoint_auth_method=none`, grant types `authorization_code` plus `refresh_token`, response type `code`, the exact callback, and the exact twenty-scope string. It received no grant and was immediately guarded-disabled. Production readback is v1 seven active clients/two active grants unchanged, and v2 zero active clients/three disabled clients/zero grants. This proves both DCR families, not authenticated v2 host acceptance.
+
 ### Routes
 
 | Route | Method | Purpose |
@@ -4037,7 +4028,7 @@ The dedicated `mcp.opsapp.co` hostname from the foundation design is deliberatel
 | `/api/mcp` | POST | The MCP endpoint. GET/DELETE pass the same auth gate, then answer 405. |
 | `/.well-known/oauth-protected-resource/api/mcp` | GET | RFC 9728 metadata (Claude's first probe location) |
 | `/.well-known/oauth-protected-resource` | GET | RFC 9728 root fallback, identical document |
-| `/.well-known/oauth-authorization-server` | GET | RFC 8414 metadata. CIMD deliberately **not** advertised. |
+| `/.well-known/oauth-authorization-server` | GET | RFC 8414 metadata. The v2 release advertises RFC 9207 authorization-response issuer support; CIMD remains unadvertised. |
 | `/api/mcp/oauth/register` | POST | RFC 7591 dynamic registration, 10/hour/IP |
 | `/api/mcp/oauth/token` | POST | `authorization_code` + `refresh_token`, form-encoded, 60/min/IP |
 | `/api/mcp/oauth/revoke` | POST | RFC 7009, always 200 |
@@ -4056,7 +4047,11 @@ Opaque 256-bit credentials, stored only as SHA-256 digests, never signed. The au
 
 ### Capability surface
 
-The transport registers exactly the manifest entries with `implementation = available` **and** `externalExposure = enabled`. Exactly eleven manifest-v7 reads are enabled; the original nine retain their v6/v7 database bridge, while every write family and the two dark site-visit contracts remain disabled. The manifest constant is the rollout control — nothing in the transport can widen past it. Results and error envelopes both pass through `serializeUntrustedPromptData` before entering any model context.
+OPS-Web release commit `d5befc466c7dbf3d67b76cde698c9a9aa4df719c` adds immutable `2026-08-29.mcp-exposure.v2`: exactly thirty-four read-only business tools and twenty grantable read scopes under capability manifest `2026-08-22.capability-manifest.v8`. Immutable `2026-08-22.mcp-exposure.v1` remains byte-compatible at eleven/seven. The client and grant store an exposure revision, bearer resolution selects that exact catalogue, and an unknown revision fails closed; therefore existing v1 clients, grants, access tokens, and rotating refresh families remain v1 after v2 is live. V2 requires fresh DCR and operator consent. Results and error envelopes pass through `serializeUntrustedPromptData` before entering any model context. Every business mutation family remains absent.
+
+The v2 tools are, in canonical order: `list_scheduled_jobs`, `list_job_readiness_issues`, `get_job_communication_context`, `get_job_conversation_context`, `list_customer_jobs`, `get_job_summary`, `search_job_history`, `get_correspondence_evidence`, `search_customers`, `search_jobs`, `resolve_job_participants`, `get_customer_context`, `list_tasks`, `get_task_context`, `list_job_artifacts`, `get_job_artifact_evidence`, `list_site_visits`, `get_site_visit_context`, `get_deck_design_geometry`, `list_sales_documents`, `get_sales_document`, `list_payments`, `list_expenses`, `get_expense_context`, `list_work_queue`, `search_catalog_items`, `get_catalog_item`, `list_purchase_orders`, `get_purchase_order`, `get_company_context`, `list_team_members`, `list_team_availability`, `get_integration_health`, and `get_operational_overview`.
+
+The v2 scopes are, in canonical order: `ops.jobs.read`, `ops.schedule.read`, `ops.customers.read`, `ops.customer_contacts.read`, `ops.photos.read`, `ops.correspondence.read`, `ops.financials.read`, `ops.tasks.read`, `ops.site_visits.read`, `ops.files.read`, `ops.financial_documents.read`, `ops.payments.read`, `ops.expenses.read`, `ops.catalog.read`, `ops.purchasing.read`, `ops.catalog_costs.read`, `ops.company.read`, `ops.team.read`, `ops.integrations.read`, and `ops.operations.read`.
 
 #### Customer and job discovery expansion (production-live 2026-08-22 UTC)
 
@@ -4064,7 +4059,7 @@ Capability-manifest `2026-08-20.capability-manifest.v7` exposes `search_customer
 
 Production ledger `20260822015049_agent_discovery_reads_20260820220000` installed the two service-role-only RPCs, 40 valid/ready indexes, and the v6/v7 same-statement reproof bridge. Indexed-writer repair ledger `20260822015939_agent_discovery_index_writer_acl_20260822015828` grants the existing table-writer roles only the exact eight scalar helpers PostgreSQL must execute to maintain those indexes; `PUBLIC` and all non-index discovery helpers remain denied. OPS-Web release commit `5eb4b561c14cf8dace2b906d50ebcd34a0ba13db` was served by READY deployment `dpl_6ZMAhdXuweX9jSuVG8T58Z5gzWko` at `app.opsapp.co`.
 
-Live authenticated acceptance listed exactly eleven tools and exercised all eleven through the production endpoint. Nine calls returned successful results; conversation context and correspondence evidence returned their expected privacy-safe `NOT_FOUND` outcomes because the selected canary job had no matching records. The disposable grant was revoked, its next bearer request returned `401`, and all temporary OAuth client, code, grant, and token rows were deleted with zero-row readback. The immutable request audit remains. Claude's permanent client/grant was not changed. Every write family and both site-visit capabilities remain dark. A future v6-removal migration remains separate until old instances, jobs, cursors, and prepared calls drain.
+At the 2026-08-22 checkpoint, live authenticated acceptance listed exactly eleven tools and exercised all eleven through the production endpoint. Nine calls returned successful results; conversation context and correspondence evidence returned their expected privacy-safe `NOT_FOUND` outcomes because the selected canary job had no matching records. The disposable grant was revoked, its next bearer request returned `401`, and all temporary OAuth client, code, grant, and token rows were deleted with zero-row readback. The immutable request audit remains. Claude's permanent client/grant was not changed. At that checkpoint, every write family and both site-visit capabilities were dark. A future v6-removal migration remains separate until old instances, jobs, cursors, and prepared calls drain.
 
 ### Safety rails
 
@@ -4077,7 +4072,7 @@ Live authenticated acceptance listed exactly eleven tools and exercised all elev
 
 37/37 live end-to-end checks against a local server bound to production Supabase: dynamic registration; consent context resolving "MAVERICK PROJECTS LTD"; approve and deny; token exchange; authorization-code replay revoking the grant it minted; refresh rotation; refresh reuse killing the token family; legacy-era `initialize`; `tools/list` returning exactly the nine; **all nine reads exercised against real Maverick data**; **seven tenant-isolation probes with another company's identifiers, every one returning a privacy-safe `NOT_FOUND` sentinel and no data**; unauthenticated and malformed-bearer rejection with zero capability disclosure; settings revoke followed by a 401 on the next call. All OAuth test rows were deleted afterward — zero residue. Suites: 71 files / 1787 tests green; `tsc --noEmit` exit 0; eslint clean.
 
-### Production deployment and host proof (reverified 2026-08-20)
+### Historical P1 production deployment and host proof (reverified 2026-08-20)
 
 - **Deployment:** Vercel production deployment `dpl_6NLRbVXSjKsAHPEhcjXAbtnLnJGx` is READY on ops-web commit `f6f7f5c8440e5c20caad9539d522cab9ccb03caf`, with `app.opsapp.co` attached and no alias error. The transport, external-exposure, and OAuth commits are ancestors of that deployed revision.
 - **Live route:** `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/api/mcp` return 200 with issuer/resource `https://app.opsapp.co` / `https://app.opsapp.co/api/mcp`. An unauthenticated request to `/api/mcp` returns the required 401 bearer challenge and protected-resource metadata pointer.
@@ -4085,6 +4080,15 @@ Live authenticated acceptance listed exactly eleven tools and exercised all elev
 - **Claude connection:** one dynamically registered client named `Claude` has one unrevoked full-read grant. The grant and its rotating refresh credential were used on 2026-08-20; the current refresh family remains valid through 2026-09-19.
 - **Real tool use:** the immutable audit contains 16 requests: 11 successful tool calls, three privacy-safe domain errors, and two rejected invalid-token probes. Successful modern-protocol calls cover schedules, readiness, customer jobs, participants, job history, communication context, conversation context, and job summaries. The evidence read was also exercised and correctly returned `NOT_FOUND` for the supplied absent selector.
 - **Surface:** exactly nine read capabilities are externally enabled. Every write family and both site-visit capabilities remain disabled.
+
+### Full read exposure v2 release (production discovery-live 2026-08-29/30 UTC)
+
+- **Database:** the thirty-nine-file P2 wave remains production-applied. Callback-policy source migration `20260830113800_mcp_oauth_chatgpt_rfc9207_callback.sql` is applied as ledger version `20260830004843`, adding ChatGPT's exact stable callback without widening Claude/Codex matching or changing existing rows/grants.
+- **Application artifact:** OPS-Web commit `d5befc466c7dbf3d67b76cde698c9a9aa4df719c` contains immutable exposure v2 at thirty-four tools/twenty scopes, exact grant-pinned v1 compatibility, fresh-DCR/re-consent enforcement, one-family callback validation, and RFC 9207 `iss` responses.
+- **Deployment:** Git-backed Vercel deployment `dpl_3DWhhcueWxeFW2AJnEmxT1bFhfNu` is `READY` in production on exact commit `d5befc466c7dbf3d67b76cde698c9a9aa4df719c`; `app.opsapp.co` is attached and `aliasError` is null.
+- **Live discovery/authentication boundary:** canonical and query-bypass authorization-server and protected-resource metadata expose the exact twenty scopes; the RFC 9207 support flag is true; unauthenticated `POST /api/mcp` returns 401 with the matching `resource_metadata` and twenty-scope challenge.
+- **Compatibility/host proof:** the untouched Codex v1 connector authenticated and returned exactly the eleven-tool v1 catalogue without a business call. Two Codex v2 registrations requested the exact twenty scopes but expired before approval/token exchange. ChatGPT's exact callback returned the expected HTTP 201 public-client registration contract with the twenty-scope string. All three v2 clients are disabled and grant-free; OAuth approval, token exchange, authenticated thirty-four-tool listing/calls, rotation, and revocation remain pending. No Claude, Codex, or ChatGPT v2 connector acceptance is claimed.
+- **Write boundary:** all externally callable business tools are reads. OAuth/security bookkeeping can mutate privately, but no MCP tool creates, updates, deletes, prepares, commits, or sends company data.
 
 ### Four production defects this work found and fixed
 
@@ -4147,6 +4151,20 @@ The normalization revision advances to `ops.correspondence.normalized-text.v2`. 
 - The shared six-table immutability guard `private.reject_agent_job_memory_mutation()` is left untouched. The delivery ledger gets its own table-scoped guard, identical in every respect but one: it admits a transaction-local re-projection write, and only when the marker names the exact row **and** every column outside the four projection columns is byte-identical. An update that changes one byte of `content_value` alongside the projection falls through to the immutability failure. The audited company-data purge remains the only permitted delete.
 - Recovery of already-stored placeholders runs through two new service-role-only RPCs — `list_agent_provider_delivery_sources_for_renormalization_as_system` (keyset-paged over `normalization_status = 'rejected'`) and `reproject_agent_provider_delivery_source_as_system`, which validates the incoming projection with the same rules capture applies and reports whether the row actually moved — driven by `scripts/renormalize-delivery-sources.ts`. Running it still reprocesses real customer email and remains Jackson's call.
 
+### MCP complete read catalogue P2 and exposure v2 (release artifact 2026-08-29)
+
+OPS-Web commit `d5befc466c7dbf3d67b76cde698c9a9aa4df719c` composes the original eleven reads with twenty-three P2 domain methods under one nominal read-catalogue service and activates immutable exposure `2026-08-29.mcp-exposure.v2` for newly registered clients. `createOpsMcpServer` still registers only the tools in the grant-selected immutable exposure object. Stored exposure v1 remains exactly the original eleven reads/seven scopes; stored exposure v2 resolves thirty-four/twenty. A fresh DCR and operator consent are mandatory to create a v2 grant.
+
+The same thirty-four-method domain service can be constructed behind the internal Phase C adapter. Current Phase C behavior continues to call its existing conversation-context method; composition does not opt Phase C into unrelated reads or change its customer-facing switch.
+
+The P2 transport chain is: resolved `ActorContext` and stored OAuth grant → manifest-owned closed selector → nominal authorization → nominal repository → fixed service-role RPC → same-statement authority/source reproof → strict private snapshot → bounded public result. Caller input cannot contain company, actor, permission, policy, SQL relation, column list, or arbitrary sort/filter definitions.
+
+Nominal policy creation is not authority. Candidate policies remain dormant until the central manifest activates their exact object identities after the full manifest invariants pass; both the primary authorization boundary and the P2 binding layer reject unactivated, cloned, or structurally similar policies.
+
+The intended deck request—“grab the deck design from Carly Hunter's site visit, total linear feet of railing and square footage, and show the geometry”—uses customer/job discovery, site-visit context, then the opaque design reference with `get_deck_design_geometry`. It never searches raw deck JSON by customer name and never treats geometry coordinates as measured dimensions. V2 contains every tool and scope required for this flow, and production discovery now advertises that scope set. Live business-data availability still depends on completing OAuth approval and authenticated host-specific acceptance for the fresh v2 registration.
+
+The database callback policy is production-applied as ledger version `20260830004843`, and READY deployment `dpl_3DWhhcueWxeFW2AJnEmxT1bFhfNu` serves the exact v2 discovery metadata and bearer challenge. Preserved-v1 authenticated listing is proven. Exact-scope Codex DCR and exact-callback ChatGPT DCR are also proven, but their three client rows are disabled with zero v2 grants. V2 OAuth approval, token exchange, thirty-four-tool listing/calls, rotating refresh, revocation, and representative deck/site-visit proof remain pending. ChatGPT separately requires its own OAuth/tool-call proof. Full contract: `specs/2026-08-29-mcp-read-catalogue-p2.md`.
+
 ### P1 release gates — complete (verified 2026-08-20)
 
 1. `OPS_AGENT_OPERATIONAL_READ_CURSOR_KEY` is provisioned in Vercel production. Its value was not read or exposed; successful authenticated paged reads prove the runtime accepted it.
@@ -4170,6 +4188,165 @@ The published contract is read-only: authorized jobs, customers, schedules, task
 | ChatGPT | Registration/callback path verified; no authenticated 34-tool acceptance pass. OPS is not listed in the public plugin directory. |
 
 A supported connection path is not an OPS acceptance pass; these labels must advance only after live authenticated proof. The guide's `Request a tool` section opens `mailto:support@opsapp.co?subject=OPS%20MCP%20tool%20request` with a structured workflow template and instructs users not to include passwords, access tokens, or customer records. Primary sources: `src/app/developers/mcp/page.tsx`, `src/app/developers/mcp/_components/mcp-guide-page.tsx`, `src/app/developers/_components/developers-header.tsx`, `src/lib/agent-control-plane/mcp/docs/{reference,copy}.ts`, and `src/i18n/dictionaries/{en,es}/mcp-docs.json`. Contract coverage: `tests/unit/mcp/guide-reference.test.ts`, `tests/unit/mcp/guide-page.test.tsx`, and `tests/e2e/mcp-guide.spec.ts`.
+
+### Current MCP boundary and Invisible Office Foundation Zero (production-released dormant, 2026-08-30/31)
+
+The production route has since advanced to immutable read-only exposure `2026-08-29.mcp-exposure.v2`: 34 read tools, 20 grantable read scopes, current-grant/current-permission reauthorization, and the durable request audit/rate-limit path. Historical v1 grants remain pinned to v1. Production metadata and the unauthenticated bearer challenge advertise only the active read ceiling. The older P1 numbers above are historical release evidence, not the present catalogue size.
+
+The first Invisible Office vertical, **“Close out my day. What did I forget?”**, is deployed behind separate, inactive contracts:
+
+- capability manifest `2026-08-30.capability-manifest.v9` remints v8 without changing its bytes and adds `prepare_day_closeout` plus an internal-only `commit_day_closeout`;
+- exposure `2026-08-30.mcp-exposure.v3` registers exactly `prepare_day_closeout`; `commit_day_closeout` is never an MCP tool;
+- consent catalogue `2026-08-30.mcp-consent-catalog.v2` admits read + prepare scopes, but active consent remains v1 and active exposure remains v2;
+- `prepare_day_closeout` requires all seven read/prepare scopes and exact `all` authority for `calendar.view`, `email.view`, `invoices.view`, `pipeline.view`, `projects.view`, `reports.view`, and `tasks.view`;
+- actor/company identity comes only from the validated grant. The domain service reuses the production read contracts, computes `day-closeout:2026-08-30.v1` server-side, separates currency totals, discloses bounded/incomplete coverage, and suppresses correspondence findings and briefs when any relevant delivery source is unreadable;
+- preparation is idempotent and creates no external effect. Findings produce one immutable private change set, one non-editable/non-bulk `file_day_closeout` queue item, and one persistent review notification;
+- the Firebase-authenticated OPS approval route is the only commit adapter. Its database transaction locks the exact actor/company/action/change set/digest, rechecks current membership/grant/scopes/permissions, consumes one confirmation, files the record inside OPS, resolves the notification, and stores a replay-safe receipt stating `messages_sent = 0` and `money_moved = false`;
+- private OPS tables own canonical closeout runs, change sets, confirmations, receipts, routine schedule/claim/retry/cursor state, and a separate typed ledger for blocked or failed routine occurrences. Direct `anon`, `authenticated`, and `service_role` table access is revoked; only narrow service-role RPCs cross the boundary;
+- the dormant routine worker claims one row at a time with leased `FOR UPDATE SKIP LOCKED` exclusion and only while at least 60 seconds remain in its 240-second budget, so unstarted work cannot spend attempts. It cancels routine work at 210 seconds and reserves the final 30 seconds for truthful finalization. Its trusted auth adapter obtains the exact actor/company/grant/client/scopes binding from the database before minting an actor context; persistence rechecks it again. Idempotency derives from routine + schedule revision + occurrence. Finalization recovers an exact committed run before recording retry or failure, preserving correctness when a persistence response is lost. It preserves local wall-clock time across DST, retries transient execution failures and work-budget expiry after 5 then 15 minutes, stores partial as a valid closeout result, stores blocked/terminal failures only in the separate failure ledger, and keeps clear runs quiet; and
+- closeout preparation has a separate durable 6 actor / 6 grant / 30 company per-minute policy bound to v3 and `ops.operations.prepare`.
+
+The dormant foundation is production-released, but the capability is **not customer-live**. Ledger versions `20260831042518_agent_day_closeout_foundation_zero`, `20260831042631_agent_day_closeout_routine_worker`, `20260831042924_agent_day_closeout_fk_indexes`, `20260831061700_agent_day_closeout_routine_configuration`, and `20260901012208_mcp_v3_synthetic_canary` are applied and mirrored byte-exact. OPS-Web exact release `f0dd81be` is contained by verified Ready production descendant `d3d51884` / `dpl_H7ncZ6jA7dyN8k4xcGMx6XUGczPU` at `app.opsapp.co`. Live readback proves the closeout and canary tables have RLS enabled, no policies, no direct app-role grants, and zero rows; public RPCs are service-role-only. V3/v9/v2-consent remain inactive and no connector has received the new authority. The cron route requires both `CRON_SECRET` and `OPS_DAY_CLOSEOUT_ROUTINES_ENABLED=true`; its offset registration is deployed, but the worker flag is absent and routine rows default disabled. The authenticated Settings control exists only for an eligible live v3 grant, so it is invisible in production. The worker makes no model/provider call. Offset registration adds 288 ordinary function invocations per day (approximately 8,640 per 30-day month), with no marginal charge while the Vercel project remains inside its included allocation; usage beyond that allocation follows the Vercel plan's invocation and compute rates. Representative production correspondence is also still incomplete: normalization v2 has recovered some HTML mail, but rejected/unreadable delivery-source rows remain, so the closeout correctly reports correspondence as not evaluated rather than claiming a complete inbox sweep.
+
+Exact-subject synthetic-canary source `20260831190000_mcp_v3_synthetic_canary.sql` plus OPS-Web commits `9df17e32`, `7b2acd91`, `429f36e9`, `e6794bc6`, and `6915f9be` are production-released at `f0dd81be`; production ledger version `20260901012208_mcp_v3_synthetic_canary` is applied and mirrored byte-exact. The release remains dormant and has not been host-accepted: there is no synthetic tenant/operator, binding, v3 client, v3 grant, or enabled routine. The migration preserves old-application v2 bearer compatibility during migration-first rollout, admits only one service-provisioned synthetic subject for at most 24 hours, rechecks the subject at OAuth writes and bearer use, serializes all canary authority mutation and shutdown on one client lock, and provides service-role-only boolean acceptance/cleanup inspectors. The private runner proves loopback PKCE consent, token rotation, exact single-tool host discovery/call, exact run/action/change-set/preview linkage to Firebase-authenticated OPS filing, truthful receipt readback, exact idempotent commit replay, OPS-owned routine enablement, deliberate spent-refresh theft, family/grant revocation, routine shutdown, bearer rejection, and independent cleanup without printing secrets, identifiers, or business data. Every service-role RPC is deadline-abortable; cleanup has an independent deadline, and simultaneous acceptance/cleanup failures preserve both safe stages. Release proof includes 434/434 targeted tests, a real four-path two-session concurrency contract, a complete production build and type-validity pass, plus independent live ACL/function/trigger/zero-authority readback.
+
+Activation remains separate from release. The next canary step requires one dedicated synthetic tenant/operator and safe finding fixture; Jackson must perform the signed-in consent, exact OPS filing, and synthetic routine enablement while the runner observes aggregate proofs. The runner must then complete theft simulation and zero-authority cleanup. This direct production canary is host-neutral protocol proof; it does not count as acceptance for Claude, ChatGPT, Codex, or another outside host. Global v3 may be considered only as a separate Jackson-approved release after the chosen launch host also passes its authenticated host-specific matrix. Worker activation and its first scheduled receipt remain a later separate gate. Existing Codex acceptance proves a bounded read-only v1 path only; production v2 discovery is live but authenticated v2 host acceptance remains pending, and neither fact proves v3 write-path acceptance. Full design and remaining gates: `specs/2026-08-30-ops-mcp-day-closeout-foundation-zero.md`.
+
+### MCP collections vertical v4 (production-released and dormant, 2026-08-31)
+
+The second Invisible Office vertical answers “Who owes me money?” from server-owned invoice facts and prepares one consolidated collection draft per approval-ready debtor. Capability manifest `2026-08-31.capability-manifest.v10` adds `prepare_collections`; immutable exposure `2026-08-31.mcp-exposure.v4` contains exactly that tool. The schema and application are deployed, but active production exposure remains read-only v2. Existing synthetic-canary v3 activation mechanics remain separate. V4 has no DCR client, consent grant, or activation.
+
+`prepare_collections` accepts only an optional canonical `as_of_date` and a required idempotency key. Tenant, actor, grant, client, permission, policy, relation, metric, sort, and recipient data are never caller-selectable. Required scopes are `ops.correspondence.read`, `ops.customer_contacts.read`, `ops.customers.read`, `ops.financial_documents.read`, `ops.operations.prepare`, and `ops.operations.read`; current company-wide permissions are `clients.view`, `email.view`, `invoices.view`, and `reports.view`.
+
+The server reads at most four fixed 25-row invoice pages and fails closed when a fifth page exists. It includes only positive collectible balances, computes calendar-date aging under `collections-aging:2026-08-31.v1`, separates every currency, and resolves each debtor through canonical customer context. A draft is withheld when the customer is under duplicate review, recipient selection is missing/ambiguous/blocked/shared, correspondence coverage is unreadable, or the latest inbound/outbound cadence is too recent. Correspondence bodies never enter the MCP result, action payload, or request log.
+
+Database access is limited to the six service RPCs documented in `03_DATA_ARCHITECTURE.md`. The prepare transaction creates one immutable run and, only for ready debtors, one private change set plus one `approve_collections_draft` queue item. It binds the exact debtor, invoice facts, currency totals, recipient, subject, body, truth boundary, expiry, and SHA-256 preview digest. A separate 6 actor / 6 grant / 30 company per-minute limiter is pinned to v4 and `ops.operations.prepare`.
+
+Approval is deliberately not an MCP tool. The Firebase-authenticated OPS queue service calls `commit_agent_collections_draft_as_actor` with the exact action-derived idempotency key and immutable preview digest. It cannot submit edits and never routes the action to an email executor. Exact retries return the stored receipt; autonomous and bulk execution reject this action family. The only successful effect is `collections_draft_approved_inside_ops`, accompanied by `messages_sent = 0`, `money_moved = false`, and `financial_documents_issued = 0`. `reject_agent_collections_draft_as_actor` leaves the draft open coherently and also produces no external effect.
+
+**Release boundary:** the verified release is contained by OPS-Web production main `d5b0911b` and Ready deployment `dpl_3XHPSsdaLJSXgZQF6tu6Uzof8gAf`. Production ledger versions `20260831215642_agent_collections_vertical` and `20260831222256_agent_collections_fk_indexes` are applied and mirrored byte-exact. Independent readback proves the private tables remain empty and v4 has zero enabled clients and zero live grants. Nothing was registered, granted, activated, sent, paid, or issued. Full contract: `specs/2026-08-31-ops-mcp-collections-vertical.md`.
+
+### MCP hiring what-if vertical v5 (production-released, dormant, 2026-09-02)
+
+The third Invisible Office vertical answers “If I hire a second member in this role at this all-in hourly cost, when does it stop costing me money?” Capability manifest `2026-08-31.capability-manifest.v11` adds read-only `analyze_hiring_break_even`; immutable exposure `2026-08-31.mcp-exposure.v5` contains exactly that tool. Its schema and application are production-released, while active production exposure remains v2. V5 has no DCR client, consent grant, or activation.
+
+The host supplies only `role` and `hourly_cost`. Tenant, actor, grant, client, timezone, currency, workweek, source window, metric, permissions, and confidence rules remain server-owned. The host boundary accepts at most four decimals, then OPS requires the hourly cost to be exactly representable in the resolved company's canonical currency minor unit and rejects incompatible precision rather than rounding. Current two-decimal CHF, XCG, and ZWG flow through the corrected shared ISO 4217 helper; unsupported non-currency units remain denied. The application proves initial authority, re-resolves current authority immediately before reading, and the database independently rechecks the exact v11/v5 actor/grant binding. The repository requires the response to carry the exact requested observation instant, while the source contract reconstructs its company-local date and ISO-week window. Required scopes are company, expense, financial-document, financial, job, payment, schedule, site-visit, task, and team reads; every current granular permission must be company-wide.
+
+The server analyzes 13 complete local weeks. Capacity uses configured company work windows less time off for the event's canonical user only. Productive work merges overlapping project tasks and all booked, non-cancelled site visits, including completed history. Cash contribution is collected project payment cash less eligible company-currency expense allocations before labour and overhead, attributed to the role and week by merged scheduled project minutes. Null currency or allocation evidence fails closed. Low/base/high are observed weekly 25th/50th/75th-percentile contribution yields. A date exists only when the modeled yield covers an entire standard week's all-in cost; otherwise the tool says it does not break even. Missing roles, incomplete/bounded sources, fewer than eight usable weeks or three financial projects, invalid schedules/currency, and non-positive revenue/contribution return no numeric scenario.
+
+This vertical is a pure analytical read. It stores no result and adds no action, notification, routine, model/provider call, UI, or new paid service. Its candidate migration includes one partial covering index for the completed site-visit history path. Migration postflight validates the complete index definition, and the sealed PostgreSQL 17 runner proves both range bounds are index conditions plus rejection of a drifted same-named index, golden behavior, and fail-closed outcomes in uniquely named disposable databases. The exact contract, proof, ordinary database-index storage/write cost, and future release/activation gates are in `specs/2026-08-31-ops-mcp-hiring-what-if-vertical.md`.
+
+### MCP promise-recovery vertical v6 (production-released, dormant, 2026-09-02)
+
+The fourth Invisible Office vertical answers “Did I ever get back to [customer] about [thing]?” through read-only `check_customer_reply`. OPS owns the versioned definition of topic match, customer request, promise, reply, resolution, and unanswered commitment. The tool resolves one exact customer inside the authenticated company, reads normalized safe bodies from the provider-delivery source ledger, and returns exact chronology with stable provider-source, hash-bound turn, and attachment references. It never drafts, sends, schedules, updates, or infers an answer from subject, snippet, thread direction, summary, routing metadata, or attachment presence.
+
+Manifest `2026-09-01.capability-manifest.v12` re-mints v11 and adds only `check_customer_reply`. Immutable exposure `2026-09-01.mcp-exposure.v6` is additive: it contains exactly `analyze_hiring_break_even` and `check_customer_reply`, with the complete v5 hiring scope ceiling plus `ops.correspondence.read`, `ops.customer_contacts.read`, and `ops.customers.read`. The promise read additionally requires current `clients.view` and `email.view` authority. Its schema and application are production-released, while production exposure remains v2; v6 has no client, grant, or activation.
+
+The Foundation Zero correspondence-readability gate is explicit. `private.agent_provider_delivery_sources` owns body readability; copied conversation-turn bodies are not authoritative. The candidate SQL repairs the active-v2 conversation-context lineage reproof and correspondence-evidence provider overlay, including stable attachment references whose optional metadata is incomplete. The transformations are guarded against function-definition drift, accept only exact provider company/source/hash bindings, and keep empty or rejected normalized bodies invalid.
+
+The read is bounded to 500 sources, 100,000 safe characters per body, 2,000,000 safe body characters per snapshot, 20 chronology items, and 100 stable attachment references per snapshot. Aggregate overflow retains newest evidence first but forces `insufficient_evidence`. Customer ambiguity, unreadable or unattributed mail, incomplete attachment enumeration, and current-operator attribution gaps also force that state. No confident negative may be returned from incomplete evidence.
+
+Read-only production discovery found 309 delivery sources: 238 readable and 71 rejected. The readable set includes real HTML-derived bodies, hash-bound provider/turn chronology, and stable attachment references. It also proves the live wrapper defects: one readable attachment-backed example is hidden because optional attachment metadata is absent, while the context wrapper rejects the historical manifest reproof. Ninety outbound provider sources exist, but none currently prove the strict current-operator authorship required by “Did I”; a run today must therefore report insufficient evidence rather than claim a personal reply.
+
+OPS-Web production release `a763f1a0` contains Phase 4 on top of the authoritative Phase 3 implementation. The released vertical stores no result, performs no DML, and adds no action, approval, notification, routine, provider/model call, paid service, draft, or send path. Its exact definitions, evidence contract, bounds, and activation gates are in `specs/2026-09-01-ops-mcp-promise-recovery-vertical.md`.
+
+### MCP sales-truth vertical v7 (production-released, dormant, 2026-09-02)
+
+The fifth Invisible Office vertical answers “Why are we losing leads, and what should I fix first?” through read-only `analyze_sales_truth`. One strict empty-input call returns the 180-company-local-day opportunity cohort, resolved close rate with Wilson 95% interval and unresolved sensitivity, canonical source attribution, structured-plus-disclosed-legacy loss reasons, linked first-response time, completed stage velocity, explicit coverage/confidence, and at most three ranked non-causal repair recommendations. The host cannot select the tenant, actor, window, metric, source population, confidence rule, or authority.
+
+Manifest `2026-09-01.capability-manifest.v13` re-mints v12 and adds only `analyze_sales_truth`. Immutable exposure `2026-09-01.mcp-exposure.v7` is additive to v6: it contains `analyze_hiring_break_even`, `check_customer_reply`, and `analyze_sales_truth`, with the v6 scope ceiling plus `ops.operations.read`. The sales read requires `ops.operations.read`, `ops.correspondence.read`, and current company-wide `pipeline.view` and `email.view`. Its schema and application are production-released, while active production exposure remains byte-stable v2; v7 has no client, grant, or activation.
+
+The server owns `sales-truth:2026-09-01.v1`. It defines qualified, resolved, and open populations explicitly; reports source linkage and transition/disposition coverage separately; requires at least ten observations and 70% relevant coverage for even low confidence; and fails closed on any source bound or malformed chronology. Recommendations carry fixed action copy, structured thresholds, stable opaque source references, and `causal_claim: false`. Free-text bodies, notes, titles, names, addresses, and raw loss labels never cross the MCP boundary.
+
+The candidate RPC reads one fixed snapshot from opportunities, stage transitions, active dispositions, linked email/text activities, and company context. It independently rechecks exact v13/v7 grant and current permission authority. Two guarded partial indexes bound the cohort and activity paths, while a private `sales_truth` revision and four triggers make source freshness explicit. The vertical performs no DML at runtime and creates no result record, action, notification, routine, draft, provider/model call, or paid service. Exact metric definitions, live source coverage, PostgreSQL proof, cost boundary, and later release gates are in `specs/2026-09-01-ops-mcp-sales-truth-vertical.md`.
+
+### MCP payroll-readiness vertical v8 (production-released, dormant, 2026-09-02)
+
+The sixth Invisible Office vertical answers “Can I make payroll on the 15th?” through read-only `check_payroll_readiness`. Input is exactly one canonical `target_date`; the host cannot provide tenant, actor, observation time, cash, obligations, receivables, payer history, currency, timing, freshness, scenario, or decision definitions.
+
+Manifest `2026-09-01.capability-manifest.v14` re-mints v13 and adds only `check_payroll_readiness`. Immutable exposure `2026-09-01.mcp-exposure.v8` is additive to v7: it contains the three v7 tools plus payroll readiness and reuses the exact v7 scope ceiling. The payroll read requires company, expense, financial-document, financial, and payment read scopes plus current company-wide expense, invoice, report, and company-settings permissions. Active production exposure remains byte-stable v2.
+
+The application reauthorizes immediately before one bounded repository call. The service-role-only snapshot RPC independently rechecks exact actor/company/client/grant/revision, scope ceiling, consent labels, permission snapshot, manifest v14, exposure v8, capability id, and capability revision. It returns opaque finance facts only. PostgreSQL owns tenant isolation, net settlement chronology including adjustments/reversals, source bounds, and revisions; TypeScript owns the version-frozen ISO currency exponent table, exact minor-unit conversion, checked `bigint` totals, recurrence, payer distributions, scenarios, decisions, item-level attribution, and prompt-safety validation. The exact database target-date error (`22023` plus `AGENT_PAYROLL_READINESS_TARGET_DATE_INVALID`) maps to the public non-retryable `INVALID_ARGUMENT` contract; other database errors remain unavailable/internal and never masquerade as input faults.
+
+Result schema `2026-09-01.v1` and metric `payroll-readiness:2026-09-01.v1` return a cash-only floor, p25 best case, p50 base case, zero-receivable worst case, p75 payer evidence, every counted obligation occurrence, every open receivable's balance and p25/p50 attribution, freshness, and precise gaps. Signed negative cash remains valid evidence. A same-day target fails closed after its exact payroll cutoff. Same-day receipts are excluded because intraday arrival is unknown; future-dated payments and delivery timestamps are invalid for the as-of read. A missed or out-of-range expected receipt is never rolled forward. Invalid numeric/temporal source values and payer-settlement amounts remain visible under exact hard gaps. A confident `yes` never depends on a receivable. Typed provenance, payer-sample uniqueness/bounds, temporal inclusion, sums, completeness, and the decision are re-derived by the output contract. Maximum source shape is exactly 154,555 characters, below the independent 400,000-character source/result ceilings.
+
+The vertical performs no runtime DML and creates no result, action, notification, routine, draft, message, payment, financial document, provider/model call, or UI. Its schema and application are production-released, including the four guarded scheduling-evidence columns. No v8 client/grant creation, OAuth discovery change, or activation occurred. Exact contract, proof, cost boundary, and activation gates: `specs/2026-09-01-ops-mcp-payroll-readiness-vertical.md`.
+
+### MCP recurring-price preview vertical v9 (production-released, dormant, 2026-09-02)
+
+The seventh Invisible Office vertical answers “Raise every [recurring service] account 8% starting [month], draft the notices, flag who’ll walk” through high-risk preparation tool `prepare_recurring_service_price_change`. Input is exactly `service_selector`, a positive canonical decimal-string `increase_percent` no greater than 100 with at most four fractional digits, and canonical `effective_month` (`YYYY-MM`). Tenant, actor, identities, observation time, pricing source, currency, rounding, cadence, exceptions, effective dates, taxes, notice rules, contacts, correspondence evidence, risk rules, and bounds remain server-owned.
+
+Manifest `2026-09-01.capability-manifest.v15` re-mints v14 and adds only this capability. Immutable exposure `2026-09-01.mcp-exposure.v9` is additive to dormant v8: it contains the four v8 tools plus the recurring-price preparation tool. Active production exposure remains byte-stable v2. The preparation requires exactly `ops.catalog.read`, `ops.company.read`, `ops.correspondence.read`, `ops.customer_contacts.read`, `ops.customers.read`, `ops.financial_documents.read`, `ops.operations.prepare`, and `ops.schedule.read`, plus current company-wide `calendar.view`, `catalog.products.view`, `catalog.view`, `clients.view`, `email.view`, `estimates.view`, `invoices.view`, and `settings.company` permissions. Collections consent catalogue v3 has an exact collections/customer-draft prepare label; price-preview catalogue v4 has its separate price/notice label. Closeout catalogue v2 remains unchanged.
+
+Additive compatibility is authority-complete. Hiring, promise recovery, sales truth, and payroll readiness accept only their historical manifest/exposure pair or v15/v9. The v15/v9 route additionally binds the exact 16-scope registered client ceiling and serialized scope, v4 grant/client consent, and exact accepted labels; cross-paired revisions or drifted client/consent/label state fail closed before the inherited read. Historical routes retain their original authorization behavior.
+
+The result itemizes included and excluded account identities, current and proposed currency-minor-unit prices, tax, the exact RRULE, exact first service date in the requested month, contractual notice evaluation, one email draft, explainable churn-risk signals, and stable source references. Duplicate recurrence rows for one account identity produce one exclusion with two hash-bound recurrence sources. Percentage and tax arithmetic use checked integers with half-away-from-zero rounding at the ISO currency minor unit; optional-selection flags must be explicit, and both line-item and parent-document discount must be zero. Missing, inactive, unsafe, or out-of-range tax evidence preserves the verified price facts and produces `tax_unavailable`. Stable preview and package hashes bind company context and every evaluated account source revision; observation/generation instants do not change identity. Risk is `high` only when the latest classified state is explicit cancellation or price objection, `medium` when the latest state is complaint/overcharge or there is coherent collectible late-payment evidence, and otherwise `unknown`; there is no `low` label. A later noun-bound explicit resolution supersedes older negative evidence, while unrelated materials/logistics text cannot. Provider-normalized correspondence remains authoritative while raw mail never enters the result. All returned business data passes through the shared untrusted-JSON serializer.
+
+The source route has two authorized phases. The first returns only a bounded recurrence catalog; the service removes histories only when exact recurrence evaluation proves they ended before the requested month and shares one 100,000-unit aggregate work budget across both catalog classifications. The second takes the selected recurrence IDs and returns a current catalog plus their detail under one PostgreSQL statement snapshot. The service requires both catalogs, the recomputed selection, and recurrence/account evidence to match exactly, reauthorizes, calculates the bounded package, and performs the final SQL authority assertion immediately before return. RRULEs must pass the non-expanding canonical uppercase recurrence alphabet before the conservative 3,500,000-byte construction threshold; the serialized catalog and complete detail wrapper each have an exact 4,000,000-byte UTF-8 server ceiling.
+
+This is an ephemeral preparation only. It persists no preview or notice business content, sends nothing, changes no price, contract, invoice, or service, and exposes no commit, send, confirm, or mutation sibling. Shared transport audit/rate-limit metadata is still recorded. Its schema and application are production-released; there is no DCR client, grant, canary, or activation for v9. Full contract: `specs/2026-09-01-ops-mcp-recurring-price-preview-vertical.md`.
+
+**Phases 3–7 release proof:** OPS-Web release `a763f1a0` is contained by current production descendant `dd187ba3`, which is `READY` at deployment `dpl_AQfJGzTsQ6XS65RWptFBgD4isQXR` and owns `app.opsapp.co`. Seven production ledgers are applied and mirrored byte-exact. Fresh live probes show that metadata still advertises only the established 20 read scopes, unauthenticated MCP returns 401, and v5–v9 have zero clients and zero grants. Full release evidence: `specs/2026-09-02-ops-mcp-phases-3-7-production-release.md`.
+
+### MCP weather-reschedule preview v11 (production-released, dormant)
+
+The ninth Invisible Office vertical answers “Rain Thursday. Slide the outdoor work, keep the indoor job, tell everyone” through high-risk preparation tool `prepare_weather_reschedule`. Input is exactly one company-local `target_date`. The OAuth grant supplies actor and tenant identity; OPS supplies timezone, explicit outdoor types, tasks, projects, crews, conflicts, forecasts, contacts, suppression state, authority, and policy.
+
+Manifest v17 re-mints v16 and adds only this capability. Dormant exposure v11 adds `ops.communications.prepare` and `ops.schedule.prepare` to the v10 ceiling and requires fresh v6 consent labels. Active production remains immutable read-only v2; there is no v11 registration, grant, canary, activation, or outside-host acceptance.
+
+The adapter delegates to the shared domain service. That service reauthorizes immediately before the read and before return. The repository passes the full server-owned permission registry used by actor-context resolution, then calls only `read_agent_weather_reschedule_as_system` and `assert_agent_weather_reschedule_authority_as_system`; both are service-role-only stable security-definer reads with empty search paths. PostgreSQL recomputes the exact full-registry authority revision before checking the capability's nine required permissions. The final RPC rebuilds the exact original-observation snapshot and rejects source drift. No provider is called and no browser write route, mutation RPC, commit sibling, send sibling, routine, notification, or durable preview exists.
+
+The response separates current facts, fresh numeric Open-Meteo evidence, the exact no-write schedule proposal, and recipient-bound email text. Outdoor classification comes only from typed company settings. Project work moves as a group to the first conflict-free clear day within the company's bounded window; UUID casing cannot hide a crew collision, multi-day future commitments are included, and indoor work remains. Ambiguous contacts, merged parent clients, shared or suppressed email, schedule locks, recurrence/pairing/dependencies, inactive crew, incomplete/stale forecasts, authority drift, and source/result bounds reject the entire request. Exact behavior and release gates: `specs/2026-09-03-ops-mcp-weather-reschedule-vertical.md`.
+## Supplier Bills / Accounts Payable Contract (2026-09-03)
+
+The internal application contract is two-step: `POST /api/internal/accounting/supplier-bills/prepare` validates the current Firebase actor, tenant, permission, supplier identity, invoice identity, monetary equality, job allocations, and PDF custody before issuing one exact confirmation; `POST /api/internal/accounting/supplier-bills/commit` reauthorizes, consumes that confirmation once, commits the accounting state, and returns a live readback receipt. Capture preparation accepts multipart JSON plus one PDF. Payment and void preparation accept narrow JSON action envelopes. Stable caller request IDs provide replay safety; the same committed request returns the prior result marked as a replay.
+
+Unpaid captures enqueue `supplier`, `supplier_bill`, and later `supplier_bill_payment` writes for every active writable QuickBooks or Sage connection. QuickBooks maps these to Vendor, Bill, and BillPayment; Sage maps them to Contact, Purchase Invoice, and Contact Payment. Category, tax, project/customer, bank, and payment-method identities must already be explicitly mapped. Missing mappings fail closed into `needs_review`; transport and dependency failures use the existing bounded retry queue. QuickBooks request IDs and provider sync tokens protect create/update replay, while OPS records the provider link and queue success atomically after each accepted provider response.
+
+Already-paid captures call the existing `save_expense_atomic` contract and preserve its category, allocation, approval, notification, and provider-expense behavior. The AP contract does not expose MCP tools or permissions. It is deliberately narrow so a later separately authorized MCP phase can prepare and commit against the same accounting boundary without changing accounting semantics. Canonical implementation details: `docs/accounting/supplier-bills-contract.md` in OPS-Web.
+
+The production application release is OPS-Web `ac51e50b` (implementation `217b4655`, privilege/index hardening `323bbfaf`, ES2017 target repair `62e51d3e`, and ledger alignment `ac51e50b`). The matching database ledger is `20260903210504_supplier_bills_ap_vertical`, `20260903211009_supplier_bill_immutable_acl_repair`, and `20260903211311_supplier_bill_fk_indexes`.
+
+### Supplier bill intake API (production web released, 2026-09-04)
+
+The intake layer uses four authenticated OPS-Web endpoints. `POST /api/internal/accounting/supplier-bills/intakes` accepts one multipart PDF and classification, performs bounded local extraction, writes the durable source first, and commits the capture through the guarded database contract. `GET /api/internal/accounting/supplier-bills/intakes` returns company-scoped lifecycle summaries. `GET /api/internal/accounting/supplier-bills/intakes/[intakeId]` returns one authorized detail with lines, allocations, checks, source document, and events. `POST /api/internal/accounting/supplier-bills/intakes/[intakeId]/prepare` and `/commit` cover review saves, hold/release, approval, payroll routing, payment scheduling, and payment recording.
+
+Every route resolves the current Firebase actor and active company before repository access. The server supplies actor and company identities to `prepare_supplier_bill_intake_write`, returns its exact confirmation, and then supplies that confirmation to `commit_supplier_bill_intake_write`. PostgreSQL reauthorizes the current actor for the action, rejects stale revisions, expires prepared intents after 15 minutes, and returns a fresh full readback. A stable idempotency key with unchanged content replays the committed receipt; reuse with different content or actor fails.
+
+Extraction in `src/lib/accounting/supplier-bills/pdf-extraction.ts` is conservative and records provenance instead of inventing missing dates, purchase orders, job identities, quantities, or units. `src/lib/accounting/supplier-bills/canpro-reconciliation.ts` creates review suggestions only. The routes do not let extraction output bypass operator disposition. The service and repository live in `src/lib/accounting/supplier-bills/intake-service.ts` and `intake-repository.ts`; route implementation is under `src/app/api/internal/accounting/supplier-bills/intakes/` in OPS-Web commit `ca7f46f3c`, with the review console completed in `bf3610e3e`.
+
+The database and web endpoints are live in production. OPS-Web source is published on production main at `f901c6d9c0e1bd63abddcb616a697f7fb9115ad6` through Git-triggered Vercel deployment `dpl_7BCJY52J5SB6KwmY7qdCrLSzCUH3`, which is `READY` and owns `app.opsapp.co`; unauthenticated intake list and capture calls fail closed with HTTP 401. Production ledger `20260904184303_supplier_bill_company_data_lifecycle` completes the account-closure path without granting ordinary delete access to immutable supplier documents, events, or private intents. The 267-table company-data manifest and 42-table privilege snapshot match production, all 37 supplier-bill foreign-key repair indexes exist, and all supplier/intake public rows plus both private intent tables were empty at final readback. iOS remains local/unreleased. No new external extraction vendor or usage-priced API is introduced; PDF parsing is local through `pdfjs-dist`. Existing S3, Vercel, and Supabase usage remains subject to the account's ordinary consumption costs. Exact contract and release boundary: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
+
+### MCP crew call-out recovery preview v12 (completed and production-released, dormant)
+
+The tenth Invisible Office vertical answers “Mike called out tomorrow. Cover his jobs and tell the crew and clients” through high-risk preparation tool `prepare_crew_callout_recovery`. Input is exactly one `crew_member_name` and one canonical company-local `target_date`. Tenant, actor, observation time, crew identity, schedule facts, projects, role evidence, experience evidence, working hours, time off, conflicts, recipients, optimization, copy, and bounds remain server-owned.
+
+Manifest `2026-09-03.capability-manifest.v18` re-mints v17 and adds only this capability. Immutable exposure `2026-09-03.mcp-exposure.v12` is additive to v11 and uses immutable consent catalogue v7. Active production exposure remains v2. The v12 path requires current scheduling, team, job, task, visit, client-contact, customer, and communication preparation scopes plus company-wide calendar, client, inbox, project, task assignment/edit/view, and team-view authority. It has no commit, apply, assign, reschedule, calendar-write, draft-write, or send sibling.
+
+The application reauthorizes before the bounded source read and again after deterministic planning. PostgreSQL independently rechecks the exact actor, company, OAuth client/grant/revision/ceiling/labels, permission revision, manifest v18, exposure v12, capability revision, and entity authority. The repository then requires one final same-observation source replay immediately before return. The source resolves exactly one current crew member, every affected authorized task and booked site visit, current candidates, roles, same-task completion history, work hours, time off, schedule conflicts, project continuity, and exact recipient lineage.
+
+TypeScript finds the highest complete same-day coverage plan, then minimizes distinct replacement people and assignment changes before preferring project continuity, more same-task history, lower existing workload, and stable identity order. A replacement needs overlapping role evidence; a task also needs same-task completion history. Site visits explicitly use `no_requirement_recorded`. None of this is licence or certificate evidence. Remaining work takes the earliest conflict-free safe reschedule option; anything else is returned as uncovered. Internal and client text remains an ephemeral exact-recipient preview and states that nothing has changed yet.
+
+The result exposes zero assignment, task, site-visit, calendar, OPS/provider-draft, message, and delivery writes. Stable source, proposal, draft, and preview hashes make unchanged replay comparable. OPS-Web implementation `464a8cbf42b515ff4845852ab4f566366874ce14` is contained by pushed main commit `1ea480b0e38d3a1b920395cbe4c91309901659b6` and no-code deployment carrier `2a086736ee7bad081caf6cdf753094b3f35967af`; Vercel deployment `7sgYzredXDaeHfJGK3oEQcSHCrYk` completed successfully at `2026-09-04T04:05:34Z`. Production database ledger `20260904033119_agent_crew_callout_recovery_preview` is applied. Public production metadata remains read-only v2, v12 has zero clients and grants, and no authenticated external-host acceptance or customer-live mutation authority exists. Exact contract and release evidence: `specs/2026-09-03-ops-mcp-crew-callout-recovery-vertical.md`.
+
+### MCP Canpro control-room task vertical v13 (production-deployed, dormant)
+
+The eleventh Invisible Office vertical proves one complete consequential loop without creating a Canpro-specific code path. An assistant starts with the existing operational overview and work queue, reads one exact task context, and calls `prepare_dispatch_confirmation_task` only for the earliest current `confirmation_required` schedule item. PostgreSQL resolves the tenant's exact active `unacknowledged-dispatch-follow-up` policy and produces one high-priority, immutable internal-task proposal. Tenant, actor, policy, task type, title, assignee, approver, priority, and retention are server-owned.
+
+Manifest `2026-09-03.capability-manifest.v19` re-mints v18. Dormant exposure `2026-09-03.mcp-exposure.v13` is additive to v12 and adds only the prepare tool under consent catalogue v8. Active production remains immutable read-only v2. The prepare path requires six exact read/prepare scopes plus current `agent.review`, project-view, and task-view/create/assign authority. The database independently binds current actor, tenant, client, grant, ceiling, labels, permission revision, policy revision, source version, and three tenant-local OPS proof references.
+
+Preparation persists one private run, three bounded evidence references, one change set, one pending `approve_dispatch_confirmation_task` queue action, and one persistent notification. It creates no task and changes no source row. The queue presents the exact sealed preview; editing, autonomous approval, and bulk approval are prohibited. Jackson's exact approval invokes the shared domain commit contract, which reauthorizes, locks and consumes the confirmation once, replays policy/source priority and version, calls the canonical OPS task-creation RPC, independently reads the task back, records a truthful receipt, and resolves the notification in one transaction. Identical replay returns the receipt; drift, stale approval, changed idempotency, double-use, or failed task creation rejects or rolls back atomically.
+
+The minimal company policy table is generic and versioned; the migration contains no Canpro row or identifier. It stores document ids, versions, hashes, exact rule fields, approver/assignee, and retention—not raw SOP bodies. Structured evidence supports legal hold, operator redaction, expiry redaction, and durable tombstones. No retention schedule is installed. Business text remains marked untrusted and cannot change policy or authority.
+
+This phase reuses the established overview, queue, task, approval, notification, mutation, audit, confirmation, and receipt foundations and does not duplicate Phase 10 crew recovery. It exposes no free-form SQL, accounting scope, QuickBooks action, provider call, message delivery, financial mutation, or browser automation. Source migration `20260904070000_agent_dispatch_confirmation_task.sql` is production ledger `20260904222406_agent_dispatch_confirmation_task`; OPS-Web production main `6a2a7c94b0ca64b207d8ab035db30f77d2311342` is live through Vercel deployment `dpl_7o1YGSZ79cyBiQxWaag9dgoTPL1j`. Production has no policy seed, v13 client or grant, exposure activation, host acceptance, schedule, or customer-live action. Public MCP remains read-only v2. Full contract and release proof: `specs/2026-09-04-ops-mcp-canpro-control-room-task-vertical.md`.
+
+
+## Invisible Office Phase 12 exact customer/opportunity updates
+
+**Release boundary:** Jackson approved production migration and activation. Both database migrations are installed; activation code is READY in production at `app.opsapp.co`, with the exact 21-scope discovery response and unauthenticated HTTP 401 boundary verified. Existing grants remain pinned; new prepare authority requires signed-in OPS consent and each business change requires exact approval.
+
+Approved `prepare_customer_update` adds one evidence-backed existing-opportunity preview (title, description, owner, follow-up reminder), optionally linked customer notes. Exposure v14 contains the 34 established reads plus this prepare tool; commit remains exclusively inside the existing OPS approval queue. Current named actor, company, scopes, permissions, source, policy and exact displayed seal are rechecked by service-only atomic RPCs. v20 read calls reauthorize the identical principal under preserved v8 read contracts; no credential or scope changes occur. New registrations use v14/v9; old grants retain their scopes. See [full contract and release proof](specs/2026-09-04-ops-mcp-customer-opportunity-updates.md).
 
 ## Task scope and composition RPCs (2026-09-01)
 
