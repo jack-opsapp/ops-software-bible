@@ -314,6 +314,19 @@ event evaluator from recording its result. Already acknowledged components do
 not replay on retry. Phase C disabled is an explicit durable skip for all four
 components.
 
+Message and appointment context has a stricter shape than durable lifecycle
+history. An intentional `legacy_*` projection without `provider_message_id`
+remains valid historical/audit evidence, but it cannot be represented as a
+`NormalizedEmail` or `PhaseCEventMessage` and is excluded from those runtime
+message collections. The same shape on an ordinary event still fails closed.
+The current `required_event_id` must be projected and message-backed, and every
+included event must still resolve one exact activity whose mailbox, provider
+message, provider thread, direction, and recipient identities agree. This
+compatibility rule prevents intentional `legacy_thread_email` projections from
+blocking a later exact event without weakening the current-event or
+message-identity trust boundaries. The 2026-09-05 repair is local-only in
+OPS-Web commit `ff9af50af`, pending release and controlled queue replay.
+
 **Release state (2026-08-21):** the migration and its two foreign-key index
 follow-ups are applied and verified in production. OPS-Web commit `6b69551a` is
 deployed READY at `https://app.opsapp.co`; the deployment returned HTTP 200 and
