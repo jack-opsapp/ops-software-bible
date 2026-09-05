@@ -4290,9 +4290,9 @@ This phase reuses the established overview, queue, task, approval, notification,
 
 ## Invisible Office Phase 12 exact customer/opportunity updates
 
-**Release boundary:** implementation and local verification complete; dormant code deployed and verified. The exact production database migration is unapplied pending Jackson's approval after automatic review rejection. This workflow is not activated.
+**Release boundary:** Jackson approved production migration and activation. Both database migrations are installed; activation code is READY in production at `app.opsapp.co`, with the exact 21-scope discovery response and unauthenticated HTTP 401 boundary verified. Existing grants remain pinned; new prepare authority requires signed-in OPS consent and each business change requires exact approval.
 
-Dormant `prepare_customer_update` adds one evidence-backed existing-opportunity preview (title, description, owner, follow-up reminder), optionally linked customer notes. Exposure v14 contains the 34 established reads plus this prepare tool; commit remains exclusively inside the existing OPS approval queue. Current named actor, company, scopes, permissions, source, policy and exact displayed seal are rechecked by service-only atomic RPCs. v20 read calls reauthorize the identical principal under preserved v8 read contracts; no credential or scope changes occur. Active production remains read-only v2. See [full contract and release proof](specs/2026-09-04-ops-mcp-customer-opportunity-updates.md).
+Approved `prepare_customer_update` adds one evidence-backed existing-opportunity preview (title, description, owner, follow-up reminder), optionally linked customer notes. Exposure v14 contains the 34 established reads plus this prepare tool; commit remains exclusively inside the existing OPS approval queue. Current named actor, company, scopes, permissions, source, policy and exact displayed seal are rechecked by service-only atomic RPCs. v20 read calls reauthorize the identical principal under preserved v8 read contracts; no credential or scope changes occur. New registrations use v14/v9; old grants retain their scopes. See [full contract and release proof](specs/2026-09-04-ops-mcp-customer-opportunity-updates.md).
 
 **End of Document**
 

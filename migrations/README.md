@@ -292,3 +292,10 @@ md5-verified row-by-row; 4 came from local checkouts (the 3 empty-ledger 0604 fi
 0527 file, cross-checked across 42 identical working copies). The six 2026-08-07 google-calendar migrations and
 `20260807152233` carry their original applied definitions — in particular `enqueue_google_calendar_sync()` here is
 the pre-booking-gate version, later replaced by `20260810194251_site_visit_booking.sql`.
+
+## Invisible Office Phase 12 release and activation — 2026-09-05 UTC
+
+- `20260905033402_agent_customer_opportunity_update.sql` — exact OPS-Web source `20260904233000_agent_customer_opportunity_update.sql`; 77,521 bytes, MD5 `2b6326f6bc1c63706c9b20d0b1cdfa41`, SHA-256 `e478142143fe9ebde253a1231cba34255a8d9757556187a6f324677c981831b2`.
+- `20260905034603_agent_customer_update_oauth_activation.sql` — exact OPS-Web source `20260905033621_agent_customer_update_oauth_activation.sql`; 11,528 bytes, MD5 `0b90bfba5c959e281a502efeb3e757b7`, SHA-256 `b1d8423379a94c2dbf0d0b5b3d694769ac4637a0d8af77f7b409e5533da8bbac`.
+
+Both archives are byte-identical to the committed, locally tested sources and the production ledger statements. Jackson explicitly approved the original migration and enabling write access. The first installs guarded customer/lead preparation and exact OPS approval; the second preserves old read tokens while enabling exact v14/v9 OAuth authority and least-privilege client ceilings. No client, grant, consent, business update, provider message or routine was created by either migration. One technical effect-fingerprint row seals the reviewed business trigger/helper graph. Full proof: `specs/2026-09-04-ops-mcp-customer-opportunity-updates.md`.
