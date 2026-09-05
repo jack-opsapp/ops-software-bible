@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: 2026-08-04
+**Last Updated**: 2026-09-04
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -1701,6 +1701,29 @@ The editor composites every *other* author's overlay as a NON-editable base unde
 
 ---
 
+### Project photo delivery — canonical store + server-side CSV projection (2026-08-31, bug `16d487c4`)
+
+**`project_photos` is the canonical store. `projects.project_images` is a server-maintained projection of it — no client writes that column any more.**
+
+**The bug this replaced.** The iOS save path PATCHed the legacy `projects.project_images` CSV *first*. That UPDATE is gated by the RESTRICTIVE `role_scope_update` policy → `private.current_user_can_edit_project(id)`, which requires admin, `projects.edit = all`, or `assigned` + task membership. A crew member holding `photos.upload` but no `projects.edit` therefore matched **0 rows** — and the client read a 0-row PATCH as *"the project does not exist server-side"*. It then skipped the canonical `project_photos` INSERT (gated only on project **view**, which the same crew member *did* hold and which would have succeeded), marked the tiles failed, and auto-filed a bug claiming a live, undeleted job was absent. Three crew photos ended up recorded nowhere but that phone's local CSV. The drain path had the complementary defect — its CSV PATCH had no write guard at all, so it "succeeded" against 0 rows and cleared `needsSync`. Web uploads (`project-photo-service.ts`) never wrote the CSV at all.
+
+**The client rule, stated plainly: photo delivery requires project VIEW, never `projects.edit`.**
+
+| Object | Contract |
+|---|---|
+| `project_photos_active_project_url_uidx` | Partial unique index on `(project_id, url) WHERE deleted_at IS NULL`. The idempotency arbiter every mirror writer and the outbound reconcilers key on. A 23505 naming it means the server already holds the row — adopt, never park. Migration `cluster_j_01`. |
+| `private.project_images_apply_mirror()` + trigger `zz1_project_photos_mirror_csv` | `AFTER INSERT OR UPDATE OF deleted_at ON project_photos`. Projects active rows into `projects.project_images` and removes tombstoned ones. **SECURITY DEFINER is load-bearing** — the projection must not depend on the uploader holding `projects.edit`, since that dependency *was* the bug. Resolves the legacy `text` `project_id` through `private.project_table_project_id_from_text`. Migration `cluster_j_02`. |
+| `private.project_images_union_guard()` + trigger `zz2_projects_project_images_union` | `BEFORE UPDATE OF project_images ON projects`. Merges any incoming array with the live `project_photos` truth so no writer — including **shipped iOS builds that still PATCH the whole array** — can drop an active mirrored URL or resurrect a tombstoned one. Migration `cluster_j_02`. |
+| `public.project_server_state(p_project_id uuid) → text` | `active` \| `deleted` \| `absent`. Company-scoped (another tenant's row reads `absent`), SECURITY DEFINER, **granted to `anon`** — load-bearing under the Firebase JWT bridge, where the app executes as `anon`. Deliberately reveals deleted-ness to company members: RLS SELECT hides soft-deleted rows from everyone, so this RPC is the only way a device can learn a deletion happened. No JWT/company ⇒ `absent`, never an error. Migration `cluster_j_03`. |
+
+Trigger naming follows the table convention — `trg_project_photos_00_write_guard` fires first, `zz1_`/`zz2_` last. The projection write bumps `projects.updated_at` via `update_projects_timestamp`, which is **desired**: realtime/delta then propagates the CSV to every device.
+
+**Client consequences (iOS).** `ImageSyncManager.deliverPortalMirror` is the single chokepoint for portal delivery and the single place a delivery failure is classified or filed. It inserts canonically first, then — only on a *permanent* rejection — probes for the truth instead of inferring it: a visible row means an edit refusal (filed as `PHOTO_PORTAL_INSERT_REFUSED`, queued); an invisible row goes to `project_server_state`, where `active` = held-not-shared (no bug — a permission state, not a defect), `deleted` = tombstone applied locally, and `absent` = filed as `PROJECT_ROW_MISSING` only after the create barrier agrees. A probe that cannot answer queues and concludes nothing. Undelivered rows persist in a durable `pendingPortalMirrors` queue (UserDefaults, deduped by url) that keeps the 30s retry armed, and a once-per-launch backfill sweep re-delivers photos stranded by pre-fix builds. The same three-way verdict backs `SyncOperationReconcilers.projectUpdateRowVerdict` for outbound project updates, so PENDING WORK stops reporting a deletion that never happened (`SyncStatusCopy.PendingWork.editRefusedDetail*`).
+
+**Lead-source vocabulary (bug `44db2ea4`, same wave).** `opportunities_source_check` permits exactly `referral, website, email, phone, walk_in, social_media, repeat_client, voice_log, other`. `ClientLeadAutocreate.permittedSources` is the client mirror and `makeInlineLeadDTO` is the single constructor every inline "New Lead" mini-form builds through; unknown values clamp to `other`, the standing contract for client-created leads. The BOOK VISIT / log-activity forms previously sent `log_activity`, which is not in the list — every such create had failed since the code shipped (prod holds zero rows with that source). **If a migration ever changes the constraint, the client mirror changes in the same commit.**
+
+---
+
 ### 25. CalendarUserEvent (Supabase-Backed)
 
 **File**: `DataModels/Supabase/CalendarUserEvent.swift`
@@ -2383,7 +2406,35 @@ Migration `20260818014340_project_tasks_returning_visibility.sql` (applied to pr
 
 **Parity evidence.** 1,383 task × user comparisons on live data (account owner + two crew members; every task of the operator company including soft-deleted rows, plus 300 foreign-company rows): 0 verdict mismatches between the by-id and row-based functions, re-run green post-apply. Live probes: the failing insert echoes its row; soft-deleted tasks remain invisible; owner-visible live rows unchanged.
 
-**Kept / unchanged.** The by-id functions remain for their existing callers (`persist_task_mutation_notification_as_system`, `private.agent_user_can_access_entity`). Shipped-client audit: iOS task updates and soft-deletes are minimal-returning (no RETURNING evaluation), and web does not write `project_tasks` via PostgREST — so the row-based `deleted_at IS NULL` arm cannot regress any live request. A future UPDATE that sets `deleted_at` AND requests representation will (correctly) refuse to echo a row the actor can no longer see — use minimal returning for soft-deletes.
+**Kept / unchanged.** The by-id functions remain for their existing callers (`persist_task_mutation_notification_as_system`, `private.agent_user_can_access_entity`).
+
+> **CORRECTION (2026-09-02).** The shipped-client audit recorded here was wrong on both counts, and its remedy does not work. It read: *"iOS task updates and soft-deletes are minimal-returning (no RETURNING evaluation), and web does not write `project_tasks` via PostgREST … use minimal returning for soft-deletes."* Web **does** write `project_tasks` via PostgREST (`TaskService.deleteTask`, `RecurrenceService.softDelete`), and **minimal returning does not save a soft-delete** — see the next section.
+
+### project_tasks soft-delete — no client role can set `deleted_at` (2026-09-02)
+
+Migrations `20260902160624_soft_delete_project_task_rpc.sql` + `20260902161850_soft_delete_rpc_service_role_revoke.sql` (applied to prod, mirrored in `migrations/`). Web bug found 2026-09-01 during TASK GROUPS Phase 4 verification: deleting a task in OPS-Web returned PostgREST 403, the row stayed live, and nothing was shown to the user.
+
+**The trigger is ACL_SELECT, not `RETURNING`.** Postgres attaches SELECT policies as `WITH CHECK` options to **any** UPDATE whose target relation requires `ACL_SELECT` — and `WHERE id = $1` requires it. `role_scope_read` is false for a row with `deleted_at` set, so the post-update row fails the check and the statement is refused `42501`. `Prefer: return=minimal` changes nothing, because the read permission is demanded by the WHERE clause, not by the echo. Proven on prod by rolled-back probe as an admin holding `tasks.edit all`:
+
+| Statement (role `authenticated`) | Result |
+|---|---|
+| `update project_tasks set updated_at = now() where id = $1` | accepted |
+| `update project_tasks set deleted_at = now() where id = $1` (no RETURNING) | `42501 role_scope_read` |
+| `with s as (update … set deleted_at = now() where id = $1 returning 1) select count(*) from s` | `42501 role_scope_read` |
+
+Before 2026-08-18 the by-id policy re-read the **old** row (`deleted_at` still NULL) under the statement snapshot, which is the only reason soft-deletes ever passed. Fixing the self-lookup removed that accident.
+
+**The fix — new capability, no RLS change.** Soft-delete moves into `SECURITY DEFINER` functions owned by the table owner, so the `WITH CHECK` never applies, and authorization is enforced explicitly by `private.user_can_edit_task` — the same ladder `role_scope_update` expresses. No policy was edited and no read was weakened.
+
+- `private.soft_delete_project_task_for_actor(p_actor_user_id, p_task_id)` — company-scoped lookup (a foreign or unknown id is refused `42501`, never disclosed as "already deleted"), idempotent when `deleted_at` is already set, sets `ops.task_mutation_actor_id` around the write so the automation triggers attribute the actor. postgres-only ACL.
+- `public.soft_delete_project_task(p_task_id uuid) → jsonb` — resolves the actor from the JWT, refuses any `auth.role()` other than `anon`/`authenticated`, EXECUTE to `anon` + `authenticated`. Returns `{ok, deleted, task_id, deleted_at}`; `deleted:false` means it was already gone.
+- `private.soft_delete_task_recurrence_for_actor` / `public.soft_delete_task_recurrence(p_recurrence_id uuid) → jsonb` — retires the template **and** its future, still-active occurrences in one transaction, skipping occurrences the actor may not edit (as row security skipped them before). Returns `{ok, recurrence_id, recurrence_deleted, deleted_count, skipped_count}`. The former two-step PATCH deleted the template and then stranded every occurrence on the same refusal.
+
+Row triggers (schedule version, parent-lifecycle guard, project team recompute, agent read revisions, reminders) fire exactly as they did for the PATCH. Behavioral contract: `ops-web tests/sql/soft-delete-project-task-rpc-contract.sql`, wired into the CI migration-contract job — it reproduces the refusal on the pre-migration shape before applying the migration, then exercises every branch of both RPCs.
+
+**Still open: the iOS twin.** `TaskRepository.softDelete` (`OPS/Network/Supabase/Repositories/TaskRepository.swift`) still PATCHes `deleted_at` directly and is refused the same way; reached from the `OutboundProcessor` `projectTask` delete lane. No parked `projectTask` **delete** op appears in `analytics_events` in the 20 days before 2026-09-02, so it is a latent break rather than an observed loss. Filed as bug `db15baf2`; the fix is to call `public.soft_delete_project_task`.
+
+**Rule for this class.** Any table whose read policy hides soft-deleted rows cannot have `deleted_at` set by a client role through PostgREST, with or without RETURNING. Route those soft-deletes through a definer RPC that re-states the authorization ladder — never by relaxing the read policy.
 
 ### clients + projects read policies — same row-based RETURNING fix (2026-08-19)
 
@@ -2474,6 +2525,101 @@ routes the `/api/setup/progress` privileged write through the sub-resolving
 
 All RLS policies use these helpers (e.g. `private.get_current_user_id()`,
 `private.get_user_company_id()`) instead of `auth.uid()` directly.
+
+### Index-Expression Execution Contract on `public` Writes (incident 2026-09-03)
+
+**Postgres evaluates an index expression with the privileges of the writing role, and the
+requirement is transitive through every `SECURITY INVOKER` callee.** So an expression index
+on a `public` table may only call `private` functions that `anon`, `authenticated`, and
+`service_role` can all execute — including functions the index definition never names, but
+which the named function calls.
+
+**What went wrong.** `20260829063450_agent_team_sources.sql` created the partial expression
+index `public.idx_users_agent_team_directory_v1` on `public.users`, whose key expression
+calls `private.agent_p2_optional_canonical_text(...)`. That function, and its nested callee
+`private.agent_prompt_text_is_safe(...)`, granted `EXECUTE` only to `postgres` — while their
+two siblings in the same family (`agent_trim_discovery_display_text`,
+`agent_discovery_unicode15_text_is_supported`) were already granted to the three API roles.
+From 2026-08-29 21:14 UTC every non-`postgres` `INSERT` into `public.users`, and every
+`UPDATE` that could not be applied HOT, failed `42501 permission denied for function
+agent_p2_optional_canonical_text`. Zero users were created for five days. The migration's
+own postflight asserted index validity, key count, collation, and predicate — but never the
+execution contract. Repaired by
+`ops-web/supabase/migrations/20260903200000_users_team_directory_index_execute_contract.sql`,
+which grants the two validators and adds the generalized postflight below so the class
+cannot ship again.
+
+**Canonical check.** This recomputes, from the live catalog, every `private` function
+reachable from a `public` index expression and returns any the API roles cannot execute. It
+must return **zero rows**. It descends only through `SECURITY INVOKER` functions, because a
+`SECURITY DEFINER` boundary switches execution to the owner and its callees no longer need
+caller privileges.
+
+```sql
+with recursive idx as (
+  select pg_get_indexdef(x.indexrelid) as def
+  from pg_index x
+  join pg_class c on c.oid = x.indrelid
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public' and pg_get_indexdef(x.indexrelid) like '%private.%'
+),
+pf as (
+  select p.oid, p.proname, p.prosrc, p.prosecdef
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private'
+),
+reach as (
+  select distinct f.oid, f.proname, f.prosecdef
+  from idx, pf f
+  where idx.def like '%private.' || f.proname || '(%'
+  union
+  select f2.oid, f2.proname, f2.prosecdef
+  from reach r
+  join pf f1 on f1.oid = r.oid and f1.prosecdef = false
+  join pf f2 on f1.prosrc like '%private.' || f2.proname || '(%' and f2.oid <> f1.oid
+)
+select r.proname, pg_get_function_identity_arguments(r.oid) as args
+from reach r
+where not (
+      has_function_privilege('service_role',  r.oid, 'EXECUTE')
+  and has_function_privilege('authenticated', r.oid, 'EXECUTE')
+  and has_function_privilege('anon',          r.oid, 'EXECUTE')
+);
+```
+
+**`SECURITY DEFINER` does not bypass the `EXECUTE` ACL.** The two are orthogonal: Postgres
+checks `EXECUTE` on the function *before* it honours `SECURITY DEFINER`, so marking an
+index-expression helper definer fails with the identical `42501`. Proven live in this
+database — `private.current_user_is_admin()` has `prosecdef = true`, yet evaluated under
+`set local role service_role`, `has_function_privilege(...,'EXECUTE')` returns false. A
+`SECURITY DEFINER` function inside an index expression is also a documented
+privilege-escalation hazard. **The correct pattern for privileged work reached from a write
+path is a `SECURITY DEFINER` *trigger* function owned by `postgres`** — exactly what
+`private.bump_agent_read_domain_revision` (installed by the same migration, on this same
+table) already does, which is why that trigger never blocked a write.
+
+**HOT updates mask this class of bug — a partial outage is the expected signature, not
+evidence against the diagnosis.** `pg_stat_user_tables` for `public.users` at incident time:
+`n_tup_upd = 1444`, `n_tup_hot_upd = 1340` (**92.8 % HOT**). A HOT update writes no index
+entries, so the expression is never evaluated and the ACL is never checked. HOT is impossible
+when an indexed column changes — and on `public.users` that includes `auth_id`,
+`firebase_uid`, `first_name`/`last_name` (the key expression), `company_id`, `is_active`,
+`deleted_at`, and `onesignal_player_id`. **Every identity-repair write is therefore guaranteed
+non-HOT and guaranteed to fail, while a bare `updated_at` bump usually succeeds.** The
+failures land precisely on the writes that matter, so the surface looks intermittent while
+the underlying grant is unconditionally broken. The six `SECURITY DEFINER` functions owned by
+`postgres` that write `public.users` (`create_company_for_owner`,
+`create_company_for_owner_by_id`, `heal_user_identity`, `join_user_to_company`,
+`replace_user_role_as_system`, `update_company_setup_for_member`) evaluate the expression as
+`postgres` and kept working throughout — which is the other half of why the outage looked
+partial.
+
+**Client-side corollary.** A write path that discards a rejected write's error and answers
+success turns this into silent corruption of client belief. `/api/auth/sync-user` did exactly
+that — it logged the failed `users` update and returned `200` carrying a JavaScript merge of
+the values the database had refused — so a caller proceeded holding an `auth_id` /
+`firebase_uid` the database never stored, and stayed permanently unresolvable under RLS.
+Both that route and `/api/setup/progress` now read back or check every write and fail loudly.
 
 ### Expense / Payment / Opportunity RLS Hardening (2026-05-31)
 
@@ -3374,7 +3520,28 @@ Live schema verified 2026-05-12 in project `ijeekuhbatykdomumfjx`: `deck_designs
 
 Live data verified 2026-05-20 in project `ijeekuhbatykdomumfjx`: active `deck_designs` rows exist for project-attached designs, and some legacy `drawing_data` payloads omit the top-level `surfaces` key while still carrying valid vertices, edges, footprint, config, levels, and level connections. Active rows also store `drawing_data.footprint.isClosed` as numeric `0`/`1`, not strict JSON booleans. Inbound iOS decoders must treat missing optional/defaulted `DeckDrawingData` fields as empty/default values and tolerate legacy numeric/string/strict boolean values for deck drawing booleans. A single legacy row must not cause the full `[SupabaseDeckDesignDTO]` pull to fail, because a fresh install depends on that inbound pass to repopulate deck designs.
 
-Embedded iOS designer exit-save contract added 2026-07-03: the project DeckBuilder calls `flushBeforeExit()` when the operator closes the designer, when the view disappears, and when the app moves inactive/background. That path persists the current `DeckDrawingData` into SwiftData, queues the `deck_designs` sync operation, and triggers the sync engine immediately. The 2-minute autosave timer is crash-recovery only; it is not the primary save-on-exit mechanism.
+Embedded iOS designer durability contract (rewritten 2026-09-04, bug `9f4aeaf8`; supersedes the 2026-07-03 exit-save note and the `88edd771` contract in `07_SPECIALIZED_FEATURES.md`). One contract, four rules:
+
+1. **Every mutation of `drawing_data` crosses a save boundary.** Canvas settings (measurement system, snapping, snap radius, grid) and the vinyl sheet's settings, order mode, roll length and ordered-snapshot merge all route through view-model setters that schedule a coalesced write. A two-way SwiftUI binding into `drawingData` is banned — that shape is what let a whole session's work sit in RAM until exit.
+2. **Autosave is unconditional.** Every drawing, new or existing, autosaves on a 120-second tick from the moment the editor opens. There is no prompt and no preference; the opt-in alert and its settings toggle were deleted. The tick writes whenever the encoded drawing differs from what is on disk, so config-, label- and material-only sessions are persisted. A blank canvas that was never inserted still creates no orphan row (bug `14555d2c`).
+3. **A durable queue record exists mid-session.** The autosave tick, app backgrounding, and editor exit each record the latest revision with `deferPush: true` — a local queue write with no network I/O, deduplicated by payload identity so an idle editor enqueues nothing. Only exit additionally triggers the push. Before this, a clean editor exit was the ONLY path that ever put a deck edit on the wire, so a crash, an OOM kill or a force-quit lost the whole session server-side.
+4. **Inbound conflicts resolve on content, not on clocks.** See the `deck_designs` client contract below.
+
+**`deck_designs` client contract (2026-09-04).** `version` is now client-incremented on every enqueued revision; it was inert since the table was created (every production row read `1`) and there was therefore no content-based conflict signal at all. `DeckDesign.syncedDrawingJSON` is a **local-only** merge base with no server column — the `drawing_data` payload the server and this device last agreed on. It moves only when a push is confirmed (`DeckDesignServerMerge.recordConfirmedPush`, inside the same local transaction that completes the outbound operation, on both the `OutboundProcessor` and `DataActor` paths) or when an inbound snapshot's drawing is accepted. A local edit never moves it; the first local write to a row that has no recorded base seeds it from the payload that write replaces.
+
+An inbound snapshot may replace `drawing_data` / `title` / `thumbnail_url` / `version` only when the local row holds nothing the server has not confirmed. The guard this replaced compared the server's `updated_at` — written by the `deck_designs_set_updated_at` trigger AFTER the push — against a device-clock `updatedAt` written BEFORE it, so the server always looked newer than the local row that produced it and the protective subtraction effectively never ran. A null or unparseable server timestamp no longer erases the local one, which used to disable the stale guard on that row permanently.
+
+**No view may call `applyServerSnapshot` directly.** Every inbound deck merge goes through `DeckDesignServerMerge` (self-repair fetches) or a processor branch that subtracts `SyncFieldGuard.protectedFields`. `DeckDesignServerMerge.pendingFields` delegates to `SyncFieldGuard` rather than matching `status == "pending"` alone, so in-flight, just-completed, failed and parked operations all protect their fields. A row still holding unconfirmed content stays flagged `needsSync` whatever a merge decides.
+
+**Recovery sweep.** `SyncEngine.enqueueStrandedDeckDesigns()` (formerly `enqueueStrandedDeckDesignLinks`) selects on unpushed content rather than on having a `project_id`, so lead decks and standalone sketches are swept, and it records a full revision — drawing, title, version, thumbnail, plus the project link only when non-nil. It previously pushed `project_id` + `updated_at` alone, which bumped the server timestamp via the trigger without delivering any geometry.
+
+**Observability.** A failed deck save files a deduped `bug_reports` row through `AutoBugReporter` (`screen = DeckBuilder.save`), carrying the design id, the store's error, free disk and whether the design was persisted — one row per affected design per session, never from a test process. The only previous trace was a console `print`, which is why this loss class was invisible in production.
+
+**Server-side geometry-loss log (applied 2026-09-04, ledger `20260904183351` + `20260904183417`).** The client half above only sees saves that *fail*; a save that succeeds while carrying less geometry than it replaced left no trace at all. `public.deck_design_geometry_regressions` now records every `deck_designs` write that reduces a deck's vertex or edge count, via the `after update of drawing_data` trigger `deck_designs_log_geometry_regression` (counting function `private.deck_design_geometry_counts`, which sums BOTH the root arrays and per-level arrays — counting only the root would make every multi-level deck permanently invisible to the log).
+
+It is **diagnostic only and blocks nothing**: `clearDesign()` is a legitimate user action, so a hard "refuse to empty a deck" rule would break a real flow. The trigger swallows its own errors and returns `null`, so the log can never fail a user's save. If the log later shows emptying that no user initiated, escalate to a block *with that evidence*.
+
+Client grants are `SELECT` only. The original migration revoked `insert, update, delete`, but Supabase's default privileges also hand `anon`/`authenticated` `TRUNCATE`, `REFERENCES` and `TRIGGER` on every new public table — and **`TRUNCATE` bypasses RLS entirely**, so a client could have erased the evidence this table exists to preserve. `20260904183417` reduces both roles to `SELECT`. Treat this as the general rule for any new diagnostic/audit table: `revoke all` then grant back exactly what is intended, and verify with `information_schema.role_table_grants` rather than assuming the revoke list was complete.
 
 Phase 1 standalone OPS Decks contract added 2026-06-26: standalone sketches reuse `deck_designs` with `company_id` scoped to the provisioned deck-only company and `project_id = nil`. The OPS Decks app must not create a project shell just to save a deck. If the operator later upgrades into full OPS and creates a project, the existing repair path attaches `project_id` to the saved `DeckDesign` row. `drawing_data` remains additive and backward-decodable; future framing, parcel/zoning, code overlay, rendering, roofing, wall/opening, railing, stair, and material blocks must round-trip even before those systems are active.
 
@@ -6282,6 +6449,288 @@ The application release at commit `d5befc466c7dbf3d67b76cde698c9a9aa4df719c` als
 The live ChatGPT registration-path canary posted exactly `https://chatgpt.com/connector_platform_oauth_redirect` and received HTTP 201 with `token_endpoint_auth_method=none`, grant types `authorization_code` and `refresh_token`, response type `code`, the same exact callback, and the canonical twenty-scope string. The canary received no grant and was guarded-disabled immediately. This is DCR compatibility evidence only; no ChatGPT authorization response, token, tool list, or tool call was accepted.
 
 **Legacy identifier note.** The repair of the Task 13 read RPCs (ledger `20260818174706`, `20260818175549`) added `private.agent_uuid_from_legacy_text(text)` — a shape-guarded immutable cast. It exists because `public.projects.id` is `uuid` while eleven child tables (`activities`, `estimates`, `project_notes`, `project_photos`, `project_team_members`, `site_visits`, and others) store `project_id` as `TEXT`, and `projects.opportunity_id` is `TEXT` alongside the `uuid` `projects.opportunity_ref`. Any new SQL joining these columns must cast explicitly; the wave's Task 13 reads did not, and failed at runtime the first time they executed.
+
+## Task scopes — task groups (2026-09-01)
+
+A task may carry multiple **scopes** — checkable units of work inside one visit. The visit (`project_tasks` row) remains the schedulable unit; scopes never carry dates, crew, or status beyond open/complete. Design: `specs/2026-09-01-task-groups-design.md`. Origin: `bug_reports` `b99a7659-d087-46ef-9578-94bcf0e10c0f`.
+
+The wave is **additive-only**: one new table plus one defaulted column on `companies`. `project_tasks` gains no column and no existing column changes meaning, so shipped iOS builds that predate scopes keep reading the old shape correctly. `project_tasks.task_type_id` continues to mean *the primary scope's type* — what every legacy surface (calendar color, lists, sync, reporting) already reads.
+
+### `public.task_scopes`
+
+Source: `migrations/20260901184459_task_scopes_table.sql`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | `uuid` primary key, **no default** | Caller-supplied. iOS generates with `UUID().uuidString` and must lowercase it. `private.insert_task_scopes` falls back to `gen_random_uuid()` when the payload omits it. |
+| `company_id` | `uuid not null` | Tenant scope. No FK declared; the guard trigger enforces equality with the parent task's company. |
+| `task_id` | `uuid not null` → `public.project_tasks(id)` `on delete cascade` | The visit this scope belongs to. |
+| `task_type_id` | `uuid not null` → `public.task_types(id)` | The scope's identity — its display name, color, and materials vocabulary. |
+| `note` | `text` null | Free detail ("20 ft", "upper deck"). Conversion stores the estimate line name here. |
+| `display_order` | `integer not null default 0` | Order within the visit. |
+| `completed_at` | `timestamptz` null | Null = open. |
+| `completed_by` | `uuid` null | Actor who checked it off. Null in service contexts, where `private.get_current_user_id()` returns null. |
+| `source_line_item_id` | `text` null | Estimate lineage, same convention as `project_tasks.source_line_item_id`. Preserves the provenance needed to partition materials per scope later without a migration. |
+| `split_to_task_id` | `uuid` null → `public.project_tasks(id)` | Set when this scope was split off into its own task; the scope row is then soft-deleted. **No write path ships yet** — the split flow is iOS Phase 3 work; the column is reserved by the spec (§4). |
+| `created_at` / `updated_at` | `timestamptz not null default now()` | `updated_at` maintained by the `update_task_scopes_timestamp` trigger. |
+| `deleted_at` | `timestamptz` null | Soft delete, per the repo-wide strategy. |
+
+Indexes: `task_scopes_task_id_idx` on `(task_id)` partial `where deleted_at is null` (the scope-list read), and `task_scopes_company_id_idx` on `(company_id)`.
+
+**Primary scope mirrors `project_tasks.task_type_id`.** For a grouped task the primary scope also exists as a `task_scopes` row, so rendering is uniform: a task's scope list is exactly its live `task_scopes` rows. `private.insert_task_scopes` enforces this — the first scope's `task_type_id` must equal the task's `task_type_id`, else `scope_primary_mismatch` (`23514`).
+
+### RLS and guards
+
+Two policies, both in the table migration. Anon-role compatible, since the iOS app runs as `anon`.
+
+- **`scope_read`** (SELECT) — a scope is visible exactly when its parent task is, delegating to `private.current_user_can_view_task_row(company_id, project_id, team_member_ids, deleted_at)`. No independent visibility rule to drift.
+- **`scope_write`** (ALL) — company isolation (`company_id = private.get_user_company_id()`) **and** the parent task's own edit rule: admin, or `tasks.edit` resolved scope-aware (`all` → any live task; `assigned` → actor on `team_member_ids` or in the project). `WITH CHECK` re-asserts company isolation. No new permission grant was introduced; nothing is registered in the client permission catalog.
+
+`private.guard_task_scope_refs()` fires `before insert or update of task_id, task_type_id, company_id` as trigger `task_scopes_guard_refs`, raising `scope_parent_task_missing` (`23503`) for a missing or soft-deleted parent, `scope_company_mismatch` (`42501`) when the row's company differs from the parent task's, and `scope_task_type_invalid` (`23503`) for a type that is not a live type of the same company. It mirrors `private.guard_project_task_task_type_reference`.
+
+Trigger `task_scopes_bump_agent_task_revision` fires after every insert, update, and delete, calling `private.bump_agent_read_domain_revision('tasks', 'company_id')` — scope writes advance the same agent read-domain freshness fence as task writes.
+
+### Status law
+
+Source: `migrations/20260901184710_task_scope_status_law.sql`. Trigger `project_tasks_stamp_scopes_on_completion` fires `after update of status` on `project_tasks` and runs `private.stamp_scopes_on_task_completion()`.
+
+When a task transitions **into** `completed` by any write path — the RPC, a direct web update, or an agent — every live open scope is stamped in the same transaction: `completed_at = coalesce(completed_at, now())`, `completed_by = coalesce(completed_by, private.get_current_user_id())`. This is the `COMPLETE ALL` law expressed in the database, so no client can produce a completed task with open scopes. Reopening a task leaves existing stamps in place; scopes are reopened only one at a time through `set_task_scope_completion`. Cancelling a task does not touch scope rows (historical record).
+
+### `companies.task_groups_conversion_enabled` — rollout gate
+
+Source: `migrations/20260901191611_conversion_grouped_tasks.sql`. `boolean not null default false`, added `if not exists`, carrying a column comment that states its purpose.
+
+This is a **rollout control, never a product setting** — no UI, no per-user toggle, flipped per company by SQL only. It exists because grouping is invisible to a crew running a build that predates scope rendering: a converted project would silently show the primary scope and hide the rest. The flag is turned on for a company only after that company's crew builds render scopes. When false — every company today — both conversion RPCs behave byte-identically to the legacy path (one task per LABOR line item). Manual group creation on a new client is a human choice and is not gated. Conversion behavior: `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Conversion grouping — sold line items into visits (2026-09-01).
+
+### Invariants
+
+- **A single-type task carries zero scope rows.** Grouping is opt-in per task; the legacy shape is untouched. Conversion produces either 0 scope rows (single-scope visit, which keeps the line name as `custom_title`, exactly as before) or the full set for a multi-scope visit — it never writes exactly one.
+- **A grouped task's scope set includes its primary.** So a grouped task has ≥ 2 live scope rows. A task reduced to one live scope by a split is still valid and renders as a plain single-type task; `create_task_with_event` also accepts a one-element `scopes` array, so exactly one row is legal, just never produced by conversion.
+- **Split-off sets `split_to_task_id` and soft-deletes the scope**, so the group's live scope list shrinks while the audit trail survives. Write path not yet shipped.
+- **Scopes never carry schedule, crew, or independent status.** Work needing independent scheduling is a separate task, not a scope (the electrician rough-in/finish case in the spec).
+- **Materials and inventory stay task-level** in this build; `source_line_item_id` preserves per-scope lineage for a later partition.
+
+Verified in production 2026-09-01: both policies, all three table triggers, the status-law trigger on `project_tasks`, and all three indexes are live; `task_scopes` holds 0 rows and 0 companies have the gate enabled. RPC contracts: `04_API_AND_INTEGRATION.md` § Task scope and composition RPCs (2026-09-01).
+
+## Customer identity & memberships (production live 2026-09-02 UTC)
+
+Ledgers `20260902010242_customer_identity_foundation` and `20260902044746_customer_identity_profile_read` (both mirrored byte-exact in `migrations/`; ledger `md5(statements[1])` equals each file minus its trailing newline). Storage and system RPCs for the OPS customer identity broker — design `specs/2026-09-01-public-api-customer-identity-design.md`, plan `specs/plans/2026-09-01-public-api-identity-P1-plan.md` Task 2. Consumed by `ops-web/src/lib/customer-identity/*` (branch `feat/public-api-identity-p1`, not yet deployed). Every table lives in `private` with ALL privileges revoked from `public, anon, authenticated, service_role` and RLS enabled with no policies; the only access paths are the `public.*_as_system` SECURITY DEFINER RPCs below, each gated `auth.role() is distinct from 'service_role'` → `42501 access_denied` and granted EXECUTE to `service_role` only. Verified live on apply: zero rows in `information_schema.role_table_grants` for the eight tables, the gate live-fired as role `anon` (`permission denied for function`) and as a definer call without a service claim (`access_denied`), security advisor delta = eight INFO `rls_enabled_no_policy` rows (same class as `private.cron_workload_controls`), performance advisor delta = `unused_index` on the brand-new indexes only.
+
+### Changes to existing tables
+
+| Object | Change |
+|--------|--------|
+| `public.clients` | `clients_id_company_id_key UNIQUE (id, company_id)` — composite FK target so a membership binds an exact company-owned client. |
+| `public.companies.public_handle` | `text NOT NULL`, CHECK `^[a-z0-9]+(-[a-z0-9]+)*$` and length 3–48, unique index `companies_public_handle_key` over **all** rows (deleted companies keep their handle; a handle is never reused, so a customer's saved link can never be captured by a later tenant). Backfilled from the slugified name with `-2`, `-3`, … on collision (64 rows, e.g. `maverick-projects-ltd`, `light-my-career` … `light-my-career-12`, `hydrowodkan-sp-z-o-o`). Trigger `companies_assign_public_handle` (BEFORE INSERT, `private.customer_assign_company_public_handle`) assigns a handle to every new company; `private.customer_public_handle_slug(text)` (NFKD, combining marks stripped, non-alphanumerics collapsed to `-`) and `private.customer_next_public_handle(text, uuid)` (advisory-locked collision loop) are the generators. The handle is the only company identifier a customer ever sees (I4). |
+| `public.clients` trigger `clients_customer_memberships_follow_merge` | AFTER UPDATE OF `merged_into_client_id` (WHEN it becomes non-null). Every live membership on the loser moves to the winner: an existing winner membership absorbs it (taking `active_full` + its evidence when the loser was full), otherwise a copy is inserted; the loser row becomes `state = 'merged'` with `merged_into_membership_id`; one `membership_merged` event per row. Fires from the final step of `execute_client_merge_guarded`. The `sub_client_id` FK is `ON DELETE SET NULL` because the merge hard-deletes duplicate loser sub-clients before re-pointing. |
+| `private.run_scheduled_cron_workload_controlled` | Re-created with the live body plus `'private.customer_identity_dormancy_sweep'` in the command allowlist. |
+
+### Tables (`private`)
+
+| Table | Purpose | Key constraints |
+|-------|---------|-----------------|
+| `customer_identities` | One row per global customer; `auth_subject` = the dedicated customer auth project's `auth.users.id` (project `icjklxkgajefqqbqhqyx`). No company data. | `UNIQUE (auth_subject)`, CHECK uuid shape; `status ∈ active, suspended, erased` with `(status = 'erased') = (erased_at is not null)`; `last_seen_at` drives dormancy (I7); `updated_at` trigger. |
+| `customer_verified_contacts` | Verified channels for an identity. | `channel ∈ email, phone`; `verification_source ∈ otp, guest_claim, staff_attestation`; unique partial index `(channel, normalized_value) WHERE revoked_at IS NULL` (a live verified email belongs to exactly one identity); `(revoked_at is null) = (revoked_reason is null)`; FK identity ON DELETE CASCADE. Values are normalized by `private.agent_normalize_discovery_email`. |
+| `customer_sessions` | Broker sessions (I6). | `session_hash` SHA-256 hex, `UNIQUE`; `network_fingerprint` SHA-256 hex; `absolute_expires_at` (30 d) ≥ `idle_expires_at` (7 d, slid on every resolve); `revoked_at`/`revoked_reason` paired. No plaintext credential is ever stored. |
+| `customer_otp_challenges` | Broker-side OTP send/attempt accounting (I8). | `email_digest` is the broker's keyed HMAC labelled `<kid>:<hex>` (CHECK `^[1-9][0-9]{0,4}:[0-9a-f]{64}$`) — the address is never stored; `attempts`, `max_attempts` (default 5), `expires_at` (10 min), `consumed_at`, `exhausted_at`, `invalidated_at` (superseded by a newer send). Index `(email_digest, created_at desc)`. Design §4 listed an `identity_id` column; it is intentionally absent — the broker records the attempt before the identity exists and the digest cannot be reversed server-side. |
+| `company_client_memberships` | Identity ↔ exact company-owned client (+ optional contact). | Composite FKs `(client_id, company_id) → clients (id, company_id)` ON DELETE CASCADE and `(company_id, sub_client_id) → sub_clients (company_id, id)` ON DELETE SET NULL; `state ∈ active_forward_only, active_full, revoked, merged`; `evidence_kind ∈ none, created_by_identity, on_file_transacted, staff_confirmed, guest_claim` (`none` is the fifth value beyond design §4 — it is the evidence a forward-only match carries); shape CHECKs: live states carry no revocation and no merge pointer, `revoked` requires `revoked_at`, `merged` requires `merged_into_membership_id`, `active_full ⇒ evidence_kind <> 'none'`, `active_forward_only ⇒ evidence_kind = 'none'`, `staff_confirmed ⇒ confirmed_by_user_id`; unique partial index `company_client_memberships_one_live_per_binding (identity_id, company_id, client_id) WHERE state IN ('active_forward_only','active_full')`; indexes by `(identity_id, company_id, created_at desc)`, `(client_id, company_id, created_at)`, `(company_id, sub_client_id)`, `(merged_into_membership_id)`; `updated_at` trigger. |
+| `customer_integrations` | One row per company-website connection. P1 ships `hosted_pages` only. | `public_handle` `^ci_[0-9a-f]{32}$` UNIQUE; `kind ∈ hosted_pages, server_credential, oauth_client`; `allowed_origins text[]` (≤ 16, embed/CORS policy only); `status ∈ active, disabled` paired with `disabled_at`; unique partial index one `hosted_pages` row per company. Seeded for every live company at apply time (55 rows); new companies get theirs on first use through `ensure_customer_hosted_integration_as_system`. |
+| `customer_pairwise_refs` | Pairwise public ref per (identity, integration) (I4). | `UNIQUE (identity_id, integration_id)`, `UNIQUE (public_ref)`, `public_ref` `^cr_[0-9a-f]{32}$`; index by `integration_id`. |
+| `customer_identity_events` | Append-only audit. | `id bigint identity`; `event_type` `^[a-z][a-z0-9_]{2,63}$`; nullable `identity_id`, `company_id`, `session_id`, `membership_id`, `network_fingerprint` (SHA-256 hex); `metadata jsonb` object with CHECK `customer_identity_events_metadata_no_secrets` — refuses top-level keys `code, token, secret, credential, password, hash, cookie, session_value, email, phone`, any `ops_cs_` / `ops_mcp_` / JWT-shaped string, any quoted 6-digit or 64-hex string, and any `@`. No foreign keys (an event outlives what it names). Single writer `private.customer_record_identity_event(...)`; no role holds UPDATE or DELETE. |
+
+### Definer-internal helpers (`private`, never exposed)
+
+`customer_touch_updated_at()` (trigger), `customer_record_identity_event(text, uuid, uuid, uuid, uuid, text, jsonb) → bigint` (raises `22023 customer_identity_event_invalid` on any CHECK failure), `customer_mask_email(text)` (`j***@example.com`; `***` when unknown), `customer_membership_evidence(company_id, client_id, normalized_email) → 'on_file_transacted' | 'none'` (I2: the client's on-file email equals the verified email **and** the company has an estimate in `sent, viewed, approved, changes_requested, converted` or an invoice in `sent, awaiting_payment, partially_paid, past_due, paid` for that client, matched on `client_ref` or legacy `client_id`, `deleted_at is null`), `customer_identity_evidence_for_client(identity_id, company_id, client_id)` (strongest evidence across every live verified email), `customer_identity_verified_emails(identity_id) → text[]` (live verified emails, sorted — the lock order), `customer_membership_candidate_clients(company_id, emails) → uuid[]` (the one definition of "which live clients match", direct or through one live sub-client), `customer_membership_matched_sub_client(company_id, client_id, emails)` (the contact that matched, when it was the contact and not the client), `customer_membership_establish_core(identity_id, company_id)` (one row: the membership when one already binds the pair or exactly one client matched, otherwise nulls plus `candidate_ids` and `emails` so the caller decides — the advisory lock it takes is held for the rest of the transaction), `customer_prune_expired_artifacts()` (challenges 1 day past expiry, sessions 30 days past absolute expiry), `customer_identity_dormancy_sweep()`, `run_customer_identity_dormancy_sweep_controlled()`.
+
+### RPCs (`public.*_as_system`; service_role only; `search_path` pinned `pg_catalog, public, private, pg_temp`)
+
+| RPC | Returns | Behaviour |
+|-----|---------|-----------|
+| `begin_customer_otp_challenge_as_system(p_email_digest, p_network_fingerprint)` | `(challenge_id uuid, allowed boolean, retry_after_seconds int)` | Advisory lock per digest. Refuses (`allowed=false`, `challenge_id` null) when the last send is < 60 s old or five sends exist in the last hour, with `retry_after_seconds` to the moment the next send is possible. Otherwise supersedes open challenges for the digest (`invalidated_at`), inserts a 10-minute challenge and returns `(id, true, 60)`. Shape-invalid inputs → `22023`. |
+| `record_customer_otp_attempt_as_system(p_challenge_id, p_success)` | `(attempts int, exhausted boolean)` or **no row** | No row for unknown, consumed, superseded or expired challenges. A failed attempt increments `attempts`; `exhausted = attempts > max_attempts`, so attempts 1–5 proceed to the auth project and the 6th and later are refused (`exhausted_at` stamped). `p_success=true` consumes the challenge unless already exhausted. |
+| `upsert_customer_identity_as_system(p_auth_subject, p_email)` | `(identity_id uuid, created boolean)` | Normalizes the email (`22023 customer_email_invalid` otherwise), advisory-locks subject and email, inserts or reuses the identity, records the verified email contact with source `otp`. A live contact owned by another identity → `23505 customer_contact_conflict` (never silently moved). Suspended/erased identity → `42501 customer_identity_unavailable`. Stamps `last_seen_at`. |
+| `mint_customer_session_as_system(p_identity_id, p_session_hash, p_network_fingerprint)` | `uuid` | Requires an active identity; 30-day absolute / 7-day idle; duplicate hash → `23505`; prunes expired artifacts. |
+| `resolve_customer_session_as_system(p_session_hash)` | `(identity_id, session_id, status)` — always one row | `status ∈ ok, expired, revoked, unknown`. `ok` slides `idle_expires_at` to `least(now + 7 d, absolute_expires_at)`, stamps session and identity `last_seen_at`. A session whose identity is no longer active is revoked on the spot (`revoked_reason = identity_<status>`). Non-`ok` rows still carry the ids they found so the broker can attribute the outcome. |
+| `revoke_customer_session_as_system(p_session_hash, p_reason)` / `revoke_all_customer_sessions_as_system(p_identity_id, p_reason)` | `boolean` / `int` | Reason required (≤ 200 chars). |
+| `read_customer_membership_as_system(p_identity_id, p_company_id)` | `(membership_id, client_id, sub_client_id, state, outcome)` or **no row** | **STABLE** — PostgreSQL refuses any write inside it, which is the structural guarantee behind I17. Reports the membership that binds this identity to this company: the live one (`active_forward_only` / `active_full`) preferred over the `revoked` one that stands in its place. No row when the identity is not active, the company is missing/deleted, or no membership exists. `outcome` is always `existing`. It never matches, never promotes, never creates. Every read path uses this one: `GET /api/customer/me`, the per-request authority gate (`requireMembership`), and every hosted render. |
+| `link_customer_membership_as_system(p_identity_id, p_company_id)` | `(membership_id, client_id, sub_client_id, state, outcome)` or **no row** | The sign-in path (§5.1 step 3, I18). Same no-row preconditions and the same advisory lock `hashtext(company_id || ':' || normalized_email)` per verified email (sorted) as the create-capable RPC; shares one matching helper with it so the two can never drift. `outcome=existing` when a membership already binds the pair (a forward-only row is re-checked for on-file evidence and promoted to `active_full` / `on_file_transacted` with a `membership_promoted` event; a company revocation stands until staff act). Otherwise: exactly one live client matched (directly or through one live sub-client, on `private.agent_normalize_discovery_email`) → `matched_full` (`active_full` / `on_file_transacted`) or `matched_forward_only` (`active_forward_only` / `none`), `sub_client_id` carried only when the contact, not the client, matched, event `membership_matched`. **Zero matches and several matches both return no row and create nothing** — no client, no membership, no duplicate review, no notification. Several matches additionally append a `membership_match_ambiguous` event (metadata `candidate_clients`) against the identity; it resolves itself once staff merge the duplicates and the next sign-in matches exactly one. |
+| `resolve_or_create_customer_membership_as_system(p_identity_id, p_company_id)` | `(membership_id, client_id, sub_client_id, state, outcome)` or **no row** | The create-capable path, design §5.3 in full. **Permitted callers, and only these: the P2 guest booking confirm, the P2 booking claim, and the P4 lead intake** — moments carrying real customer intent. Never a read, never sign-in. Behaves exactly as `link_…` up to the match, then: zero → new client `(company_id, name = email, email)` + `created` (`active_full` / `created_by_identity`); more than one → fresh client + `created_possible_duplicate` (D6), one pending `duplicate_reviews` row (`confidence high`, signal `same_email`) per candidate, and a persistent `duplicates_found` notification ("Potential duplicates found" / action "Review") to every `users_with_permission(company, 'pipeline.manage', 'all')` with dedupe key `customer_identity:possible_duplicate:<client_id>`. Events: `membership_matched`, `membership_created`, `membership_created_possible_duplicate`. |
+| `confirm_customer_membership_as_system(p_membership_id, p_staff_user_id)` | `text` (state) | Staff must be an active member of the membership's company **and** hold `clients.edit` at any scope (`42501` otherwise). `active_forward_only` → `active_full` / `staff_confirmed` with `confirmed_by_user_id`, `confirmed_at`; `active_full` is idempotent; `merged` / `revoked` → `22023`; unknown → `P0002`. |
+| `revoke_customer_membership_as_system(p_membership_id, p_staff_user_id, p_reason)` | `boolean` | Same gate; live → `revoked` (true); anything else false. Sessions are global and are **not** revoked by a company revocation. |
+| `list_customer_memberships_for_client_as_system(p_company_id, p_client_id)` | `setof (membership_id, state, evidence_kind, contact_email_masked, last_seen_at)` | Every membership on the client, oldest first; email masked in the database (`***` when the identity has no live email). |
+| `read_customer_profile_as_system(p_identity_id, p_company_id)` | `(display_name, contact_email_masked, membership_state)` — always one row | Backs `GET /api/customer/me`. `display_name` = live membership's sub-client name, else client name, null when there is no live membership, when the client's name is only the customer's own address (the record an intent path created for the identity) or is uuid-shaped. `membership_state ∈ active_forward_only, active_full, revoked, none`. |
+| `ensure_customer_hosted_integration_as_system(p_company_id)` | `uuid` | The company's `hosted_pages` integration, created on first use; deleted/unknown company → `22023`. |
+| `ensure_customer_pairwise_ref_as_system(p_identity_id, p_integration_id)` | `text` | Stable `cr_…` ref per (identity, integration); inactive identity → `42501`, unknown/disabled integration → `22023`. |
+| `append_customer_identity_event_as_system(p_event_type, p_identity_id, p_company_id, p_session_id, p_network_fingerprint, p_metadata)` | `void` | Broker-side writer for the audit table; `22023 customer_identity_event_invalid` for any refused payload. |
+
+### Dormancy re-gate (I7)
+
+`cron.job` `customer_identity_dormancy_daily` (`34 6 * * *`) → `private.run_customer_identity_dormancy_sweep_controlled()` → shared runner with workload key `db-customer-identity-dormancy`, 300 s lease → `private.customer_identity_dormancy_sweep()`. For every `active_full` membership whose identity has `last_seen_at < now() - 180 days`: re-evaluate on-file evidence; if it stands, keep `active_full` (evidence_kind set to `on_file_transacted`, event `membership_dormancy_reevaluated`), otherwise drop to `active_forward_only` / `none` and clear the staff confirmation (event `membership_demoted_dormant`). Then prune expired artifacts. Idempotent day to day (demoted rows are no longer `active_full`).
+
+### Verification record (2026-09-02)
+
+Contract suite (scratchpad `contract_tests.sql`, run three times via psql inside `begin … rollback`, applying the migration file itself first): zero non-owner table grants; gate `42501` for anon claim, missing claim and role `anon`; handle backfill 64/64 unique and shape-valid; trigger functions fire for role `anon` despite revoked EXECUTE (probe); OTP 60 s and 5/hour limits, attempts 1–5 proceed, 6+ exhausted, consumed/unknown return no row; identity upsert idempotent, contact conflict `23505`, invalid email `22023`; sessions ok/expired (idle and absolute)/revoked/unknown, idle slide, revoke-all count, duplicate hash `23505`, suspended identity revokes on resolve and refuses mint; membership matrix 0 / 1 (forward-only → promoted after a sent invoice) / sub-client (forward-only, contact carried → staff confirm → revoke → resolve returns revoked, confirm-after-revoke `22023`, foreign staff `42501`) / many (fresh client, 2 duplicate reviews, notifications delivered) / no-email identity → no row / unknown company → no row / masked listing / second company creates its own client; merge trigger scenarios A (loser only) and B (both, winner promoted) with 2 events; hosted integration and pairwise ref stable; audit refuses secret keys, addresses and bad types; dormancy sweep retains evidence-backed and demotes staff-confirmed rows through the controlled runner (`completed: true`). Profile suite: none / self-created / named client / revoked / sub-client / other company / unknown identity / gate.
+
+### Read / link / create split (production live 2026-09-03 UTC)
+
+Ledger `20260903193127_customer_membership_read_write_split` (mirrored byte-exact in `migrations/`; ledger `md5(statements[1])` = `51327f69de4c2c52efd34a1f01491a22`, the file minus its trailing newline). Design invariants **I17** and **I18**, added 2026-09-03.
+
+**Why.** The P1 live end-to-end run found a write on a read path. `resolve_customer_membership_as_system` both reported a membership and created one, and `GET /api/customer/me` called it on every request. A customer signed into one business, whose browser then asked about a second business's `public_handle`, caused a `clients` row and an `active_full` membership to appear inside that second, live company. Reproduced against production (sign-in at `maverick-projects-ltd`, then `?handle=norcut-railings` → `{"membership":{"state":"active_full"}}` plus a client inside Norcut Railings); the polluted rows were deleted the same day.
+
+**What shipped.** One RPC became three, and the ambiguous name was dropped rather than aliased:
+
+- `read_customer_membership_as_system` — STABLE, so the database itself refuses any write inside it. Every read path uses it.
+- `link_customer_membership_as_system` — sign-in. Establishes a membership only against a client already on file, and never creates one.
+- `resolve_or_create_customer_membership_as_system` — the create-capable path, callable only from the P2 booking confirm, the P2 booking claim and the P4 intake.
+- `resolve_customer_membership_as_system` — **dropped.** Nothing in the database referenced it (`pg_proc` scan before apply) and the only application callers were rewritten in the same change.
+
+The matching itself moved into `private.customer_membership_establish_core` and three small private helpers, so the read, the link and the create cannot drift apart on who counts as a match.
+
+**Contract suite** `ops-web/docs/artifacts/public-api-p1-7/contract_tests.sql`, run through psql inside `begin … rollback` against production — first with the migration applied inside the transaction, then again against the live objects after apply (`verify_live.log`), leaving zero residue. Every assertion counts `clients`, `sub_clients`, `company_client_memberships` and `duplicate_reviews` before and after the call and compares them exactly:
+
+- **Shape** — the read RPC is `provolatile='s'`; zero grants to `public`/`anon`/`authenticated` on all three; both new RPCs refuse `42501` as `anon`; the retired name no longer resolves.
+- **The defect** — a signed-in identity reading Norcut Railings by handle: 0 rows reported, and clients 0/0, memberships 0/0, sub-clients 0/0, duplicate reviews 0/0.
+- **Sign-in, no match** — 0 rows; Maverick clients 74/74 and memberships 0/0; the identity and exactly 1 verified contact recorded, which is all sign-in may write.
+- **Sign-in, match** — `matched_forward_only`, clients 75/75, the matched client row byte-identical (`md5(client.*::text)`) before and after; a second sign-in reports `existing`; a sent invoice promotes the next sign-in to `active_full`.
+- **Sign-in with evidence on file** — `matched_full` / `on_file_transacted` directly.
+- **Sub-client match** — parent client linked, contact carried; after a staff revoke both the read and the link report `revoked` and no membership is minted around it.
+- **Reads never promote** — with a sent invoice on file, a read still reports `active_forward_only` and the membership row is byte-identical before and after.
+- **Ambiguity (I18)** — two clients sharing the email: 0 rows, clients 80/80, memberships 4/4, duplicate reviews 78/78, and exactly 1 `membership_match_ambiguous` event against the identity.
+- **The create path still creates** — `created` for zero, `created_possible_duplicate` with 2 duplicate reviews and 2 staff notifications for many, idempotent on the second call, and no row for an identity with no verified email.
+- **Input handling** — null identity or company → `22023` on both; unknown identity, unknown company → no row rather than an error that would confirm what exists (I5).
+
+---
+
+## Public site-visit booking (production live 2026-09-02 UTC)
+
+Ledgers `20260902190000_public_booking_foundation` and `20260902193000_public_booking_claim_membership_index` (both mirrored byte-exact in `migrations/`; ledger `md5(statements[1])` equals each file minus its trailing newline — `7a960e2c6ef97934dcb1f207b3ad716e` and `57a64c8071047a568a6b9652d326c6d1`). Storage and system RPCs behind public booking on a trades business's own website — design `specs/2026-09-02-public-api-availability-and-guest-booking-design.md`, parent `specs/2026-09-01-public-api-customer-identity-design.md`, plan `specs/plans/2026-09-02-public-api-guest-booking-P2-plan.md` Task P2-1. Consumed by `ops-web/src/lib/customer-identity/*` from P2-2 onward (branch `feat/public-api-booking-p2`, not yet deployed).
+
+The guest tables live in `private` with ALL privileges revoked from `public, anon, authenticated, service_role` and RLS enabled with no policies; the only access paths are the `public.*_as_system` SECURITY DEFINER RPCs below, each gated `auth.role() is distinct from 'service_role'` → `42501 access_denied` and granted EXECUTE to `service_role` only. The **policy table is deliberately in `public`** — it is staff configuration a settings screen reads and writes through ordinary RLS, not a credential.
+
+**The staff-actor booking family is untouched.** `book_site_visit`, `reschedule_site_visit` and `cancel_site_visit_booking` still resolve their actor from `private.get_current_user_id()` and still gate on `private.current_user_can_edit_site_visit` — verified by object after apply.
+
+### Deliberate deviations from the design text
+
+| Design says | What shipped, and why |
+|-------------|----------------------|
+| The confirm creates the lead "through `create_opportunity_guarded`" (I16) | Impossible as written: `create_opportunity_guarded` **and** `private.create_opportunity_company_serialized_internal` both resolve the actor from `private.get_current_user_id()` and require `pipeline.create:all` on that actor, so neither is callable with no signed-in user. `confirm_guest_booking_as_system` mirrors the live production precedent for this exact caller class — the external intake API's `create_external_intake_submission_as_system` — inserting the opportunity directly with `assigned_to = null, assignment_version = 0` (the only shape `private.guard_opportunity_assignment_mutation` permits at INSERT). I16's substance holds: one client, one `opportunities` row with `source='website'`, the visit attached to that lead, no parallel booking-only record. |
+| — (not addressed) | Lead ownership then goes through the sanctioned system verb `public.change_opportunity_assignment_as_system` with a **new** source `public_booking_default`, so the assignment ledger, its write-token guard and its delivery rows stay intact. That value is validated in four places, all widened additively: CHECK `opportunity_assignment_events_source_check`, CHECK `opportunity_assignment_events_actor_required`, `private.change_assignment_system_company_serialized_internal`, and `private.change_opportunity_assignment_core` (re-created verbatim with one line inserted into its system branch; the human branch `'manual' / 'suggestion_accept'` is untouched). |
+| `guest_booking_intents.contact_email_encrypted` holds the address | The digest is what the table stores and matches on; the **plaintext reaches `confirm_guest_booking_as_system` as an argument** and is never persisted, mirroring the P1 OTP ledger. `contact_email_encrypted` is broker-owned opaque ciphertext for the later confirmation and manage mails — nothing in SQL reads or interprets it. |
+| State machine `held → verified → confirmed \| submitted` | The broker proves the channel and confirms in one request, so the shipped path moves `held → confirmed \| submitted` in one transaction. `verified` stays in the CHECK and in the live-hold predicate so splitting verify from confirm later needs no schema change; nothing writes it today. |
+| `max_bookings_per_day` "counts booked visits with `booked_at` on that local date" | Counts visits **scheduled** on that local date (`booked_at is not null`, `status='scheduled'`, `deleted_at is null`) plus live holds on it. A cap on when a booking *was made* would not bound a day's workload; a cap on how many appointments a day can hold does. |
+| — (not addressed) | `site_visits.created_by` is `text NOT NULL` with no FK and every live row is uuid-shaped. A public booking has no staff creator, so it records the resolved owner when there is one and `00000000-0000-0000-0000-000000000000` otherwise: still parseable for the scope helpers that cast it, resolving to no user. |
+| Staff notification type | `schedule_change` — it is in the shipped `NotificationType` union and renders as "Schedule" in the rail. A dedicated `booking_request` type would render as a raw slug until P2-4 teaches both clients about it. |
+
+### `public.site_visit_booking_policies`
+
+One row per company; **an absent row means `mode='off'`**, so nothing was backfilled. Business-defined availability only — OPS never reads the crew's real calendar to answer a public question (D10).
+
+| Column | Type / constraint |
+|--------|-------------------|
+| `company_id` | `uuid` PK → `companies(id)` ON DELETE CASCADE |
+| `mode` | `text NOT NULL DEFAULT 'off'`, CHECK `off \| request \| instant` (D9 — one control, three states) |
+| `windows` | `jsonb NOT NULL DEFAULT '[]'`, CHECK `private.booking_windows_valid` — an array of ≤ 14 `{weekday, start, end}` objects, weekday 0 (Sunday) – 6, `HH:MM` bounds with `start < end`, no two windows overlapping within a weekday (touching windows are allowed) |
+| `timezone` | `text NOT NULL`, length 1–100; validated against `pg_timezone_names` by trigger, not CHECK (the catalog is not immutable) |
+| `min_notice_hours` | `int NOT NULL DEFAULT 48`, CHECK 0–720 |
+| `horizon_days` | `int NOT NULL DEFAULT 21`, CHECK 1–120 |
+| `visit_duration_minutes` | `int NOT NULL DEFAULT 60`, CHECK 15–480 (matches the `book_site_visit` range) |
+| `slot_granularity_minutes` | `int NOT NULL DEFAULT 60`, CHECK ∈ (15, 30, 60, 120) |
+| `max_bookings_per_day` | `int NULL`, CHECK ≥ 1; NULL = uncapped |
+| `default_owner_id` | `uuid NULL` → `users(id)` ON DELETE SET NULL; index `site_visit_booking_policies_owner_idx` |
+| `created_at` / `updated_at` | `timestamptz NOT NULL`, `updated_at` maintained by `private.customer_touch_updated_at` |
+
+Trigger `site_visit_booking_policies_validate` (BEFORE INSERT OR UPDATE, `private.booking_policy_validate`) refuses `22023 booking_policy_timezone_invalid` for a zone absent from `pg_timezone_names` and `22023 booking_policy_owner_not_in_company` for an owner outside the company. Owner **eligibility** (`private.user_is_guarded_assignment_target_eligible`) is re-checked at booking time instead, because a person can lose it after the policy was saved — an ineligible owner leaves the lead unassigned rather than failing the booking.
+
+RLS (role `public`, because the app runs as anon): PERMISSIVE `company_isolation` FOR ALL on `company_id = private.get_user_company_id()`, plus RESTRICTIVE `role_scope_insert` and `role_scope_update` requiring `private.current_user_has_permission('settings.company', 'own')`. Grants mirror `site_visit_types` exactly — the schema's default privileges hand every new `public` table to anon and authenticated wholesale **including TRUNCATE, which bypasses RLS**, so the migration revokes all and hands back `SELECT, INSERT, UPDATE` only; `service_role` keeps DELETE. Turning booking off is `mode='off'`, never a missing row.
+
+### Tables (`private`)
+
+| Table | Purpose | Key constraints |
+|-------|---------|-----------------|
+| `guest_booking_intents` | One public booking attempt: the slot it holds, the channel it proved, and the client, lead and visit it resolved to. | `state ∈ held, verified, confirmed, submitted, expired, cancelled`; `duration_minutes` 15–480; `contact_email_digest` `^[1-9][0-9]{0,4}:[0-9a-f]{64}$` (the broker's keyed HMAC — the address is never stored); `contact_email_encrypted` ≤ 4096 chars, opaque to SQL; `contact_phone_raw` ≤ 40 chars, **evidence only, never a match key (I1)**; `verified_channel ∈ email, phone` paired with `verified_at`; `answers jsonb` CHECK `private.booking_answers_valid` (array ≤ 100 objects, ≤ 8 scalar-valued keys each, ≤ 16 KB serialized); `network_fingerprint` SHA-256 hex (never a raw IP); FKs to `companies`, `private.customer_integrations`, `clients`, `opportunities`, `site_visits`. Shape CHECK `guest_booking_intents_state_evidence`: `verified/confirmed/submitted ⇒ verified_at`; `confirmed/submitted ⇒ resolved_client_id and resolved_opportunity_id`; **`submitted ⇒ resolved_site_visit_id is null`** (I14 at the schema level); only `confirmed`/`cancelled` may carry a visit. Partial indexes on live holds `(company_id, slot_start_at)`, `(network_fingerprint)`, `(hold_expires_at)`, each resolved id, `(integration_id)`, and `(company_id, contact_email_digest)` for claims. |
+| `customer_booking_claims` | Exactly-once claim of a guest booking by a customer identity. | `UNIQUE (intent_id)`; FKs to the intent and `private.customer_identities` ON DELETE CASCADE, `membership_id` → `company_client_memberships` ON DELETE SET NULL; indexes on `identity_id` and (partial) `membership_id`. |
+
+### Definer-internal helpers (`private`, never exposed)
+
+`booking_windows_valid(jsonb)` and `booking_answers_valid(jsonb)` (both IMMUTABLE, CHECK-backed); `booking_policy_validate()` (trigger); `booking_policy_slot_starts(policy, from_date, to_date)`; `booking_slot_is_open(policy, slot, ignore_intent, ignore_visit)`; `booking_expire_stale_holds(company_id)`; `booking_resolve_guest_client(company_id, email, name, phone)`; `booking_notify_staff(...)`; `guest_booking_hold_sweep()`; `run_guest_booking_hold_sweep_controlled()`.
+
+**`booking_policy_slot_starts` is the single slot definition** — the availability read and the confirm re-check both derive from it, so the two can never disagree. It expands the weekly windows across a local date range in the policy timezone, stepping by `slot_granularity_minutes` while a whole `visit_duration_minutes` still fits inside the window.
+
+**DST is handled by a round-trip guard, and it is load-bearing.** A local start that does not survive `(ts at time zone tz) at time zone tz = ts` is dropped. In `America/Vancouver` on 2027-03-14 the local hour 02:00 does not exist; Postgres maps it to `10:00Z`, which is *also* what local 03:00 maps to — without the guard the page would be offered the same instant twice. On 2026-11-01 the repeated local hour 01:00 resolves to one instant (`09:00Z`, standard offset) and round-trips cleanly, so exactly one slot is produced. Proven in the contract suite: 5 slots on the spring-forward day (all distinct, none at local 02:00), 6 on the fall-back day (all distinct).
+
+**`booking_slot_is_open` is the single availability truth.** It refuses when the policy is `off`; when the instant is not one the expander offers; when the slot is inside `min_notice_hours` or at/after local midnight on `today + horizon_days + 1`; when it overlaps a live booked visit anywhere in the company (`booked_at is not null`, `status='scheduled'`, `deleted_at is null` — company-wide on purpose, because the public is never told anything about crew, I11); when it overlaps a live hold (`state in ('held','verified')` and `hold_expires_at > now()`); or when the local day already holds `max_bookings_per_day` bookings plus live holds. Overlap is half-open, so adjacent hourly slots do not collide.
+
+`booking_resolve_guest_client` is P1 §5.3 with guest rules: matching consumes the verified email only (I1), against live `clients` and one live `sub_clients` parent through `private.agent_normalize_discovery_email`, under advisory lock `hashtext(company_id || ':' || email)`. Exactly one match reuses it (`matched`); zero creates the client (`created`); more than one creates a fresh client (`created_possible_duplicate`, D6), opens one pending `duplicate_reviews` row per candidate and sends a persistent `duplicates_found` notification to every `users_with_permission(company, 'pipeline.manage', 'all')` with dedupe key `customer_identity:possible_duplicate:<client_id>`. **No membership is created** — a guest has no identity yet.
+
+### RPCs (`public.*_as_system`; service_role only; `search_path` pinned `pg_catalog, public, private, pg_temp`)
+
+| RPC | Returns | Behaviour |
+|-----|---------|-----------|
+| `read_public_booking_policy_as_system(p_company_id)` | `(mode, timezone, visit_duration_minutes, min_notice_hours, horizon_days)` or **no row** | Everything the hosted page may know about a company's schedule. No row when the company is deleted or `mode='off'`. No counts, no crew, no internal ids. |
+| `read_public_availability_as_system(p_company_id, p_from, p_to)` | `setof (slot_start_at timestamptz)` | Nothing at all when `mode='off'`. Clamps the requested range to `[today_local, today_local + horizon_days]` so a wide request cannot become a wide scan, then filters the expander through `booking_slot_is_open`. |
+| `hold_booking_slot_as_system(p_company_id, p_integration_id, p_slot_start_at, p_network_fingerprint)` | `(intent_id, hold_expires_at, allowed, retry_after_seconds)` | Advisory lock `hashtext('public_booking:' || company_id)`, expires stale holds first. **I13:** the hold is 5 minutes; at most 3 live unverified holds per network fingerprint and 10 per company, each refusal carrying `retry_after_seconds` to the next expiry. A refusal is shaped exactly like a success minus the intent (I5), whether the cause is the cap, an unknown/disabled integration, `mode='off'` or a taken slot. |
+| `record_guest_booking_contact_as_system(p_intent_id, p_contact_name, p_contact_email_digest, p_contact_email_encrypted, p_contact_phone, p_answers)` | `(intent_id, hold_expires_at, accepted)` | The `/contact` step between hold and code. `accepted=false` (no raise) for an intent that is not a live `held`. |
+| `book_site_visit_as_system(p_opportunity_id, p_scheduled_at, p_duration_minutes, p_assignee_ids, p_reminder_lead_minutes, p_actor_user_id, p_source)` | `uuid` | The actorless twin of `book_site_visit`, mirroring every guard: opportunity row lock as the booking mutex, company match, past-time rule (`<= now() - 5 min`), duration 15–480, reminder 0–1440, assignee validation, one-open-booking-per-lead (`55000 site_visit_already_booked`), the same `site_visits` insert shape (TEXT `company_id`/`client_id` alongside uuid `client_ref`), the same `site_visit_scheduled` activity, the `activity_id` back-write, and the `new_lead → qualifying` nudge through `move_opportunity_stage`. Differs only where there is no current user: the actor is a parameter, the assignees come from the caller's policy-derived list (empty = the unassigned queue) never from public input (I11), and there is no `current_user_can_edit_site_visit` gate — the service-role gate and the explicit opportunity lookup stand in its place. `p_source ∈ public_booking, booking_request_accepted` (anything else `22023`) and only shapes the activity subject. |
+| `confirm_guest_booking_as_system(p_intent_id, p_contact_email_digest, p_contact_email, p_verified_channel)` | `(outcome, intent_id, client_id, opportunity_id, site_visit_id, scheduled_at)` | **The atomic core.** Requires a live `held` intent whose stored digest equals the one just proved (`42501 booking_contact_mismatch` — a code verified for another address never confirms this booking). Under the company advisory lock it re-derives the slot from live policy and refuses `55000 booking_slot_unavailable` (**I12** — a replayed descriptor can never book what policy, an existing booking, a live hold or the day cap now forbids). Then resolves the client, inserts the lead (`source='website'`, `source_thread_key = 'public_booking:<intent_id>'`, `source_metadata` carrying the integration and the client-match outcome), assigns it from `default_owner_id` when that person is still eligible, and branches: `instant` books the visit and returns `confirmed`; `request` creates **no** visit and returns `submitted` (**I14** — the Google sync trigger has nothing to enqueue). Either way the intent is stamped and a staff notification is written. |
+| `confirm_booking_request_as_system(p_intent_id, p_staff_user_id, p_scheduled_at)` | `(intent_id, site_visit_id, scheduled_at)` | Request acceptance, honouring a staff-chosen time. Staff may move a request to a time policy would not have offered — they are the business — but not onto an overlapping live booking (`55000 booking_slot_unavailable`). Books through `book_site_visit_as_system` with the staff member as actor and resolves the `booking_request:<intent_id>` notification. |
+| `decline_booking_request_as_system(p_intent_id, p_staff_user_id, p_reason)` | `(intent_id, opportunity_id)` | Intent → `cancelled` with the reason; the notification resolves; **the lead stays** — someone asked for work. |
+| `reschedule_guest_booking_as_system(p_intent_id, p_scheduled_at)` | `(intent_id, site_visit_id, scheduled_at)` | Customer-side, called only after a fresh code (I15). Re-runs full slot validation ignoring the intent's own hold and its own visit — moving a booking is a new booking decision. The `scheduled_at` change fires the Google sync trigger's `update`. |
+| `cancel_guest_booking_as_system(p_intent_id, p_reason)` | `(intent_id, site_visit_id)` | Mirrors `cancel_site_visit_booking`: the status flip to `cancelled` enqueues the remote `delete`, and any still-pending `create`/`update` queue rows are neutralized with `skip_reason='booking_cancelled'` so a cancelled booking can never materialize on a calendar. Works for a `submitted` request too (nothing to cancel on the calendar). The freed slot returns to availability. |
+| `claim_guest_booking_as_system(p_intent_id, p_identity_id, p_contact_email_digest)` | `(claim_id, membership_id, client_id, created)` or **no row** | A later sign-in claiming the booking. The digest key lives in the broker's key ring, not the database, so the broker computes the digest of the identity's own verified email and this RPC checks the two things it can: that the digest is the one on the intent, and that the identity holds a live verified contact on that channel (`42501 booking_claim_channel_unproven` otherwise). Attaches the identity to the client the booking **already resolved** (`active_full` / `guest_claim`) and never creates one; exactly once by `UNIQUE(intent_id)`, with a repeat claim returning the first row and `created=false`. |
+
+### Hold sweeper (I13)
+
+`cron.job` `guest_booking_hold_sweep_5min` (`*/5 * * * *`) → `private.run_guest_booking_hold_sweep_controlled()` → shared runner with workload key `db-guest-booking-hold-sweep`, 120 s lease → `private.guest_booking_hold_sweep()`. Expires every `held`/`verified` intent past `hold_expires_at`, then deletes `expired`/`cancelled` intents older than 7 days that never resolved a lead. `private.run_scheduled_cron_workload_controlled` was re-created with the live body plus `'private.guest_booking_hold_sweep'` in the command allowlist. The sweep is hygiene, not correctness: the availability and confirm predicates already ignore an expired hold, so one never blocks a slot even between runs.
+
+### Verification record (2026-09-02)
+
+Contract suite `ops-web/docs/artifacts/public-api-booking-p2-1/contract_tests.sql`, run through psql inside `begin … rollback` against production (applying the migration file itself first, so every assertion runs on live schema, live permission data and the live trigger graph, leaving zero residue). Fixture: Maverick (`ddee107c-…`, `America/Vancouver`) plus a synthetic calendar-scoped `email_connections` row, so the Google queue is live rather than inert. 39 assertions, all green:
+
+- **Grants and gate** — zero non-owner grants on both `private` tables; policy-table app-role grants asserted equal to `site_visit_types`; all 11 `*_as_system` RPCs refuse `42501` as the real `anon` role.
+- **Validators** — window overlap, inversion, weekday range, `HH:MM` format, non-array and 15-entry payloads rejected, touching windows accepted; answers non-array and nested-value payloads rejected; policy write refuses a bogus timezone and a cross-tenant owner (`22023`).
+- **DST** — spring-forward 2027-03-14 yields 5 distinct slots with none at local 02:00; fall-back 2026-11-01 yields 6 distinct slots.
+- **Availability** — `mode='off'` returns 0 slots and no policy row; `instant` returns 152 slots over 21 days; first slot ≥ 48 h out; nothing past the horizon even for a 400-day request; a real booking withdraws its slot; `max_bookings_per_day=1` closes the day holding one booking (7 slots → 0).
+- **Holds** — a hold withdraws its slot and lasts ≤ 5 min; the 4th hold from one fingerprint is refused (`retry_after=300`); 10 live holds across 4 fingerprints, the 11th refused; a staff booking lands on a held slot and the subsequent confirm is refused `booking_slot_unavailable`; expired holds stop blocking; the sweeper expired all 10.
+- **I12** — replaying a descriptor for a slot taken in the meantime is refused at the hold; narrowing the policy under a live hold refuses the confirm.
+- **Instant** — lead `source=website`, `stage=qualifying`, `assigned_to` = policy owner at `assignment_version=1`, `source_thread_key=public_booking:<intent>`; visit booked with the policy owner as the only assignee; 1 `google_calendar_sync_queue` create row; 1 `site_visit_scheduled` activity with the `activity_id` back-write; 1 `public_booking_default` assignment event; 1 staff notification.
+- **I14** — `request` mode returns `submitted` with a null visit, **0** `site_visits` rows and **0** new calendar-queue rows table-wide, while still creating the client and the lead; the persistent notification carries `/pipeline?opportunityId=…` and "Open lead". Staff acceptance moving the time by an hour books it for real, enqueues exactly 1 calendar row and resolves the notification. Decline cancels the intent, keeps the lead and resolves the notification.
+- **Management** — reschedule moves the visit and enqueues 1 `update`; an unoffered time is refused; cancel flips the status, leaves 0 pending create/update rows, enqueues 1 `delete`, and returns the slot to availability.
+- **Claim** — a foreign digest is refused `42501`; the claim creates an `active_full` / `guest_claim` membership on the booking's own client; a second claim by another identity returns the first row with `created=false` and writes no second row.
+- **Isolation** — RLS enabled with 3 policies in the documented shape; anon with no company identity reads 0 rows and its write is refused `42501`.
+
+Live verification after apply (`docs/artifacts/public-api-booking-p2-1/verify_live.log`): ledger md5 matches the file; 0 non-owner grants; RLS on with 0 policies on both `private` tables; the gate live-fired 11/11 as role `anon`; anon reads 0 policy rows and cannot write; inventory 2 private tables + 1 public table + 11 RPCs + 10 helpers with 0 rows anywhere; `book_site_visit` / `reschedule_site_visit` / `cancel_site_visit_booking` still actor-bound and still gated; cron job active; the new assignment source present in all four allowlists; all 21 new functions carry a pinned `search_path`. Security advisor delta = two INFO `rls_enabled_no_policy` rows (the intended shape, same class as the P1 tables) and **zero** `anon_/authenticated_security_definer_function_executable` or `function_search_path_mutable` findings on any new function. Performance advisor delta after `20260902193000` = `unused_index` only, the expected artifact of brand-new empty tables.
+
+## Sage Accounting sync hardening (local source only — awaiting release approval, 2026-09-04)
+
+Source: OPS-Web commit `d0879395f`. The three migrations named below are mirrored byte-for-byte in this Bible but are **not production-applied**. Their runtime contract has been exercised on disposable PostgreSQL 17.
+
+### Exact connection and OAuth identity
+
+- `accounting_connections` gains encrypted `sage_business_id`, deterministic SHA-256 `sage_business_id_lookup`, and display-only `sage_business_name`. The lookup is unique per provider environment and prevents one Sage business from being attached to two OPS companies. A partial unique index permits only one writable Sage connection per OPS company.
+- `accounting_oauth_attempts` stores one-time, expiring OAuth state plus the PKCE verifier, initiating OPS company/user, provider environment, and encrypted credential-bundle snapshot. `sage_business_selection_sessions` stores the short-lived post-callback business list until the operator explicitly selects one exact business.
+- Both temporary OAuth tables are server-only: RLS is enabled, browser grants are revoked, and only `service_role` receives table access. Consume helpers are `SECURITY DEFINER` with a fixed `search_path` and one-time row locks.
+
+### Provider mapping and document fidelity
+
+- Sage mapping tables bind OPS sales accounts, purchase accounts, tax rates, payment methods, bank accounts, and expense categories to one exact `(company_id, connection_id, provider_environment)` scope. They are service-role managed and carry foreign-key covering indexes.
+- Estimates preserve whether the remote document is a Sage `estimate` or `quote` through `sage_document_kind`. Invoices, estimates/quotes, and purchase invoices reconcile complete line graphs rather than header-only totals.
+- `payments.updated_at` participates in change detection. The payment-balance triggers lock and recalculate every distinct old and new invoice/bill after insert, amount change, allocation move, void, or delete, while transaction-local provider-origin suppression prevents echo queue rows.
+
+### Durable queue and inbound apply
+
+- `accounting_sync_queue` accepts Sage sales documents, contacts, products, AR payments, suppliers, purchase invoices, and AP payments. Claims are connection-scoped, recover stale work, enforce dependency fences, and select fairly instead of allowing one entity lane to starve the rest. Retry and idempotency state remains durable across response loss.
+- Sage-origin writes run under exact company/connection/environment suppressions so inbound reconciliation cannot enqueue an outbound echo. Reconcile candidate RPCs exclude deleted and terminal rows and order by least-recently-reconciled state.
+- Service-role apply RPCs lock the canonical parent, validate exact tenancy and connection identity, replace the full line graph, and then apply payments. Provider tombstones remain explicit reconciliation decisions; financial documents are never silently hard-deleted.
+
+### Local-only migration chain
+
+| File | Purpose | Release state |
+|---|---|---|
+| `20260904040000_sage_connection_identity_and_oauth.sql` | encrypted business identity, PKCE attempts, one-time business selection, mapping tables, document-kind identity | Local only; not applied |
+| `20260904050000_sage_queue_hardening.sql` | queue-owned provider writes, exact connection scope, stale recovery, dependency/fairness rules, AP balance support | Local only; not applied |
+| `20260904060000_sage_reconciliation.sql` | fair candidates, exact-scope inbound apply, complete line replacement, payment reallocation and echo suppression | Local only; not applied |
+
+---
 
 ## Invisible Office Day Closeout State (production-applied foundation, exact canary pending)
 

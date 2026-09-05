@@ -3139,7 +3139,15 @@ Mixed selections route through Properties so field users do not have to choose b
 
 **Label editing commit contract (updated 2026-08-21).** Edge and surface Label fields keep keystrokes in local draft state. Each edit captures its originating geometry and level so selection or active-level changes cannot redirect the pending value. Keyboard Done, focus loss, target change, or Properties-sheet dismissal commits the normalized final value exactly once; an unchanged value is a complete no-op. A changed label therefore creates one undo snapshot, one local SwiftData save, and one confirmation toast rather than repeating those effects for every character. It does not enqueue or push cloud work while the editor remains open. Sources: `ops-ios/OPS/DeckBuilder/Views/PropertySheetView.swift`; `ops-ios/OPS/DeckBuilder/DeckBuilderViewModel.swift`.
 
-**Local edit-session and exit-sync contract (2026-08-21; code commit `88edd771`).** `DeckBuilderViewModel.save()` is a local SwiftData durability boundary only. Repeated drawing, property, title, autosave, undo, and tool commits create no `SyncOperation` and cannot start a Supabase push. App inactivity/background while the editor is still open calls `flushLocallyForInterruption()`: pending drawing state is persisted locally, but no cloud operation is recorded. Actual editor exit (`saveForExit()` or `onDisappear` → `flushBeforeExit()`) records the latest locally saved revision with `deferPush: true`, deduplicated by a session payload identity so the close action and disappearance cannot enqueue the same revision twice. The push task yields until after the dismissal transaction; it is intentionally allowed to outlive the dismissed view model. Thumbnail rendering/upload also begins post-dismissal, and a successful thumbnail records a new deferred revision. Local drawing persistence remains authoritative when rendering, upload, connectivity, or sync fails. Coverage: `DeckDesignLinkSyncTests`, `DeckDesignSyncTests`, `DeckBuilderRegressionTests`, and `DeckDesignerPerformanceTests`.
+**Edit-session durability contract (rewritten 2026-09-04, bug `9f4aeaf8`; supersedes the `88edd771` contract of 2026-08-21).** The canonical statement lives in `03_DATA_ARCHITECTURE.md` § `deck_designs`; this is the editor-side summary.
+
+`DeckBuilderViewModel.save()` is the local SwiftData durability boundary, and every mutation of `drawingData` now reaches it — the settings and vinyl sheets write through view-model setters instead of raw two-way bindings, and a surface reconcile triggered by a tap schedules its own write. Autosave is unconditional on a 120-second tick for every drawing; the opt-in prompt and its settings toggle are deleted.
+
+Cloud work is recorded — not pushed — at three points: every autosave tick, app inactivity/background (`flushLocallyForInterruption()`), and editor exit (`saveForExit()` or `onDisappear` → `flushBeforeExit()`). All three use `deferPush: true`, deduplicated by payload identity so an idle editor enqueues nothing and the close action cannot enqueue a revision twice. Only exit triggers the push; that task yields until after the dismissal transaction and is intentionally allowed to outlive the dismissed view model. Thumbnail rendering/upload still begins post-dismissal and a successful thumbnail records a new deferred revision.
+
+`88edd771` removed the enqueue along with the push in order to stop a request storm. Deferring the push was correct; dropping the queue record was not — it made a clean editor exit the only path that ever put a deck edit on the wire, so a crash, an OOM kill or a force-quit lost the entire session server-side and left the local row undefended against the next inbound merge. `deferPush` gives the same quiet gesture path with a durable record behind it.
+
+Local drawing persistence remains authoritative when rendering, upload, connectivity, or sync fails. A save that throws is now reported rather than printed, and the editor no longer presents `// DESIGN SAVED` after a save that failed; the title bar shows nothing while saving works and a labelled retry control when it does not. Coverage: `DeckDesignLinkSyncTests`, `DeckDesignSyncTests`, `DeckDesignServerMergeTests`, `DeckBuilderRegressionTests`, `DeckDesignDrawingDataCacheTests`, `VinylOrderConfigPersistenceTests`, and `DeckDesignerPerformanceTests`.
 
 **Expanding canvas workspace (added 2026-07-22).** The embedded Deck Builder's 2D editor starts with the legacy 4,800 × 4,800-point workspace, then expands its session-only, non-shrinking bounds in 480-point increments with a 240-point gutter whenever persisted vertices, rendered stair outlines, or active draw, perimeter, move, or paste geometry approaches an edge. Expansion supports negative origins and never translates or rewrites deck geometry. `DeckCanvasView` renders a tokenized workspace fill and focused boundary against the tokenized exterior, clips the grid to the visible portion of those bounds, accepts screen-to-world input beyond the prior fixed limits, and constrains pan so at least one 44-point recovery strip remains visible. When the workspace fits the viewport, recentering is deferred until direct manipulation ends so content cannot jump under the finger. Perimeter reorientation cancels any in-flight camera snap while the finger is down and explicitly completes the deferred anchor center on lift. Bounds remain view/session state only: there is no `deck_designs.drawing_data` field, payload-shape change, Supabase schema change, or migration. Sources: `ops-ios/OPS/DeckBuilder/Models/DeckCanvasWorkspace.swift`; `ops-ios/OPS/DeckBuilder/Views/DeckCanvasView.swift`. Verified in `ops-ios` commit `6bbe72f4d85ca0c96a18f8e3c154ee2d9dde788a`.
 
@@ -4833,6 +4841,47 @@ The Quick Actions tab replaces the prior bottom-right circular FAB (`floating-ac
 - `src/components/ops/floating-action-button.tsx` (deleted 2026-04-25)
 - Long-press edit mode (replaced by routed customize)
 - The bottom-right 52px circular FAB position
+
+#### Bug-Report Element Picker (OPS Web — 2026-08-31, bug `1f2bf7e9`)
+
+An operator filing a bug can point at the on-screen element the report is about, so triage receives that element's identity and a cropped screenshot of it instead of a full-page capture plus a verbal description ("the grey field in settings" → four candidate components).
+
+**Components:**
+- `src/components/ops/bug-report-element-picker.tsx` — portaled capture overlay (`data-element-picker-root`, `data-bug-report-ignore`, `role="dialog"`, `aria-modal`). Painted `rgba(0,0,0,0.35)` wash — never `backdrop-filter`, which flickers the dashboard on a full-viewport layer — crosshair cursor, hairline reticle (`outline var(--text-2)` on the `surface-hover` fill) following the hovered element with a `role · name` mono pill, and a bottom-left hint rail: `// CLICK AN ELEMENT · ESC CANCELS` · `[ TAB MOVES · ENTER SELECTS ]` · `[ CANCEL ]`.
+- `src/lib/utils/element-reference.ts` — the pure helpers: `describeElement`, `buildStableSelector`, `isPickable`, `resolvePickTarget`, `readComponentChain`, `pickFromPoint`, `computeCropRect`, `buildElementReference`, `captureElementCrop`.
+- `src/lib/types/bug-report-element.ts` — the `ElementReference` contract, `MAX_ELEMENT_REFERENCES = 3`, `ELEMENT_CROP_PADDING_PX = 24`.
+- `src/components/ops/bug-report-drawer.tsx` — the `[ SELECT ELEMENT ]` action, the element chips, and the submission wiring.
+- `src/app/admin/feedback/_components/feedback-content.tsx` — the admin `ELEMENTS (n)` section.
+- i18n: `bugReport.picker.*` (flat dotted keys) in `src/i18n/dictionaries/{en,es}/common.json`.
+
+**Behavior.** Every reporter — minimal form and power-user form alike — gets `[ SELECT ELEMENT ]` in the auto-capture block; at three references it reads `[ MAX 3 ELEMENTS ]` and disables. Activating it enters picking mode: the drawer stays mounted but goes fully transparent and inert (`data-picking="true"`), so the operator's typed text survives, and its outside-click dismiss and Escape-to-close are both suspended — either would otherwise close the form out from under the overlay. The overlay hit-tests with `document.elementsFromPoint` and skips its own subtree rather than toggling `pointer-events`, which flickers the cursor on every move. Not pickable: the overlay, the drawer, the create cluster, anything under a `data-bug-report-ignore` ancestor, `html`/`body`, and zero-size elements. SVG descendants resolve to their nearest HTML ancestor; an `<iframe>` is picked as itself. Selection is a click, a tap, or Enter on the keyboard-focused element (the reticle follows `focusin`, so the keyboard path sees what the pointer path sees). On select the reticle flashes to `--ops-accent` for one beat — the only accent on screen, and only at the instant of commitment — a crop is captured, and the drawer returns carrying an `ELEMENT :: {name}` chip with a 28px thumbnail and a remove control. Esc or `[ CANCEL ]` aborts and returns focus to the action. Motion is the single OPS curve `cubic-bezier(0.22, 1, 0.36, 1)`: 150ms overlay fade, a `requestAnimationFrame`-driven reticle with a 120ms transform/size transition, 150ms flash, all zeroed under `prefers-reduced-motion`. New z-index layer **`picker: 8000`** — above modals (3000) and map controls (5000), below emergency (9000). See `05_DESIGN_SYSTEM.md § 15`.
+
+**`ElementReference` contract** — stored as `bug_reports.custom_metadata.elementReferences: ElementReference[]`:
+
+| Field | Notes |
+|-------|-------|
+| `id` | client uuid, stable within the report |
+| `label` | aria-label → visible text (≤60) → placeholder → alt → title → tag name |
+| `role` | explicit `role` attribute, else implicit (button / link / textbox / checkbox / radio / combobox / generic) |
+| `tag` | lowercase tag name |
+| `selector` | bounded structural CSS path (≤6 levels) built from `data-testid` / `#id` / `aria-label` / `:nth-of-type` segments joined with `>`, stopping early at an anchor that already resolves uniquely. **Never utility classes** — Tailwind strings churn on every restyle, so a class-based path rots within a sprint |
+| `classes` | raw class attribute, kept because it is greppable |
+| `testId` | `data-testid` or null |
+| `text` | text snippet ≤120 |
+| `rect` / `page` / `viewport` | viewport rect at selection time, scroll-adjusted document coords, viewport size |
+| `componentChain` | nearest ≤3 named React components walked from the `__reactFiber$…` key — best effort, and usually empty in production builds because component names are minified |
+| `capturedAt` | ISO timestamp |
+| `attachmentIndex` | index into `bug_reports.additional_attachments` for this reference's crop, or null |
+
+**Storage — no migration.** `bug_reports.custom_metadata` (`jsonb`) and `bug_reports.additional_attachments` (`text[]`) already existed; this feature adds no columns. A crop is cut from a fresh full-page `modern-screenshot` capture, bounded to the element's rect plus 24px padding, clamped to the viewport and scaled to device pixels. `buildCaptureOptions()` in the drawer is the single source of truth for capture scale/filter/background so the full screenshot and the element crops cannot drift apart. Capture runs once per selection, never on hover — a full-body capture costs a few hundred milliseconds on a dense page, which is what the `[ CAPTURING ELEMENT… ]` state exists for.
+
+Crops upload **after** the report row exists, through the existing screenshot route extended with `kind=element&index=n`, landing at `bug-reports/{companyId}/{reportId}/element-{n}.png` with the `s3:` scheme prefix (or `{companyId}/{reportId}/element-{n}.png`, no prefix, under `STORAGE_BACKEND=supabase`). The route reads the row's current `additional_attachments`, appends, writes back, and responds `{ success, path, attachmentIndex }` — the real array position, which is what `attachmentIndex` points at. The drawer uploads sequentially, so arrival order and index order agree; returning the actual position lets a caller detect drift instead of assuming it. `index` must be an integer 0–9 or the route returns 400. Without `kind=element` the route behaves exactly as before: it writes `screenshot_url` and never touches `additional_attachments`; an element crop is the mirror image and never overwrites the screenshot. Auth, company-membership, and reporter checks apply identically to element crops. A failed crop capture or a failed upload is logged and tolerated exactly like the main screenshot — the reference still lands, carrying `attachmentIndex: null` and consuming no attachment slot.
+
+**Admin.** `BugReportDetail` renders an `ELEMENTS (n)` section under SCREENSHOT. Per reference: the crop thumbnail presigned through `GET /api/admin/bug-reports/screenshot?path=…` (`[NO CROP]` when the reference has none), `role · label`, the selector in mono with a `COPY` action, classes, text snippet, rect as `x,y · w×h`, page coordinates, and the component chain joined with ` › `. The metadata shape is type-guarded on read — it is client-written JSON and is never trusted. The raw METADATA dump stays as the audit trail. `getBugReports()` now also selects `additional_attachments`.
+
+**Triage.** No change was required: `GET /api/cron/bug-triage/bug` selects `*`, so the per-bug payload already carries `custom_metadata` and `additional_attachments`. The backlog endpoint's narrow column projection is a work-queue listing by design; the triage agent fetches the full row per bug.
+
+**Out of scope:** the iOS reporter (a different widget), marking multiple points on one screenshot, and editing a reference after selection — remove and re-pick instead.
 
 ### §14.3.4 Expenses Ready for Review — server-side auto-send (2026-06-01)
 
@@ -7342,6 +7391,56 @@ re-drive is the interval gate plus the next webhook or cron tick — not the
 continuation-priority path, since a bare provider historyId is not a
 continuation envelope and does not register as one.
 
+#### The recovery walk checkpoints per page (86c758b1)
+
+Recovering an expired Gmail cursor means replaying a bounded interval before a
+fresh `history_id` may be committed. The walk listed every page it was allowed
+— up to 10 pages or 500 threads — and then read all of those threads under a
+single two-minute deadline. `mapGmailReads` lets no partial result escape by
+design, so a pass that overran that deadline threw away every page it had
+already read and persisted nothing at all. The next attempt then re-listed the
+identical first page against the identical interval and overran identically.
+Proven live 2026-08-29 on a 30-day `in:anywhere` window: six consecutive server
+attempts moved the mailbox zero pages, and at the ~599-thread ceiling the
+inter-batch pacing alone (~120 batches × 250 ms) spent a quarter of the budget
+before a single thread was read. The walk was aborted cleanly — recovery
+columns cleared, `history_id` and `last_synced_at` never moved.
+
+The walk now lists and reads **one page at a time**. A page's `nextPageToken`
+becomes the pass's resume position only after that page has been read in full
+and its mail is carried out of the walk for ingestion, so the checkpoint the
+cycle writes after ingestion always names a page the mailbox actually consumed.
+An overrun on page N truncates the pass there: pages 1..N-1 are ingested, page
+N is re-listed next cycle, nothing is skipped and nothing is committed twice.
+
+The persist itself did **not** move earlier. It stays where it was — one
+owner-fenced `persist_email_connection_recovery_checkpoint_as_system` at the
+end of the cycle, strictly after ingestion. Writing a page token mid-walk would
+durably skip mail whenever ingestion later failed, which is the invariant the
+walk has always held (a failed recovered-activity insert leaves both cursors
+unadvanced). Durability comes from the pass now *returning* the pages it read
+instead of discarding them, not from persisting sooner.
+
+Each page also receives its own slice of the read budget — the remaining budget
+divided by the pages the pass may still read, floored at 45 s — rather than one
+shared cliff, so a slow page fails alone instead of consuming the time the
+pages behind it need. Healthy pages finish well inside a slice and the walk
+keeps going, so throughput is unchanged; a degraded mailbox falls back to two
+or three pages per cycle instead of failing entirely. The first page of a pass
+is always granted a slice: a pass that can advance zero pages is the stall.
+
+Terminal semantics are unchanged and now explicit. Only a pass that consumes
+the provider's last page commits the fresh cursor and clears all three recovery
+columns in the same owner-fenced write; that is carried by a `complete` flag on
+the checkpoint, because a null resume token means *page one*, not completion.
+A pass that stopped early — on its caps, its budget, or an overrun — records
+`continuationPending` and its resume position, leaving `last_synced_at` where
+it was. Only a read-deadline overrun truncates a pass; auth, scope, and
+provider faults still propagate and are diagnosed on the paths that mark them.
+Incremental-sync read semantics and every other `mapGmailReads` caller are
+untouched. OPS-Web `fix/web-bug-sweep-integration-20260829`, commit
+`335019e9`, not pushed.
+
 #### Phase C work-queue claims are null-safe (d26b3a98)
 
 `claim_opportunity_phase_c_work` excluded completed rows with
@@ -7470,6 +7569,106 @@ carries as an emergency hotfix.
 | `20260830113300_apply_email_outbound_learning_public_vector_resource.sql` | `public.vector` cast committed to source |
 | `20260830113400_delivery_source_normalization_reprojection.sql` | Evidence-ledger re-projection, revision v2, backfill RPCs |
 | `20260830113500_email_connection_webhook_high_water.sql` | `webhook_history_high_water` column + record RPC |
+
+### Email-intelligence hardening — flagged-sender gate, Stage-B sender history, summary sanitization (bug `7ca126d2`, prepared 2026-08-31, not deployed)
+
+Traced from the canonical example: **Vitrum**, a glass supplier Canpro buys
+from, produced five "leads" in five months and one incoherent AI summary. The
+bad lead (opportunity `b444e6fc`) was created by the pre-2026-08-29 brain, but
+the trace exposed defects live in the shipped code. Repaired on OPS-Web branch
+`fix/sweep0831-cluster-l`, four commits on top of production commit
+`9a53168d`. **No migrations.** No model, temperature, or lane changes — the
+classifier lanes and the summary model are unchanged, and every change
+tightens autonomy rather than widening it.
+
+**Why the lead was created.** Cindi Howard's reply arrived on a thread with no
+opportunity link and no pattern/platform/forwarder/contact-form match, so it
+entered the unmatched lane and was classified from a single message — the old
+brain never saw that the operator had STARTED the thread with a purchase
+order. The feedback prior did run and was arithmetically impotent: one
+sender-negative is worth `-0.16`, so a `0.90` baseline landed at `0.74`,
+still clear of the `0.70` threshold, and the lane created in silence.
+
+**1. A flagged sender never silently creates a lead**
+(`lead-feedback-prior-service.ts`). When the operator has any active negative
+feedback for the exact sender, no positive history for that sender, and the
+baseline verdict is `lead` at or above threshold, the outcome is now `defer`
+with `review_reason = 'feedback_boundary'` instead of `lead`. Suppression
+authority is unchanged and still requires an exact source match, two
+independent sender rows, or mature domain evidence — what changed is the
+*fallback*, which used to be auto-creation. `feedback_boundary` was already in
+the `lead_classification_reviews.review_reason` CHECK, so no migration. The
+review projects a hold onto the inbox thread through
+`persistDeferredLeadClassification`; the reviewer's borderline band only
+remaps `not_lead` outcomes, so `defer` passes through untouched.
+
+**2. Stage B gets system-verified sender history**
+(`ai-sync-reviewer.loadSenderHistoryFacts` → `email-ai-classifier`). Phase C
+already held every fact needed to keep Vitrum out of the pipeline — 209
+threads from the domain classified VENDOR/RECEIPT, an operator discard as
+`vendor_sales`, and five prior opportunities all terminal — and no wire
+carried any of it to the lead decision. The loader runs **three batched,
+company-scoped queries per review batch, never one per candidate**: a
+thread-category census over `email_threads` for the sender and its domain,
+active negative `lead_disposition_feedback` reason codes, and the
+`opportunities` stage census for the matching CRM contact. It renders one
+sentence block of counts and enum words, capped at 400 characters and omitted
+entirely when the database says nothing. The block rides in the **system**
+prompt keyed by candidate id — never in the untrusted user payload — and
+carries no body text, subject, or name; a count cannot carry an injection. A
+load failure degrades to "no history" rather than failing Stage B. It runs
+only when the caller supplies a Supabase client alongside the mailbox lease.
+
+**3. Lead summaries are sanitized on evidence-in and text-out**
+(`lead-summary-service.ts`, `conversation-state/message-cleaner.ts`,
+`utils/email-parsing.ts`). The 2026-08-31 summary for `b444e6fc` read
+`Scope: 8723 | 9785 201 St Langley Twp, BC V1M 3E7 | From: Jackson Sweet Sent:
+Thursday… Next action: <mojibake>` — a sliced signature card and a
+mojibake-quoted copy of the operator's own message. Three body-cleaning
+failures fed it, all now closed:
+
+- **Space-only lines.** Outlook emits `"\n \n \n"` separators, so every
+  line-anchored heuristic that expects an empty line silently missed.
+  `normalizeBodyLines` right-trims each line before any stripper runs.
+- **Reply headers.** The `QUOTE_MARKERS` From/Sent/To triple demands three
+  strictly consecutive unprefixed lines. `stripOutlookReplyHeaderBlock` pairs
+  a line-start `From:` with a `Sent:`/`Date:` line within three lines,
+  tolerating blank lines, a missing `To:`, and `>` prefixes. The colon is
+  load-bearing — authored prose opening "From day one" is untouched.
+- **Signature cards.** A pipe-delimited ALL-CAPS card
+  (`JANE DOE | INSIDE SALES REP |`) carries no `--` delimiter, device footer,
+  sign-off word, or labelled `Phone:` line, so all four existing anchors
+  walked past it. A fifth anchor cuts at the card when the tail below it is
+  entirely card-shaped.
+- **Mojibake.** Zero-width and bidi marks that arrived double-encoded (`â€چ`)
+  are removed by exact third character, so a mangled quote, dash, or
+  apostrophe — real text — survives.
+
+Provider-native "clean" bodies are normalized and header-stripped too:
+`providerCleanBody` only ever meant the quote chain was gone.
+`body_text_clean` rows written before this keep their artifacts at rest
+forever, so the summary service re-cleans at read time through
+`sanitizeSummaryEvidenceBody`, which — unlike the conversation cleaner, which
+must never blank a message — returns nothing for a body that is only a contact
+card. On the way out, every resolved fact field (scope, schedule, objection,
+next action, excluded scope) is rejected when it reads as a reply header or a
+contact card (two or more pipe separators with a phone or postal token), and
+the validation contexts are guarded on the same terms so a validator can never
+demand that a summary repeat a card it was handed.
+
+**Deliberately unchanged.** The `customer-deterministic-v2` rule (a thread
+linked to a live-stage opportunity is CUSTOMER — correct rule, wrong upstream
+link); Lane-1 adoption of new mail into the linked opportunity; the router's
+`require_human_review` on a malformed message; the terminal-tier
+create-new-instead-of-revive guard; and terminal-summary eligibility —
+summarizing terminal opportunities is by design, the *content* was the bug.
+
+**Root cause still open (product, not a bug).** Vitrum is a supplier stored in
+`clients` (`41a26c73`, created 2026-03-18, with Cindi as a sub-contact).
+People and vendors living in the client table is the upstream cause of this
+whole class; the honest fix is a vendor/supplier entity, which is a feature,
+not a repair. Thread `31cc0378` carries the same shape (an internal office
+contact stored as a client).
 
 ### What replaced the old §19
 
@@ -8386,9 +8585,117 @@ Both OPS-Web and ops-site render the same `blog_posts` data:
 
 ### Overview
 
-Social media assets are generated by Cowork scheduled tasks using Python CLI scripts, uploaded to Supabase Storage, reviewed via Slack, and auto-published to Instagram via an edge function. The pipeline is fully automated with a human-veto model: content posts to `#social-media` for review, and auto-publishes after a 6-hour window unless killed with ❌.
+OPS Web now owns a durable scheduled-agent → Instagram production system. A scheduled writer submits a versioned editorial package; OPS Web validates the live source and OPS voice rules, deterministically selects one of seven visual treatments, renders public 1080 × 1350 JPEGs, opens a 10-minute operator veto window after rendering finishes, and publishes through Meta with atomic claims, quota checks, bounded retries, notifications, and a complete audit trail.
 
-### Social Generators
+**Release state (verified 2026-09-05 05:23:59 UTC): Instagram OAuth is connected as `@opsapp.co`.** Both social migrations and production code are deployed. The independent production readback contains one encrypted connection with both required scopes and a valid 60-day credential. The operator reported the connected UI. Current production is source `3a89c08ca1f5b827ccac2f6194842e83f8f7abc8`, deployment `dpl_CTSMvUZksuStAK6yxFNxp5hWPmco`, READY and aliased to `app.opsapp.co`. The queue contains zero posts; the first real Instagram publication remains separately unauthorized and unverified. Automatic renewal has not yet reached its first live window. The dated incident notes below are historical; the connection-resolution entry supersedes their pending/blocker statements. The older Slack/Python/edge-function pipeline below is historical context.
+
+**OAuth completion incident (2026-09-04).** After the operator corrected Meta's redirect setting, request `2w868-1788560282142-8defd3a8dfff` reached `/api/admin/social/instagram/callback` at 22:18:02 UTC and returned `instagram=failed&reason=connection`. Its one-time state was consumed, but the account was not persisted. The existing production log discards the underlying cause and Vercel has no saved trace. This proves failure inside completion, not a specific token, profile, encryption, or database defect. The exact failing step remains unverified.
+
+**Safe diagnostics deployed (verified 2026-09-04 at 22:51 UTC).** Jackson approved the diagnostic release. Only that change was integrated onto then-current production/main `6a2a7c94b`, yielding production commit `4cfa65ef6e2de2dfe7ab0557da222b7f1908b581`. Vercel deployment `dpl_FBcP4c3v3TSvsjNyEADuFK2M9Q32` was verified READY and assigned to `app.opsapp.co`. `instagram-failure-diagnostics.ts`, `instagram-oauth-client.ts`, and `instagram-connection-service.ts` log source-defined stages, allowlisted local error codes, numeric HTTP/provider codes, and fixed response-shape labels. They exclude credentials, codes, state, emails, URLs, messages, stacks, and response bodies; OAuth and publishing behavior are unchanged. The integrated revision passed 149 focused social/API tests, targeted TypeScript, formatting, and the production build. Live probes returned the canonical missing-code callback redirect (307) and unauthenticated admin API rejection (401), both with no-store caching. At 22:44 UTC, connection and post counts remained zero. One fresh operator login was requested after deployment; the exact failure and connection success remain unverified. Successful connection requires independent encrypted-row and displayed-username proof. No first real publication is authorized. Runbook: `ops-web/docs/social/instagram-operations.md`, OAuth completion incident section.
+
+**Parser correction deployed (verified 2026-09-04 at 23:10 UTC).** The fresh callback at 22:57:54 UTC on diagnostic production logged `code_exchange / INSTAGRAM_OAUTH_RESPONSE_INVALID / object`: OPS received parseable JSON with a successful HTTP status, then rejected it because the short-token parser required `data[0]`. The correction accepts direct records or exactly one record in a `data` array for short tokens and profiles, preserving all required permissions, token lifetime, professional user ID, username, encrypted storage, and one-time state checks. Malformed/ambiguous wrappers and missing scopes still fail closed. Eleven regression/safety cases failed before the change; all 183 focused tests, targeted TypeScript, and formatting passed afterward. A real OAuth-client/AES-GCM/service test proves the local encrypted persistence contract; independent review found no actionable issue. Code integration candidate: `fc287e5895b2a6a05f77afe3cb1d5589a8ce4413`; implementation plus runbook/plan commit: `70095a466`. Jackson approved deployment. Production source `c5c0acbfa32984d272cf80d64408f3b670a26e88` includes the correction and its operations notes atop prior production. Vercel deployment `dpl_7sdv4qkR2hJZij4m2QREtRyhgSz2` passed its build and was independently verified READY through `app.opsapp.co`. Live route probes returned the canonical missing-code callback redirect (307) and unauthenticated admin API rejection (401), both with no-store caching. A fresh operator login was requested after deployment; stored-account and visible-username verification remain pending. The credential contents and later production steps remain unverified because safe logs do not retain credentials. Connection and post counts were still zero at 23:01 UTC. No first real Instagram publication is authorized.
+
+**Historical blocker: renewable-token rejection (2026-09-04; resolved below).** Two fresh callbacks at 23:18:31 and 23:19:17 UTC on parser-fix production passed initial token parsing and required permissions, then failed `token_upgrade / INSTAGRAM_OAUTH_REJECTED / HTTP 400 / Meta 100`. Production has no Instagram origin overrides and the upgrade request matches the official business-login endpoint/parameters. Code 100 does not identify the rejected parameter, so no secret rotation or speculative request change is warranted. Local candidate `d1388a856` (implementation `d283fe0ed`) adds only source-defined parameter/reason hints, strips known secrets before matching, and revalidates labels before logging. It retains no provider text or credentials and changes no OAuth behavior. Thirteen new diagnostic expectations failed before implementation. The broad verification run passed 197 tests with one unrelated renderer timeout; that test passed separately in isolation. Targeted TypeScript, formatting, and independent review passed. Jackson explicitly approved deployment of this diagnostic update and related code fixes until the connection is verified; this continuing approval remains active and does not authorize first real publication. Diagnostic source `e21901459153bd846b03d7661561301aa369a1ca` was deployed as `dpl_9htj9VviM7qCcVqZ7zpEhMN2G2T6`, which passed its build and was independently verified READY through `app.opsapp.co` at 2026-09-05 02:00 UTC. Live callback/admin probes returned expected 307/401 results with no-store caching. A fresh operator login was requested to obtain the new fixed-label hints. Fresh-login proof, encrypted connection persistence, and visible username remain outstanding. Runbook and detailed plan: `ops-web/docs/social/instagram-operations.md` and `ops-web/docs/plans/2026-09-04-instagram-token-upgrade-diagnostics.md`.
+
+**Access-setup investigation (2026-09-05 03:33 UTC).** The fresh callback on source `3208ed09d`, deployment `dpl_8cfLkkruGBGi5ZJQUXKJ8snEweLQ`, returned `token_upgrade / HTTP 400 / Meta 100 / providerHints=[unsupported_request]`; newer production contains the same OAuth source. The hint confirms matched wording but not an invalid parameter or account configuration. Dummy-credential probes against alternative token paths all fail authentication first (Meta 190), so they provide no basis for changing the documented endpoint. No new source or production change was made. Meta's official Instagram App Review documentation confirms Standard Access without App Review for an app used only by a business the operator owns/manages. The next required evidence is the actual Meta Instagram account/app access setup; requested a screenshot of Instagram > API setup with Instagram login with App Secret hidden. Do not force App Review, change the endpoint, or rotate credentials solely from this generic failure. Continuing approval for necessary code repairs remains active; the first publication remains separate.
+
+**Connection resolved (2026-09-05 05:23:59 UTC).** After the Meta account was added as **Instagram Tester**, the exact **App Roles > Roles > Instagram Testers** list showed `opsapp.co` as **Pending**, despite a preceding generic form-save error. The operator accepted the invitation through Instagram **Apps and Websites**, then completed fresh OPS authorization and reported the connected UI. Independent database readback verified one connection for `opsapp.co`, a nonempty professional user ID, both `instagram_business_basic` and `instagram_business_content_publish`, a present `ig-token:v1` encrypted envelope, issue/connection time `2026-09-05T05:22:49.761Z`, and expiration `2026-11-04T05:22:49.761Z`. The credential is currently valid, with no recorded refresh error; verification returned no secret, token, or ciphertext. `account_type` is null because the OAuth profile request does not request that optional field; the operator separately confirmed a Professional dashboard. Both social tables retain RLS enabled with no app-role policies. `social_posts=0` and published rows=0. The 05:24:06 UTC scheduled worker returned HTTP 200 on the current deployment. Social/OAuth/worker code is unchanged from `3208ed09d`; the final resolution required the accepted account role rather than a new source deployment, endpoint change, or credential rotation. The previously deployed direct-record parser fix remains required. OAuth repair is complete; the continuing repair-deployment approval has fulfilled its scope. `last_refreshed_at` remains null, so future automatic renewal and a first real publication are not live-proven. Detailed proof and the exact Meta invitation pitfall are recorded in `ops-web/docs/social/instagram-operations.md`.
+
+### Current Architecture
+
+| Component | Location | Responsibility |
+|---|---|---|
+| Agent submission route | `ops-web/src/app/api/internal/social/posts/route.ts` | Fail-closed bearer auth, contract validation, idempotent submission response |
+| Agent contract | `ops-web/src/lib/social/contract.ts` | Versioned source, copy, slide, media, preference, and publish-time schema |
+| Voice references | `ops-web/docs/social/voice/` | OPS constraints, Sam Parr creative reference, approved OPS examples |
+| Feed selector | `ops-web/src/lib/social/template-selector.ts` | Deterministic story/treatment/format choice using fit and recent feed history |
+| Media guard | `ops-web/src/lib/social/public-media.ts` | Public HTTPS enforcement, SSRF defense, bounds, normalization, metadata stripping |
+| Renderer | `ops-web/src/lib/social/render/` | Seven tokenized 1080 × 1350 JPEG treatments |
+| Asset store | `ops-web/src/lib/social/asset-store.ts` | Deterministic S3 keys with Supabase Storage fallback |
+| Durable queue | `ops-web/supabase/migrations/20260901235149_create_social_publishing.sql` | Service-role-only rows, RLS, claims, lifecycle, retry, Meta IDs, audit |
+| Publisher | `ops-web/src/lib/social/publisher.ts` | Atomic claim ownership, Meta calls, 5/15/60-minute retries, notifications |
+| Meta client | `ops-web/src/lib/social/instagram-client.ts` | Quota, container readiness, single/carousel publish, token-safe errors |
+| Vercel worker | `GET /api/cron/social-publish` | Two-minute bounded queue processing behind `CRON_SECRET` |
+| Admin API | `/api/admin/social/posts`, `/api/admin/social/posts/[id]` | Admin-gated list, edit/regenerate, stop, publish-now, retry |
+| Command deck | `/admin/social` | Exact artifact, launch rail, veto countdown, copy, failure, audit, controls |
+
+### Content and Feed Model
+
+Story types define the editorial job: `blog_signal`, `field_dispatch`, `operator_protocol`, `performance_proof`, `release_note`, and `roast_card`.
+
+Visual treatments define the feed composition:
+
+- `editorial_cover` — image-led short-title blog/release cover
+- `split_signal` — image/text split for medium titles and proof
+- `operator_brief` — pure-graphic long-title field memo
+- `field_frame` — image-led job-site dispatch
+- `proof_board` — pure-graphic evidence/result card
+- `signal_grid` — pure-graphic protocol or release sequence
+- `roast_file` — pure-graphic critique file
+
+The selector first removes incompatible treatments, then scores story fit, title length, usable media, recent image/text balance, and a penalty against either of the last two treatments. The idempotency key provides a stable tie-break. Agent preferences are recorded but cannot force a layout that would clip or break the feed cadence. One slide becomes `single`; two to ten slides become `carousel`.
+
+### Agent Submission Contract
+
+`POST /api/internal/social/posts`
+
+- Authentication: `Authorization: Bearer <SOCIAL_AUTOMATION_SECRET>`; the route fails closed unless the configured secret has at least 32 characters.
+- Duplicate prevention: mandatory `Idempotency-Key`; a new package returns `201`, a replay returns `200` with the original `post_id`.
+- Contract version: `2026-09-01`.
+- Blog source: `source.id` must resolve to a live `public.blog_posts` row. The live title, canonical URL, publication date, and thumbnail are authoritative.
+- Fields: title, optional subtitle/date, hook, angle, caption, optional CTA, alt text, one to ten slides, optional media, optional story/treatment/format preferences, optional future `publish_at`.
+- Guardrails: strict unknown-field rejection, field length limits, HTTPS media, slide/format compatibility, banned public audience language, emoji/hashtag limits.
+
+Canonical scheduled-agent handoff: `ops-web/docs/social/scheduled-agent-contract.md`.
+
+### Durable Queue and Veto Lifecycle
+
+`public.social_posts` is visible only to service-role code. RLS is enabled, browser privileges are revoked, and no `anon` or `authenticated` policies expose the rows. Publishing persists a claim-scoped stage ledger (`claimed` → `container_ready` → `publish_requested` → `publish_succeeded`). Expired pre-publish work may recover while an attempt remains; an expired final pre-publish lease becomes terminal `PUBLISH_ATTEMPTS_EXHAUSTED` instead of stranding in `publishing`. Any expired row at or beyond `publish_requested` becomes reconciliation-required and is never automatically reclaimed. Stale rendering, exhausted leases, and uncertain publishing states write a leased recovery-notification outbox. A service-only RPC inserts the persistent notification and acknowledges that outbox in one database transaction, so a failed notification attempt remains replayable. A database transition trigger atomically cancels any pending outbox lease and resolves the exact persistent failure alert when an operator begins a corrective edit, stops the post, or starts a safe retry; a replacement-render failure creates a fresh outbox event.
+
+Lifecycle:
+
+`rendering → review → publishing → published`
+
+Alternate states are `failed` and terminal `cancelled`.
+
+- A render enters `review` with `publish_after = rendered_at + 10 minutes`, unless the request specified a later time.
+- `EDIT COPY` preserves old asset evidence, renders the replacement, and begins a fresh 10-minute veto window.
+- `STOP` permanently cancels a reviewable/failed row and resolves its review notification.
+- `PUBLISH NOW` and `RETRY NOW` use the same atomic publisher and quota checks as cron.
+- Published and cancelled rows are immutable.
+
+Claims use fixed-search-path `SECURITY DEFINER` RPCs, `FOR UPDATE SKIP LOCKED`, unique claim tokens, and three-minute expiry. Duplicate cron delivery therefore cannot claim the same row twice.
+
+### Rendering and Asset Custody
+
+Every final asset is an ordered public 1080 × 1350 `image/jpeg`. Remote inputs are restricted to public HTTPS, revalidated through redirects and DNS, bounded by time/size/pixels, and normalized with metadata stripped.
+
+Deterministic key:
+
+`social-media/{postId}/{renderVersion}/slide-{nn}.jpg`
+
+S3 is the default backend (`STORAGE_BACKEND=s3`); the public Supabase `social-media` bucket remains the fallback. Queue metadata stores URL, SHA-256, dimensions, byte count, content type, order, alt text, and storage key.
+
+### Meta Publishing and Recovery
+
+The server-only Graph client requires `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`, and explicit `INSTAGRAM_API_VERSION`; `INSTAGRAM_API_ORIGIN` defaults to `https://graph.facebook.com`.
+
+For every publish it checks `content_publishing_limit`, creates single-image or carousel child/parent containers, polls readiness, calls `media_publish` once, and stores the media ID/permalink. HTTP 429/5xx and explicitly transient Graph errors retry after 5, 15, then 60 minutes. Terminal failures stay visible for operator correction.
+
+`PUBLISH_OUTCOME_UNKNOWN` and `PUBLISHED_ACK_NOT_PERSISTED` must never be retried blindly: Meta may have accepted the post. Reconcile the Instagram profile and durable row first to avoid a duplicate. Admin edit, stop, publish, and retry actions are server-side locked for these rows. External image downloads pin the validated DNS address through TLS, revalidate redirects, and stop streaming at 12 MB. The executable PostgreSQL 17 harness applies the exact migration and proves disjoint concurrent claims, monotonic stage transitions, every lease-recovery branch, service-role-only grants, atomic recovery notification delivery, and zero-row replay.
+
+### Notifications and Operations
+
+- Review: persistent `social_post_review`, links to `/admin/social?post={id}`.
+- Success: standard `social_post_published`.
+- Exhausted/terminal failure: persistent `social_post_failed` with operator-safe error.
+- Recipient: `SOCIAL_OPERATOR_USER_ID` + `SOCIAL_OPERATOR_COMPANY_ID`, falling back to the PMF operator pair.
+
+Canonical runbook and production activation gates: `ops-web/docs/social/instagram-operations.md`.
+
+### Legacy Pipeline (Historical, Pending Cutover)
+
+#### Legacy Social Generators
 
 Located at `OPS-Web/scripts/social-generators/`:
 
@@ -8405,7 +8712,7 @@ All generators:
 - Require fonts at `$OPS_FONT_DIR` (default `OPS-Web/public/fonts`): Kosugi-Regular, Mohave-Bold, Mohave-Regular
 - Output PNGs to local disk; scheduled tasks handle upload automatically
 
-### Upload Utility
+#### Legacy Upload Utility
 
 `supabase_upload.py` — Uploads generated PNGs to the `social-media` bucket.
 
@@ -8417,7 +8724,7 @@ Returns public URLs: `https://ijeekuhbatykdomumfjx.supabase.co/storage/v1/object
 
 Auth: Uses the **service_role** key (env override `SUPABASE_SERVICE_ROLE_KEY`, else a hardcoded service_role fallback, lines 35–38), which **bypasses storage RLS**. The `social-media` (and `images`) buckets' legacy `{anon}`/`{public}` write policies were vestigial from an early anon prototype (the `test-anon-write.jpg`/`probe-*.png` objects are its fingerprint) and were revoked by W3 §7 migration `20260705170000_sec_w3_storage_anon_write_revoke` (applied to prod 2026-07-05) — service_role writes are unaffected. See `03_DATA_ARCHITECTURE.md` § Storage.
 
-### Automated Social Content Schedule
+#### Legacy Automated Social Content Schedule
 
 **Sunday Generation Batch** — all content created and posted to `#social-media` for review:
 
@@ -8432,7 +8739,7 @@ Auth: Uses the **service_role** key (env override `SUPABASE_SERVICE_ROLE_KEY`, e
 
 Each generator task: creates content → runs brand voice enforcement → uploads to Supabase Storage → posts to `#social-media` (C0ASCNEHMAS) with publish metadata JSON (`publish_day`, `urls`, `caption`) for the auto-publisher to read.
 
-### Instagram Publishing
+#### Legacy Instagram Publishing
 
 Edge function: `OPS-Web/supabase/functions/social-publish-instagram/index.ts`
 
@@ -8469,7 +8776,7 @@ Edge function: `OPS-Web/supabase/functions/social-publish-instagram/index.ts`
 }
 ```
 
-### Auto-Publish Logic (`social-auto-publish`)
+#### Legacy Auto-Publish Logic (`social-auto-publish`)
 
 Runs Mon/Wed/Thu at 9 AM. Checks `#social-media` for posts tagged with today's `publish_day` and applies these rules:
 1. **❌ reaction** → post is killed, not published
@@ -8480,15 +8787,15 @@ Runs Mon/Wed/Thu at 9 AM. Checks `#social-media` for posts tagged with today's `
 6. Posts summary to `#social-media` only if activity occurred (publish, skip, or kill)
 7. **Legacy posts** (no `publish_day` metadata) → treated as immediately eligible if 6+ hours old, for backward compatibility
 
-### Known Gaps
+#### Legacy Gaps and Current Disposition
 
-1. **No social queue table** — published posts are tracked only via Slack history. No DB record of what was generated, when, or the resulting IG post ID.
-2. **No web admin notifications** — no OPS-Web rail notification for pipeline events. All status reporting goes to Slack.
-3. **No retry logic** — if Instagram publish fails, the `social-auto-publish` task reports the error to Slack but does not automatically retry on next run.
-4. **No draft preview** — blog posts only visible publicly when `is_live = true`.
-5. **Hardcoded anon key** in `supabase_upload.py` — should use env var.
-6. **Token management** — Instagram token expires every 60 days. `social-auto-publish` checks the `X-Token-Warning` header and posts a warning to Slack when < 7 days remain, but there is no auto-refresh. Jackson must manually rotate the token via Meta Developer Console.
-7. **Missing migration files** — `newsletter_subscribers`, `newsletter_content`, `email_log`, and `app_settings` tables exist in Supabase but have no corresponding migration files in the repo. Should be captured in migrations for reproducibility.
+1. **Queue/audit gap — resolved locally.** `social_posts` migration records source, selection, assets, lifecycle, attempts, errors, claims, Meta IDs, and audit events. Awaiting production migration approval.
+2. **Web notification gap — resolved locally.** Review, publication, and persistent failure notifications use the OPS notification rail. Awaiting deployment/configuration.
+3. **Retry gap — resolved locally.** Atomic claims and bounded 5/15/60-minute retry are implemented, including explicit uncertain-publish stops. Awaiting deployment.
+4. **Exact preview gap — resolved locally.** `/admin/social` renders the final JPEG/carousel and caption during the veto window. Awaiting deployment.
+5. **Legacy Python credentials — retired at cutover.** The new path uses server-only Vercel/Supabase credentials. Do not expand the old script.
+6. **Token operations — documented.** Rotation remains a controlled Meta/Vercel operator action; the new runbook defines verification and unknown-outcome reconciliation.
+7. **Unrelated content-table migrations — still open historical debt.** `newsletter_subscribers`, `newsletter_content`, `email_log`, and `app_settings` remain outside this social publishing migration.
 
 ---
 
@@ -10310,5 +10617,25 @@ The field UI exposes `review`, `to_pay`, `paid`, `held`, and `payroll` filters, 
 Primary iOS sources are `OPS/DataModels/SupplierBillIntake.swift`, `OPS/Services/SupplierBills/SupplierBillCaptureQueue.swift`, `SupplierBillCache.swift`, `SupplierBillIntakeService.swift`, `OPS/ViewModels/SupplierBillIntakeViewModel.swift`, and `OPS/Views/Books/Bills/SupplierBillsView.swift`. The implementation is local commit `c6269763`; it has not been pushed or released. The matching web console and account-closure integration are published on production main at OPS-Web commit `f901c6d9c` through `READY` Vercel deployment `dpl_7BCJY52J5SB6KwmY7qdCrLSzCUH3` on `app.opsapp.co`. Canonical contract: `specs/2026-09-03-canpro-supplier-bill-clearance.md`.
 
 ---
+
+## 46. Agent Queue — Approval Desk (Web, 2026-09-01)
+
+**What it is.** `/agent/queue` is the single human approval gate for everything the automation proposes. Every proposal is a `public.agent_actions` row (`status = pending`) with an `action_type`, a `context_summary`, an `action_data` payload, a `priority`, a `confidence`, and an `expires_at`. Nothing executes until an operator approves it on this page (or through the same API); rejected rows record `review_notes`; rows nobody reviews before `expires_at` are flipped to `expired` by the expiry sweep. Approval runs the type's executor inside `ApprovalQueueService.approveAction` and lands the row on `executed` (or `failed` with `error_message`).
+
+**Producers.** Web services that call `ApprovalQueueService.proposeAction`: `project-lifecycle-service` (`create_task`, `reassign_task`, `archive_project`, `send_status_email`), `task-suggestion-service`, `project-suggestion-service`, `invoice-suggestion-service`, `payment-reminder-service`, `financial-intelligence-service` (`financial_insight`), `schedule-optimization-service` (`optimize_schedule`, `reschedule_tasks`), `client-scheduling-comms-service` (appointment confirmations / reminders / reschedule handling), the agent control plane (`file_day_closeout`, `approve_collections_draft`), and the `POST /api/agent/queue` manual proposer. Database producers: `public.close_project_when_fully_paid` and `public.close_project_from_payment_review` (`close_project`, source `lifecycle_automation`). The card component (`src/components/agent/action-card.tsx`) carries one detail body per `action_type`; a type with no body still renders the shared shell (summary, priority, confidence, age, source link).
+
+**Surface (rebuilt 2026-09-01).** One glass panel registered `fullHeight: "padded"` in `src/lib/navigation/route-registry.ts` (the page previously rendered inside the scrolling frame while boxing itself to `h-full`, which left a 57 px list on a 780 px viewport — the root cause of the "content cut off" report). The workbar carries a two-way segment — `NEEDS YOU` (`status = pending`, count in the segment label) and `HISTORY` (every other status, newest review first) — and a type chip row derived from the rows actually loaded (hidden when only one type is present). Priority is a tag on the card (tan = high, rose = urgent), not a filter. The list is the only scroll owner. Selecting rows reveals an in-panel batch bar (`APPROVE n` is the page's single accent element; `REJECT n`; `CLEAR`). States: 3 skeleton rows while loading; `// ERROR — QUEUE UNAVAILABLE` with the server message and `RETRY` when the query fails (the previous build rendered a fake "No pending suggestions" empty state on any error, including a 403); `RegisterEmpty` (`0 // AWAITING REVIEW [all clear]` / `0 // REVIEWED`) when the view is genuinely empty. The stats ribbon (pending / approved today / rejected today / avg response) and the page-level H1 were removed — the TopBar already titles the route and the count lives in the segment.
+
+**Access — `agent.review`.** Ledger `20260901201256_agent_review_permission` seeds the key at scope `all` for preset Admin, Owner, and Office (`public.role_permissions`, idempotent on `(role_id, permission)`) and registers it in `private.lead_permission_editor_registry` so per-user overrides may grant or clear it. Operator, Crew, and Unassigned do not hold it by default; company admins and the account holder bypass inside `public.has_permission`. Both sides gate on the same key: the route registry (`agent-queue` and the `/agent` umbrella; `/agent/auto-send` stays on `inbox.send`), the sidebar entry and its pending badge, the three TanStack hooks in `src/lib/hooks/use-approval-queue.ts`, and every `/api/agent/queue*` handler via `requirePermission(auth, "agent.review")` → `checkPermissionByUserId` → `public.has_permission` (fail-closed). The previous server gate was `requireAdminOrOwner` (`account_holder_id ∪ admin_ids`) while the client gated on `pipeline.view`; an Operator holding `pipeline.view@assigned` could open the page and receive 403s the UI hid. `requireAdminOrOwner` still guards the other agent routes (confirm/unconfirm schedule, suggest-tasks, team availability, comms wizard).
+
+| Permission | Admin | Owner | Office | Operator | Crew |
+|-----------|-------|-------|--------|----------|------|
+| `agent.review` | ✓ | ✓ | ✓ | — | — |
+
+**Key files.** `src/app/(dashboard)/agent/queue/page.tsx` (surface), `src/components/agent/action-card.tsx` (card shell + per-type bodies), `src/components/agent/reject-dialog.tsx`, `src/lib/agent-queue/status-filter.ts` (`HISTORY_STATUSES`, `parseStatusesParam`), `src/lib/hooks/use-approval-queue.ts`, `src/app/api/agent/_lib/auth.ts`, `src/app/api/agent/queue/{route,[actionId]/route,bulk/route}.ts`, `src/lib/api/services/approval-queue-service.ts` (`getQueue`, `getStats`, `approveAction`, executors). Routes are documented in `04_API_AND_INTEGRATION.md` § "Agent Queue Routes".
+
+**Shipped.** ops-web `main` `f0c020f7` (fast-forward push 2026-09-02, after merging the 65 intervening main commits with no conflicts); Vercel production deployment `ops-3rg8q3ifs` Ready, serving `app.opsapp.co`. Gate on the pushed tree: `tsc --noEmit` clean except 8 pre-existing errors in the bug-report element-picker test files (sibling merge `5017459d`), which do not fail Vercel builds; 53/53 queue-related tests green.
+
+**Observed state at the rebuild (Canpro, 2026-09-01).** 54 pending, 292 expired, 1 rejected; the oldest pending row dated 2026-08-22; average review latency ≈ 35 h. Roughly five in six proposals had been expiring unreviewed because the page was unusable, not because the proposals were wrong — track the expired share after the rebuild before tuning any producer.
 
 **End of Document**

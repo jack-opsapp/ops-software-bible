@@ -4,7 +4,7 @@
 
 **Purpose**: Complete documentation of the OPS financial system — pipeline/CRM, estimates, invoices, payments, products catalog, and accounting integrations. All financial data lives in **Supabase** (PostgreSQL), separate from operational data in Bubble.io.
 
-**Last Updated**: August 7, 2026
+**Last Updated**: September 4, 2026
 **Source Reference**: `C:\OPS\ops-web\src\lib\types\pipeline.ts`, `src\lib\api\services\`, iOS source at `ops-ios/OPS/`
 
 ## Table of Contents
@@ -610,6 +610,80 @@ formatCurrency(amount, currency?)     // "USD" default → "$1,234.56"
 formatTaxRate(rate)                   // 0.0875 → "8.75%"
 ```
 
+### Line Item Calculator (web, 2026-08-31)
+
+A calculator inside the shared line-item editor
+(`ops-web/src/components/ops/line-item-editor.tsx`). Because that editor is
+rendered by the Books estimate dialog (`estimate-form-modal.tsx`), the floating
+create-estimate window (`create-estimate-modal.tsx`) **and** the invoice modal
+(`invoice-form-modal.tsx`), the calculator ships to all three at once. Origin:
+feature request `be25c30e`.
+
+**Entry point.** A `CALC` text chip in the editor's action row beside "Add Line
+Item" (28px compact tier). It is a text chip, not a glyph — lucide `Calculator`
+already means *estimate* in the FAB, the client-workspace tab and the finance
+nav.
+
+**Placement.** Radix popover rendered with `contentClassName="z-modal"` (3000).
+The default popover layer (`z-dropdown`, 1000) renders behind both the floating
+window (z 2000+) and the Books dialog (z 3000). Anchored to the action row, not
+to a row, so the floating window's `overflow-y-auto` shell cannot clip it.
+
+**Modes** — `CALC` (expression + keypad), `AREA` (length × width, count, waste),
+`LINEAR` (a run of lengths, waste), `CONVERT` (from/to within one dimension).
+
+**Math** (`ops-web/src/lib/utils/estimate-calc/`):
+
+- `expression.ts` — tokenizer → shunting-yard → RPN fold over `+ - * / ( ) %`
+  with unary minus, the `×`/`÷` glyphs and `12x16` as multiply. **No `eval` and
+  no `Function` constructor**; a test reads the module source to pin that.
+  Errors: `empty`, `malformed`, `divide_by_zero`, `out_of_range`.
+- `measure.ts` — `computeArea`, `computeLinear`, `convert`, `UNIT_GROUPS`.
+  Every conversion routes through one SI anchor per dimension using the exact
+  1959 international definitions (1 ft = 0.3048 m, 1 in = 0.0254 m,
+  1 yd = 0.9144 m); area and volume factors are derived, never restated.
+  Cross-dimension conversion throws.
+
+**Rounding.** `Number(value.toFixed(2))` — ties away from zero on the decimal
+expansion of the stored double. `2.345 → 2.35` and `0.125 → 0.13`, but
+`1.005 → 1.00` because it is stored as 1.00499999999999989. Correcting that
+needs a decimal library for an error of a hundredth of a cent. Display adds
+thousands grouping and trims trailing zeros (`192`, `1,240.57`); insertion
+passes the plain number.
+
+**Magnitude gate.** Results beyond `|1e12|` return `out_of_range` rather than a
+silently mangled number — past the safe-integer range the cent-rounding
+round-trip loses whole units.
+
+**Insertion rule.** The target is the last **focused** quantity or unit-price
+field, captured on `onFocus` and never cleared on blur (clicking the chip blurs
+the field the operator was just in). It is then derived against the `items`
+array, so deleting or reordering the targeted line resolves itself. The write
+always goes through `updateItem(id, field, value)` — the two numeric inputs
+commit via `parseFloat(e.target.value) || 0` on every keystroke, so a DOM-level
+write would be discarded on the next render, and a partial value would snap to
+0. After insert the popover yields focus control to the editor, which returns
+focus to the field that received the number.
+
+**i18n.** New `estimate-calculator` namespace (en + es), registered in
+`ops-web/src/i18n/types.ts`. The surrounding line-item editor remains
+un-internationalised.
+
+**Non-goals / known gaps:**
+
+- The calculator does **not** set a line's `unit` / `unitId`. The estimate row
+  exposes no unit control at all; that is a separate editor change.
+- **Shown work is displayed but never persisted.** `LineItemRow` carries no
+  description or notes field — only `name` is free text — so the editor
+  declares `descriptionSupported={false}` and the `[ ADD MATH TO DESCRIPTION ]`
+  toggle never renders. The DB-level `LineItem` type *does* have `description`,
+  but the editor's row model drops it and no submit path carries it. Wiring it
+  up means touching `LineItemRow`, both row factories and all three submit
+  paths.
+- Working strings (`12 ft × 16 ft = 192 sq ft`) are English-only, alongside the
+  editor's wider i18n debt.
+- No calculator history is persisted; state resets when the popover closes.
+
 ### Money Rendering Canon (cross-platform, 2026-07-28)
 
 Money renders in the **en_US locale on every device**, both platforms. Web:
@@ -1114,7 +1188,7 @@ interface AccountingConnection {
 }
 ```
 
-Located at `src/lib/api/services/accounting-service.ts`. Stores OAuth connections for QuickBooks and Sage. Expense push runs via Supabase Edge Functions (below); the QuickBooks import, webhook apply, and full-CRUD queue run in `ops-web` (see *QuickBooks Sync*).
+Located at `src/lib/api/services/accounting-service.ts`. Stores OAuth connections for QuickBooks and Sage. Legacy expense push runs via Supabase Edge Functions (below); QuickBooks import/webhook/queue and the hardened Sage OAuth/queue/reconciliation paths run in `ops-web` (see *QuickBooks Sync* and *Sage Accounting sync*).
 
 **Additional columns (2026-06, not in the legacy interface above):** `provider_environment text NOT NULL DEFAULT 'production'` (CHECK ∈ {`production`, `sandbox`}) lets one company hold separate QuickBooks production and sandbox rows; uniqueness is `(company_id, provider, provider_environment)`. `sync_direction text NOT NULL DEFAULT 'pull_only'` (CHECK ∈ {`pull_only`, `push_only`, `bidirectional`}) governs which half of the sync engine may run — a `pull_only` connection can never push to the provider; `realm_id_lookup text` (SHA-256 hex of the realm id) is the deterministic routing column for inbound webhooks, since `realm_id` itself is encrypted. **Token security:** `access_token` / `refresh_token` / `realm_id` are AES-256-GCM encrypted at rest (`token-cipher.ts`, key env `QB_TOKEN_ENC_KEY`, fail-closed); decryption is centralized in `AccountingTokenService.getValidToken`, which refreshes with the credential bundle matching the connection's `provider_environment`. The web client reads this table as the anon role, so an anon company-scoped `SELECT` policy gated on `accounting.view` exists alongside the `service_role` write policy (migration `20260603010000_accounting_connections_read_policy.sql`, bug `eb70d803`).
 
@@ -1132,13 +1206,24 @@ Financial-data view:
 - **Inbound payment safety** — linked QBO payments are canonicalized as `paymentQbId:invoiceQbId` in OPS, while outbound void/update calls parse the raw payment id before calling QBO and then refresh the local composite key. Delayed inbound payment webhooks update a legacy raw payment row instead of inserting a duplicate. QuickBooks Payment `Void` webhooks mark matching OPS payments `voided_at`; Payment `Update` also voids stale composite rows that disappeared from QBO's latest split and reconciles affected invoices to QBO `Balance`, so QBO-side payment edits/reversals do not leave OPS A/R overstated.
 - **Local bidirectional hardening awaiting release approval (2026-09-03)** — create queue rows now fence dependent updates; reconcile candidates are selected across all four entity lanes by least-recently-reconciled order and exclude tombstoned/terminal records; payment reconciliation strips the OPS invoice suffix before QBO lookup; and overlength invoice/estimate numbers receive a deterministic OPS-id suffix inside QBO's 21-character limit. The migration and web route are locally verified only, not production-live.
 
+### Sage Accounting sync — full sales and purchasing graph (production deployed, dormant 2026-09-04)
+
+OPS-Web commit `d0879395f` replaces the partial Sage path with one exact-business, bidirectional model. The release reached production dormant on 2026-09-04; see `04_API_AND_INTEGRATION.md` § Sage Accounting for the deployment and ledger record.
+
+- **One accounting reality** — a company still connects either QuickBooks or Sage, never both. Sage authorization explicitly selects and encrypts one business identity; every request carries that exact `X-Business` value. Sandbox is a logical, allow-listed profile using dedicated credentials because Sage does not expose a separate sandbox API host.
+- **Complete sales documents** — customers/contacts, products, estimates, quotes, invoices, line items, and AR payments move through the durable queue and reconciliation engine. `sage_document_kind` keeps estimates and quotes distinct. Account, tax, bank, and payment-method mappings are scoped to the exact connection/environment.
+- **Complete purchasing documents** — suppliers, purchase invoices, full line items, expense-category/purchase-account mappings, and AP payments use the same queue ownership and inbound apply rules as sales documents.
+- **Money stays canonical** — moving or voiding an AR/AP payment locks and recalculates every old/new invoice or bill. Provider-origin suppression prevents the derived balance update from echoing back into the outbound queue. Provider tombstones never silently erase financial history; terminal discrepancies become review work.
+- **Failure recovery** — stable provider idempotency keys, create-before-update fences, stale-claim recovery, fair entity selection, serialized Sage writes, and `needs_review` after provider-success/local-finalization failure make retries safe across timeouts and process loss.
+- **Proof boundary** — the deterministic fake-Sage war game and PostgreSQL 17 runtime are green, including full graphs and payment reallocation. The real runner correctly stopped at missing explicit sandbox profile before any write; exact-credential Sage sandbox proof remains pending.
+
 ### Edge Functions (3)
 
 All deployed to Supabase, invoked via `SUPABASE_URL/functions/v1/<function-name>`. All use `verify_jwt: false` with manual auth header validation internally.
 
 #### `accounting-oauth`
 
-Handles OAuth flows for QuickBooks and Sage.
+Handles the legacy Edge Function OAuth flows. The hardened Sage connector uses the authenticated OPS-Web `/api/integrations/sage*` routes documented above; those routes are authoritative for new Sage connections.
 
 **Actions** (via `action` field in JSON body):
 - `authorize` — Returns OAuth redirect URL for the provider
@@ -1148,7 +1233,7 @@ Handles OAuth flows for QuickBooks and Sage.
 
 **Token management**:
 - QuickBooks: Access tokens expire every 60 minutes, refresh tokens every 100 days
-- Sage: Access tokens expire every 60 minutes
+- Sage: access tokens expire after 5 minutes; rotating refresh tokens last 31 days and are persisted encrypted on refresh
 - Token refresh called automatically by `accounting-sync-expense` before sync operations
 
 **Required env vars**: `QB_CLIENT_ID`, `QB_CLIENT_SECRET`, `QB_REDIRECT_URI`, `SAGE_CLIENT_ID`, `SAGE_CLIENT_SECRET`, `SAGE_REDIRECT_URI`

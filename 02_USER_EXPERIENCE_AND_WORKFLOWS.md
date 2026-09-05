@@ -1501,6 +1501,23 @@ identified as not included and cannot be silently represented as selectable.
 
 ---
 
+### New-lead identity sources (2026-08-31)
+
+**Purpose:** A new lead is almost always a person the operator already has somewhere — in their phone, or in the OPS client base. Retyping them is the app forgetting what it was already told. Bugs `55f40233` (NEW LEAD form) and `f8951223` (BOOK VISIT inline form).
+
+**AddLeadSheet — two source rows above the form** (`Views/Leads/Sheets/AddLeadSheet.swift`). They answer different questions, so they do not collapse to one entry point:
+
+- **IMPORT FROM CONTACTS** — the system `CNContactPickerViewController` via the anchored `ContactPicker` bridge (attached as a `.background`, never `.sheet`; bug `5d5df5b0`). Semantics are **fill, never create**: `ContactLeadFill` (`Views/Components/Contact/ContactLeadFill.swift`) writes only the fields the contact actually carries, so a partly typed form survives, and no `clients` or `opportunities` row exists until the operator saves. An imported address routes through `LeadForm.addressTextChanged`, so stale coordinates from an earlier autocomplete pick are dropped.
+- **USE EXISTING CLIENT** — `ClientPickerSheet` in its new `.leadSeed` context. `LeadForm.adoptClient` binds the client: identity fields adopt the record, job fields (title, value, notes, stage, priority) stay the operator's, and SOURCE flips to `repeat_client` (a chip that now exists in `LeadFormView.sourceOptions`, so the group is never left unselected). The bound `client_id` is written directly on save, bypassing name-based resolution.
+
+Both rows are replaced by a single bound-client chip (olive hairline, unlink `×`) the moment a client is linked — state-aware, showing the operator's current reality. A lead opened from a client's page (`seedClient`) simply *starts* in that bound state, so there is one state machine rather than two. Unlinking drops the binding but keeps the prefilled text; the save then falls back to match-or-create by name.
+
+**`ClientPickerSheet.Context`** (`Views/Components/Project/ClientPickerSheet.swift`): `.projectReassign` is the historical behavior (unchanged, and the default, so every existing call site is byte-identical). `.leadSeed` closes the two lanes that create a client — the blended phone-contact rows and the create-client foot row — because both funnel through `ClientLeadAutocreateQueue` and would mint a second lead racing the one being composed. The gates are pure statics (`showsPhoneContacts`, `showsCreateRow`).
+
+**BOOK VISIT inline form** (`Views/Pipeline/ActivityTargetPickerView.swift`) carries the same IMPORT FROM CONTACTS row in the capture panel's chrome. The inline form is deliberately three fields (name / phone / email), so a picked contact's postal address rides along as a quiet, clearable `// ADDRESS ·` line and is written to the created lead's `address` — a visit booked from here needs somewhere to go.
+
+---
+
 ### EstimatesListView (Estimates Segment)
 
 **Purpose:** List all company estimates with filtering, search, and swipe actions.

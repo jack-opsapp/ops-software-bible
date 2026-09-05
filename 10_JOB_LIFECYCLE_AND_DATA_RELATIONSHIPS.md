@@ -1648,6 +1648,8 @@ A site visit exists in exactly **two** shapes, separated by one column:
 - **Booking sheet WHEN surface** — a Monday-first paged week rail (18-month horizon + month jump) whose day cells carry tan booked-visit markers; a BOOKED — <DAY> strip lists that day's existing visits (calendar-visibility-scoped, the moved booking excluded); a non-blocking tan OVERLAPS note flags window collisions. Signals inform, they never block.
 - **Lead NEXT TOUCH** — a booked visit outranks `next_follow_up_at` in the detail hero (presentation only; the column is untouched). The cell opens the appointment sheet: live countdown (`SiteVisitCountdown`), window, crew, START NOW (visit-day onward, convert grant), REBOOK (reschedule mode).
 - `reschedule_site_visit.p_scheduled_at` is NULL-keeps as of 2026-08-28 (see 04_API) — crew/duration/reminder-only reschedules omit it. Applied to prod 2026-08-28, ledger `20260829022150`.
+- **Project details action bar (BOOK VISIT / REBOOK)** (2026-08-31, bug `7d94c9f3`) — books on the project's **linked lead**, resolved through `opportunities.project_id` (`OpportunityRepository.fetchLinked(toProjectId:)`, newest non-deleted row). Booking is opportunity-anchored by RPC contract, so a project with no linked lead offers nothing. The entry sits in the client-facing verb cluster (`CONTACT · BOOK VISIT · TASK · SHARE`) and is state-aware: an open booking flips the verb to REBOOK and opens that booking for reschedule/cancel, so a second booking is never offered next to an existing one. Hidden when the project has no linked lead, the operator lacks `pipeline.convert` on that lead, the access is mention-only, or the project is completed/closed/archived. The gate (`ProjectVisitBookingGate`) is deliberately stricter than the server, which requires only `pipeline.edit`: `scope(.convert) ⊆ scope(.edit)`, so a rendered verb can never be refused. Stage is **not** consulted — the linked lead of a converted project is WON, and `book_site_visit` is stage-blind. Live updates follow the `SiteVisitBookingChanged` notification.
+- **BOOK VISIT lead picker now lists clients** (2026-08-31, bug `55f40233`) — the FAB's leads-only picker (`ActivityTargetPickerView`, `.leadsOnly`) offers open leads **and** existing clients; jobs stay out. Tapping a client materializes a bookable lead: remote-first `fetchAllLinked(toClientId:)` → newest open (non-terminal, non-deleted, non-archived) lead, else a fresh `repeat_client` lead bound to that client. A failed lookup surfaces a terse error and creates **nothing** — failing closed is what keeps duplicate leads out. The activity logger's `.all` mode is unchanged.
 
 ### Checklist Administration
 
@@ -3492,4 +3494,77 @@ The web app includes a full in-app email client at `/inbox` (inbox view, compose
 
 Unknown or mismatched identity remains activity-scoped `needs_review` and is absent from lead/project photo surfaces. Disconnected mailboxes resume queued work after reconnect. Stored OPS copies remain accessible after provider deletion or disconnect.
 
+## Conversion grouping — sold line items into visits (2026-09-01)
+
+Source: `migrations/20260901191611_conversion_grouped_tasks.sql`. Design: `specs/2026-09-01-task-groups-design.md` §6. Schema: `03_DATA_ARCHITECTURE.md` § Task scopes — task groups (2026-09-01). RPC contracts: `04_API_AND_INTEGRATION.md` § Task scope and composition RPCs (2026-09-01).
+
+Both conversion paths that materialize tasks from sold work — `private.execute_opportunity_conversion_core` (lead → project) and `private.sync_accepted_estimate_project_tasks` (estimate acceptance) — can now compose LABOR line items into grouped tasks instead of emitting one task per line.
+
+### Gate semantics
+
+Each path reads `companies.task_groups_conversion_enabled` for the owning company and branches on it. The column is `boolean not null default false`, so **every company today takes the legacy branch**.
+
+The gate is a rollout control, not a product setting: no UI, no per-user toggle, flipped per company by SQL only. Its reason is client visibility, not risk aversion. Grouping moves work out of task rows and into scope rows; a crew running a build that predates scope rendering would open a converted project and silently not see the non-primary scopes — the work would look like it had vanished. So a company is switched on only after its crew builds render scopes. Manual group creation on a new client is a human choice made in a build that can display it, and is not gated.
+
+When false, both RPCs run the original statement unchanged — one task per LABOR line item, `custom_title` = line name, legacy titles. Byte-identical legacy behavior is the point of the branch; the grouped path is additive beside it.
+
+### Legacy vs grouped materialization
+
+When the gate is true, the grouped branch delegates to `private.materialize_line_item_tasks_grouped(company_id, project_id, lines)`:
+
+1. **Lines already carried are skipped.** A line is done when a live task claims it as `source_line_item_id` *or* a live scope does (joined through its live parent task on the same project). This is the idempotency test, and it is why re-running a conversion adds nothing.
+2. **Untyped LABOR lines cannot be composed** — a line with no `task_type_ref` has no type to group by, so it becomes one task each, exactly as the legacy path, keeping the line name as `custom_title`.
+3. **Typed lines compose per estimate.** Because a task carries exactly one `source_estimate_id`, candidates are batched by `estimate_id` and handed to `public.compose_task_scopes`, ordered by `sort_order` then `line_item_id` for determinism. Each returned visit becomes one task.
+
+Per visit, the task takes `task_type_id` = the visit's `primary_task_type_id`, and its schedule-shaping defaults (`display_order`, `duration`, `task_color`) from the **primary line**. Title depends on shape: a multi-scope visit sets `custom_title` to **null**, so the client renders the auto-title (primary type display + `+N`); a single-scope visit keeps the line name, exactly as legacy.
+
+**Scope rows are written only for multi-scope visits.** A single-scope visit produces a plain task with zero scope rows — so conversion never emits a task with exactly one scope, and the single-type shape stays byte-identical to today. Scopes are inserted through the same `private.insert_task_scopes` helper the creation RPCs use, with `note` = the line name and `source_line_item_id` = that line, `display_order` following visit order.
+
+### Provenance rules
+
+Provenance is split deliberately, and both halves are load-bearing:
+
+- The **task** carries `source_line_item_id` = the **primary** line only, plus `source_estimate_id`.
+- **Every other sold line in the visit is carried by its scope's** `source_line_item_id`.
+
+So no single query on `project_tasks` alone sees all sold lines of a grouped conversion. Every consumer that asks "is this line converted?" must check both provenance surfaces. Two already do:
+
+- **Acceptance verification** in `sync_accepted_estimate_project_tasks` counts a required line as covered when a live task claims it **or** a live scope on a live task of the same project and estimate claims it. Without the scope half, a grouped conversion would fail its own completeness assert with `accepted_estimate_task_sync_incomplete` (`23514`).
+- **Material demand mapping** in `private.resolve_estimate_material_demand_plan` maps a line carried as a scope to the grouped task that owns it, via two `left join lateral` lookups — one for the line itself, one for its `parent_line_item_id` — each resolving through `task_scopes` → `project_tasks` on the same project and estimate, ordered by `created_at, id` and limited to one row. **This mapping applies regardless of the gate**, so a company whose grouped tasks were created by hand (ungated manual grouping) still gets correct material demand. Every sold line therefore maps to a task for materials, grouped or not.
+
+### Idempotency
+
+Repeat conversions add nothing. The pending-line filter in the grouped path excludes any line already carried by a live task or live scope, and the ungrouped path keeps its original guard. Task creation through `create_task_with_event` writes scopes only when the task row was freshly inserted, so a retried creation never duplicates scope rows either.
+
+### Verified 2026-09-01
+
+Against a Canpro-shaped fixture (vinyl + glass rail + gate + 6' tall + one untyped line):
+
+- Gate **on** ⇒ 3 tasks: vinyl as a single, the rail group carrying 3 scopes, and the untyped line as a single.
+- Gate **off** ⇒ 5 tasks, 0 scopes, legacy titles.
+- Repeat conversions add nothing in either mode; every sold line maps to a task for materials.
+- `set_task_scope_completion` exercised across all branches, including denial for a user without task-edit rights on the project.
+
+Production state at documentation time: `task_scopes` holds 0 rows and no company has the gate enabled.
+
+---
+
 *This document supersedes any prior informal notes about entity relationships. All implementation decisions should reference this document.*
+
+## Public booking in the lead lifecycle (2026-09-03, built, NOT deployed)
+
+A homeowner booking from a trades business's own website enters the **existing** lifecycle — it does not open a parallel one. Design: `specs/2026-09-02-public-api-availability-and-guest-booking-design.md`; routes in `04_API_AND_INTEGRATION.md` § Customer identity broker + public booking.
+
+**The spine, in order.** Verified end-to-end against production 2026-09-03 (MAVERICK test company, both modes, all artefacts removed afterwards):
+
+1. The homeowner picks a slot OPS offered, holds it (≤ 5 min), enters contact details, and proves one channel with a six-digit code. No OPS account is created — "guest" means no account, not an unverified person.
+2. `confirm_guest_booking_as_system` runs **one atomic step under the company advisory lock**: re-validate the slot against live policy, bookings and holds; resolve the client company-scoped (§ 5.3 of the identity design — exact verified email only, never name or address); create the lead through **`create_opportunity_guarded`** with `source='website'`; then branch on the company's booking mode.
+3. **`instant`** → `book_site_visit_as_system` writes a real `site_visits` row (`booked_at` set, `status='scheduled'`, duration and assignee from policy), logs one `site_visit_scheduled` activity, nudges a `new_lead` opportunity to `qualifying` via `move_opportunity_stage`, and lets the existing status trigger enqueue Google Calendar sync. Staff get a `schedule_change` notification "Site visit booked online" plus the ordinary lead-assignment notification.
+4. **`request`** → the lead is created and the intent settles at `submitted`. **No `site_visits` row, no calendar sync row, no reminder** (I14). Staff get a *persistent* `schedule_change` notification (dedupe `booking_request:<intent_id>`) linking to the lead, and accept — optionally moving the time — through `confirm_booking_request_as_system`, which is what actually books the visit.
+
+**Consequences for existing behaviour.**
+
+- A publicly booked visit is an ordinary `site_visits` row: it renders on both calendars as the third source alongside `project_tasks` and `calendar_user_events`, obeys the **one-open-booking-per-lead** rule shared with the staff-actor `book_site_visit`, and is never materialised as a task.
+- The staff-actor RPCs (`book_site_visit`, `reschedule_site_visit`, `cancel_site_visit_booking`) are **untouched** and are never called from a public path — they resolve their actor from `private.get_current_user_id()`, which no public caller has. The `_as_system` twins mirror every guard except the actor gate, and take the assignee from policy rather than caller input.
+- Calendar sync stays silent for a company with no calendar-scoped Google connection (`skip_reason='missing_calendar_scope'`), exactly as for staff bookings.
+- The client a public booking creates is an ordinary client. If that person later signs in, they are matched to it and see **only what they created** (`active_forward_only`) until the business confirms them or the on-file-and-transacted evidence rule is met — see `03_DATA_ARCHITECTURE.md` § Customer identity & memberships.

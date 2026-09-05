@@ -624,6 +624,8 @@ Input is an explicit discriminated union:
 
 Output includes the exact visit ID/version/freshness, booking discriminator, bounded status/timing/assignee facts, and lead identity. A linked address is resolved through the opportunity; `site_visits` has no address column. `calendar.view:own` and assigned pipeline scope are resolved against the actual visit/lead, not accepted from caller claims.
 
+An opportunity-linked visit remains eligible when both the canonical `client_ref` and legacy `client_id` are null, provided the stored opportunity is active, same-company, and visible to the actor. A non-null client reference is a separate mandatory authority edge: it must resolve to an active, unmerged, same-company client that the actor can view, otherwise the visit fails closed. A converted visit carrying both project and opportunity links continues to use the opportunity anchor; the project link does not make it unlinked.
+
 ### 6.11 `get_site_visit_context` (dark)
 
 Purpose: return one site visit with lead context, booking facts, checklist completion, artifact counts by kind, bounded authorized artifact evidence, and timeline activity.
@@ -635,7 +637,9 @@ Input requires an explicit anchor:
 
 Artifact evidence and timeline limits are independently bounded at 20. Counts distinguish total artifacts from those marked `included_in_project_review`. Raw storage-object URLs are never returned directly; any usable link must pass the same bounded, actor-scoped, short-lived evidence authorization layer as correspondence evidence. Every query filters `deleted_at IS NULL` on the visit and its satellites.
 
-These two reads are contract entries only. Their handlers and repositories do not exist, so they remain unavailable and unadvertised until the booking/read implementation and adversarial gates pass.
+These two reads are implemented and exposed through MCP. Repository `P0002` for an exact site-visit lookup is projected as the contract-safe `NOT_FOUND` envelope, preserving hidden/nonexistent indistinguishability; markerless stale state is projected as retryable `TEMPORARILY_UNAVAILABLE`, never as a fabricated `STALE_CONTEXT` marker.
+
+Implementation status (2026-08-30): OPS-Web commit `3b2b7c9b` contains the nullable-client visibility repair, a closed source/metadata/ACL migration, and PostgreSQL runtime/replay proofs. It is staged only until that commit is integrated, deployed, and the migration is applied; the production migration ledger and `migrations/` archive must not record it before then.
 
 ---
 

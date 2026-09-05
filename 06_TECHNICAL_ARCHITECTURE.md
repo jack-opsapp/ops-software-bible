@@ -1004,6 +1004,17 @@ class DataController: ObservableObject {
         self.keychainManager = KeychainManager()
         self.authManager = AuthManager()
 
+        // (2026-08-31) XCTest processes never spawn the auth probe. Its
+        // no-credentials path ends in clearAuthentication() — a keychain wipe
+        // plus dozens of UserDefaults removals — seconds after init, which
+        // used to land mid-test and sign out fixture-seeded operators (the
+        // test host app's own controller included). Unit-test fixtures seed
+        // currentUser directly; UI tests exercise the app in a separate,
+        // XCTest-free process and still probe normally.
+        if NSClassFromString("XCTestCase") != nil {
+            return
+        }
+
         Task {
             await checkExistingAuth()
         }

@@ -36,6 +36,7 @@
 22. [Bubble-to-Supabase Migration API](#bubble-to-supabase-migration-api)
 23. [Email Pipeline Integration Routes (24 Routes)](#email-pipeline-integration-routes-24-routes)
 24. [OpenAI API Key Separation](#openai-api-key-separation)
+25. [External Lead API — `/v1/intake` + `/v1/analytics` (production-live; credential issuing path)](#external-lead-api--v1intake--v1analytics-production-live-2026-07-26-credential-issuing-path-documented-2026-09-02)
 
 ---
 
@@ -111,7 +112,7 @@ Onboarding completion is server-authoritative across OPS-Web, ops-site handoff p
 
 | Route | Purpose | Contract |
 |-------|---------|----------|
-| `POST /api/setup/progress` | Persist web setup drafts and partial progress | Idempotent per step. The company step calls **`create_company_for_owner_by_id`** (service-role only) so the company, its `company_code`, the Owner `user_roles` row, the owner labels (`company_id`, `is_company_admin`, `role='owner'`, `user_type='company'`) and `initialize_company_defaults` all commit in **one transaction**. `create_company_for_owner` is not reachable from this route — it identifies its caller via `auth.jwt() ->> 'sub'` and raises `NO_JWT` under the service-role client — hence the by-id twin. The RPC **adopts** an existing unlinked company held by the same `account_holder_id` rather than inserting a second one, which is what makes a retry after a partial failure safe. Typed errors map to status: `NO_USER_ROW`/`ALREADY_IN_COMPANY` → 409, `INVALID_NAME` → 400, `USER_INACTIVE` → 403, anything else → 500. |
+| `POST /api/setup/progress` | Persist web setup drafts and partial progress | Idempotent per step. The company step calls **`create_company_for_owner_by_id`** (service-role only) so the company, its `company_code`, the Owner `user_roles` row, the owner labels (`company_id`, `is_company_admin`, `role='owner'`, `user_type='company'`) and `initialize_company_defaults` all commit in **one transaction**. `create_company_for_owner` is not reachable from this route — it identifies its caller via `auth.jwt() ->> 'sub'` and raises `NO_JWT` under the service-role client — hence the by-id twin. The RPC **adopts** an existing unlinked company held by the same `account_holder_id` rather than inserting a second one, which is what makes a retry after a partial failure safe. Typed errors map to status: `NO_USER_ROW`/`ALREADY_IN_COMPANY` → 409, `INVALID_NAME` → 400, `USER_INACTIVE` → 403, anything else → 500. **Write truthfulness (2026-09-03, Cluster M):** the identity write, the existing-company update, and the trailing `setup_progress` checkpoint each discarded their error object entirely while the handler still answered `{ success: true }`. All three are now checked and fail the step with `500`. The identity write sets `first_name`/`last_name`, both covered by the `users` team-directory index key expression, which makes it permanently non-HOT — it was rejected on every call for the whole expression-index privilege outage and the operator's name was lost mid-onboarding with no signal on either side. |
 | `POST /api/setup/complete` | Complete owner/company web setup | Requires a company-attached owner/admin-capable user. Rejects employee users. Merges `onboarding_completed.web=true`; clients must not mark web onboarding complete locally until this response succeeds. |
 | `POST /api/auth/join-company` | Join an existing company by code | Calls `join_user_to_company(p_user_id, p_company_id, p_company_code)` and must pass the normalized company-code proof. **The route's own admin-rail notification fan-out was removed (2026-06, ops-web commit `bc61f062`)** — the per-admin rail rows are now written inside the RPC. The route **keeps** its OneSignal push fan-out. |
 | `POST /api/onboarding/complete` | Complete iOS onboarding through the web API gateway | Accepts Firebase `idToken`/`token` plus `platform:"ios"`, verifies the OPS user, requires `company_id` and `user_type`, rejects non-admin company users when completing company-owner onboarding, merges `onboarding_completed.ios=true`, and records `setup_progress.steps.ios_onboarding=true`. |
@@ -155,7 +156,7 @@ and never reached the product. Closed by `create_company_for_owner_by_id` (one t
 adopt-on-retry). The 9 real orphan companies in prod — all holding zero operator-authored data —
 were retired by `migrations/20260818233813_retire_orphan_signup_companies.sql`; the two
 `TOCTOU RACE …` fixtures are synthetic and deliberately kept.
-| `POST /api/auth/sync-user` | Provision/repair the `users` row from the verified Firebase token | Verifies the Firebase `idToken`, looks up by `auth_id` → `firebase_uid` → `email`. **Sets `users.firebase_uid` from the verified token at row creation** (gated to Firebase-issued tokens) and backfills/repairs legacy rows. This guarantees `firebase_uid` is present for the JWT-`sub`-keyed identity lookup used by `create_company_for_owner` and `join_user_to_company`. **CRIT-3 application-layer hardening (staged 2026-07-07, ops-web `fix/auth-identity-hardening`, pending prod deploy):** the email fallback resolves on the VERIFIED TOKEN email — never the caller-supplied body email; an unverified email-only match against a row already bound to a *different* identity (`auth_id`/`firebase_uid` ≠ this token's sub) is refused with `403` instead of being rewritten or handed back; the 23505 insert-race recovery re-queries by `auth_id` first, then `firebase_uid`, so a Supabase-token race row (whose `firebase_uid` is null) is still recovered. |
+| `POST /api/auth/sync-user` | Provision/repair the `users` row from the verified Firebase token | Verifies the Firebase `idToken`, looks up by `auth_id` → `firebase_uid` → `email`. **Sets `users.firebase_uid` from the verified token at row creation** (gated to Firebase-issued tokens) and backfills/repairs legacy rows. This guarantees `firebase_uid` is present for the JWT-`sub`-keyed identity lookup used by `create_company_for_owner` and `join_user_to_company`. **CRIT-3 application-layer hardening (staged 2026-07-07, ops-web `fix/auth-identity-hardening`, pending prod deploy):** the email fallback resolves on the VERIFIED TOKEN email — never the caller-supplied body email; an unverified email-only match against a row already bound to a *different* identity (`auth_id`/`firebase_uid` ≠ this token's sub) is refused with `403` instead of being rewritten or handed back; the 23505 insert-race recovery re-queries by `auth_id` first, then `firebase_uid`, so a Supabase-token race row (whose `firebase_uid` is null) is still recovered. **Write truthfulness (2026-09-03, Cluster M):** the existing-user branch used to log a failed `users` update and still return `200` built from `mapUserFromDb({ ...existingRow, ...updates })` — handing the caller `auth_id` / `firebase_uid` values the database had rejected. It now reads the row back with `.select().single()`, so the response is always the stored state, and returns **`500`** when the rejected update carried identity columns (`private.resolve_uid()` keys every `users` RLS policy on exactly those, so losing them leaves the caller unable to resolve itself). A rejected cosmetic-only update still returns `200`, carrying the true stored row rather than a merge. |
 | `POST /api/auth/send-verification` | Send the OPS-branded Firebase email-verification message | **Staged 2026-07-07 (CRIT-3 Phase B), pending prod deploy.** Verifies the Firebase `idToken`, no-ops when `email_verified` is already true, generates the verification action link via the Admin SDK (no send), rebuilds the URL through OPS's own `/auth/action?mode=verifyEmail` handler so the branded SendGrid template is used, and sanitizes auth errors to a generic `401`. Best-effort/soft UX — the user is never gated on deliverability. Wires the previously-dormant verification stack so `email_verified` can eventually be trusted by the identity model. |
 
 **Database RPC: `create_company_for_owner` (shared owner-creation path, 2026-06).** One atomic `SECURITY DEFINER` Postgres function used by **both iOS and OPS-Web**, replacing iOS's direct PostgREST company insert and web's bespoke insert (which had diverged: iOS set `role='owner'` + a `user_roles` Owner row; web set only `is_company_admin=true`, leaving owners in inconsistent permission states).
@@ -312,6 +313,19 @@ outage keeps summary/lifecycle due but does not block the guarded commercial or
 event evaluator from recording its result. Already acknowledged components do
 not replay on retry. Phase C disabled is an explicit durable skip for all four
 components.
+
+Message and appointment context has a stricter shape than durable lifecycle
+history. An intentional `legacy_*` projection without `provider_message_id`
+remains valid historical/audit evidence, but it cannot be represented as a
+`NormalizedEmail` or `PhaseCEventMessage` and is excluded from those runtime
+message collections. The same shape on an ordinary event still fails closed.
+The current `required_event_id` must be projected and message-backed, and every
+included event must still resolve one exact activity whose mailbox, provider
+message, provider thread, direction, and recipient identities agree. This
+compatibility rule prevents intentional `legacy_thread_email` projections from
+blocking a later exact event without weakening the current-event or
+message-identity trust boundaries. The 2026-09-05 repair is local-only in
+OPS-Web commit `ff9af50af`, pending release and controlled queue replay.
 
 **Release state (2026-08-21):** the migration and its two foreign-key index
 follow-ups are applied and verified in production. OPS-Web commit `6b69551a` is
@@ -1817,6 +1831,8 @@ Semantics (all server-owned; threshold = 5): count ≥ 5 → insert one persiste
 
 `role_scope_read` (RESTRICTIVE SELECT) used to call `private.current_user_can_view_task(id)`, which re-fetches the task row by id — invisible under the statement snapshot during the INSERT's own RETURNING evaluation, so **every** PostgREST task insert with `Prefer: return=representation` (iOS `TaskRepository.create` = `.insert().select().single()`) failed `42501` regardless of permissions, rolling back the just-created task (bug `06810537`). The policy now evaluates the candidate row's own columns via `private.current_user_can_view_task_row(company_id, project_id, team_member_ids, deleted_at)`; semantics are proven identical on live data (1,383 task × user parity comparisons, 0 mismatches). Full detail: `03_DATA_ARCHITECTURE.md` § "project_tasks read policy".
 
+**Follow-on (2026-09-02): soft-delete needs an RPC.** The same repair made `deleted_at`-setting UPDATEs impossible for client roles — Postgres applies the SELECT policy as a `WITH CHECK` on any UPDATE whose target requires `ACL_SELECT`, which `WHERE id = $1` does, so `Prefer: return=minimal` is no escape. Web and iOS both write `project_tasks` this way. Task soft-delete now goes through `public.soft_delete_project_task(p_task_id uuid) → jsonb` and series retirement through `public.soft_delete_task_recurrence(p_recurrence_id uuid) → jsonb` (both `security definer`, pinned `search_path`, EXECUTE to `anon` + `authenticated` only, authorization by `private.user_can_edit_task`). Migrations `20260902160624` + `20260902161850`. Full detail, including the disproven shipped-client audit this corrects: `03_DATA_ARCHITECTURE.md` § "project_tasks soft-delete".
+
 ## iOS notification-surface RPCs (2026-08-17)
 
 Eleven narrow RPCs (migrations `20260818023254_ios_notification_surface_rpcs.sql` + dedupe-key follow-up `20260818023657_measurement_notification_dedupe_keys.sql` — archived in `migrations/`, byte-exact against the ledger) close bug `e302355c`: the twelve iOS notification surfaces that kept direct-INSERTing `notifications` after the 2026-07-15 hardening and died `42501` silently. One RPC per surface shape, all `security definer` with pinned `search_path`, granted to `anon` + `authenticated` (revoked from `service_role` — the service lane keeps its own creators). Shared doctrine: actor from `private.get_current_user_id()`; company from the actor's row; recipients derived server-side (never caller input); fixed server-side copy templates (caller data limited to clamped counts / validated dimension integers); server-literal `type`; `action_url` internal-path-or-NULL (web click-through mirrors the live service lane: `/dashboard?openProject=<id>&mode=view`); iOS navigation via the shipped `deep_link_type` values. All raise `42501` (no actor / not authorized for the anchor row) and `22023` (invalid input or unrecorded state). iOS bindings live in `NotificationRepository` § "Narrow creation RPCs"; each call site keeps its OneSignal push lane client-side, targeted by the RPC's returned recipient ids where the server owns recipient selection.
@@ -1882,6 +1898,30 @@ the site-visit direct create (`SiteVisitCaptureViewModel.createLeadFromIdentityD
 same key — direct + queued paths can never duplicate). Before this change the
 allowlist rejected the key (`unsupported_opportunity_field`, 22023 → HTTP 400),
 which was root cause RC1 of the 2026-07-22 stuck-lead incident.
+
+**`source` must be a constraint member — the RPC does not validate it.**
+`private.create_opportunity_company_serialized_internal` passes
+`p_opportunity.source` straight into the INSERT, so the live
+`opportunities_source_check` constraint is the only thing standing between a
+client and a failed write. Permitted values, verified against prod 2026-08-31:
+
+```
+referral · website · email · phone · walk_in · social_media · repeat_client · voice_log · other
+```
+
+An off-constraint value fails the INSERT with a CHECK violation, which reaches
+the caller as `guardedCreateRejected` — an opaque "could not create" with no
+hint that the *source string* was the problem. Every client must send a member
+of that list. iOS holds the canonical fallback at
+`ClientLeadAutocreate.schemaAllowedSource` (`"other"`), the lead form's SOURCE
+chip ids are asserted to be a subset by `LeadsConformanceTests`, and the
+BOOK VISIT picker's client-materialization lane sends `repeat_client`.
+
+**Incident (2026-08-31):** the inline lead creates in `ActivityTargetPickerView`
+and `UnifiedLogActivityViewModel` were sending `source: "log_activity"`, which
+has never been a constraint member — every typed and voice inline create was
+rejected server-side. Zero `log_activity` rows exist in prod, confirming none
+ever landed.
 
 ### `link_deck_design_to_opportunity_guarded(p_design_id uuid, p_target_opportunity_id uuid) → jsonb`
 
@@ -3938,6 +3978,20 @@ The release prerequisites above were satisfied and executed on 2026-08-18 (UTC).
 - **Outbound posture at the control-plane cutover checkpoint:** auto-send remained OFF (`INBOX_AUTO_SEND_ENABLED` unset — the cron no-ops); `public.claim_email_send_provider_delivery(uuid)` EXECUTE was re-granted to `service_role` after deploy verification (out-of-ledger; `migrations/20260818052155_restore_claim_email_send_provider_delivery_grant.sql`), closing the last deliberately-held outbound revoke. MCP was still unmounted at this checkpoint; the production mount described immediately below superseded that state later the same day.
 - **Deferred verification pass (Maverick Projects, 2026-08-18):** the pass immediately caught one wave defect — the stale July version-gate twin on `task_schedule_automation_outbox` aborting confirm/unconfirm on `schedule_version = 0` tasks (`23514`) — fixed by ledger `20260818052612` before the first new-code `auto-confirm-schedules` cron firing (schedule `39 * * * *`; zero customer impact; see `03_DATA_ARCHITECTURE.md`). After the fix: full schedule-confirm round-trip green through the new RPC path on a Maverick task under service-role claims (`confirm_project_task_schedule_as_system` → `newly_confirmed: true`, row proof bound, one `schedule_confirmation_dispatch` outbox row; `unconfirm_project_task_schedule_as_system` → `newly_unconfirmed: true`, proof cleared). Phase-10 canary validation layers re-proven live: reserve without service claims → `42501 access_denied`; reserve with malformed hashes → `22023 PHASE_C_AUTO_SEND_SOURCE_FENCE_INVALID`; resolve of unknown reservation → `23505 PHASE_C_AUTO_SEND_IDEMPOTENCY_CONFLICT`. No `email_connections` rows were created and nothing was sent (Maverick has zero connections). All test rows removed: both pending dispatch outbox rows, the temporary `phase_c` feature override, zero reservation residue; the test task restored to its exact pre-test state.
 
+## Agent Queue Routes — `agent.review` gate + history statuses (2026-09-01)
+
+All four queue handlers authenticate with Firebase (`authenticateRequest`) and then gate on the granular key `agent.review` through `requirePermission(auth, "agent.review")` (`src/app/api/agent/_lib/auth.ts` → `checkPermissionByUserId` → `public.has_permission`, fail-closed: an RPC error is a 403). This replaced the `requireAdminOrOwner` manager check (`account_holder_id ∪ admin_ids`) on these routes only; the other `/api/agent/*` routes keep `requireAdminOrOwner`. Preset grants: Admin, Owner, Office (ledger `20260901201256_agent_review_permission`). The service layer runs under the service-role client for the duration of each call (`setSupabaseOverride`), so company scoping is `auth.companyId` from the authenticated user, never a request parameter.
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/agent/queue` | GET | List. `status=<one>` or `statuses=a,b` (comma list; validated by `parseStatusesParam`, unknown value → 400; takes precedence over `status`), `actionType`, `priority`. Pending lists sort priority (urgent→low) then newest; a `statuses` list that excludes `pending` sorts `reviewed_at desc nulls last, updated_at desc` (the HISTORY view). `statsOnly=true` → `{ pending, approvedToday, rejectedToday, avgResponseTimeMinutes }`; `countOnly=true` → `{ count }`. Hard limit 200 rows. |
+| `/api/agent/queue` | POST | Manual proposal (`actionType`, `actionData`, `contextSummary` required; validated type list in the handler). 200 with `{ message }` when an identical action is already pending, 201 `{ actionId }` otherwise. |
+| `/api/agent/queue/[actionId]` | PATCH | `{ action: "approve" \| "reject", notes?, editedActionData? }`. Approve executes the type's executor and returns the updated row; 409 when the row is gone or already handled. |
+| `/api/agent/queue/[actionId]` | DELETE | Cancel a pending action. |
+| `/api/agent/queue/bulk` | POST | `{ actionIds[], action, notes? }`, max 25; returns `{ approved \| rejected, failed, errors[] }`. |
+
+Client hooks (`src/lib/hooks/use-approval-queue.ts`) are enabled only when the permission store grants `agent.review`; the sidebar badge poll additionally requires the company `phase_c` flag.
+
 ## OPS Remote MCP Server — P1 Mount, Claude First (production-live 2026-08-18; reverified 2026-08-20)
 
 Supersedes the "MCP transport remains unmounted and dark" statements above. The mount is **deployed and operational in production**. The MCP merge `a860f5ee` is in the ancestry of the current READY Vercel production deployment, which serves `app.opsapp.co`. Claude completed dynamic registration and OAuth consent against the live endpoint. Scope: `specs/2026-08-18-mcp-mount-claude-first-scope.md`; plan: `specs/plans/2026-08-18-mcp-mount-claude-first-P1-plan.md`.
@@ -4294,10 +4348,257 @@ This phase reuses the established overview, queue, task, approval, notification,
 
 Approved `prepare_customer_update` adds one evidence-backed existing-opportunity preview (title, description, owner, follow-up reminder), optionally linked customer notes. Exposure v14 contains the 34 established reads plus this prepare tool; commit remains exclusively inside the existing OPS approval queue. Current named actor, company, scopes, permissions, source, policy and exact displayed seal are rechecked by service-only atomic RPCs. v20 read calls reauthorize the identical principal under preserved v8 read contracts; no credential or scope changes occur. New registrations use v14/v9; old grants retain their scopes. See [full contract and release proof](specs/2026-09-04-ops-mcp-customer-opportunity-updates.md).
 
+
 ### September 5 Maverick repair follow-up — local, awaiting release approval
 
 The full-scope principal ordering repair, conversation alias/raw-snapshot compatibility repair, canonical all-day task boundaries and advertised read-input improvements are verified locally. Production is unchanged; the exact forward migration, security proof, 892 application checks, 60 SQL assertions, release gate and separate unresolved B.C. timezone-data mismatch are recorded in [Maverick MCP repairs](specs/2026-09-05-maverick-mcp-read-repairs.md).
 
+## Task scope and composition RPCs (2026-09-01)
+
+Server-side contracts for task groups. Schema and invariants: `03_DATA_ARCHITECTURE.md` § Task scopes — task groups (2026-09-01). Design: `specs/2026-09-01-task-groups-design.md`.
+
+### `public.set_task_scope_completion`
+
+Source: `migrations/20260901185254_set_task_scope_completion_rpc.sql`. Grants: `authenticated`, `anon`.
+
+```
+set_task_scope_completion(
+  p_scope_id            uuid,
+  p_completed           boolean,
+  p_expected_updated_at timestamptz default null,
+  p_idempotency_key     text        default null
+) returns jsonb
+```
+
+Checking or unchecking one scope, with the status law enforced in a single transaction. `p_idempotency_key` is **required despite its default** — a null or blank key raises `idempotency_key_required`. The RPC locks the parent task first and then the scope, the same order `complete_project_task` uses, so the two cannot deadlock against each other.
+
+Permission is the completion gate, not the edit gate: `private.current_user_can_complete_task_material_consumption(company_id, task_id)`, the same predicate `complete_project_task` applies (the RPC sets `ops.complete_project_task_rpc` before the check). **Unchecking a scope on a task that is already `completed` additionally requires** `private.user_can_change_task_status(actor, task_id)` — reopening a task is a status change.
+
+Behavior:
+
+- **Checking the last open scope** calls `public.complete_project_task(task_id, p_idempotency_key, '{}')`, so materials are consumed exactly once, through the existing idempotency-keyed path rather than a second consumption route. The response carries `task_auto_completed: true` and the nested `completion` object that RPC returned.
+- **Unchecking a scope on a completed task** sets the task back to `active` by direct update. Already-consumed materials stay consumed — completion is reversible, consumption is not.
+- **Optimistic concurrency** mirrors `update_task_with_event`: a stale `p_expected_updated_at` **returns** rather than raises, so a client can reconcile without treating it as an error.
+
+Conflict response:
+
+```json
+{ "ok": false, "conflict": true, "scope_id": "…", "completed": false,
+  "updated_at": "…", "task_status": "active" }
+```
+
+Success response (`completion` present only when the call auto-completed the task):
+
+```json
+{ "ok": true, "conflict": false, "scope_id": "…", "completed": true,
+  "completed_at": "…", "completed_by": "…", "updated_at": "…",
+  "task_status": "completed", "task_auto_completed": true, "completion": { } }
+```
+
+Errors: `access_denied` (`42501`, caller role is not `anon`/`authenticated`), `scope_id_and_completed_required` (`22023`), `idempotency_key_required` (`22023`), `actor_company_not_found` (`42501`), `scope_not_found` (`P0002`, also raised for a soft-deleted scope or parent), `task_company_scope_mismatch` (`42501`), `tasks_edit_required` (`42501`), `task_status_forbidden` (`42501`).
+
+### `public.compose_task_scopes`
+
+Source: `migrations/20260901185510_compose_task_scopes_rpc.sql`, superseded in place by `migrations/20260901190151_compose_task_scopes_reason_grammar.sql` (composition unchanged; only the reason grammar for repeated-type visits changed). `STABLE`, `SECURITY DEFINER`. Grants: `anon`, `authenticated`, `service_role`, `postgres`; `PUBLIC` revoked.
+
+```
+compose_task_scopes(p_company_id uuid, p_candidates jsonb) returns jsonb
+```
+
+The single deterministic composition brain of spec §6 — one rule set consumed by estimate conversion, Quick Add chips, and the Agent Control Plane, rather than three drifting implementations. Company scoping is explicit: a user caller must pass their own company (`private.get_user_company_id()`); `service_role` may pass any company, matching the `read_agent_*_as_system` / `create_task_with_event_as_system` family.
+
+Input — a JSON array, caller order preserved:
+
+```json
+[{ "task_type_id": "uuid", "note": "…", "source_line_item_id": "…" }]
+```
+
+Output:
+
+```json
+{ "visits": [ { "kind": "single" | "group",
+                "primary_task_type_id": "uuid",
+                "scopes": [{ "task_type_id": "…", "note": "…", "source_line_item_id": "…" }],
+                "after_task_type_ids": ["uuid"],
+                "reason": "…" } ] }
+```
+
+Algorithm:
+
+1. Resolve every candidate's type inside `p_company_id`, not soft-deleted.
+2. Build directed dependency edges **among the candidate types only**, resolved transitively. Edges come from `task_types.dependencies[].depends_on_task_type_id`, UUID-shape-guarded; self-edges are dropped.
+3. A type that another candidate depends on, directly or transitively, becomes its **own predecessor visit**, emitted in topological order with input order as the tie-break. Dependency-connected types are different visits — the phases-weeks-apart pattern must not collapse.
+4. Every remaining candidate is a **leaf**. Leaves partition by crew compatibility alone: an empty `default_team_member_ids` is compatible with anything; two non-empty crews are compatible iff equal as sets. Assignment is greedy in input order into the first compatible open group, and a group's effective crew is the first non-empty crew placed in it. Differing predecessor sets never separate leaves — a visit's `after_task_type_ids` is the union of its members' candidate-ancestors, which is how the scheduler applies the max-of-constraints rule.
+5. `primary_task_type_id` is the visit's first member in input order. Candidates that repeat a type stay separate scopes of the same visit. `kind` is `single` iff the visit has exactly one scope. Output order is predecessor visits first (topological), then leaf visits.
+6. Same input ⇒ byte-identical output. A dependency **cycle** among candidates does not raise: composition falls back to input order and stays deterministic.
+
+Reason grammar, exactly as emitted:
+
+- Predecessor visit: `"<type> must finish before <dependents>"`, with `" — after <ancestors>"` appended when the visit itself has ancestors.
+- Leaf visit, several distinct types: `"<types> share a crew and none depends on another — one visit"`.
+- Leaf visit, one distinct type, more than one leaf group: `"<type> has its own crew — separate visit"`.
+- Leaf visit, one distinct type, single leaf group: `"<type> — one visit"`.
+- Any visit whose scopes are all one type and number more than one renders that type as `"<type> (N scopes)"` — estimate conversion routinely sells several lines of the same type.
+- Leaf visits append `" after <ancestors>"` (no dash) when `after_task_type_ids` is non-empty.
+
+Errors: `compose_company_id_required` (`22023`), `compose_company_scope_mismatch` (`42501`), `compose_candidates_array_required` (`22023`), `compose_candidate_task_type_required` (`22023`, an element that is not an object or has no `task_type_id`), `compose_candidate_task_type_invalid` (`22023`, unparseable UUID), `compose_unknown_task_type` (`23503`, a type not live in that company). An empty candidate array returns `{"visits": []}`.
+
+### `create_task_with_event` — `scopes` payload extension
+
+Source: `migrations/20260901185630_task_creation_scopes.sql`. The shared implementation `private.create_task_with_event_for_actor` gains `scopes` in its payload key allowlist, so scopes are created in the same transaction as the task.
+
+```json
+"scopes": [{ "id": "uuid?", "task_type_id": "uuid",
+             "note": "…?", "display_order": 0, "source_line_item_id": "…?" }]
+```
+
+Absent, `null`, or `[]` ⇒ **exactly today's behavior**. Rules enforced by `private.insert_task_scopes`:
+
+- The **first** scope's `task_type_id` must equal the task's `task_type_id`, else `scope_primary_mismatch` (`23514`) — the primary scope mirrors `project_tasks.task_type_id`.
+- Scopes are inserted **only when the task row was freshly inserted** (`row_count = 1` from the `on conflict (id) do nothing`), so an idempotent retry of the same task never duplicates scope rows.
+- `id` defaults to `gen_random_uuid()`; `display_order` defaults to the element's index and may not be negative; `note` and `source_line_item_id` are trimmed, with blanks stored as null.
+- Any unknown key in a scope object, a non-object element, a missing `task_type_id`, an unparseable UUID or integer, or a `scopes` value that is neither array nor null raises `invalid_task_payload` (`22023`).
+
+The return value gains `scope_count`:
+
+```json
+{ "task_id": "…", "created": true, "schedule_version": 0,
+  "updated_at": "…", "scope_count": 3 }
+```
+
+`private.insert_task_scopes(uuid, uuid, uuid, jsonb)` is revoked from `public`, `anon`, and `authenticated`.
+
+### `create_task_with_event` — estimate provenance keys (2026-09-01)
+
+Source: `migrations/20260901232945_task_creation_provenance.sql`. The same payload allowlist also accepts `source_line_item_id` and `source_estimate_id` (both text, trimmed, blanks stored as null), so a client converting an estimate can create a task — grouped or single — with its provenance in the same transaction instead of a direct insert.
+
+- `source_line_item_id` requires `source_estimate_id` (`invalid_task_payload`, `22023`).
+- `source_estimate_id` must name a live estimate of the actor's company (`invalid_task_source_estimate`, `22023`); `source_line_item_id` must name a line item of that estimate in the same company (`invalid_task_source_line_item`, `22023`).
+- Both values participate in the idempotent-retry comparison: a retry with the same `p_task_id` and identical provenance returns `created: false`; different provenance raises `task_id_conflict` (`23505`).
+- A second live task for the same `(company, project, estimate, line)` is refused by the pre-existing unique index `project_tasks_active_estimate_line_key` (`23505`) — scope rows carry the remaining lines of a grouped visit.
+- Absent keys ⇒ byte-identical legacy behavior (verified 2026-09-01 by row comparison in a rollback probe).
+
+### `public.create_task_with_event_as_system` — `p_scopes`
+
+Same migration. The 11-argument signature was **dropped and recreated** with a trailing `p_scopes jsonb default null` (12 arguments) — a default could not be appended in place. Grants were explicitly restored to `service_role` only, with `public`, `anon`, and `authenticated` revoked, because Supabase default privileges would otherwise re-grant the new signature to the API roles. The wrapper still rejects any caller whose `auth.role()` is not `service_role` with `access_denied` (`42501`), and folds `p_scopes` into the payload it hands the shared implementation.
+
+### `sync_accepted_estimate_project_tasks` — changed result keys
+
+Source: `migrations/20260901191611_conversion_grouped_tasks.sql`. `private.sync_accepted_estimate_project_tasks` gains two keys in its JSONB result:
+
+- `scope_count` — scope rows written by this call; `0` on the legacy path.
+- `grouping_enabled` — the resolved value of `companies.task_groups_conversion_enabled` for the estimate's company, so a caller can tell a legacy result from a grouped one without inferring it from counts.
+
+`project_task_count` keeps its meaning: live tasks for this estimate on the project. Acceptance verification now counts a sold line as covered when it is carried **either** by a task's `source_line_item_id` **or** by a live scope's, so a grouped conversion no longer trips `accepted_estimate_task_sync_incomplete` (`23514`). Full conversion behavior: `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Conversion grouping — sold line items into visits (2026-09-01).
+
+## External Lead API — `/v1/intake` + `/v1/analytics` (production-live 2026-07-26; credential issuing path documented 2026-09-02)
+
+**Status:** production-live on `app.opsapp.co` since `a0d18e12` (2026-07-26). Public developer reference at `https://app.opsapp.co/developers/api` (server-rendered, indexable, no session required) with the OpenAPI 3.1 contract at `/developers/api/openapi.json` (served byte-for-byte from `ops-web/docs/api/openapi-v1.json`). Design authority: `specs/2026-07-23-lead-intake-and-analytics-api-design.md` (canonical copy in `ops-web/.worktrees/lead-intake-api/docs/superpowers/specs/`). **As of 2026-09-02 zero sources, principals, or credentials exist in prod** — the surface is live but unused; the docs page had never said where a credential is issued (fixed 2026-09-02, see "Discoverability" below).
+
+### Published operations
+
+| Operation | Method + path | Required scope |
+|---|---|---|
+| `getIntakeConfig` | `GET /v1/intake/config` | `intake.write` |
+| `createUploadBatch` | `POST /v1/intake/uploads` | `intake.write` |
+| `createIntakeSubmission` | `POST /v1/intake/submissions` | `intake.write` |
+| `getIntakeSubmission` | `GET /v1/intake/submissions/{publicSubmissionId}` | `intake.write` |
+| `getLeadFeed` | `GET /v1/analytics/leads` | `analytics.leads.read` |
+| `getLeadMetrics` | `GET /v1/analytics/metrics` | `analytics.leads.read` (+ `analytics.financial.read` for monetary metrics) |
+
+Routes live at `ops-web/src/app/v1/{intake,analytics}/**/route.ts`. Every request authenticates with `Authorization: Bearer <secret>`; `src/lib/external-api/auth/credential-auth.ts` resolves company, credential class, scopes, and allowed source IDs through `authenticate_external_api_credential_as_system` before any business logic runs. The request body never chooses `company_id`.
+
+### Credential model (exactly as the spec defines it)
+
+Two credential classes; one credential can never combine them.
+
+| Class | Scopes | Bound to | Purpose |
+|---|---|---|---|
+| Intake | `intake.write` | one or more registered intake sources (`private.lead_intake_sources`) | discover intake config, reserve uploads, submit the original inquiry, read own submission status |
+| Analytics | `analytics.leads.read`, optionally `analytics.financial.read` | the whole company (never a source) | pseudonymous lead feed + versioned metrics |
+
+`analytics.financial.read` is additive and invalid without `analytics.leads.read`. Secrets are stored hashed with a visible prefix (`opsx_…`), shown in full **exactly once** at creation, optionally expiring, rotatable with a 1-hour overlap, immediately revocable, and fully audited (`private.external_api_credentials`, `private.external_api_principals`, `private.external_api_principal_sources`, `private.external_api_security_events`, `private.external_api_request_audit`).
+
+### Credential issuing path (the only way to get a credential)
+
+There is no request-to-OPS path. An operator issues credentials inside the product:
+
+1. **Gate — company feature flag `external_api`.** A row in `public.admin_feature_overrides` with `feature_key = 'external_api'` and `enabled = true` for the company. Surfaced to the client as a synthetic flag by `GET /api/feature-flags` (`src/app/api/feature-flags/route.ts`; carries no routes so it gates only the Website section, not all of `/settings`). Enforced again server-side by `requireExternalApiSettingsActor` (`src/lib/external-api/settings/actor.ts`), which returns **404** when the flag is off and **403** when the actor lacks the permission. MAVERICK PROJECTS LTD (`ddee107c-…`) has the flag on as of 2026-09-02; no other company does.
+2. **Gate — permission `settings.integrations` at scope `all`** (catalog label "Integration settings", `src/lib/types/permissions.ts`). Typically the owner. The actor must also be a UID-linked, active, non-deleted `public.users` row — the settings surface deliberately refuses the legacy email fallback.
+3. **Screen — Settings → Comms → Website.** Section id `website` in `src/components/settings/settings-domains.tsx` (`permission: "settings.integrations"`, `flag: "external_api"`, legacy tab ids `website` / `external-api`). Deep link: **`/settings?section=website`** (the settings shell keeps state in `?section=<leaf>`; legacy `?tab=` canonicalizes to it). Component `src/components/settings/website-integration-tab.tsx` with `website-integration/{source-register,source-dialog,credential-register,credential-dialog,secret-reveal-dialog}.tsx`.
+4. **Step 1 — register the website as a source** (`CONNECT WEBSITE`): site label, canonical host, phone region, allowed HTTPS browser origins. `POST /api/settings/external-api/sources` → `private.lead_intake_sources` (+ a default row in `private.lead_intake_forms`). Empty state on the tab now lists the two steps (register site → create key) before the single `CONNECT WEBSITE` action.
+5. **Step 2 — create an intake credential bound to that source** (`CREATE INTAKE KEY` → `ISSUE INTAKE KEY`): `POST /api/settings/external-api/credentials` with `{ name, class: "intake", scopes: ["intake.write"], sourceIds: [sourceId], expiresAt }` → RPC `create_external_api_credential_as_system` → `201 { credential, secret }`. The secret is rendered once in `SecretRevealDialog` and never persisted client-side. Analytics credentials use the separate `CREATE ANALYTICS KEY` flow on the same screen with `class: "analytics"` and no `sourceIds`; the dialog warns that `analytics.leads.read` grants company-wide row-level lead visibility and warns again when `analytics.financial.read` is added.
+6. **Lifecycle:** `PATCH /api/settings/external-api/credentials/:id` (name/expiry, optimistic `expectedUpdatedAt`), `POST …/:id/rotate` (`overlapSeconds: 3600`), `POST …/:id/revoke` (`reasonCode: "owner_revoked"`). Sources: `PATCH /api/settings/external-api/sources/:id` (incl. `active: false`); the settings list is `GET /api/settings/external-api`. All settings writes cross `*_as_system` guarded RPCs in `src/lib/external-api/settings/settings-service.ts`.
+
+### Discoverability (2026-09-02, branch `feat/external-api-discoverability`)
+
+- `/developers/api` gained a **"Get a credential"** section between Overview and Authentication (`src/app/developers/api/_components/credential-issuing.tsx`): who issues (Integration settings permission, usually the owner), where (Settings → Comms → Website), the three steps using the real button labels, the once-only secret rule, the separate analytics-credential rule, and a direct link to `/settings?section=website`. The Authentication scope list now names all three scopes. Copy in `src/i18n/dictionaries/{en,es}/external-api-docs.json`; parity locked by `tests/unit/i18n/external-api-docs-parity.test.ts`; section behaviour by `tests/unit/external-api/docs-credential-issuing.test.tsx`.
+- Website tab empty state explains the two steps (`website.empty.step*` keys in `settings.json`, en + es).
+
+### Verified live (2026-09-02)
+
+The whole issuing path was exercised end-to-end against production Supabase as a MAVERICK staff user: settings read `200` (`featureEnabled=true`) → `POST /sources` `201` → `POST /credentials` `201` (`scopes=["intake.write"]`, secret returned once) → `GET /v1/intake/config` with that bearer **`200`** returning the live source/form/file-policy payload → revoke `200` → same call **`401`**. Evidence: `ops-web/docs/artifacts/external-api-discoverability/`.
+
+Three operational facts came out of that run:
+
+- **Test rows cannot be fully deleted, by design.** `private.external_api_security_events` is append-only (`reject_external_api_audit_mutation`, `42501`) and holds an FK to `external_api_credentials`, so an issued credential row is permanent; and `assert_external_api_principal_source_policy` (`23514`) forbids removing an intake principal's last source grant, so its source row is permanent too. Revocation — not deletion — is the terminal state. Anything created while testing stays as `status='revoked'` and is unreachable (inactive source accepts nothing; revoked credential returns 401). Maverick currently carries one revoked source (`p1-6-verification.example.com`) and two revoked intake credentials from this verification; zero submissions were created.
+- **A local preview needs the external-API secret family**, none of which are in the shared `.env.local`: without `EXTERNAL_API_CREDENTIAL_HMAC_KEYS`, `POST /api/settings/external-api/credentials` returns `500 "Settings unavailable"`; without `EXTERNAL_API_NETWORK_HMAC_KEYS`, every `/v1/*` call returns `503 rate_limit_unavailable` (the limiter cannot derive its identity). Production has both — `app.opsapp.co/v1/intake/config` answers `401 invalid_credentials`, which is the correct "admitted by the limiter, rejected by auth" signal. The other members of the family are `EXTERNAL_API_IDEMPOTENCY_HMAC_KEYS`, `EXTERNAL_API_ATTRIBUTION_HMAC_KEYS` and `EXTERNAL_API_CURSOR_ENCRYPTION_KEYS`; each is a `{"activeKid":"1","keys":{"1":"<32-64 bytes base64url>"}}` ring.
+- **Clear `.next-dev` before testing these routes.** A stale Turbopack dev manifest returns the HTML 404 page for every route deeper than two segments — `/api/settings/external-api` resolves while `/api/settings/external-api/sources` 404s, which reads exactly like a missing route.
+
+## Staff "Portal access" routes — client dossier (2026-09-01, on `feat/public-api-identity-p1`, not deployed)
+
+Program: `specs/2026-09-01-public-api-customer-identity-design.md` § 5.4 (invariants I2 staff confirmation → full history, I7 companies can revoke). Plan: `specs/plans/2026-09-01-public-api-identity-P1-plan.md` Task 7. Code: `ops-web/src/lib/clients/portal-access.ts` (shared spine), `ops-web/src/app/api/clients/[id]/portal-access/**`, block `ops-web/src/components/clients/portal-access-block.tsx` mounted in the client workspace window's CONTACT tab (`contact-tab.tsx`, between Sub-contacts and Notes; the `/clients/[id]` page is a redirect shim into `/dashboard?openClient=`).
+
+Every route runs the same spine: `verifyAdminAuth` (Firebase staff token) → `findUserByAuth(uid, email, "id, company_id, is_active")` (the third argument is required — the default select omits `is_active`, so gating on it without asking for it can never pass) → `checkPermissionById` (granular, never a role name) → the client in the URL must exist in the caller's company (`clients.id = :id and company_id = :caller`), a non-uuid id is answered exactly like a foreign client: `404`. Only then does the route reach the customer identity system RPCs (service role; `private` tables per design D8).
+
+| Route | Gate | RPC | 200 body | Failures |
+|-------|------|-----|----------|----------|
+| `GET /api/clients/[id]/portal-access` | `clients.view` | `list_customer_memberships_for_client_as_system(p_company_id, p_client_id)` | `{ memberships: [{ membershipId, state, evidenceKind, maskedEmail, lastSeenAt }] }` — masked email only, never a client/company/identity id; a row that fails the masked-email shape is refused | `401`, `403`, `404`, `503 { error: "portal_access_unavailable" }` |
+| `POST /api/clients/[id]/portal-access/[membershipId]/confirm` | `clients.edit` | `confirm_customer_membership_as_system(p_membership_id, p_staff_user_id)` | `{ state }` (the RPC returns `active_full`) | `400` non-uuid membership id; `404` membership not among this client's (the route lists first and binds the id to the client in the URL); RPC `42501 access_denied` → `403 { error: "Forbidden" }`, `P0002` → `404`, `22023` (merged / revoked / bad argument) → `409 { error: "Conflict" }`; else `503` |
+| `POST /api/clients/[id]/portal-access/[membershipId]/revoke` | `clients.edit` | `revoke_customer_membership_as_system(p_membership_id, p_staff_user_id, p_reason)` with `p_reason = 'staff_revoked'` (fixed; the audit trail names the actor class, never free text) | `{ revoked: boolean }` (`false` when the membership was not live) | same as confirm |
+
+States rendered by the block: `active_full` (olive "Full history"), `active_forward_only` (tan "New work only" — the row that offers *Confirm access*), `revoked` / `merged` (dim, no actions). `evidence_kind` is carried in the listing but not rendered. Actions are two-step and revealed on hover / keyboard focus only for operators holding `clients.edit`; the listing is re-read after every change. Copy keys live under `portalAccess.*` in `ops-web/src/i18n/dictionaries/{en,es}/clients.json`. Tests: `ops-web/tests/unit/api/clients-portal-access-routes.test.ts`, `ops-web/tests/unit/components/portal-access-block.test.tsx`, `ops-web/tests/unit/components/contact-tab-portal-access.test.tsx`. Proof: `ops-web/docs/artifacts/public-api-p1-5-portal-access/`.
+
+---
+
+
 **End of Document**
 
 This completes the comprehensive API and Integration documentation for the OPS Software Bible. Any developer or AI agent should now have complete context to implement the entire Supabase-backed sync system, repository layer, realtime subscriptions, image handling, push notifications, email pipeline integration, and error management with full fidelity to the current implementation.
+
+## Customer identity broker + public booking — `/api/customer/*` (2026-09-03, on `feat/public-api-booking-p2`, NOT deployed)
+
+The public boundary a homeowner touches. Design: `specs/2026-09-01-public-api-customer-identity-design.md` (identity, invariants I1–I18) and `specs/2026-09-02-public-api-availability-and-guest-booking-design.md` (availability, booking, I11–I16). Hosted pages live at `/c/<companies.public_handle>/…`; `/c` and `/api/customer` are public middleware prefixes and the staff dashboard never reads the customer cookie.
+
+**Posture, common to every route below.** Responses are `Cache-Control: no-store`, carry **no UUID, no clear email, no crew or assignee, and no internal id of any kind** (I4), and are enumeration-safe — an unknown company handle, an inactive integration and a malformed handle all answer the same `404 not_found` (I5). Error bodies are fixed: `invalid_request` 400, `unauthenticated` 401, `access_denied` 403, `not_found` 404, `slot_no_longer_available` 409, `rate_limited` 429 (+`Retry-After`), `customer_identity_failed` 500, `customer_identity_unavailable` 503. Per-IP limits ride `src/lib/utils/ratelimit.ts` keyed `customer-api:<route>:<ip>`. Every store call reaches `private` tables only through `*_as_system` SECURITY DEFINER RPCs.
+
+### Sign-in
+
+| Route | Body / query | Answers |
+|-------|--------------|---------|
+| `POST /api/customer/auth/start` | `{handle, email}` | `{challengeId: "ch_…", retryAfterSeconds}` — **identical for a known email, an unknown email and a refused send** |
+| `POST /api/customer/auth/verify` | `{handle, challengeId, code, email}` | `{ok, next}` + sets the session cookie; `400 invalid_code {attemptsRemaining}` / `challenge_exhausted` / `challenge_closed` |
+| `POST /api/customer/auth/signout` | — | `204`, cookie cleared (a 5xx keeps the cookie) |
+| `GET /api/customer/me` | `?handle=` | `{displayName, maskedEmail, membership:{state}}`; `401` (+clear) for a dead session |
+
+- **The challenge ref is a capability, not an id.** `ch_` + base64url(`uuid`‖`kid`‖HMAC-SHA256(ring key, `uuid`‖normalized email)) — 46 chars. `/verify` recomputes the tag and so **proves the supplied email is the one the code was sent to before proxying to Supabase**. A mismatch is charged as an attempt, logged `otp_failed{binding:"mismatch"}`, never proxied, and answered **byte-identically to a wrong code** (verified live 2026-09-03). Supabase's `verifyOtp` requires the email; the broker stores only its HMAC digest, which is why the email rides the body.
+- Session cookie `ops-customer-session`: opaque `ops_cs_`-prefixed 256-bit credential, **stored only as a SHA-256 digest**, httpOnly, Secure, SameSite=Lax, **Path=`/`** (Path=`/c` would never reach `/api/customer/*`).
+- **`/me` is read-only (I17).** It calls `read_customer_membership_as_system`, never the resolve-or-create twin. Naming a company's public handle is not an act of intent and must never make a row appear in that company's data — see the 2026-09-03 defect note in `03_DATA_ARCHITECTURE.md` § Customer identity & memberships.
+- **Sign-in never creates a client (I18).** It creates the identity and the verified contact; matching an existing client establishes a membership (`active_forward_only` until I2 evidence or staff confirmation), matching nothing yields `membership.state: null` and the hosted home says so plainly.
+
+### Booking
+
+| Route | Body / query | Answers |
+|-------|--------------|---------|
+| `GET /api/customer/booking/availability` | `?handle&from&to` | `{mode, timezone, durationMinutes, slots:[{startAt, ref:"sl_…"}]}` |
+| `POST /api/customer/booking/hold` | `{handle, slot}` | `{intentRef:"in_…", holdExpiresAt}` |
+| `POST /api/customer/booking/contact` | `{handle, intentRef, name, email, phone?, answers?}` | `{challengeId, retryAfterSeconds}` |
+| `POST /api/customer/booking/verify` | `{handle, intentRef, challengeId, code, email}` | `{outcome:"confirmed"\|"submitted", bookingRef:"bk_…", scheduledAt}` |
+| `POST /api/customer/booking/manage/{start,verify}` | — | reschedule / cancel behind a fresh code (I15) |
+
+- Slots are **expanded from the owner's declared windows, never read off the crew calendar** (D10), already net of notice, horizon, existing bookings, live holds and the per-day cap. The `sl_` descriptor is HMAC-signed and 10-minute-lived; **a valid signature proves only that OPS offered the slot, never that it is still free** — confirmation re-checks under the company lock and answers `409 slot_no_longer_available` on a replay (I12, verified live 2026-09-03).
+- `outcome` follows the company's one three-state control (D9): `instant` books a real `site_visits` row and returns `scheduledAt`; `request` creates the lead and a pending request, returns `scheduledAt: null`, and **puts nothing on any calendar and enqueues no calendar sync** until staff accept (I14, verified live 2026-09-03).
+- Either way the lead is created through `create_opportunity_guarded` with `source='website'` and the visit, when it exists, is attached to it — there is no parallel booking-only record (I16). Assignment comes from the policy's `default_owner_id` or falls to the unassigned queue; **the public never selects or sees crew** (I11).
+- Guest booking creates **no identity and no membership** — the account is optional. A later sign-in with the same verified email matches the client the booking created and yields `active_forward_only`.
+
+**Staff-side counterparts:** booking policy read/write and the request accept/decline live behind `settings.company` / the lead surface; the client-dossier membership routes are documented in § Staff "Portal access" routes above.
