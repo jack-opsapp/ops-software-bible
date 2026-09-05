@@ -4421,13 +4421,13 @@ The public boundary a homeowner touches. Design: `specs/2026-09-01-public-api-cu
 **Staff-side counterparts:** booking policy read/write and the request accept/decline live behind `settings.company` / the lead surface; the client-dossier membership routes are documented in § Staff "Portal access" routes above.
 
 
-## Cloud Instagram editorial (2026-09-05; local, not deployed)
+## Cloud Instagram editorial (2026-09-05; production preparation active)
 
-Source routes: `ops-web/src/app/api/cron/social-editorial/route.ts` and `ops-web/src/app/api/admin/social/editorial/route.ts`. Both return no-store responses and safe errors.
+Source routes: `ops-web/src/app/api/cron/social-editorial/route.ts` and `ops-web/src/app/api/admin/social/editorial/route.ts`. Both return no-store responses and safe errors, including thrown admin-auth rejections. Final production source `baa32daadafd37a931bd2bae9b6cee2147eb17fb` is READY as `dpl_7QzcFZb7nh8uTXwWne7kvCsaDv51`, aliased to `app.opsapp.co`. Live unauthenticated probes returned 401/no-store for both routes; authenticated cloud cron invocations returned 200 before and after preparation activation. The enabled schedule targets that exact deployment. The guide is readable in the cloud bundle; its response fingerprint was not directly observed through the invocation CLI.
 
 | Route | Authentication and behavior |
 | --- | --- |
-| `GET /api/cron/social-editorial` | Exact bearer `CRON_SECRET`, minimum 32 characters; constant-time comparison. Runs recovery, one eligible weekday slot and notification delivery; Node runtime, 300-second maximum. Vercel invokes every 15 minutes. |
+| `GET /api/cron/social-editorial` | Exact bearer `CRON_SECRET`, minimum 32 characters; constant-time comparison. Runs recovery, one eligible weekday slot and notification delivery; Node runtime, 300-second maximum. Also reads the bundled Sam Parr guide and returns its path and SHA-256, allowing a zero-cost readiness check outside generation hours. Vercel invokes every 15 minutes. |
 | `GET /api/admin/social/editorial` | Existing platform-admin authorization before any read. Returns singleton mode/budget and last 20 runs including source snapshots, packages, previews, attempt audit and status. No activation mutation or credentials. |
 
 Service-only RPCs from `20260905185527_create_social_editorial.sql` (all `SECURITY INVOKER`, fixed empty search path, public/anon/authenticated execution revoked):
@@ -4442,4 +4442,4 @@ Service-only RPCs from `20260905185527_create_social_editorial.sql` (all `SECURI
 | `notify_social_editorial(text,text)` | Integer delivered count; transactionally inserts notification and acknowledges run, up to ten per call |
 | `guard_cloud_editorial_handoff()` | Trigger result; serializes automatic `social_posts` rendering/review transition with producer control |
 
-Publish-mode handoff reuses `submitSocialPost` and the existing publishing contract with stable key `cloud-editorial-v1:YYYY-MM-DD`. Prepare mode never invokes that submission. Code deployment, new migration and paid preparation activation await explicit approval; first real publication remains separate. Runbook: `ops-web/docs/social/cloud-editorial-operations.md`.
+Publish-mode handoff reuses `submitSocialPost` and the existing publishing contract with stable key `cloud-editorial-v1:YYYY-MM-DD`. Prepare mode never invokes that submission. Jackson approved code deployment, the new migration and paid preparation-only activation on 2026-09-05. Migration `20260905233314` is applied; deployment verification remains in progress. First real publication remains separate. Runbook: `ops-web/docs/social/cloud-editorial-operations.md`.
