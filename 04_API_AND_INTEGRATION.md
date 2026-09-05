@@ -4419,3 +4419,27 @@ The public boundary a homeowner touches. Design: `specs/2026-09-01-public-api-cu
 - Guest booking creates **no identity and no membership** — the account is optional. A later sign-in with the same verified email matches the client the booking created and yields `active_forward_only`.
 
 **Staff-side counterparts:** booking policy read/write and the request accept/decline live behind `settings.company` / the lead surface; the client-dossier membership routes are documented in § Staff "Portal access" routes above.
+
+
+## Cloud Instagram editorial (2026-09-05; local, not deployed)
+
+Source routes: `ops-web/src/app/api/cron/social-editorial/route.ts` and `ops-web/src/app/api/admin/social/editorial/route.ts`. Both return no-store responses and safe errors.
+
+| Route | Authentication and behavior |
+| --- | --- |
+| `GET /api/cron/social-editorial` | Exact bearer `CRON_SECRET`, minimum 32 characters; constant-time comparison. Runs recovery, one eligible weekday slot and notification delivery; Node runtime, 300-second maximum. Vercel invokes every 15 minutes. |
+| `GET /api/admin/social/editorial` | Existing platform-admin authorization before any read. Returns singleton mode/budget and last 20 runs including source snapshots, packages, previews, attempt audit and status. No activation mutation or credentials. |
+
+Service-only RPCs from `20260905185527_create_social_editorial.sql` (all `SECURITY INVOKER`, fixed empty search path, public/anon/authenticated execution revoked):
+
+| Signature | Result / authority |
+| --- | --- |
+| `claim_social_editorial(date,text,uuid)` | Set of claimed run rows, at most one; settings lock, date identity, mode, budget and live-lease checks |
+| `checkpoint_social_editorial(date,uuid,jsonb,jsonb)` | Boolean; owner-scoped source snapshot and nullable package checkpoint |
+| `finish_social_editorial(date,uuid,text,text,uuid default null)` | Persisted state text or null on ownership loss; third retry persists failed |
+| `recover_social_editorial()` | Integer recovered terminal count |
+| `record_social_editorial_attempt(date,uuid,jsonb)` | Boolean; append at most three bounded audits for the live owner |
+| `notify_social_editorial(text,text)` | Integer delivered count; transactionally inserts notification and acknowledges run, up to ten per call |
+| `guard_cloud_editorial_handoff()` | Trigger result; serializes automatic `social_posts` rendering/review transition with producer control |
+
+Publish-mode handoff reuses `submitSocialPost` and the existing publishing contract with stable key `cloud-editorial-v1:YYYY-MM-DD`. Prepare mode never invokes that submission. Code deployment, new migration and paid preparation activation await explicit approval; first real publication remains separate. Runbook: `ops-web/docs/social/cloud-editorial-operations.md`.

@@ -6713,4 +6713,16 @@ Source: OPS-Web commit `d0879395f`. The three migrations named below are mirrore
 
 ---
 
+## Cloud Instagram editorial ledger (2026-09-05; local, not deployed)
+
+Source: `ops-web/supabase/migrations/20260905185527_create_social_editorial.sql`, mirrored in `migrations/pending/`. This migration is not applied to production. Existing `blog_posts`, `social_posts` and `notifications` schemas were verified before implementation.
+
+- `public.social_editorial_settings`: singleton boolean `id` primary key constrained true; `mode text` constrained to `off`/`prepare`/`publish`, default `off`; `monthly_budget_usd numeric(8,2)` constrained 0–20, default 20.
+- `public.social_editorial_runs`: `slot_date date` primary key; `kind text` blog/protocol/product/rotation; fixed originating `mode text` prepare/publish; `state text` working/retry/prepared/submitted/skipped/failed; `attempts integer` 0–3; `reserved_usd numeric(8,2)` 0–1.50; nullable `claim_token uuid`, `lease_until timestamptz`, `next_attempt_at timestamptz`; `source_id uuid`, `source_snapshot jsonb`; `attempt_log jsonb` default empty array; `package jsonb`; nullable `post_id uuid` referencing `social_posts(id)`; uppercase allowlisted `last_code text`; `notified_at`, `created_at`, `updated_at` timestamps.
+- Both tables enable RLS, revoke all public/anon/authenticated privileges and grant only service-role CRUD. There are no browser policies. Seven new functions use `SECURITY INVOKER`, fixed empty search paths and explicit service-role execution grants with public execution revoked.
+- Atomic claim serializes through settings, reserves US$0.50, grants a six-minute token lease and caps attempts at three. Checkpoint/finalization/rejection audit require the live owner. Recovery terminalizes expired slots. Mode changes never promote a prepared row. Stable key `cloud-editorial-v1:YYYY-MM-DD` binds any downstream post.
+- `guard_cloud_editorial_handoff` gates agent-originated rendering/review transitions on `social_posts` against the live publish setting, matching working run/lease/source and a still-live blog. `notify_social_editorial` inserts prepared/failed notifications and acknowledges `notified_at` in one transaction.
+
+Exact function contracts: `04_API_AND_INTEGRATION.md` § Cloud Instagram editorial. Feature and release boundary: `07_SPECIALIZED_FEATURES.md` §22. Local PostgreSQL tests exercise the exact migration, grants, concurrent claims and recovery; no production runtime claim is made.
+
 **End of Data Architecture Documentation**
