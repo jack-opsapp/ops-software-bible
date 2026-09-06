@@ -6715,6 +6715,9 @@ Source: OPS-Web commit `d0879395f`. The three migrations named below are mirrore
 
 ## Cloud Instagram editorial ledger (production preparation active 2026-09-05)
 
+**Manual production-services proof (2026-09-06 00:12 UTC).** One requested date row (`2026-09-05`) is now prepared with five assets, source/package evidence, three preserved attempt reservations totaling US$2.25, and an acknowledged notification. Model usage was only the first writer/editor pair, estimated US$0.112664. Two exact operator recoveries are recorded in `attempt_log`; attempts and reservations were not reset. Replayed claim and notification RPCs both returned zero. Settings remain prepare/US$20; `social_posts=0`. No schema change was needed. The source retry comparison fix remains local pending deployment. See §22 in the feature chapter and `ops-web/docs/artifacts/social-editorial/manual-run-2026-09-05/README.md`.
+
+
 Source: `ops-web/supabase/migrations/20260905185527_create_social_editorial.sql`, applied as migration version `20260905233314` and mirrored at `migrations/20260905233314_create_social_editorial.sql`. The settings row was independently verified `prepare` with US$20 monthly allowance, zero editorial runs and zero social posts at 23:52:46 UTC, after approved activation and an authenticated cloud invocation. Existing `blog_posts`, `social_posts` and `notifications` schemas were verified before implementation.
 
 - `public.social_editorial_settings`: singleton boolean `id` primary key constrained true; `mode text` constrained to `off`/`prepare`/`publish`, default `off`; `monthly_budget_usd numeric(8,2)` constrained 0–20, default 20.

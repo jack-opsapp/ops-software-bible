@@ -4423,6 +4423,9 @@ The public boundary a homeowner touches. Design: `specs/2026-09-01-public-api-cu
 
 ## Cloud Instagram editorial (2026-09-05; production preparation active)
 
+**Local manual-trigger addition (2026-09-05 Vancouver; deployment pending).** `POST /api/cron/social-editorial` accepts exactly `{"action":"prepare_now","date":"YYYY-MM-DD"}` under the same strong bearer authentication. The date must be today in Vancouver, mode must be prepare before claim and on the claimed run, and normal daily identity, budget, leases and duplicate limits apply. GET remains scheduled and ignores manual-action query parameters. The user-requested immediate draft was completed through a session invocation against existing production services; the new POST endpoint is not yet deployed. Automatic approval review rejected the push pending explicit production-deployment permission. Local runtime fixes also correct pinned DNS lookup callback shape and property-order-independent source revalidation.
+
+
 Source routes: `ops-web/src/app/api/cron/social-editorial/route.ts` and `ops-web/src/app/api/admin/social/editorial/route.ts`. Both return no-store responses and safe errors, including thrown admin-auth rejections. Final production source `baa32daadafd37a931bd2bae9b6cee2147eb17fb` is READY as `dpl_7QzcFZb7nh8uTXwWne7kvCsaDv51`, aliased to `app.opsapp.co`. Live unauthenticated probes returned 401/no-store for both routes; authenticated cloud cron invocations returned 200 before and after preparation activation. The enabled schedule targets that exact deployment. The guide is readable in the cloud bundle; its response fingerprint was not directly observed through the invocation CLI.
 
 | Route | Authentication and behavior |
