@@ -1,6 +1,6 @@
 # OPS MCP customer-message follow-up
 
-**Status:** implementation complete and locally verified; production database apply and web release pending. The capability remains dormant.
+**Status:** released to production on 2026-09-06 and independently read back. The capability remains dormant.
 
 ## Product contract
 
@@ -85,6 +85,16 @@ TypeScript contracts reject caller-supplied recipients, CC, BCC, attachments, an
 
 The earlier delivery-source re-projection replay failure is fixed by `20260906040000_delivery_source_reprojection_replay.sql`. Identical recapture now succeeds after normalization while changed provider bytes still conflict and the original immutable source digest remains unchanged.
 
+Production release evidence:
+
+- Supabase recorded `delivery_source_reprojection_replay` as migration `20260906230408` and `agent_customer_message_follow_up` as migration `20260906230457`.
+- The production policy seal matches the installed transport and authority helpers, both private ledgers force RLS, and both receipt triggers are installed.
+- Production contains zero Phase 13 message proposals, zero `send_customer_follow_up` actions, zero v15 OAuth clients, and zero live v15 grants.
+- The existing Phase 12 authority is unchanged: production contains one v14 client and one live v14 grant.
+- OPS Web commit `4907dc649c28009079a600c78e7bbdcdb26b502e` deployed successfully through Vercel and is served by `app.opsapp.co`.
+- The live protected-resource metadata and unauthenticated MCP challenge advertise the v14 scope set and omit `ops.communications.prepare`. The MCP endpoint continues to reject unauthenticated requests.
+- The merged production build passed, and the focused compatibility suite passed all 234 tests across 32 files. The final Phase 13 vertical check passed all 27 tests across six files.
+
 ## Release boundary
 
-No production database migration, consent label, client, grant, exposure activation, host acceptance, customer message, or provider call is created by local completion. A production apply requires a separately authorized migration action. Dormant web push and deployment are authorized by the Phase 13 brief once verification and Bible synchronization are complete. Activation and the first real customer send remain separate exact approvals.
+The dormant database and web software are now in production. This release did not install consent v10, activate exposure v15, create or remint any client or grant, accept a host, prepare a customer message, create an approval action, or call an email provider. Phase 13 therefore remains unavailable to every production caller. Activation and the first real customer send remain separate exact approvals.
