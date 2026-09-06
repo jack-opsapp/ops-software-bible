@@ -4350,6 +4350,21 @@ The three delivery workers take the filter as an injectable dependency
 the PUSH only — rail rows, emails, and delivery completion are untouched, and a
 suppressed push is dropped, never queued.
 
+**Push failure after the rail write is degraded, not fatal (bug `77113c23`,
+ops-web `be46c2a2e`, live on main `3c6344efd` 2026-09-05).** The same
+ordering that protects quiet hours — rail row first, push second — used to be
+undone by the task worker's error handling: a OneSignal rejection after the
+in-app row had persisted (typically HTTP 200 with an `errors` body because the
+recipient has no subscribed device) threw a generic retryable error, the
+outbox burned all 10 attempts, and the event went terminal even though the
+crew member already had the notification in their rail. The worker now
+completes the event with `deliveryState: "degraded"` evidence
+(`inAppDelivery: "persisted"`, `pushDelivery: "failed"`, provider `status` +
+bounded `detail`) and `GET /api/cron/lead-assignment-deliveries` surfaces it as
+`taskAutomation.degraded` / `taskAutomation.warnings` (503 for that run). The
+push is never retried on the outbox; the rail row is the delivery of record.
+Details and the result shape: `03_DATA_ARCHITECTURE.md` § outbox replay.
+
 **Deliberate bypasses (do not "fix"):** `POST /api/cron/site-visit-prompts`
 (§14.3.7 — the operator chose the appointment time) and
 `openai-quota-alert-service` (platform incident). iOS local, time-anchored

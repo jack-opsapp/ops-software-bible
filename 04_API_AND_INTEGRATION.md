@@ -2369,7 +2369,7 @@ Every entity uses **upsert on `bubble_id` conflict**, making the migration safe 
 
 ## Email Pipeline Integration Routes (24 Routes)
 
-The Email Pipeline system adds 24 API routes across 6 route groups. All routes live in `OPS-Web/src/app/api/`. Unless noted, all routes use `getServiceRoleClient()` with `setSupabaseOverride()` for Supabase access (bypassing RLS). All long-running routes set `maxDuration = 300` (5 min, Vercel Pro limit).
+The Email Pipeline system adds 24 API routes across 6 route groups. All routes live in `OPS-Web/src/app/api/`. Unless noted, all routes use `getServiceRoleClient()` with `setSupabaseOverride()` for Supabase access (bypassing RLS). That module-global override is not race-safe: an overlapping request's `finally { setSupabaseOverride(null) }` can clear it mid-flight and drop a service that resolves through `requireSupabase()` onto the anon browser client (observed once in production as PostgreSQL `42501 permission denied for table email_connections` on route 21, bug `5ff083cf`). Routes 21 and 22 therefore run inside `runWithSupabase()` (AsyncLocalStorage-scoped) as of ops-web `aac04c312`, live on main `3c6344efd` 2026-09-05; migrate any other route here to `runWithSupabase` when touched. All long-running routes set `maxDuration = 300` (5 min, Vercel Pro limit).
 
 ### 1. POST /api/integrations/email/analyze
 
@@ -3017,6 +3017,7 @@ OPS operator signature wins over mailbox OPS, which wins over the exact provider
 | Field | Value |
 |-------|-------|
 | Auth | Service role |
+| Supabase context | `runWithSupabase(getServiceRoleClient(), …)` — request-scoped, not the module-global override (bug `5ff083cf`) |
 | Query params | `companyId` (required), `userId` (required) |
 | Response | `{ featureEnabled: boolean, settings: { enabled: boolean, businessHoursStart: string, businessHoursEnd: string, timezone: string, delayMinMinutes: number, delayMaxMinutes: number } }` |
 | Service calls | `AdminFeatureOverrideService.isAIFeatureEnabled()`, direct query on `email_auto_send_settings` |
@@ -3030,6 +3031,7 @@ OPS operator signature wins over mailbox OPS, which wins over the exact provider
 | Field | Value |
 |-------|-------|
 | Auth | Service role |
+| Supabase context | `runWithSupabase(getServiceRoleClient(), …)` — request-scoped, not the module-global override (bug `5ff083cf`) |
 | Request body | Partial settings object (any subset of: `enabled`, `businessHoursStart`, `businessHoursEnd`, `timezone`, `delayMinMinutes`, `delayMaxMinutes`) |
 | Response | `{ ok: true, settings: AutoSendSettings }` |
 | Service calls | `AdminFeatureOverrideService.isAIFeatureEnabled()`, upsert on `email_auto_send_settings` |
