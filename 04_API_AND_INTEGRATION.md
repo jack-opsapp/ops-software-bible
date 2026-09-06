@@ -1708,6 +1708,29 @@ One transaction owns completion and its timeline effect. The public Data API fun
 
 If the visit has an opportunity, client, or project parent, the transaction inserts or updates its single `activities(type='site_visit', site_visit_id=visit.id)` row and writes the resulting id to `site_visits.activity_id`. Partial unique index `activities_site_visit_completion_uidx` and `ON CONFLICT (site_visit_id) WHERE type='site_visit'` make retry after an interrupted response idempotent. Return shape: `{ "visit": <site_visits row>, "activity_id": <uuid|null> }`. Execute is granted only to `anon, authenticated`; the function has a pinned search path. Callers: `ops-ios/OPS/Network/Supabase/Repositories/SiteVisitRepository.swift` and `ops-web/src/lib/api/services/site-visit-service.ts`.
 
+### Guarded visit stage command v1 (2026-09-06; locally prepared, unapplied)
+
+Source: `ops-web/supabase/migrations/20260906171832_site_visit_stage_commands.sql`, final local commit `26816f355f55807232c8c9f8cb3b406d4314d948`. This RPC pair is not yet live. It is a database-only addition; no Next.js runtime deployment is required. The legacy `move_opportunity_stage` remains unchanged and is never a delivery fallback.
+
+`read_site_visit_stage_snapshot(p_opportunity_id uuid) → jsonb` returns `contract_version:1`, `capability:site_visit_stage_command_v1`, trusted `actor_id`/`company_id`, `opportunity_id`, `stage`, opaque `stage_revision`, UTC `stage_entered_at` with six fractional digits, and `can_move`. Capture and persist this context before the operator commits. Display/default/selection must use the same validated snapshot; late responses cannot silently rebase an existing choice. The timestamp is display data, not a revision. Never refresh an expected token during queued retry; absent capability/token keeps local visit success with explicit stage recovery.
+
+`apply_site_visit_stage_command(p_command_id uuid, p_site_visit_id uuid, p_opportunity_id uuid, p_to_stage text, p_expected_stage text, p_expected_revision text, p_expected_actor_id uuid, p_expected_company_id uuid) → jsonb` requires all eight arguments. The caller must currently be authenticated and allowed to edit the exact company-bound lead and visit; expected actor/company must match trusted JWT context before any receipt lookup or mutation. A stage write requires a completed, noncancelled, undeleted visit bound to that lead and the original expected stage/revision. Allowed targets:qualifying,quoting,quoted,follow_up,negotiation. Terminal, converted, archived and merged leads cannot be moved by this command.
+
+Every result has `contract_version`, `command_id`, `outcome`, nullable `reason`, nullable `receipt`. Receipt fields:opportunity_id,stage,stage_revision,stage_entered_at,nullable transition_id,recorded_at. Receipts are historical evidence and must never overwrite a fresh Opportunity projection.
+
+| Outcome | Delivery rule |
+|---|---|
+| applied / already_applied | Settle the exact command. Replay returns the original immutable receipt; transition_id is non-null. |
+| already_satisfied | Settle without claiming the command caused a transition. Eligible current lead already equals target; only a private no-op receipt is written, reason and transition_id null. Original well-formed token remains in request; no token refresh or state change. |
+| conflict | Retain deliberate recovery context. Reasons:snapshot_mismatch,opportunity_unavailable,visit_unavailable,visit_binding_changed. The immutable refusal wins on every exact replay, even if the target later becomes current. |
+| not_ready | Unchanged retry after visit completion reaches the server; no receipt stored. |
+
+Wrong/missing capability (`PGRST202`/`42883`) and permission (`42501`) fail closed. Malformed fields, forbidden targets or command UUID reused with changed payload return `22023`. Busy row `55P03`, deadlock `40P01`, serialization `40001` and ambiguous transport failures retry the unchanged identity/payload. Company advisory lock → command advisory lock → company-scoped visit NOWAIT → company-scoped opportunity NOWAIT avoids existing booking's reverse lock order. No cross-tenant row is acquired/probed before denial.
+
+Initial missing/incomplete visit with a current matching target returns not_ready, not already_satisfied. A different-target stale snapshot can conflict before the visit arrives. Permission-checked prior receipts are resolved before fresh lifecycle/snapshot eligibility; exact no-op replay remains no-op after later movement, and prior refusal never upgrades itself. Completion's own new_lead→qualifying activity can satisfy a requested qualifying target without another transition.
+
+Verification:34/34 local synthetic PostgreSQL17 cases passed at the final source commit; real auth/permission, legacy move/manual-boundary and activity auto-advance bodies are used, external sinks are simulated. Exact production migration approval, fresh schema/fingerprint read, catalog/grants/RLS readback, schema-cache exposure and authenticated read-only snapshot proof must precede client release. The migration remains outside the applied-migration archive. No mutating production canary or provider fan-out proof was performed.
+
 ### `POST /api/uploads/presign` — `targetType=site_visit`
 
 Site-visit media uses the existing authenticated presign endpoint with a closed target contract:

@@ -1449,6 +1449,16 @@ lead to WON:
 
 ---
 
+### Durable visit stage intent amendment (2026-09-06; local source, unreleased)
+
+The iOS performance repair separates durable visit completion from the requested stage command, so local save need not wait for network delivery. The new outbox lane is `siteVisitStageMove` on entityType `siteVisit`; the completed visit reaches the server first. Original actor/company, command UUID, intended target and server snapshot are saved atomically with completion. Missing snapshot preserves the saved visit and parks stage intent for deliberate review; automatic retry never obtains a new expected token. Displayed current stage, default and chosen target bind to the same review snapshot, including stale-local/fresh-server and late-response cases.
+
+The additive server contract in `ops-web/supabase/migrations/20260906171832_site_visit_stage_commands.sql` (final local commit `26816f355f55807232c8c9f8cb3b406d4314d948`) is **unapplied**. It supplies permission-checked immutable receipts and an opaque revision covering direct/legacy stage, ownership and lifecycle changes. Existing `move_opportunity_stage` is unchanged. The new command excludes new_lead,won,lost,discarded as targets and never creates/converts a project.
+
+The existing activity auto-advance trigger may already move new_lead→qualifying when completion posts its activity. If an eligible completed visit's current lead already equals its requested target, the new command returns explicit `already_satisfied`: private receipt only, null transition_id, no extra stage/manual-attribution/transition/notification effect. This means the desired stage is satisfied, not that this command caused it. Replay preserves its original no-op receipt after subsequent stage changes. A prior conflict remains conflict; a different-target stale snapshot still requires a new deliberate choice and new command identity. Historical delivery receipts never replace fresh lead state.
+
+Server proof:34/34 local PostgreSQL17 tests, including real captured auto-advance/manual-boundary function bodies and unchanged legacy function hash. Combined client verification and physical-device behavior remain pending. Production schema/readback and iOS install/release are separate explicit gates; this subsection describes prepared behavior only. Full request/result contract is in chapter04 and private storage custody in chapter03.
+
 ### Automation E: Opportunity Won → Attach Site Visit Photos
 
 **Trigger:** `opportunity.stage → won`
