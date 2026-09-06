@@ -80,6 +80,18 @@ The email-photo source flip followed that path on 2026-08-29: applied at the ops
 (origin/main `014c888a`, same action per its GO condition; 13 photos backfilled with sender attribution,
 verified live) and archived as `20260829233858_email_photo_source_attribution.sql`.
 
+**Currently staged (authored 2026-09-05, NOT applied):**
+`ops-web/supabase/migrations/staged/20260905_STAGED_agent_photo_source_email_widening.sql` — widens the
+three agent read implementations that partition project photos by source (`read_agent_job_readiness_issues_v4_impl`,
+`read_agent_job_participant_snapshot_v5_impl`, `read_agent_job_summary_as_system_v6_core`) so `email`-sourced
+photos count as usable site photos instead of `malformed_or_local_count`, then advances the operational read
+revision for every company holding live emailed photos. Guarded transformation of the live definitions,
+idempotent, readback-verified, rollback-probed on prod 2026-09-05. **GO condition: apply only after the ops-web
+`main` deployment carrying the tolerant readiness partition (`readiness-rules.ts` with an optional `email`
+bucket) is Ready on Vercel** — the deployed bundle's strict six-key schema would fail every readiness read the
+moment the seventh key appears. On apply, mirror the ledger bytes here as `<version>_agent_photo_source_email_widening.sql`
+and remove this entry. Record: `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Source attribution.
+
 ### Applied by the 2026-08-28 bug-sweep PM (mirrored below, md5-verified)
 
 - `20260829022150_reschedule_site_visit_scheduled_at_null_keeps.sql` — Cluster B; `p_scheduled_at` NULL-keeps.
