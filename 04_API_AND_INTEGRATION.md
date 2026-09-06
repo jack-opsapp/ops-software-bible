@@ -703,6 +703,16 @@ This creates a `SyncOperation` SwiftData model with:
 
 After recording, if the device is connected, `OutboundProcessor.processPendingOperations()` is triggered immediately.
 
+### Local responsiveness amendment (2026-09-06; integration source, unreleased)
+
+IOS PERFORMANCE source commits `047a7197`, `193f7464` and compile correction `8e7e2ef1` separate `SyncEngine.pushPending()` ordinary upload draining from historical repair. `requestRecovery()` coalesces controlled launch/company change/reconnect/manual/timer boundaries. A utility-owned context returns immutable candidate IDs; the owning context revalidates bounded batches of eight visit IDs. Cancellation/container/account generations guard the boundary. Completed history remains stored, but ordinary recovery discovery selects unresolved operations. Rare protected settlement/link repairs stay on their owning context only at controlled recovery boundaries; this is not a claim that all legacy helpers are background-only.
+
+The status pill uses `RecoveryAttentionReader` and an equatable compact count/parked summary in a fresh background context. Detailed RecoveryInventory remains on demand. Existing500ms debounce/default-runloop60-second fallback remain. Authenticated recovery-vault header discovery runs off main without decoding whole packets; unreadable/key/integrity failures throw and retain prior same-account status, never imply absence.
+
+`DeckEditingSessionRegistry` holds only the active design in both outbound drivers. Autosave/inactive flush still saves geometry and a durable revision; actual disappearance/process restart releases the hold. Exit reuses saved JSON, coalesces upload-only wake, and renders optional thumbnail after disappearance. `DeckThumbnailWorker` decodes immutable JSON into independent reference caches off main. An uploaded thumbnail can update metadata only while its drawing revision stays current and no editor has reopened; it never saves stale geometry. In-flight uploads are not cancelled on editor open, and existing version/merge guards remain required.
+
+Signposts `com.ops.capture/Persistence`:DeckLocalSave,SyncRecoveryDiscovery,RecoveryAttentionRead. Focused synthetic sync/deck/recovery tests are authored; combined compile/test execution remains pending. Current shared-main/customer behavior is not changed by this prepared integration subsection.
+
 ### Sync Triggers
 
 | Trigger | Method | Behavior |
