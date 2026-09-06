@@ -10590,6 +10590,12 @@ The truthful effect envelope is zero project, task, calendar, provider-draft, an
 
 **Release boundary:** Phase 9 is contained by OPS-Web production main `dcfa2d64e68860d31798303ed0ce30f7dc5acfd1` and READY deployment `dpl_22TEbgu5UfmCEiAio1aiQn8D6ZmM`, which owns `app.opsapp.co`. Supabase ledger versions `20260903194613_agent_weather_reschedule_preview` and `20260903194749_agent_weather_reschedule_preview` are a byte-identical concurrent replay of the same tested additive migration and are both mirrored exactly. The five functions have the intended owner, empty-search-path, and service-role-only boundary; the inherited v1 consent label remains unchanged. Manifest v17, exposure v11, and consent v6 remain inactive: production has zero active v11 clients/grants, public metadata remains on the established 20 read-only v2 scopes, and unauthenticated MCP fails closed with `401`. No schedule or message changed. Zero weather rows satisfy the required 12-hour freshness gate, so no business-data canary was fabricated. Canonical contract: `specs/2026-09-03-ops-mcp-weather-reschedule-vertical.md`.
 
+## Invisible Office Phase 13 customer reply
+
+The Phase 13 vertical prepares one text-only reply to the latest inbound message in an existing customer job thread. It resolves the active personal mailbox and one recipient from immutable provider evidence, then shows those exact identities with the subject, body, source excerpt, and 30-minute expiry in the OPS approval desk. Any edit requires a new preparation. The action cannot be bulk-approved, auto-approved, retargeted, given CC/BCC recipients, or given attachments.
+
+Exact approval changes only the durable action to approved. The established approved-email transport then owns signature resolution, one durable intent, mailbox serialization, provider idempotency, acceptance, unknown-outcome quarantine, reconciliation, and outbound activity capture. Cancellation is valid only before an intent exists. Provider acceptance is shown as acceptance; only an OPS activity readback produces `reconciled_sent`; delivery remains unclaimed. Candidate v21/v15 software is dormant and consent v10 is intentionally absent. Canonical contract: `specs/2026-09-06-ops-mcp-customer-message-follow-up.md`.
+
 ---
 
 ## 44. Invisible Office Crew Call-Out Recovery (production-released and dormant)

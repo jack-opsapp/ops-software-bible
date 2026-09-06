@@ -1,6 +1,6 @@
 # Maverick MCP read and preparation-boundary repairs
 
-Status: the original repairs are live and their authenticated read canaries pass. Jackson also approved the additional timestamp/no-change repair. Its production migration and web deployment are live and independently verified; the final signed-in canary is blocked by the task’s OPS connector startup timeout. Real business approval/commit acceptance remains unclaimed.
+Status: the original repairs are live and their authenticated read canaries pass. Jackson also approved the additional timestamp/no-change repair. Its production migration and web deployment are live and independently verified. A fresh signed-in canary passed on 2026-09-06. Real changed-update approval/commit acceptance remains unclaimed.
 
 ## Incident and corrected behavior
 
@@ -55,6 +55,6 @@ The precision migration was applied as ledger `20260905235844` and independently
 
 GitHub run [34000083879](https://github.com/jack-opsapp/ops-web/actions/runs/34000083879) reaches the same existing failure at `tests/sql/delivery-source-reprojection-contract.sql:498`, `agent_provider_delivery_source_idempotency_conflict`. This is unchanged from the first release and separate from the successful targeted checks.
 
-The task's OPS MCP client currently fails during startup with a 30-second timeout and exposes no callable tools. The configured connection remains enabled and reports OAuth authentication. Native resource/template startup retries fail identically. No credentials were printed, persisted to artifacts, or sent to another service; an attempted use of the existing OPS credential did not retrieve a token. No replacement grant or synthetic production authority was created. Therefore the final fresh identity → unchanged-title MCP canary is not yet claimed. After the connection is available, copy the exact six-digit identity timestamp into the unchanged-title call, verify non-retryable `CUSTOMER_UPDATE_NO_CHANGE`, and independently recheck unchanged source/grant/proposal state.
+The final fresh identity → unchanged-title MCP canary is now complete. On 2026-09-06 the signed-in OPS connector returned Maverick opportunity `d2000000-0000-4000-d200-000000000008` with exact `updated_at` `2026-08-21T20:19:43.482755Z`. Passing that unchanged title and full timestamp to `prepare_customer_update` returned non-retryable `CUSTOMER_UPDATE_NO_CHANGE`; no proposal was created. Independent database readback confirmed the title and timestamp were unchanged, `private.agent_customer_updates` remained empty for Maverick, and Maverick `job_conversations` remained empty. This proves exact precision and the no-change transport. It does not prove a real changed-update approval or commit.
 
 Creating a real production proposal, approving/committing a business change, and sending messages remain outside this repair release. No new service or paid tier is introduced; existing hosting/database usage applies.
