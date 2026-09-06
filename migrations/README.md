@@ -317,3 +317,9 @@ Both archives are byte-identical to the committed, locally tested sources and th
 `20260905191357_agent_maverick_read_repairs.sql` is the exact 16,199-byte archive of OPS-Web source `20260905184652_agent_maverick_read_repairs.sql` and the production ledger's single statement. MD5 `4107d02fa009cb9d992dbee953586e96`; SHA-256 `4c4022d54ba0278ca4d0d33705ce10c358242a00d4dfdb3bbb3a54aace40838d`.
 
 Jackson explicitly approved application and release. Live readback verified all seven function hashes, preserved owners/OIDs/ACLs/security settings, denied application execution on the new helper, unchanged Maverick task/grant state and zero proposals. Full release and authenticated acceptance evidence: [Maverick MCP repairs](../specs/2026-09-05-maverick-mcp-read-repairs.md).
+
+## Maverick source-version precision repair — production-applied 2026-09-05 UTC
+
+`20260905235844_agent_customer_update_source_precision.sql` is the exact 1,388-byte archive of approved OPS-Web source `20260905192721_agent_customer_update_source_precision.sql` and the production ledger statement. MD5 `c89defd31a0065dd05e8aba9130a7b63`; SHA-256 `73d4218ee05f74c2230295790e69581ebe8ad1dcb33abbf0defc2b256afe927d`.
+
+The migration preserves six fractional digits in job identity `dates.updated_at`. Post-apply readback verified the expected function definition, original OID/owner/ACL/security/search path, unchanged shared formatter and preparation/authority functions, unchanged task/opportunity/grant state, and zero proposals. Jackson explicitly approved this migration, web deployment, Bible publication and final verification records. Full release evidence: [Maverick MCP repairs](../specs/2026-09-05-maverick-mcp-read-repairs.md).
