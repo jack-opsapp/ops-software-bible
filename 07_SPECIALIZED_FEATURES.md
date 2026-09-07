@@ -10358,6 +10358,27 @@ update op (jobs) — offline-safe.
 toast (`VIEW` action), Settings › DATA › `Pending Work` (live mono count, `—` at
 zero), and Notifications sync section `VIEW ALL →`.
 
+**Placement (2026-09-07, bug `417aac7b`, third close).** The pill is superimposed
+on each root's `AppHeader`, hung off the header's bottom edge by
+`HeaderSyncStatusOverlay` — never in flow, never in an app-level band. It reserves
+no layout, so nothing below the header moves when an attention item appears, and
+it is free to cover header TEXT (greeting, company line, screen title) because
+attention outranks a greeting. It is never free to cover a CONTROL: the overlay
+reserves the header's trailing-cluster column from that cluster's measured bounds
+(`OPSHeaderTrailingSlotBoundsKey`), so a tall accessibility-size pill cannot reach
+Home's avatar or any root's search button, and bottom-anchoring keeps it inside
+the header instead of on the row below. The two earlier closes both got this
+wrong — an in-flow header row pushed `TODAY [TASKS] / ACTIVE / ALL` and the map
+down, then an app-level band offset by the header's measured height landed on top
+of the `ALL` chip. Home project mode is the single exception: `AppHeader` leaves
+the screen and `OPSMapContainer`'s project stack hosts the same control via
+`SyncStatusIndicator(placement: .projectHeader)`, gated by
+`HomeSyncStatusPlacementPolicy.showsProjectModeFallback`. Proof:
+`HomeSyncStatusLayoutTests.testStatusPillNeverCoversAnInteractiveControl` (plus a
+retired-band characterization so that invariant can never go vacuous) and
+`SyncPillHeaderLayoutTests` — the real `AppHeader`, seven header types, two
+widths, four Dynamic Type sizes.
+
 **Refresh (updated 2026-08-10):** both surfaces — the pill and this screen — were
 rebuilding the inventory on a 2-second `.common`-mode poll, which fires during
 scroll tracking and ran a six-fetch main-context load forever, whether or not
