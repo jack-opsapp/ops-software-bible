@@ -1,6 +1,6 @@
 # OPS MCP approved schedule and crew changes — Phase 14
 
-**Status:** implemented in an isolated web checkout and verified locally. Production migrations are awaiting Jackson's exact approval. Candidate capability manifest v22 / exposure v16 / consent v11 remain dormant; consent v11 is deliberately absent. Active v20 / v14 / v9 and Phase 13's dormant v21 / v15 are preserved. No customer task changes, real proposal/approval canary, OAuth changes, sending, provider-calendar writes or routine activation are authorized by this implementation.
+**Status:** production migrations approved, applied and independently verified on 2026-09-07. The web release is READY on the production domain, verified at 06:07 UTC. Candidate capability manifest v22 / exposure v16 / consent v11 remain dormant; consent v11 is deliberately absent. Active v20 / v14 / v9 and Phase 13's dormant v21 / v15 are preserved. No customer task changes, real proposal/approval canary, OAuth changes, sending, provider-calendar writes or routine activation are authorized by this implementation.
 
 ## Exact operation
 
@@ -61,6 +61,16 @@ Application tests cover strict input/output substitution rejection, microsecond 
 
 Exact test counts, source fingerprints and release hashes are recorded in the web `docs/artifacts/phase14/README.md`. This is not Phase 12 changed-update acceptance, Phase 13 sending acceptance, or Phase 14 customer-live acceptance. No new subscription or recurring worker is introduced; existing Supabase/Vercel usage applies. Hosted maintenance costs/downtime require verification before a specific operation is approved.
 
-## Code and pending SQL record
+## Approved code and SQL release record
 
-Web implementation commit: `402b03dd1b3651a8cb30b31d8b775836482def24` (preceded by canonical time repair `c1da9fb26`). Verification: 127 application/regression tests, 51 PostgreSQL assertions and four real concurrency scenarios passed. Both migration mirrors are byte-identical to that web commit and are **not production-applied**. The main push was rejected by automatic approval review for missing explicit trusted-user authorization; no code was pushed or deployed. The tested local release is ready for an exact push/deploy and migration decision. Hosted timezone maintenance is a separate unresolved operational gate.
+Web implementation commit: `402b03dd1b3651a8cb30b31d8b775836482def24` (preceded by canonical time repair `c1da9fb26`). Verification: 127 application/regression tests, 51 PostgreSQL assertions and four real concurrency scenarios passed. Jackson subsequently approved the two migrations and web/Bible main pushes. Production recorded `20260907055324_task_mutation_time_validation` and `20260907055344_agent_schedule_crew_approval`; the archived files use those actual ledger versions and retain the exact approved SQL bytes. The web release includes fresh upstream social-editorial work and is pushed at `37da7dee3f3fb379be5939ecc16bf2d62bd3e2d4`. Hosted timezone maintenance remains a separate unresolved operational gate.
+
+## Production SQL readback — 2026-09-07 05:54 UTC
+
+Both stored migration statements match the approved SHA-256 values: `6b2455ec97e4aa06a4e051e37b00f8691405e30a162de7ac8e460d81fc08e158` and `477d0d54baf5f6d8566a763c30cae9dc2c2d091b5d754c71dbff2c27a49d5520`. The canonical native-time casts and all-day reminder correction are installed. Four private relations have force-RLS and no direct service-role SELECT/INSERT access. Public prepare/inspect/commit/reject/filter entry points are postgres-owned, SECURITY DEFINER, empty-search-path and service-role-only. The installed effect policy matches the current production graph. Change sets, capacity fences, write tokens, Phase 14 approval actions, v16 clients and v16 grants are all zero. Vancouver November midnight remains 08:00Z; this release has not updated hosted timezone data.
+
+## Production deployment readback — 2026-09-07 06:07 UTC
+
+Vercel deployment `dpl_3nvLuUUfqSRoXsmGegd9DS3JHmYY` reached READY at 06:06:34 UTC for exact web commit `37da7dee3f3fb379be5939ecc16bf2d62bd3e2d4`. An independent lookup of `app.opsapp.co` resolves to that deployment and commit. The merged release passed all 127 focused application/regression tests and a full local production build; Vercel also completed its production build and generated all 465 pages.
+
+The public `/.well-known/oauth-protected-resource/api/mcp` JSON is exactly equal to its pre-release snapshot: 21 scopes and no `ops.schedule.prepare`. An unauthenticated `tools/list` POST to `/api/mcp` returns HTTP 401 with `{"error":"unauthorized"}`. The deployment-scoped error/fatal log scan from 06:06:00 through 06:07:05 UTC returned no matching logs. This short initial observation is not sustained runtime health or signed-in customer canary proof. No Phase 14 activation or real business mutation was performed.

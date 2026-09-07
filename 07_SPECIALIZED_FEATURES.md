@@ -4075,7 +4075,7 @@ Mirror the deterministic structuring + the per-family idempotent commit loop. Th
 
 ## 14. Notification System
 
-**Phase 14 addition (2026-09-06, dormant; migration pending):** `approve_schedule_change` preparation creates an actor-owned persistent review notification linking to the approval desk. Commit/rejection resolves it atomically. Successful task changes retain existing assignment/schedule in-app and preference-dependent OneSignal push events; receipt language reports queued effects, never delivered pushes. No automatic customer-message event is created. See [Phase 14 contract](specs/2026-09-06-ops-mcp-schedule-crew-approval.md).
+**Phase 14 addition (2026-09-06, dormant; migration applied 2026-09-07):** `approve_schedule_change` preparation creates an actor-owned persistent review notification linking to the approval desk. Commit/rejection resolves it atomically. Successful task changes retain existing assignment/schedule in-app and preference-dependent OneSignal push events; receipt language reports queued effects, never delivered pushes. No automatic customer-message event is created. See [Phase 14 contract](specs/2026-09-06-ops-mcp-schedule-crew-approval.md).
 
 ### Overview
 Multi-layer notification system combining local (UNUserNotificationCenter), push (OneSignal), and in-app (Supabase `notifications` table) notifications. Features batching during sync, deep linking to projects, unread tracking, quiet hours, and per-type preference controls.
