@@ -4075,6 +4075,8 @@ Mirror the deterministic structuring + the per-family idempotent commit loop. Th
 
 ## 14. Notification System
 
+**Phase 14 addition (2026-09-06, dormant; migration pending):** `approve_schedule_change` preparation creates an actor-owned persistent review notification linking to the approval desk. Commit/rejection resolves it atomically. Successful task changes retain existing assignment/schedule in-app and preference-dependent OneSignal push events; receipt language reports queued effects, never delivered pushes. No automatic customer-message event is created. See [Phase 14 contract](specs/2026-09-06-ops-mcp-schedule-crew-approval.md).
+
 ### Overview
 Multi-layer notification system combining local (UNUserNotificationCenter), push (OneSignal), and in-app (Supabase `notifications` table) notifications. Features batching during sync, deep linking to projects, unread tracking, quiet hours, and per-type preference controls.
 
@@ -10645,3 +10647,9 @@ Primary iOS sources are `OPS/DataModels/SupplierBillIntake.swift`, `OPS/Services
 **Observed state at the rebuild (Canpro, 2026-09-01).** 54 pending, 292 expired, 1 rejected; the oldest pending row dated 2026-08-22; average review latency ≈ 35 h. Roughly five in six proposals had been expiring unreviewed because the page was unusable, not because the proposals were wrong — track the expired share after the rebuild before tuning any producer.
 
 **End of Document**
+
+## Invisible Office Phase 14 schedule and crew approval (2026-09-06; dormant)
+
+The approval desk adds an exact named-actor `approve_schedule_change` preview with company timezone, current/proposed dates and crew, every included scope, confirmation clearing, project crew changes and actual side effects. It cannot be bulk/automatically approved or edited during approval. Availability uses bounded OPS tasks, booked visits, verified/held guest slots, personal/time-off events, recorded working hours and prior work experience. Unknown external calendars/certifications stay unclaimed.
+
+The canonical update preserves scope composition and queues existing in-app and preference-dependent OneSignal notifications for affected crew. It reschedules reminders on the correct all-day company civil date, suppresses automatic confirmation/cascade/customer dispatch through an exact private write token, and returns independently verified task/project/reminder state. A current-version capacity fence guards later overlapping bookings and task writes. Customer messages require separate approval; calendar subscriber sync is unknown. See [Phase 14 contract](specs/2026-09-06-ops-mcp-schedule-crew-approval.md); no production task change or real host acceptance is claimed.

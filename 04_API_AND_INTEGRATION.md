@@ -4610,3 +4610,9 @@ The public boundary a homeowner touches. Design: `specs/2026-09-01-public-api-cu
 - Guest booking creates **no identity and no membership** — the account is optional. A later sign-in with the same verified email matches the client the booking created and yields `active_forward_only`.
 
 **Staff-side counterparts:** booking policy read/write and the request accept/decline live behind `settings.company` / the lead surface; the client-dossier membership routes are documented in § Staff "Portal access" routes above.
+
+## Invisible Office Phase 14 approved schedule/crew API (2026-09-06; dormant)
+
+Candidate `prepare_schedule_change` is implemented behind manifest v22 / exposure v16 / future consent v11. It accepts 1–25 exact task IDs with full-precision source timestamps, schedule versions, destination company civil dates and explicit crew; company/actor come from current trusted authority. The shared domain facade is used by human MCP hosts and durable agents. Active v20/v14/v9 and dormant Phase 13 remain unchanged. There is no MCP commit sibling.
+
+Service-role-only SQL entry points are `inspect_agent_schedule_change_as_system`, `prepare_agent_schedule_change_as_system`, `commit_agent_schedule_change_as_actor`, `reject_agent_schedule_change_as_actor` and the dedicated preparation rate limiter. Visibility helpers enforce named-actor queue access. Exact OPS approval submits only the sealed preview digest/change-set ID and uses one retry-stable commit key. Reauthorization precedes receipt replay. Canonical task writes, internal effects and independent receipt readback commit atomically. [Phase 14 contract](specs/2026-09-06-ops-mcp-schedule-crew-approval.md) defines permissions/scopes, expiry, unavailable evidence, delivery ownership and the required hosted tzdata operation. Production migration and activation are not implied by code availability.
