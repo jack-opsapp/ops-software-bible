@@ -2196,3 +2196,8 @@ The release passed 288 changed-surface application tests, 7 PostgreSQL 17 cases,
 **Last Updated**: 2026-09-04
 **Document Version**: 1.12
 **Source**: ops-web git commits `0b268fd`, `2742b60`, `f5a01f1`, `81577c4`, `217b4655`, `323bbfaf`, `62e51d3e`, `ac51e50b`, `162f76f75`, `f901c6d9c`; iOS source `ops-ios/OPS/`; Supabase Edge Functions `accounting-oauth`, `accounting-sync-expense`, `accounting-batch-create`. Cashflow Forecast addition based on iOS branch `cashflow-forecast` + Supabase migration `add_cashflow_forecast_tables`.
+
+
+## Private estimates and change orders (Phase 15, local)
+
+One exact human-approved save creates an immutable held draft and allocates one official number atomically. A change-order baseline is distinct from a predecessor revision; prior financial history and accepted contract totals remain unchanged. PostgreSQL numeric arithmetic follows existing subtotal tax rounding. Currency-ambiguous history, conflicting/missing pricing policies and unsupported units block. Portal, PDF and accounting guards preserve private custody. See [Phase 15 contract](specs/2026-09-07-ops-mcp-financial-document-approval.md) for authority, arithmetic, locks, verification and separate migration/activation gates.
