@@ -274,6 +274,8 @@ Central configuration for the app. Key values:
 
 `POST /api/opportunities/[id]/summary-refresh` is the authenticated iOS-to-OPS-Web handoff after a human Lead Details activity has already been saved. Source: `ops-web/src/app/api/opportunities/[id]/summary-refresh/route.ts` (code commit `d4c04e0d`).
 
+`GET /api/opportunities/[id]/link-candidates` — the Won dialog's project picker (added 2026-09-05, branch `fix/w2-lead-project-link-web`, commit `390075b7e`; awaiting push). Verifies the operator's Firebase idToken, then calls `get_manual_project_link_candidates(p_opportunity_id)` through `getAccessTokenClient(idToken)` so the RPC sees the operator as `auth.jwt()->>'sub'` — **not** the service-role client, which the RPC rejects with `access_denied`. Returns `{ candidates: [{ projectId, title, address, status, sameAddress, sameClient }] }` in the server's ranked order (never re-sorted client-side); 401 missing/invalid token, 400 non-UUID id, 403/404/400/500 mapped from RPC SQLSTATE `42501`/`P0002`/`22023`+`22P02`/other. Source: `ops-web/src/app/api/opportunities/[id]/link-candidates/route.ts`; test `tests/unit/api/opportunity-link-candidates-route.test.ts`. Semantics: §09 "Manual project choice is address-advisory".
+
 The route requires a Firebase bearer token, validates the opportunity UUID, and calls `authorize_lead_summary_refresh` through the actor's access-token client. That RPC derives actor/company identity and requires live edit authority. Only then does the route use the service-role client to call `refreshLeadSummariesForOpportunities` for exactly one opportunity. No request body may supply actor or company authority.
 
 Responses: `200` when the targeted refresh writes or legitimately completes without a write; `202` when Phase C is disabled; `401` for missing/invalid authentication; `400` for malformed opportunity ids; `403`/`404` for denied/missing opportunities; `503` when generation is deferred or unavailable. The iOS activity save is authoritative and never rolls back on a refresh failure; the recurring server refresh remains the recovery boundary.
@@ -313,6 +315,19 @@ outage keeps summary/lifecycle due but does not block the guarded commercial or
 event evaluator from recording its result. Already acknowledged components do
 not replay on retry. Phase C disabled is an explicit durable skip for all four
 components.
+
+Message and appointment context has a stricter shape than durable lifecycle
+history. An intentional `legacy_*` projection without `provider_message_id`
+remains valid historical/audit evidence, but it cannot be represented as a
+`NormalizedEmail` or `PhaseCEventMessage` and is excluded from those runtime
+message collections. The same shape on an ordinary event still fails closed.
+The current `required_event_id` must be projected and message-backed, and every
+included event must still resolve one exact activity whose mailbox, provider
+message, provider thread, direction, and recipient identities agree. This
+compatibility rule prevents intentional `legacy_thread_email` projections from
+blocking a later exact event without weakening the current-event or
+message-identity trust boundaries. The 2026-09-05 repair is local-only in
+OPS-Web commit `ff9af50af`, pending release and controlled queue replay.
 
 **Release state (2026-08-21):** the migration and its two foreign-key index
 follow-ups are applied and verified in production. OPS-Web commit `6b69551a` is
@@ -687,6 +702,20 @@ This creates a `SyncOperation` SwiftData model with:
 - `dependsOnId` -- ID of another SyncOperation that must complete first
 
 After recording, if the device is connected, `OutboundProcessor.processPendingOperations()` is triggered immediately.
+
+### Local responsiveness amendment (2026-09-06; integration source, unreleased)
+
+IOS PERFORMANCE source commits `047a7197`, `193f7464` and compile correction `8e7e2ef1` separate `SyncEngine.pushPending()` ordinary upload draining from historical repair. `requestRecovery()` coalesces controlled launch/company change/reconnect/manual/timer boundaries. A utility-owned context returns immutable candidate IDs; the owning context revalidates bounded batches of eight visit IDs. Cancellation/container/account generations guard the boundary. Completed history remains stored, but ordinary recovery discovery selects unresolved operations. Rare protected settlement/link repairs stay on their owning context only at controlled recovery boundaries; this is not a claim that all legacy helpers are background-only.
+
+The status pill uses `RecoveryAttentionReader` and an equatable compact count/parked summary in a fresh background context. Detailed RecoveryInventory remains on demand. Existing500ms debounce/default-runloop60-second fallback remain. Authenticated recovery-vault header discovery runs off main without decoding whole packets; unreadable/key/integrity failures throw and retain prior same-account status, never imply absence.
+
+`DeckEditingSessionRegistry` holds only the active design in both outbound drivers. Autosave/inactive flush still saves geometry and a durable revision; actual disappearance/process restart releases the hold. Exit reuses saved JSON, coalesces upload-only wake, and renders optional thumbnail after disappearance. `DeckThumbnailWorker` decodes immutable JSON into independent reference caches off main. An uploaded thumbnail can update metadata only while its drawing revision stays current and no editor has reopened; it never saves stale geometry. In-flight uploads are not cancelled on editor open, and existing version/merge guards remain required.
+
+Signposts `com.ops.capture/Persistence`:DeckLocalSave,SyncRecoveryDiscovery,RecoveryAttentionRead. The sync/deck/recovery cases selected in core03 passed. Subsequent focused runs closed all observed failures: core04 passed306cases and core05 passed all127cases selected for final regression. Verified source was fast-forwarded to local main622010a0. The optimized generic iPhone build passed with0errors (existing compiler warnings remain), and contact-import/cancel UI cases passed2/2. No push, phone installation or customer distribution has occurred; physical latency is not established by these results.
+
+**Outbound session lifetime amendment (local source a021ab0a,bad6ad3a):** SyncEngine synchronously invalidates the old outbound processor and DataActor generation before logout/reconfiguration clears or replaces their context. The legacy driver retains its ModelContainer across drains, individual requests and reconciliation; cleanup uses an operation UUID captured before suspension. Both drivers verify cancellation, original active user/company, session validity and registered-operation identity before post-await model reads/writes. DataActor's locked generation rejects an old response even after invalidate→resume. Interrupted claims remain durable without charging a new retry or inventing delivery confirmation.
+
+`SiteVisitOutboundSync.executeIfHandled` and `SiteVisitMediaSyncManager.uploadPendingMedia` accept `isCurrent: () -> Bool` and caller-inherited `isolation: isolated (any Actor)? = #isolation`; production drivers pass real scope predicates. Guards propagate through repository acquisition, completion/upsert/delete and media preparation/upload continuations. The model context stays on its owning actor; media bytes/image preparation stays on background actors. All seven gated driver lifetime cases passed in the final core05 run; all five typed/media invalidation cases passed in core04. The reset test preserves invalidation→synthetic store destruction→awaited cancellation and never reopens the destroyed container. Mention fixtures stay offline so they exercise unclaimed retargeting, with fresh durable readback before the actor-refresh assertion. Both app compilation and these runtime regressions passed, following the earlier standalone strict-concurrency interface probe. These are local proofs; customer distribution and device timing remain separate.
 
 ### Sync Triggers
 
@@ -1693,6 +1722,29 @@ One transaction owns completion and its timeline effect. The public Data API fun
 
 If the visit has an opportunity, client, or project parent, the transaction inserts or updates its single `activities(type='site_visit', site_visit_id=visit.id)` row and writes the resulting id to `site_visits.activity_id`. Partial unique index `activities_site_visit_completion_uidx` and `ON CONFLICT (site_visit_id) WHERE type='site_visit'` make retry after an interrupted response idempotent. Return shape: `{ "visit": <site_visits row>, "activity_id": <uuid|null> }`. Execute is granted only to `anon, authenticated`; the function has a pinned search path. Callers: `ops-ios/OPS/Network/Supabase/Repositories/SiteVisitRepository.swift` and `ops-web/src/lib/api/services/site-visit-service.ts`.
 
+### Guarded visit stage command v1 (applied 2026-09-07 UTC)
+
+Source: `ops-web/supabase/migrations/20260906171832_site_visit_stage_commands.sql`, final local commit `26816f355f55807232c8c9f8cb3b406d4314d948`. This RPC pair is live on ops-app under approved migration `20260907001000_site_visit_stage_commands`, archived byte-exact in the Bible. Independent live catalog/ACL/RLS/trigger comparison matches the tested contract. It is a database-only addition; no Next.js runtime deployment is required. The legacy `move_opportunity_stage` remains unchanged and is never a delivery fallback.
+
+`read_site_visit_stage_snapshot(p_opportunity_id uuid) → jsonb` returns `contract_version:1`, `capability:site_visit_stage_command_v1`, trusted `actor_id`/`company_id`, `opportunity_id`, `stage`, opaque `stage_revision`, UTC `stage_entered_at` with six fractional digits, and `can_move`. Capture and persist this context before the operator commits. Display/default/selection must use the same validated snapshot; late responses cannot silently rebase an existing choice. The timestamp is display data, not a revision. Never refresh an expected token during queued retry; absent capability/token keeps local visit success with explicit stage recovery.
+
+`apply_site_visit_stage_command(p_command_id uuid, p_site_visit_id uuid, p_opportunity_id uuid, p_to_stage text, p_expected_stage text, p_expected_revision text, p_expected_actor_id uuid, p_expected_company_id uuid) → jsonb` requires all eight arguments. The caller must currently be authenticated and allowed to edit the exact company-bound lead and visit; expected actor/company must match trusted JWT context before any receipt lookup or mutation. A stage write requires a completed, noncancelled, undeleted visit bound to that lead and the original expected stage/revision. Allowed targets:qualifying,quoting,quoted,follow_up,negotiation. Terminal, converted, archived and merged leads cannot be moved by this command.
+
+Every result has `contract_version`, `command_id`, `outcome`, nullable `reason`, nullable `receipt`. Receipt fields:opportunity_id,stage,stage_revision,stage_entered_at,nullable transition_id,recorded_at. Receipts are historical evidence and must never overwrite a fresh Opportunity projection.
+
+| Outcome | Delivery rule |
+|---|---|
+| applied / already_applied | Settle the exact command. Replay returns the original immutable receipt; transition_id is non-null. |
+| already_satisfied | Settle without claiming the command caused a transition. Eligible current lead already equals target; only a private no-op receipt is written, reason and transition_id null. Original well-formed token remains in request; no token refresh or state change. |
+| conflict | Retain deliberate recovery context. Reasons:snapshot_mismatch,opportunity_unavailable,visit_unavailable,visit_binding_changed. The immutable refusal wins on every exact replay, even if the target later becomes current. |
+| not_ready | Unchanged retry after visit completion reaches the server; no receipt stored. |
+
+Wrong/missing capability (`PGRST202`/`42883`) and permission (`42501`) fail closed. Malformed fields, forbidden targets or command UUID reused with changed payload return `22023`. Busy row `55P03`, deadlock `40P01`, serialization `40001` and ambiguous transport failures retry the unchanged identity/payload. Company advisory lock → command advisory lock → company-scoped visit NOWAIT → company-scoped opportunity NOWAIT avoids existing booking's reverse lock order. No cross-tenant row is acquired/probed before denial.
+
+Initial missing/incomplete visit with a current matching target returns not_ready, not already_satisfied. A different-target stale snapshot can conflict before the visit arrives. Permission-checked prior receipts are resolved before fresh lifecycle/snapshot eligibility; exact no-op replay remains no-op after later movement, and prior refusal never upgrades itself. Completion's own new_lead→qualifying activity can satisfy a requested qualifying target without another transition.
+
+Verification:34/34 local synthetic PostgreSQL17 cases passed at the final source commit; real auth/permission, legacy move/manual-boundary and activity auto-advance bodies are used, external sinks are simulated. Explicit approval, fresh schema/fingerprint read, exact applied-ledger archive, and catalog/grants/RLS readback are complete. Independent postapply comparison confirms23 dependency functions,100 public columns and13 public policies unchanged. Both exact HTTP RPC parameter sets resolve and return42501/401 to anonymous callers before function invocation, proving schema-cache routing and the deny boundary without business-data writes. Authenticated transport snapshot and physical iPhone measurement remain separate verification steps before claiming the full client flow verified. No mutating production canary or provider fan-out proof was performed.
+
 ### `POST /api/uploads/presign` — `targetType=site_visit`
 
 Site-visit media uses the existing authenticated presign endpoint with a closed target contract:
@@ -1834,6 +1886,8 @@ The **only** creation path for the three iOS review-stack rail notifications (`t
 `security definer`, pinned `search_path`, granted to `anon` + `authenticated`. Narrow by construction: recipient is always the resolved actor (self-notification only), company derives from the actor's row, copy is a fixed server-side template per stack kind (the clamped non-negative count is the only caller data that reaches the row), `type` is constrained to the three stack kinds, and rows carry `deep_link_type` only (`taskReview` / `paymentReview` / `unscheduledReview`) — `action_url` stays NULL because these are phone-workflow surfaces and the `notification_action_url_internal` CHECK forbids the legacy `ops://` scheme anyway.
 
 Semantics (all server-owned; threshold = 5): count ≥ 5 → insert one persistent unread row unless one already stands (`created` / `kept`, at-most-one-unread dedupe under a per-user+stack advisory xact lock); count < 5 → mark unread rows of that stack read (`cleared` / `noop`) so the rail clears without user action. Raises `42501` (no actor), `22023` (unknown stack). iOS caller: `NotificationRepository.syncReviewStack(stack:count:)` from `ReviewThresholdService.evaluate` after each sync, reporting honest counts including zero.
+
+**iOS caller amendment (2026-09-06, local repair):** `ReviewThresholdService.evaluate` requests the shared current-company background snapshot instead of synchronously fetching task/project tables for every report. Reports are serialized; valid zero counts still clear stacks, while loading, failed, retired or stale-account results do not report false zero. Server RPC parameters, permissions and threshold semantics are unchanged. See `06_TECHNICAL_ARCHITECTURE.md` → Shared iOS Review Counts.
 
 ### `project_tasks` INSERT..RETURNING no longer self-voids
 
@@ -2356,7 +2410,7 @@ Every entity uses **upsert on `bubble_id` conflict**, making the migration safe 
 
 ## Email Pipeline Integration Routes (24 Routes)
 
-The Email Pipeline system adds 24 API routes across 6 route groups. All routes live in `OPS-Web/src/app/api/`. Unless noted, all routes use `getServiceRoleClient()` with `setSupabaseOverride()` for Supabase access (bypassing RLS). All long-running routes set `maxDuration = 300` (5 min, Vercel Pro limit).
+The Email Pipeline system adds 24 API routes across 6 route groups. All routes live in `OPS-Web/src/app/api/`. Unless noted, all routes use `getServiceRoleClient()` with `setSupabaseOverride()` for Supabase access (bypassing RLS). That module-global override is not race-safe: an overlapping request's `finally { setSupabaseOverride(null) }` can clear it mid-flight and drop a service that resolves through `requireSupabase()` onto the anon browser client (observed once in production as PostgreSQL `42501 permission denied for table email_connections` on route 21, bug `5ff083cf`). Routes 21 and 22 therefore run inside `runWithSupabase()` (AsyncLocalStorage-scoped) as of ops-web `aac04c312`, live on main `3c6344efd` 2026-09-05; migrate any other route here to `runWithSupabase` when touched. All long-running routes set `maxDuration = 300` (5 min, Vercel Pro limit).
 
 ### 1. POST /api/integrations/email/analyze
 
@@ -3004,6 +3058,7 @@ OPS operator signature wins over mailbox OPS, which wins over the exact provider
 | Field | Value |
 |-------|-------|
 | Auth | Service role |
+| Supabase context | `runWithSupabase(getServiceRoleClient(), …)` — request-scoped, not the module-global override (bug `5ff083cf`) |
 | Query params | `companyId` (required), `userId` (required) |
 | Response | `{ featureEnabled: boolean, settings: { enabled: boolean, businessHoursStart: string, businessHoursEnd: string, timezone: string, delayMinMinutes: number, delayMaxMinutes: number } }` |
 | Service calls | `AdminFeatureOverrideService.isAIFeatureEnabled()`, direct query on `email_auto_send_settings` |
@@ -3017,6 +3072,7 @@ OPS operator signature wins over mailbox OPS, which wins over the exact provider
 | Field | Value |
 |-------|-------|
 | Auth | Service role |
+| Supabase context | `runWithSupabase(getServiceRoleClient(), …)` — request-scoped, not the module-global override (bug `5ff083cf`) |
 | Request body | Partial settings object (any subset of: `enabled`, `businessHoursStart`, `businessHoursEnd`, `timezone`, `delayMinMinutes`, `delayMaxMinutes`) |
 | Response | `{ ok: true, settings: AutoSendSettings }` |
 | Service calls | `AdminFeatureOverrideService.isAIFeatureEnabled()`, upsert on `email_auto_send_settings` |
@@ -3916,7 +3972,7 @@ No attachment route or worker calls Gmail/Graph send, draft, label, delete, move
 
 `list_scheduled_jobs` is project-task-only in v1. It uses a half-open UTC window of at most 90 days, default limit 25/maximum 50, source-stable signed keyset pagination, company-local schedule authority, and a separate display-timezone projection. Task lifecycle, derived timing, and current confirmation are orthogonal. Output includes only bounded customer-shareable crew identity; employee email, phone, HR role, profile, and other private roster data never cross the domain boundary.
 
-`list_job_readiness_issues` evaluates `SITE_PHOTOS_MISSING`, `CUSTOMER_RECORD_UNRESOLVED`, `SCHEDULE_UNCONFIRMED`, `CREW_UNASSIGNED`, and `ADDRESS_INCOMPLETE`. A request may scan at most five physical pages of 50 authorized candidates under one immutable source fence. The SQL repository returns safe raw facts and one job projection proof; `readiness-rules.ts` alone derives fixed facts, severity, rule revision, and `issue | clear | not_evaluated`. Missing authorization or truncated source evidence is `not_evaluated`, never a negative fact. Customer and photo scopes are conditionally required only when their rule is selected.
+`list_job_readiness_issues` evaluates `SITE_PHOTOS_MISSING`, `CUSTOMER_RECORD_UNRESOLVED`, `SCHEDULE_UNCONFIRMED`, `CREW_UNASSIGNED`, and `ADDRESS_INCOMPLETE`. A request may scan at most five physical pages of 50 authorized candidates under one immutable source fence. The SQL repository returns safe raw facts and one job projection proof; `readiness-rules.ts` alone derives fixed facts, severity, rule revision, and `issue | clear | not_evaluated`. Missing authorization or truncated source evidence is `not_evaluated`, never a negative fact. Customer and photo scopes are conditionally required only when their rule is selected. `SITE_PHOTOS_MISSING` counts every remote photograph of the site — `site_visit`, `in_progress`, `completion`, `other`, `measurement`, and customer-emailed `email` (widening authored 2026-09-05, staged behind the web deploy; see `10_JOB_LIFECYCLE_AND_DATA_RELATIONSHIPS.md` § Source attribution) — and excludes `deck_design` renders; the SQL partition is exhaustive by `photo_source` value and anything outside it lands in `malformed_or_local_count`, so a new enum value must be added to the three read implementations before it counts.
 
 `get_job_communication_context` is a current-only read for one opportunity or project. `general` returns bounded job/contact facts without schedule or photo claims. `schedule_notice` adds the current bounded task schedule and customer-shareable assignment names. `photo_request` adds that schedule plus the existing TypeScript-owned `SITE_PHOTOS_MISSING` evaluation; SQL returns only the same bounded raw photo-source shape used by readiness. An unavailable or bounded schedule/photo source is explicit `not_evaluated`, not a false zero/absence claim.
 
@@ -4406,3 +4462,40 @@ The public boundary a homeowner touches. Design: `specs/2026-09-01-public-api-cu
 - Guest booking creates **no identity and no membership** — the account is optional. A later sign-in with the same verified email matches the client the booking created and yields `active_forward_only`.
 
 **Staff-side counterparts:** booking policy read/write and the request accept/decline live behind `settings.company` / the lead surface; the client-dossier membership routes are documented in § Staff "Portal access" routes above.
+
+
+## Cloud Instagram editorial (2026-09-05; production preparation active)
+
+**Subscription-authoring handoff routes (2026-09-07; built and tested locally, NOT deployed).** Source: `ops-web/src/lib/social/editorial/handoff.ts` (pure handlers), `handoff-runtime.ts` (composition), routes under `ops-web/src/app/api/internal/social/editorial/`. All POST-only, Node runtime, `maxDuration 60`, `cache-control: no-store`, bearer `SOCIAL_AUTHORING_TOKEN` (≥32 chars, constant-time compare; 503 `SOCIAL_AUTHORING_NOT_CONFIGURED`, 401 `SOCIAL_AUTHORING_INVALID`, 405 otherwise), 200 KB body limit (413). In the cloud the token is injected by Anthropic's agent proxy from an environment API credential for host `app.opsapp.co`; the routine never sees it.
+
+| Route | Contract |
+|---|---|
+| `POST /api/internal/social/editorial/claim` `{worker}` | Returns `{assignment:null, reason:"idle"|"authoring_off"}` or one claimed assignment: `id, identity, kind, mode, attempt, attempts_remaining, claim_token, lease_until, brief_version ("ops-editorial-2026-09-07-v3"), current_time, source {id,title,slug,url,published_at,text,thumbnail_url}, recent_hooks (≤30), format {story_types, slides {min,max}, closing_slide}, limits, guide {path, sha256, content}`. Blog kind binds its own article (not live → `blocked/SOURCE_WITHDRAWN`, next row); recurring kinds pick the freshest live article unused by any non-blocked assignment, legacy run or post in 60 days (none → `blocked/NO_FRESH_SOURCE`). Up to three rows are tried per call. |
+| `POST …/assignments/{id}/draft` `{claim_token, candidate, editor, usage?}` | 404 `ASSIGNMENT_NOT_FOUND`; 409 `CLAIM_NOT_OWNED` (token, lease or state); 422 `DRAFT_REJECTED` with `code` ∈ `SCHEMA_INVALID, EVIDENCE_INVALID, IMAGE_REQUIRED, DUPLICATE_HOOK, MODEL_LINK_REJECTED, UNSUPPORTED_NUMBER, VOICE_REJECTED, SLIDE_COUNT` (claim stays live; ≤3 submissions per claim, then 429 `SUBMISSIONS_EXHAUSTED` and requeue +6 h); 200 `{state:"rejected", attempts_remaining}` when the editor verdict is not fully approved (attempt consumed, requeue +6 h, third → `blocked/EDITOR_REJECTED`); 200 `{state:"drafted", identity, title}` on success (replay with the same token returns the same). Validation is `prepareSubmission(candidate, snapshot, recentHooks, kind)`; the endpoint never renders, notifies or submits. |
+| `POST …/assignments/{id}/release` `{claim_token, outcome:"error"|"unsupported", detail?}` | `error` → queued (+2 h; third attempt → `blocked/ATTEMPTS_EXHAUSTED`), `unsupported` → `blocked/UNSUPPORTED_FORMAT`. |
+
+`GET /api/cron/social-editorial` (leased) now runs `runEditorialTick`: recover → discover → promote ≤3 drafted rows (prepare/either-side-prepare → preview; publish → `submitSocialPost` with `publish_at` = paced slot; a third consecutive promotion failure blocks with the error code) → `notify_social_editorial` → `check_social_editorial_authoring(…, 26)`. Result `{state, discovered, promoted, notified, copywriting_reference}`. `GET /api/admin/social/editorial` returns `{settings, assignments (≤30, each with joined post status/permalink/publish_after), legacy_runs (≤5)}`. `prepare_now` POST and the OpenAI generator are retired. New env: `SOCIAL_AUTHORING_TOKEN`, optional `SOCIAL_STORAGE_BACKEND` (`supabase|s3`, social artwork only). Tests: `ops-web/tests/unit/social/editorial/handoff.test.ts`, `worker.test.ts`.
+
+**Local manual-trigger addition (2026-09-05 Vancouver; deployment pending).** `POST /api/cron/social-editorial` accepts exactly `{"action":"prepare_now","date":"YYYY-MM-DD"}` under the same strong bearer authentication. The date must be today in Vancouver, mode must be prepare before claim and on the claimed run, and normal daily identity, budget, leases and duplicate limits apply. GET remains scheduled and ignores manual-action query parameters. The user-requested immediate draft was completed through a session invocation against existing production services; the new POST endpoint is not yet deployed. Automatic approval review rejected the push pending explicit production-deployment permission. Local runtime fixes also correct pinned DNS lookup callback shape and property-order-independent source revalidation.
+
+
+Source routes: `ops-web/src/app/api/cron/social-editorial/route.ts` and `ops-web/src/app/api/admin/social/editorial/route.ts`. Both return no-store responses and safe errors, including thrown admin-auth rejections. Final production source `baa32daadafd37a931bd2bae9b6cee2147eb17fb` is READY as `dpl_7QzcFZb7nh8uTXwWne7kvCsaDv51`, aliased to `app.opsapp.co`. Live unauthenticated probes returned 401/no-store for both routes; authenticated cloud cron invocations returned 200 before and after preparation activation. The enabled schedule targets that exact deployment. The guide is readable in the cloud bundle; its response fingerprint was not directly observed through the invocation CLI.
+
+| Route | Authentication and behavior |
+| --- | --- |
+| `GET /api/cron/social-editorial` | Exact bearer `CRON_SECRET`, minimum 32 characters; constant-time comparison. Runs recovery, one eligible weekday slot and notification delivery; Node runtime, 300-second maximum. Also reads the bundled Sam Parr guide and returns its path and SHA-256, allowing a zero-cost readiness check outside generation hours. Vercel invokes every 15 minutes. |
+| `GET /api/admin/social/editorial` | Existing platform-admin authorization before any read. Returns singleton mode/budget and last 20 runs including source snapshots, packages, previews, attempt audit and status. No activation mutation or credentials. |
+
+Service-only RPCs from `20260905185527_create_social_editorial.sql` (all `SECURITY INVOKER`, fixed empty search path, public/anon/authenticated execution revoked):
+
+| Signature | Result / authority |
+| --- | --- |
+| `claim_social_editorial(date,text,uuid)` | Set of claimed run rows, at most one; settings lock, date identity, mode, budget and live-lease checks |
+| `checkpoint_social_editorial(date,uuid,jsonb,jsonb)` | Boolean; owner-scoped source snapshot and nullable package checkpoint |
+| `finish_social_editorial(date,uuid,text,text,uuid default null)` | Persisted state text or null on ownership loss; third retry persists failed |
+| `recover_social_editorial()` | Integer recovered terminal count |
+| `record_social_editorial_attempt(date,uuid,jsonb)` | Boolean; append at most three bounded audits for the live owner |
+| `notify_social_editorial(text,text)` | Integer delivered count; transactionally inserts notification and acknowledges run, up to ten per call |
+| `guard_cloud_editorial_handoff()` | Trigger result; serializes automatic `social_posts` rendering/review transition with producer control |
+
+Publish-mode handoff reuses `submitSocialPost` and the existing publishing contract with stable key `cloud-editorial-v1:YYYY-MM-DD`. Prepare mode never invokes that submission. Jackson approved code deployment, the new migration and paid preparation-only activation on 2026-09-05. Migration `20260905233314` is applied; deployment verification remains in progress. First real publication remains separate. Runbook: `ops-web/docs/social/cloud-editorial-operations.md`.

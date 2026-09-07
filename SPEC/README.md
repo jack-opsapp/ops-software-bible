@@ -18,7 +18,7 @@ A productized custom-software-development service for trades businesses. Three d
 | SPEC-02 · SYSTEMS | $7,500 CAD + $395/mo care | Workflows plus a structured, maintained data backbone (in the customer's OPS or standalone) + dashboards + import/cleanup. Paid 25/25/25/25 |
 | SPEC-03 · PROPRIETARY | from $25,000 CAD + from $750/mo care | A standalone trade tool built only for the customer (a Deckset, a bespoke roofing estimator) on its own database, operated by OPS; connects to their OPS or runs independent. Not OPS-scale platform builds (out of tier). White label +$4,000 / +$200/mo. Deposit $6,250; total locked at scope sign-off |
 
-*(v1 Setup $3,000 / Build $8,500 / Enterprise $18,000 with universal 25/25/25/25 is superseded; the docs below retain v1 language pending the implementation doc-pass.)*
+*(v1 Setup $3,000 / Build $8,500 / Enterprise $18,000 with universal 25/25/25/25 is superseded; the docs below retain v1 language pending the implementation doc-pass. 05_ADMIN_UX capacity + milestones passages were brought to v2 on 2026-09-05 alongside the ops-web console rename.)*
 
 SPEC-02/03 use the **25 / 25 / 25 / 25** four-milestone payment structure (deposit / scope sign-off / midpoint demo / delivery); SPEC-01 is 50/50 (deposit / delivery). Net-15 invoicing and a **30-day post-walkthrough Guarantee Refund** with explicit exclusions and anti-abuse rules apply to every tier (per-tier refund levers in 10 § 4).
 
