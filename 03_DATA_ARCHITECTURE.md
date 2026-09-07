@@ -4622,7 +4622,8 @@ func tasksByStatus(_ status: TaskStatus) -> [ProjectTask] {
 
 ```swift
 // CORRECT: Pass IDs
-Task.detached { await processProject(projectId: project.id) }
+let projectId = project.id // Read while still on the model-owning actor.
+Task.detached { await processProject(projectId: projectId) }
 
 // INCORRECT: Passing model causes crashes
 Task.detached { await processProject(project: project) }
@@ -4644,6 +4645,8 @@ func processProject(projectId: String) async {
 ```
 
 Inside `DataActor` methods, use `self.modelContext` (the actor's background context); do not create ad-hoc `ModelContext(sharedModelContainer)` instances from within an actor.
+
+**Runtime ownership amendment (2026-09-06, local repair):** production obtains the configured worker through `DataController.readyDataActor()` / `DataActor.makeBackgroundConfigured(modelContainer:)`. The macro's ordinary constructor and `Task.detached` alone are not proof of off-main execution. Context construction and actor jobs use the explicit serial executor. Revocation, post-await scope checks and a current-job drain precede store teardown; queued model readers throw on retirement instead of returning false empty data. See `06_TECHNICAL_ARCHITECTURE.md` for runtime evidence and the shared review-count snapshot. No new schema change is required for this executor repair.
 
 ### 3. Use @MainActor for UI Operations
 

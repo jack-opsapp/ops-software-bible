@@ -1020,32 +1020,7 @@ class DataController: ObservableObject {
         }
     }
 
-    // MARK: - Setup
-    @MainActor
-    func setModelContext(_ context: ModelContext) {
-        self.modelContext = context
-        self.connectivity = ConnectivityManager()
-        self.syncEngine = SyncEngine(modelContext: context, connectivity: connectivity)
-
-        Task {
-            await cleanupDuplicateUsers()
-            await MainActor.run {
-                if isAuthenticated || currentUser != nil {
-                    initializeSyncManager()
-                }
-            }
-        }
-    }
-
-    @MainActor
-    func initializeSyncManager() {
-        guard let modelContext = modelContext else { return }
-
-        self.imageSyncManager = ImageSyncManager(
-            modelContext: modelContext,
-            connectivityMonitor: connectivity
-        )
-    }
+    // Setup and teardown use the DataActor readiness lifecycle below.
 
     // MARK: - Data Access
     func getProject(id: String) -> Project? {
@@ -1075,16 +1050,18 @@ struct ContentView: View {
 
 ### DataActor (Background SwiftData Writes)
 
-**File:** `OPS/Utilities/DataActor.swift` (~2400 lines)
-**Status:** Phase 1 complete 2026-04-19; flag-defaulted-on. Phase 2 (DataController CRUD migration) and Phase 3 (PhotoActor split) planned post-bake.
+**Files:** `OPS/Utilities/DataActor.swift`, `DataActorModelExecutor.swift`, `DataActorStartup.swift`
+**Status (2026-09-06):** actor path remains default-on. A local runtime repair replaces the synchronous production constructor with an explicitly queued executor and awaited startup readiness. Final combined lifecycle verification passed168/168, and38/38 tests passed with independently confirmed Core Data concurrency assertions. Equivalent optimized phone workflow speed remains unmeasured; this is not an App Store release. Historical Phase 2/3 scope below is unchanged.
 **References:** `docs/superpowers/specs/2026-04-18-model-actor-refactor-design.md` (design), `docs/superpowers/plans/2026-04-18-model-actor-phase1-sync-foundation.md` (Phase 1 plan), `docs/superpowers/verification/2026-04-19-phase1-verification.md` (device verification log).
 
-**Why it exists.** The main-queue `ModelContext` (from `sharedModelContainer.mainContext`) is the binding point for SwiftUI `@Query` and `@Bindable`. Writing to it from any executor other than main corrupts SwiftData's internal state (malloc double-free crashes). Before Phase 1, sync / cleanup / background writes all happened `@MainActor` — safe, but blocks the main thread during full sync (2–5 seconds for mid-size contractor datasets). DataActor moves those writes onto a separate background `ModelContext` owned by an `@ModelActor` singleton, eliminating both the crash class and the main-thread pin.
+**Why it exists.** The main context belongs to SwiftUI. Bulk sync, queue bookkeeping and relationship walks must use a separate context whose actual executor stays off the UI thread. An optimized physical startup recording on 2026-09-06 found five main-thread stalls of 253–384 ms and `DataActor` work on main. The earlier assertion that synchronous `@ModelActor` construction eliminated main-thread work was incorrect. Runtime probes also showed that detached construction, even with a detached container, and an explicit witness to `DefaultSerialModelExecutor` still ran on main on the tested iOS 26.5 runtime. An explicit serial queue passed transaction/thread-affinity checks, concurrent persistence and reopen checks; the final production executor/lifetime test group also passed with Core Data concurrency assertions independently confirmed enabled.
 
-**Architecture (C-pragmatic per Apple WWDC24 Sessions 10137/10138).**
+**Architecture.**
 
-- **Main context + `@MainActor`** — SwiftUI view-driven edits via `@Bindable`/`@Query`. Autosave on. This is SwiftData's sweet spot; untouched by the refactor.
-- **DataActor (`@ModelActor`) + background context** — all bulk/sync/cleanup/background writes. Autosave off; mutations wrapped in `modelContext.transaction { }` for atomicity. Singleton, created once in `DataController.setModelContext` (synchronously, to avoid races with auth-path and network-reconnect sync triggers that run before async Tasks complete).
+- **Main context + `@MainActor`** — SwiftUI view-driven edits and model bindings remain confined to main.
+- **`DataActor.makeBackgroundConfigured(modelContainer:)`** — creates the private context on `DataActorModelExecutor`'s serial queue, disables autosave, installs the observer, and returns the configured actor. Its explicit `unownedExecutor` uses that queue. Production consumers do not use the macro's ordinary initializer, which remains for legacy fixtures.
+- **`DataActorStartup`** — registers a pending readiness boundary synchronously, then orders configuration, normalization, deduplication and relationship wiring. `DataController.readyDataActor()` returns only the current prepared actor. Separate unstructured tasks are not assumed FIFO. Actor identity is published only when it changes.
+- **Retirement** — a permanent session revocation rejects queued work and post-await responses from the retired account/context. The serial executor drains current synchronous model work before a main-context wipe. Read consumers treat retirement as cancellation, preserving displayed data rather than publishing false empty snapshots. `ImageSyncManager` retirement is part of the same context replacement boundary; its durable photo obligations remain intact.
 
 **Cross-actor contract.**
 
@@ -1093,7 +1070,11 @@ struct ContentView: View {
 
 **Refresh bridge.** iOS 18.2 has a known bug (FB14750050) where `@Query`-observing views don't auto-refresh when a background actor context inserts rows. `MainContextRefreshBridge` closes it: actor posts a Sendable notification on save with `[PersistentIdentifier]` payload, bridge force-registers inserted IDs in mainContext via `model(for:)`, bumps a `@Published` refresh counter. iOS 26 verification showed Apple appears to have fixed the underlying bug; bridge retained as insurance.
 
-**SyncEngine wiring.** `SyncEngine.configure` accepts `dataActor: DataActor?`. When `FeatureFlags.useDataActor` is on AND actor is non-nil, `fullSync/pullDelta/pushPending/syncCompanyNow/deltaSyncSince` dispatch to actor methods; otherwise legacy `@MainActor InboundProcessor/OutboundProcessor` paths run unchanged. `SyncEngine.setDataActor(_:)` is a late-bind setter used by `DataController.setModelContext` to cover auth-path initialization ordering.
+**SyncEngine wiring (2026-09-06 local repair).** `setDataActorStartup` installs pending readiness before auth/reconnect can request sync. All actor-dependent sync/realtime entry paths await it, then recheck context, account, generation and actor identity after suspension. A registered pending or invalidated startup never falls through to legacy. Explicit flag-off and standalone legacy integrations retain their existing route. Configured context identity is tracked independently of the image-manager initialization sentinel; an actual replacement retires and rebinds context-owned processors. Realtime ingress closes synchronously before asynchronous channel teardown. Old inbound responses cannot merge or advance sync cursors, progress or Spotlight state in a replacement session.
+
+**Image worker ownership (2026-09-07).** `DataController` synchronously invalidates the old image manager on `MainActor` before replacing its context or tearing down authentication. Each manager retains its originating `ModelContainer` and owns cancellable startup/retry/connectivity triggers and tasks. Every asynchronous invocation captures user/company identity and refuses later model writes, queue replacement or follow-up requests after retirement or identity change. Invalidation preserves durable uploads, portal mirror obligations, tombstones and capture files. Full drains claim ownership before the first awaited recovery sweep; new portal insert obligations are persisted before the network request. Already-issued server requests may complete; invalidation suppresses the old manager's subsequent effects rather than retracting accepted requests. Source: `OPS/Network/ImageSyncManager.swift` and `OPSTests/Network/ImageSyncManagerLifecycleTests.swift`.
+
+**Interrupted sync and Spotlight ownership (2026-09-07).** A sync cycle owns its busy-state cleanup by UUID, independently of task cancellation. Replacement revokes that ownership so an old completion cannot clear a newer cycle's state. Incremental Spotlight dispatch carries the original session predicate through avatar fetches and submission boundaries; no retained model is read after a retired avatar continuation. The tracker takes its current batch before suspension, preserving marks accumulated during the dispatch. Sources: `SyncEngine.swift`, `SpotlightSyncTracker.swift`, `SpotlightIndexManager.swift` and `SpotlightSessionLifetimeTests.swift`.
 
 **Rollback.** `UserDefaults.standard.set(false, forKey: "feature.useDataActor")` + relaunch. Legacy paths take over; no data migration required (actor uses the same store file as the main context).
 
@@ -1106,6 +1087,16 @@ struct ContentView: View {
 **Phase 3 scope (pending).** Extract dedicated `PhotoActor` for `LocalPhoto` writes + photo upload pipeline. Parallel write lane with DataActor. Flag: `usePhotoActor`.
 
 **Known followup.** At dev-account scale, `MainContextRefreshBridge.model(for:)` force-registration adds small per-row overhead with no amortizing benefit (no main-thread pin to relieve at <50 rows). Tracked as Supabase `bug_reports` `914b3945-27f5-4823-9e4b-d42f0407fcc2`; resolved at mid-size scale.
+
+### Shared iOS Review Counts (2026-09-06 local repair)
+
+`ReviewSnapshotStore.shared` is the passive source for the FAB, Job Board header, persistent review-stack rail reports and periodic review reminders. A refresh awaits the current ready actor and fetches current-company tasks and projects once each. `DataActor+ReviewSnapshot.swift` produces Sendable scalar counts; explicit review-sheet entry still resolves row arrays on the main context. Passive rendering performs no task/project enumeration.
+
+Cache identity includes container and actor instance, company/user, effective review permissions, calendar/time zone/day, thresholds/frequency and execution mode. Relevant mutations coalesce; an invalidation during a read rejects that result and requests one follow-up. Scope replacement clears visible cached data immediately. Foreground refreshes and a next-eligibility timer cover both midnight and earlier elapsed-day reminder thresholds. A failed or retired read never becomes a zero count. Valid zero counts still reach all three server-owned review-stack RPCs; reporting is serialized and checks current identity before each call. A one-shot report retains its intent when startup readiness, invalidation or expiry supersedes its read or transport within the same user/company/container. A stable failure stops without spinning or reporting zero; replacement accounts cannot inherit the old report intent.
+
+The explicit actor flag-off path uses two throwing reads from the existing main context and the same calculator. A failed enabled actor startup does not silently use that fallback. Review-only task queries and completed-task unlock counts now exclude other companies' cached tasks, matching their sheet rows; `DataController.getAllTasks()` keeps its existing semantics elsewhere. Unlock thresholds remain separate from the server's rail threshold.
+
+Verification: final combined runtime suite passed168/168 with no skips at993ca641, including review counts, actor retirement and four gated report-intent cases. Earlier41/41 review and persisted warm-context read/edit/read checks also passed; counts overlap. The original populated-store2/1/1 reporting assertion remains unchanged and passed after the startup/reporting correction. Sources: `ReviewSnapshot.swift`, `ReviewSnapshotStore.swift`, `DataActor+ReviewSnapshot.swift`, `TaskReviewQuery.swift`, `ReviewThresholdService.swift`, `AppState.swift`, and the corresponding `OPSTests` suites. Runtime improvement on the user's equivalent optimized site-visit sequence is not yet measured.
 
 ### Task Schedule Write Integrity (2026-06-08)
 
