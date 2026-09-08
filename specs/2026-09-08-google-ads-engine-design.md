@@ -1,7 +1,7 @@
 # Google Ads Engine — Design
 
 **Date:** 2026-09-08
-**Status:** Draft awaiting Jackson's five calls (§2). Everything else is decided.
+**Status:** APPROVED 2026-09-08. Jackson locked the five calls in §2 on their recommended defaults and is performing the three account actions in §3.1.
 **Owner surface:** ops-web (`/admin/google-ads`, `/api/internal/ads/engine/*`, crons), try-ops (landing pages + click-id capture), one Claude Cloud Routine.
 **Research inputs:** `research/google-ads/2026-09-08-local-findings.md`, `research/google-ads/2026-09-08-google-ads-for-trades-saas.md`, `research/google-ads/2026-09-08-google-ads-api-engineering.md` (all committed alongside this spec).
 **Spawn prefix:** `GOOGLE ADS ENGINE - P<phase>-<n>`.
@@ -35,9 +35,9 @@ Four layers, built in this order: **measurement**, **account rebuild**, **engine
 - Business volume: 64 companies, 6 paying, 2–7 new companies a month. Every Smart Bidding threshold (15–30 conversions per month) is out of reach today. Value-based and target-based bidding are not available; the honest opening strategy is **Maximize Clicks with a CPC cap** on a tight phrase/exact keyword set.
 - The house pattern for routine-authored work already exists and is live: the Instagram Cloud Routine (claim → author → independent editor → deterministic server validation with fixable 422 codes → held draft → policy mode flip) plus the notification rail. This design reuses that contract shape verbatim.
 
-## 2. Jackson's calls (defaults shown; the build proceeds on the defaults unless he says otherwise)
+## 2. Jackson's calls (LOCKED 2026-09-08 on the recommended defaults)
 
-| # | Decision | Recommended default | Why it is his |
+| # | Decision | Decision (locked) | Why it was his |
 |---|---|---|---|
 | 1 | Budget and commitment | **$1,500 CAD/month for 90 days ($4,500)**, Canada only, Search only | Money. $370/month buys no information; $1,500 buys ~250 clicks → ~10 trials/month → a readable quarter |
 | 2 | Where paid clicks land | **try.opsapp.co dedicated pages with web signup**; never the App Store; the app is offered after signup | Product direction: paid traffic gets a web-first path while organic keeps its App Store CTAs |
