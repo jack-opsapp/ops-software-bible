@@ -1,6 +1,6 @@
 -- Approved test setup: Jackson explicitly selected MAVERICK on 2026-09-08.
--- NOT COMMITTED: rollback dry-run stopped before inserts on active sandbox sync.
--- Do not weaken the guard. Exact sandbox-pause approval and readback are required.
+-- COMMITTED 2026-09-08 17:09 UTC after explicit sandbox-pause approval/readback.
+-- Do not rerun: read 2026-09-08-maverick-fixture-created.json for exact identities.
 -- Synthetic historical source only; this is NOT a host draft-save acceptance.
 -- No policy enrollment, effect seal, OAuth grant, send, sync, or output draft.
 -- Re-execution fails closed before inserts if the fixture already exists.
@@ -77,10 +77,12 @@ begin
   'Payment on completion',200,0.0775,15.50,215.50,'approved',owner_id,'CAD')
  returning id into estimate_id;
  insert into public.line_items(company_id,estimate_id,name,description,quantity,unit,unit_price,
-  discount_percent,is_taxable,tax_rate_id,is_optional,is_selected,sort_order,type,minimum_charge_snapshot,line_total)
+  discount_percent,is_taxable,tax_rate_id,is_optional,is_selected,sort_order,type,minimum_charge_snapshot)
  values(company,estimate_id,'Deck labour','TEST ONLY — synthetic historical price source',
-  2,'hour',100,0,true,tax_id,false,true,0,'LABOR',0,200)
+  2,'hour',100,0,true,tax_id,false,true,0,'LABOR',0)
  returning id into line_id;
+ if not exists(select 1 from public.line_items where id=line_id and line_total=200)
+ then raise exception 'FIXTURE_SERVER_LINE_TOTAL_MISMATCH'; end if;
  fixture_ids:=array[customer_id,history_project_id,quote_project_id,note_id,estimate_id,line_id];
 
  foreach relation_name in array array['clients','projects','project_notes','estimates','line_items'] loop

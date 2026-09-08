@@ -1,0 +1,341 @@
+{
+  "status": "FIXTURE_CREATED_OWNER_PREVIEW_VERIFIED_AWAITING_EXACT_OWNER_ENROLLMENT",
+  "approved_scope": "Existing MAVERICK test company; fictional test data; temporary QuickBooks sandbox sync pause and restoration. No exact draft save has been approved.",
+  "pause": {
+    "provider": "quickbooks",
+    "authority": "Jackson explicitly approved temporary sandbox sync pause and restoration",
+    "direction": "bidirectional",
+    "paused_at": "2026-09-08T17:08:08.082277+00:00",
+    "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+    "environment": "sandbox",
+    "is_connected": true,
+    "connection_id": "956dfa13-821f-45c4-ba30-7286d3178896",
+    "after_sync_enabled": false,
+    "before_sync_enabled": true,
+    "restore_sync_enabled_to": true,
+    "unrelated_fields_unchanged": true
+  },
+  "fixture": {
+    "tax_id": "d0000000-0000-4000-d000-000000000001",
+    "currency": "CAD",
+    "owner_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+    "tax_hash": "bcae71cfd81915d4d45400b56eafb690",
+    "tax_rate": 0.0775,
+    "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+    "customer_id": "db03d9e2-5753-46db-8a61-7a2d72164da8",
+    "recorded_at": "2026-09-08T17:09:28.82881+00:00",
+    "company_hash": "81e16bdbd2be8f9d28d4fd723c4f4f7b",
+    "history_total": 215.5,
+    "source_note_id": "ebb45d42-dd6a-4282-ac73-6a2e1af74278",
+    "quote_project_id": "775d8bc4-edd6-4e45-854f-c7e1cf12e3e7",
+    "historical_line_id": "eb654ed0-28fd-4428-b9f4-42ee173b6811",
+    "history_project_id": "0adfdd7c-7f7f-4851-8f53-6cbed9549131",
+    "existing_data_hashes": {
+      "clients": "372277a623f7ff3b5360a35ef912d570",
+      "projects": "ce190009579c703bdeadee883bf05559",
+      "estimates": "004d521082281feeed203c8124156466",
+      "line_items": "f2b6a8cac1bcc290099e24b175195f22",
+      "project_notes": "3a1f28d775fe17258bf409d8552509ee"
+    },
+    "expected_quote_total": 232.74,
+    "output_drafts_created": 0,
+    "historical_estimate_id": "323f486f-1a05-496b-9e4f-d725384d007d",
+    "inserted_business_rows": 6,
+    "accounting_queue_rows_for_fixture": 0,
+    "company_and_tax_settings_unchanged": true,
+    "existing_business_records_unchanged": true
+  },
+  "independent_readback": {
+    "source": {
+      "id": "ebb45d42-dd6a-4282-ac73-6a2e1af74278",
+      "sha256": "sha256:4b18713abd825a5a8f469f2e2ee3ed5b9408f7a9efb3fd1803f021ceeffac811",
+      "content": "TEST ONLY. Prepared by Codex for owner review; not an enrolled policy or a save approval. Currency CAD. Unit hour. Historical line prices and explicit operator prices are permitted for this fictional trial. Terms: Payment on completion. Every save requires exact approval in OPS. No delivery, invoice issue, accounting sync, or hold release.",
+      "author_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8"
+    },
+    "history": {
+      "id": "323f486f-1a05-496b-9e4f-d725384d007d",
+      "pdf": null,
+      "tax": 15.5,
+      "qb_id": null,
+      "total": 215.5,
+      "number": "MCP-P16-FIXTURE-HISTORY-20260908",
+      "sha256": "sha256:16b548b7e045f0e2e42991f769a5c9ab5a52b2e9170ace10c7ff77e7afcca909",
+      "status": "approved",
+      "sage_id": null,
+      "sent_at": null,
+      "currency": "CAD",
+      "subtotal": 200,
+      "viewed_at": null,
+      "approved_at": null
+    },
+    "customer": {
+      "id": "db03d9e2-5753-46db-8a61-7a2d72164da8",
+      "name": "MCP P16 TEST ONLY — Fictional customer",
+      "email": null,
+      "phone": null,
+      "qb_id": null,
+      "address": null,
+      "sage_id": null
+    },
+    "projects": [
+      {
+        "id": "0adfdd7c-7f7f-4851-8f53-6cbed9549131",
+        "title": "MCP P16 TEST ONLY — Deck history",
+        "status": "completed",
+        "client_id": "db03d9e2-5753-46db-8a61-7a2d72164da8",
+        "opportunity_id": null,
+        "opportunity_ref": null
+      },
+      {
+        "id": "775d8bc4-edd6-4e45-854f-c7e1cf12e3e7",
+        "title": "MCP P16 TEST ONLY — Deck quote",
+        "status": "rfq",
+        "client_id": "db03d9e2-5753-46db-8a61-7a2d72164da8",
+        "opportunity_id": null,
+        "opportunity_ref": null
+      }
+    ],
+    "tax_hash": "bcae71cfd81915d4d45400b56eafb690",
+    "verified_at": "2026-09-08T17:10:15.236382+00:00",
+    "company_hash": "81e16bdbd2be8f9d28d4fd723c4f4f7b",
+    "history_line": {
+      "id": "eb654ed0-28fd-4428-b9f4-42ee173b6811",
+      "unit": "hour",
+      "sha256": "sha256:c2e9c67f3d0901f30e5464608879da96a6a602d875bcf940fbfe0bad0fa1dd01",
+      "tax_id": "d0000000-0000-4000-d000-000000000001",
+      "quantity": 2,
+      "line_total": 200,
+      "unit_price": 100
+    },
+    "output_drafts": 0,
+    "existing_data_hashes": {
+      "clients": "372277a623f7ff3b5360a35ef912d570",
+      "projects": "ce190009579c703bdeadee883bf05559",
+      "estimates": "004d521082281feeed203c8124156466",
+      "line_items": "f2b6a8cac1bcc290099e24b175195f22",
+      "project_notes": "3a1f28d775fe17258bf409d8552509ee"
+    },
+    "accounting_queue_rows": 0
+  },
+  "owner_review": {
+    "preview": {
+      "id": "a941a4d7-1e59-4f48-a67b-0c7878c9ed08",
+      "preview": {
+        "tax": {
+          "id": "d0000000-0000-4000-d000-000000000001",
+          "name": "CA Sales Tax",
+          "rate": "0.0775"
+        },
+        "policy": {
+          "terms": "Payment on completion",
+          "revision": "phase16-maverick-host-1",
+          "currency_code": "CAD",
+          "source_sha256": "sha256:4b18713abd825a5a8f469f2e2ee3ed5b9408f7a9efb3fd1803f021ceeffac811",
+          "permitted_units": [
+            "hour"
+          ],
+          "source_document_id": "ebb45d42-dd6a-4282-ac73-6a2e1af74278",
+          "expected_policy_sha256": null,
+          "permitted_price_sources": [
+            "historical_line",
+            "operator"
+          ]
+        },
+        "source": {
+          "id": "ebb45d42-dd6a-4282-ac73-6a2e1af74278",
+          "sha256": "sha256:4b18713abd825a5a8f469f2e2ee3ed5b9408f7a9efb3fd1803f021ceeffac811",
+          "content": "TEST ONLY. Prepared by Codex for owner review; not an enrolled policy or a save approval. Currency CAD. Unit hour. Historical line prices and explicit operator prices are permitted for this fictional trial. Terms: Payment on completion. Every save requires exact approval in OPS. No delivery, invoice issue, accounting sync, or hold release.",
+          "author_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+          "project_id": "775d8bc4-edd6-4e45-854f-c7e1cf12e3e7"
+        },
+        "operation": "enroll",
+        "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+        "expires_at": "2026-09-08T17:27:18.313761+00:00",
+        "preview_id": "a941a4d7-1e59-4f48-a67b-0c7878c9ed08",
+        "company_name": "MAVERICK PROJECTS LTD",
+        "actor_user_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+        "operator_name": "Pete Mitchell",
+        "preview_sha256": "sha256:54b55009b6b48ccf0987b7e5f91f0b6075a8b13e30f224df6fc14672f3d88a54",
+        "preparation_only": true
+      },
+      "request": {
+        "terms": "Payment on completion",
+        "revision": "phase16-maverick-host-1",
+        "currency_code": "CAD",
+        "source_sha256": "sha256:4b18713abd825a5a8f469f2e2ee3ed5b9408f7a9efb3fd1803f021ceeffac811",
+        "permitted_units": [
+          "hour"
+        ],
+        "source_document_id": "ebb45d42-dd6a-4282-ac73-6a2e1af74278",
+        "expected_policy_sha256": null,
+        "permitted_price_sources": [
+          "historical_line",
+          "operator"
+        ]
+      },
+      "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+      "created_at": "2026-09-08T17:12:18.334784+00:00",
+      "expires_at": "2026-09-08T17:27:18.313761+00:00",
+      "consumed_at": null,
+      "actor_user_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+      "preview_sha256": "sha256:54b55009b6b48ccf0987b7e5f91f0b6075a8b13e30f224df6fc14672f3d88a54"
+    },
+    "policies": 0
+  },
+  "rehearsal": {
+    "generated_column_error": "428C9 line_total is generated; attempted explicit insert rolled back",
+    "correction": "Omit generated line_total and assert database-computed amount=200",
+    "corrected_rollback_run_passed": true
+  },
+  "production_issue": {
+    "observed": "Authenticated owner preview was persisted but app showed No new result was verified",
+    "cause": "FinancialPolicyPreviewSchema tax.id uses RFC-strict z.uuid; current PostgreSQL tax ID has a non-RFC variant nibble",
+    "candidate_fix": "Reuse existing PostgresUuidSchema only for returned tax.id",
+    "regression": {
+      "before": "New existing-tax-ID scenario failed; 2 passed, 1 failed",
+      "after": "28 focused tests across 6 files passed; full TypeScript validation passed with 8 GiB heap; Astra read-only review had no actionable findings"
+    },
+    "release": {
+      "id": "dpl_HJRyVB6byM1pmLx686giUid6PhUp",
+      "url": "ops-oz0k66n4m-jacksons-projects-f76fa6e8.vercel.app",
+      "state": "READY",
+      "alias": [
+        "app.opsapp.co",
+        "ops-web-opal.vercel.app",
+        "ops-web-jacksons-projects-f76fa6e8.vercel.app",
+        "ops-web-git-main-jacksons-projects-f76fa6e8.vercel.app"
+      ],
+      "target": "production",
+      "ready": 1788888540328,
+      "source_sha": "e6fb07d7d6540db22c948fb1f8650684ca8e4af8"
+    }
+  },
+  "financial_policy_enrolled": false,
+  "output_draft_saved": false,
+  "financial_effect_resealed": false,
+  "financial_oauth_activated": false,
+  "sandbox_restore": {
+    "reason": "Fixture setup complete; stop at exact owner enrollment gate without leaving accounting paused",
+    "provider": "quickbooks",
+    "authority": "Jackson explicitly approved temporary sandbox sync pause and restoration",
+    "direction": "bidirectional",
+    "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+    "environment": "sandbox",
+    "restored_at": "2026-09-08T17:31:47.283359+00:00",
+    "is_connected": true,
+    "connection_id": "956dfa13-821f-45c4-ba30-7286d3178896",
+    "after_sync_enabled": true,
+    "fixture_queue_rows": 0,
+    "before_sync_enabled": false,
+    "unrelated_fields_unchanged": true
+  },
+  "restore_independent_readback": {
+    "sandbox": {
+      "id": "956dfa13-821f-45c4-ba30-7286d3178896",
+      "direction": "bidirectional",
+      "environment": "sandbox",
+      "is_connected": true,
+      "sync_enabled": true
+    },
+    "policies": 0,
+    "proposals": 0,
+    "production": {
+      "id": "86983ace-1f70-4503-a066-76cefee21496",
+      "direction": "pull_only",
+      "environment": "production",
+      "is_connected": false,
+      "sync_enabled": false
+    },
+    "verified_at": "2026-09-08T17:32:15.692578+00:00",
+    "write_tokens": 0,
+    "output_drafts": 0,
+    "fixture_queue_rows": 0,
+    "owner_preview_consumed_at": null
+  },
+  "owner_review_after_fix": {
+    "id": "8fb55749-024b-4c52-9998-ff777ba1f9c2",
+    "preview": {
+      "tax": {
+        "id": "d0000000-0000-4000-d000-000000000001",
+        "name": "CA Sales Tax",
+        "rate": "0.0775"
+      },
+      "policy": {
+        "terms": "Payment on completion",
+        "revision": "phase16-maverick-host-1",
+        "currency_code": "CAD",
+        "source_sha256": "sha256:4b18713abd825a5a8f469f2e2ee3ed5b9408f7a9efb3fd1803f021ceeffac811",
+        "permitted_units": [
+          "hour"
+        ],
+        "source_document_id": "ebb45d42-dd6a-4282-ac73-6a2e1af74278",
+        "expected_policy_sha256": null,
+        "permitted_price_sources": [
+          "historical_line",
+          "operator"
+        ]
+      },
+      "source": {
+        "id": "ebb45d42-dd6a-4282-ac73-6a2e1af74278",
+        "sha256": "sha256:4b18713abd825a5a8f469f2e2ee3ed5b9408f7a9efb3fd1803f021ceeffac811",
+        "content": "TEST ONLY. Prepared by Codex for owner review; not an enrolled policy or a save approval. Currency CAD. Unit hour. Historical line prices and explicit operator prices are permitted for this fictional trial. Terms: Payment on completion. Every save requires exact approval in OPS. No delivery, invoice issue, accounting sync, or hold release.",
+        "author_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+        "project_id": "775d8bc4-edd6-4e45-854f-c7e1cf12e3e7"
+      },
+      "operation": "enroll",
+      "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+      "expires_at": "2026-09-08T17:44:59.092694+00:00",
+      "preview_id": "8fb55749-024b-4c52-9998-ff777ba1f9c2",
+      "company_name": "MAVERICK PROJECTS LTD",
+      "actor_user_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+      "operator_name": "Pete Mitchell",
+      "preview_sha256": "sha256:797d258732b442c64f8d74d3ddee06f28ba118fefba3ff83e31620f0a88f5886",
+      "preparation_only": true
+    },
+    "created_at": "2026-09-08T17:29:59.107869+00:00",
+    "expires_at": "2026-09-08T17:44:59.092694+00:00",
+    "consumed_at": null,
+    "preview_sha256": "sha256:797d258732b442c64f8d74d3ddee06f28ba118fefba3ff83e31620f0a88f5886"
+  },
+  "owner_review_browser": {
+    "url": "https://app.opsapp.co/settings/financial-policy?source=ebb45d42-dd6a-4282-ac73-6a2e1af74278",
+    "observed_at": "2026-09-08T17:30:00Z",
+    "signed_in_company": "MAVERICK PROJECTS LTD",
+    "signed_in_operator": "Pete Mitchell",
+    "heading": "Exact rule review",
+    "revision": "phase16-maverick-host-1",
+    "currency": "CAD",
+    "terms": "Payment on completion",
+    "unit": "hour",
+    "price_sources": [
+      "Verified past estimate lines",
+      "Exact prices supplied by the operator"
+    ],
+    "tax": "CA Sales Tax 7.75%",
+    "button": "Enroll these rules",
+    "button_clicked": false,
+    "handoff": true
+  },
+  "closed_financial_authority": {
+    "verified_at": "2026-09-08T17:32:44.970226+00:00",
+    "financial_clients": 0,
+    "financial_bindings": 0
+  },
+  "native_codex_fixture_readback": {
+    "verified_at": "2026-09-08T17:22:14Z",
+    "capability": "get_sales_document",
+    "document_id": "323f486f-1a05-496b-9e4f-d725384d007d",
+    "customer_id": "db03d9e2-5753-46db-8a61-7a2d72164da8",
+    "project_id": "0adfdd7c-7f7f-4851-8f53-6cbed9549131",
+    "currency": "CAD",
+    "total_minor": 21550,
+    "quantity": 2,
+    "unit_price_minor": 10000,
+    "proof_ref": "ops_proof:v1:f5edaa5d925f6bd69ee27e0810b5db88a043843de391968ed7e3196eccda40a2",
+    "financial_prepare_or_save": false
+  },
+  "duplicate_replay_guard": {
+    "expected_rejection": "FIXTURE_ALREADY_EXISTS_READ_BACK_DO_NOT_RECREATE",
+    "passed": true
+  }
+}
