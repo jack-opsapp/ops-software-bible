@@ -1,0 +1,77 @@
+{
+  "status": "BLOCKED_BEFORE_FIXTURE_INSERTS",
+  "authorization": "Jackson explicitly approved existing MAVERICK as the test company and preparation of Codex/Claude testing. Exact owner policy review, draft-save approval and no-distribution boundaries remain.",
+  "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+  "test_notes": 0,
+  "verified_at": "2026-09-08T17:02:08.814089+00:00",
+  "test_clients": 0,
+  "test_projects": 0,
+  "test_estimates": 0,
+  "computed_effect": "sha256:077c377b70d9531b436800593907f1c465d7ce668faa4a27baeac500d648ffa9",
+  "installed_effect": "sha256:1dbb20f58a47881a7838a77a2ae69cb55aea8142ba41e5c9b62c0b73a21ae4c5",
+  "financial_policies": 0,
+  "accounting_connections": [
+    {
+      "id": "86983ace-1f70-4503-a066-76cefee21496",
+      "provider": "quickbooks",
+      "connected": false,
+      "direction": "pull_only",
+      "environment": "production",
+      "sync_enabled": false
+    },
+    {
+      "id": "956dfa13-821f-45c4-ba30-7286d3178896",
+      "provider": "quickbooks",
+      "connected": true,
+      "direction": "bidirectional",
+      "environment": "sandbox",
+      "sync_enabled": true
+    }
+  ],
+  "owner": {
+    "id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+    "name": "Pete Mitchell",
+    "signed_in_ops_owner_review": false
+  },
+  "fixture_plan": {
+    "currency": "CAD",
+    "default_tax_id": "d0000000-0000-4000-d000-000000000001",
+    "tax_rate": 0.0775,
+    "history_total": 215.5,
+    "new_quote_total": 232.74,
+    "company_settings_changes": 0
+  },
+  "guarded_dry_run": {
+    "error": "FIXTURE_ACCOUNTING_PUSH_ENABLED",
+    "aborted_before_first_insert": true,
+    "committed": false,
+    "fixture_sql": "2026-09-08-maverick-fixture.sql",
+    "retry_mode": "Stops before inserts if any matching fixture exists; read back before rerun."
+  },
+  "root_cause": "Native get_integration_health intentionally reads provider_environment=production only. enqueue_accounting_sync accepts both production and sandbox connections. The sandbox connection is active bidirectional.",
+  "unchanged_by_this_turn": [
+    "business records",
+    "company settings",
+    "tax rates",
+    "accounting connections",
+    "policies",
+    "effect seal",
+    "OAuth clients and grants",
+    "MCP configuration"
+  ],
+  "remaining": [
+    "Explicit approval to temporarily pause the exact sandbox sync without disconnecting or deleting credentials",
+    "Owner signs in to OPS as Pete Mitchell",
+    "Execute and independently verify isolated fixture setup",
+    "Owner reviews and enrolls exact test policy through OPS UI",
+    "Review/approve literal financial effect seal and exact temporary bindings",
+    "Fresh consent and separate Codex/Claude trials, with each output save separately approved in OPS",
+    "Disable exact trial bindings; preserve draft holds and prove cleanup"
+  ],
+  "host_acceptance": {
+    "Codex": "Existing read path passed in prior checkpoint; financial flow not run",
+    "Claude": "User-operated test pending",
+    "ChatGPT": "Not substituted by either host"
+  },
+  "supplemental_docs": "Supabase monitoring-and-debugging.md documentation fetch returned 404; live catalog, trigger function, guarded transaction and independent readback supplied the evidence."
+}
