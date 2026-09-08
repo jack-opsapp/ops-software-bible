@@ -52,6 +52,12 @@ Jackson directly approved the software release and two migrations in the parent 
 
 Owner implementation: `0a2340a8f`, with `516a12df4` evidence formatting. Financial trial implementation: `5b6bd5a57`. Release integration merged upstream `f49bba20226f81621c439a5946be6b83b268e094` without rewriting shared history. Commit `2465637815a9a55e671f5b8399409b6fa45be10f` fixes the reproduced timestamp-hash discrepancy across UTC and America/Vancouver sessions by pinning the financial canary predicate to UTC. Nine fresh protocol scenarios pass, including legacy v3 resolution and financial bearer/refresh/expiry checks. Release source is `4bc3221cbd04f645e496d7490d9f6c416f334c0a`.
 
+## Host acceptance checkpoint — 2026-09-08
+
+Jackson will run the Claude test and explicitly directed the coordinator to use its own Codex connection instead of operating ChatGPT. At 16:32 UTC, native authenticated OPS calls in Codex passed company context, bounded estimate listing, exact document/line reading and job financial-rollup reconciliation. The connected company is MAVERICK PROJECTS LTD, not the proposed fictional acceptance company. All four exercised capabilities are read-only; 35 capabilities are available, but neither `inspect_financial_document` nor `prepare_financial_document` is callable. No trial fixture, policy, grant, binding, effect seal or financial save was created or changed.
+
+This proves the current Codex read path only. Financial prepare/approve/save acceptance remains blocked on a dedicated authorized test connection and the existing exact approval gates. Claude evidence must be collected separately; neither Codex nor Claude substitutes for authenticated ChatGPT evidence. See [Codex read-only checkpoint](../docs/artifacts/phase16/host-acceptance/2026-09-08-codex-read-only.json). The earlier ChatGPT-specific trial proposal is historical; a Codex trial must resolve its own actual callback/client and obtain fresh exact consent, never upgrade the existing MAVERICK grant.
+
 ## Verified production release — 2026-09-08
 
 - Web main source: `4bc3221cbd04f645e496d7490d9f6c416f334c0a`. Deployment `dpl_6FMCk537aRwSaeRB4EG7qRi3oiJu` is READY; the `app.opsapp.co` alias independently resolves to this source.
