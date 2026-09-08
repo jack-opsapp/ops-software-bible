@@ -2201,3 +2201,9 @@ The release passed 288 changed-surface application tests, 7 PostgreSQL 17 cases,
 ## Private estimates and change orders (Phase 15, dormant)
 
 One exact human-approved save creates an immutable held draft and allocates one official number atomically. A change-order baseline is distinct from a predecessor revision; prior financial history and accepted contract totals remain unchanged. PostgreSQL numeric arithmetic follows existing subtotal tax rounding. Currency-ambiguous history, conflicting/missing pricing policies and unsupported units block. Portal, PDF and accounting guards preserve private custody. See [Phase 15 contract](specs/2026-09-07-ops-mcp-financial-document-approval.md) for authority, arithmetic, locks, verification and release evidence and separate activation gates.
+
+## Owner pricing-policy readiness (Phase 16, local and dormant)
+
+An exact owner-enrolled rule revision determines eligible terms, units and price-source kinds; it is never standing approval to save, send, issue or distribute a document. Enrollment seals the attributable OPS source note, company currency and default tax. Tax/source/owner drift or policy retirement stops preparation and already-prepared saves. Each estimate/change order still passes the existing named-operator approval and immutable held-draft transaction. Historical currency and price units must exist explicitly; current company settings cannot fill gaps in history.
+
+The local historical-quote +8% proof creates a CAD 216.00 subtotal and 226.80 total from two fictional hours at 100.00 plus 5% tax, only after exact approval, with one durable draft/number under retry. Canpro currently has no saved estimates or tax rows and no usable products (two deleted catalog records exist). External Canpro source conflicts remain business decisions, not migration seeds. No company enrollment or real host acceptance occurred. See [Phase16 contract](specs/2026-09-08-ops-mcp-financial-readiness.md).

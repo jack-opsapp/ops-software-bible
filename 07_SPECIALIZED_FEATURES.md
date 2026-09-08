@@ -10658,3 +10658,7 @@ The canonical update preserves scope composition and queues existing in-app and 
 ## Financial draft approval notifications (Phase 15, dormant)
 
 `approve_financial_document` uses the existing named-actor queue and persistent notification. Exact commit/rejection resolves the notification atomically. The preview shows every line, original/proposed rates, terms, tax, scope sources and previous revision. Generic, bulk and autonomous approval paths reject financial drafts. See [Phase 15 contract](specs/2026-09-07-ops-mcp-financial-document-approval.md) for authority, arithmetic, locks, verification and release evidence and separate activation gates.
+
+## Financial rule enrollment notifications (Phase 16, local and dormant)
+
+`/settings/financial-policy?source=<exact company note UUID>` gives the current owner one source-and-rule review before enrollment. Source content is rendered as inert text, never HTML or instructions. A successful enrollment or exact revocation writes one standard notification atomically with its durable receipt, linking to `/settings/financial-policy`. Review itself creates no notification or financial document. Existing Phase15 per-draft persistent approval notifications remain the financial save authority. Revocation cannot release held drafts. See [Phase16 contract](specs/2026-09-08-ops-mcp-financial-readiness.md).

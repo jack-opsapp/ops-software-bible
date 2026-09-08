@@ -4621,3 +4621,11 @@ Service-role-only SQL entry points are `inspect_agent_schedule_change_as_system`
 ## MCP financial document approval (Phase 15, dormant)
 
 `inspect_financial_document` and `prepare_financial_document` are dormant v23/v17 definitions. Server-only inspect/prepare/commit/reject/filter and rate-limit RPCs share canonical actor identity; the OPS approval desk performs exact single-document saves with complete receipt readback. Active v20/v14/v9 and existing OAuth grants are unchanged; prospective consent v12 is absent. See [Phase 15 contract](specs/2026-09-07-ops-mcp-financial-document-approval.md) for authority, arithmetic, locks, verification and release evidence and separate activation gates.
+
+## Financial policy readiness (Phase 16, local and dormant)
+
+`GET /api/agent/financial-policy?source=<optional exact note UUID>` reads owner readiness; `POST` accepts one strict decision: `{action:"preview",policy:{revision,source_document_id,source_sha256,expected_policy_sha256,currency_code,terms,permitted_price_sources,permitted_units}}`, `{action:"enroll",preview_id,preview_sha256}`, or `{action:"revoke",policy_id,policy_sha256}`. Actor and company come only from the authenticated OPS session. Body limit is 64 KiB; errors are bounded codes; responses are no-store.
+
+Service-role-only RPCs are `get_financial_policy_readiness_as_actor(uuid,uuid,uuid)`, `preview_financial_policy_as_actor(uuid,uuid,jsonb)`, `enroll_financial_policy_as_actor(uuid,uuid,uuid,text)` and `revoke_financial_policy_as_actor(uuid,uuid,uuid,text)`. Each rechecks exact current owner and canonical company-wide financial/settings permissions. Review expiry is 15 minutes. Enrollment consumes the sealed review once; exact replay rechecks current source/authority. Receipt states preparation-only and zero created financial documents.
+
+Candidate consent v12 now exists locally and validates the exact v17/v23 financial preparation surface. It remains absent from selectable catalogs; active v20/v14/v9 and all existing grants stay unchanged. The current v3-only canary path cannot activate financial access. Real host activation requires separately approved exact company/actor/client consent plumbing and acceptance. See [Phase16 contract](specs/2026-09-08-ops-mcp-financial-readiness.md).
