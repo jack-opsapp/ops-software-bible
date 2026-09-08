@@ -1,0 +1,164 @@
+{
+  "checkpoint": "2026-09-08 financial trial activation and native Codex inspection",
+  "authority": "Jackson explicitly approved new 30-minute MAVERICK-only Codex and Claude trial connections after safety review; at most one private test estimate each, every save requires exact OPS approval; no sends or accounting sync.",
+  "client_registration": [
+    {
+      "registration_receipt": {
+        "clients": [
+          {
+            "scope": "ops.company.read ops.customers.read ops.financial_documents.prepare ops.financial_documents.read ops.jobs.read",
+            "client_id": "c15e9551-c7d3-4960-ac9a-e24439bc958f",
+            "created_at": "2026-09-08T18:30:03.979304+00:00",
+            "client_name": "OPS Phase16 MAVERICK Codex Acceptance",
+            "grant_types": [
+              "authorization_code",
+              "refresh_token"
+            ],
+            "redirect_uris": [
+              "http://127.0.0.1:63821/callback/ops_p16_codex_20260908"
+            ],
+            "scope_ceiling": [
+              "ops.company.read",
+              "ops.customers.read",
+              "ops.financial_documents.prepare",
+              "ops.financial_documents.read",
+              "ops.jobs.read"
+            ],
+            "response_types": [
+              "code"
+            ],
+            "exposure_revision": "2026-09-07.mcp-exposure.v17",
+            "consent_catalog_revision": "2026-09-07.mcp-consent-catalog.v12",
+            "token_endpoint_auth_method": "none"
+          },
+          {
+            "scope": "ops.company.read ops.customers.read ops.financial_documents.prepare ops.financial_documents.read ops.jobs.read",
+            "client_id": "0769a35e-8d80-48e1-b6b6-c91c69895f7c",
+            "created_at": "2026-09-08T18:30:03.979304+00:00",
+            "client_name": "OPS Phase16 MAVERICK Claude Acceptance",
+            "grant_types": [
+              "authorization_code",
+              "refresh_token"
+            ],
+            "redirect_uris": [
+              "https://claude.ai/api/mcp/auth_callback",
+              "https://claude.com/api/mcp/auth_callback"
+            ],
+            "scope_ceiling": [
+              "ops.company.read",
+              "ops.customers.read",
+              "ops.financial_documents.prepare",
+              "ops.financial_documents.read",
+              "ops.jobs.read"
+            ],
+            "response_types": [
+              "code"
+            ],
+            "exposure_revision": "2026-09-07.mcp-exposure.v17",
+            "consent_catalog_revision": "2026-09-07.mcp-consent-catalog.v12",
+            "token_endpoint_auth_method": "none"
+          }
+        ],
+        "recorded_at": "2026-09-08T18:30:04.206049+00:00",
+        "grants_created": 0,
+        "bindings_created": 0,
+        "existing_clients_unchanged": true
+      }
+    }
+  ],
+  "codex_activation": [
+    {
+      "activation_receipt": {
+        "binding": {
+          "id": "64642db0-ac7e-4113-9848-a6e081cd10f8",
+          "user_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+          "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+          "created_at": "2026-09-08T18:33:03.562099+00:00",
+          "expires_at": "2026-09-08T19:03:03.562099+00:00",
+          "disabled_at": null,
+          "oauth_client_id": "c15e9551-c7d3-4960-ac9a-e24439bc958f",
+          "exposure_revision": "2026-09-07.mcp-exposure.v17",
+          "financial_policy_id": "d815e12d-f12a-47a2-9e91-a54dd37ab813",
+          "financial_policy_sha256": "sha256:f27b2ac1d237f72ff1214994394126928e78a6d87f91cc77b1602680b97fea87",
+          "consent_catalog_revision": "2026-09-07.mcp-consent-catalog.v12",
+          "financial_effect_revision": "sha256:077c377b70d9531b436800593907f1c465d7ce668faa4a27baeac500d648ffa9"
+        },
+        "recorded_at": "2026-09-08T18:33:04.333532+00:00",
+        "effect_current": "sha256:077c377b70d9531b436800593907f1c465d7ce668faa4a27baeac500d648ffa9",
+        "effect_installed": "sha256:077c377b70d9531b436800593907f1c465d7ce668faa4a27baeac500d648ffa9",
+        "documents_created": 0,
+        "claude_binding_started": false
+      }
+    }
+  ],
+  "codex_fresh_consent": [
+    {
+      "fresh_consent": {
+        "scopes": [
+          "ops.company.read",
+          "ops.customers.read",
+          "ops.financial_documents.prepare",
+          "ops.financial_documents.read",
+          "ops.jobs.read"
+        ],
+        "user_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+        "grant_id": "8923745b-7590-4209-a95c-85a26b0a5b2a",
+        "revision": "847d4fe6cc1e404899f065af8956fc0d",
+        "client_id": "c15e9551-c7d3-4960-ac9a-e24439bc958f",
+        "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+        "revoked_at": null,
+        "verified_at": "2026-09-08T18:37:38.750571+00:00",
+        "accepted_labels": [
+          "See the company operating profile",
+          "See your clients and their jobs",
+          "Inspect pricing sources and prepare private estimates or change orders for exact approval in OPS; never send or issue documents",
+          "See estimates and invoices in detail",
+          "See your jobs and their status"
+        ],
+        "exposure_revision": "2026-09-07.mcp-exposure.v17",
+        "consent_catalog_revision": "2026-09-07.mcp-consent-catalog.v12"
+      }
+    }
+  ],
+  "history_fixture_repair": [
+    {
+      "repair_receipt": {
+        "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+        "project_id": "0adfdd7c-7f7f-4851-8f53-6cbed9549131",
+        "recorded_at": "2026-09-08T18:53:22.271991+00:00",
+        "after_completed_at": "2026-09-08T17:09:28.596584+00:00",
+        "before_completed_at": null,
+        "after_project_sha256": "sha256:1a9e7d456e4d52ecd6d39f0db34024b056a279d4d3db4c9f771270e6d405a7f1",
+        "accounting_queue_rows": 0,
+        "before_project_sha256": "sha256:a09f1e936370b8deb6e7d31f69eafd4888d72ef7a37101d93e704c2b3fb9e81a",
+        "sandbox_sync_restored": true,
+        "synthetic_fixture_only": true,
+        "sandbox_pause_committed": false,
+        "status_lifecycle_events": 0,
+        "unrelated_project_fields_unchanged": true
+      }
+    }
+  ],
+  "first_prepare_failure": {
+    "request_id": "523bca2a-f700-4755-9730-4f619a899ee0",
+    "native_code": "TEMPORARILY_UNAVAILABLE",
+    "server_error": "FINANCIAL_DOCUMENT_HISTORY_UNSUPPORTED",
+    "cause": "Coordinator-created fictional historical project was completed but had null completed_at. No proposal persisted. Exact test-only repair populated completed_at from its fixture creation timestamp; historical status is not real customer approval."
+  },
+  "claude": {
+    "client_id": "0769a35e-8d80-48e1-b6b6-c91c69895f7c",
+    "binding_started": false,
+    "host_acceptance": "not_exercised"
+  },
+  "native_host": {
+    "binary": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "version": "0.153.1",
+    "model": "gpt-6-astra",
+    "funding": "Existing ChatGPT subscription login; OPENAI_API_KEY removed from command environment; no paid API fallback",
+    "configuration": "per-command temporary server settings only; no persistent global MCP entry"
+  },
+  "review": {
+    "report": "2026-09-08-effect-review.md",
+    "coverage": "Complete reachable financial prepare/save/transitive database effect graph; not a certification of unrelated database functions or all external consumers."
+  }
+}

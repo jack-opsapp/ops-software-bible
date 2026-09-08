@@ -1,5 +1,9 @@
 # Phase 16 — financial draft readiness and host acceptance
 
+Current checkpoint (2026-09-08 18:56 UTC): native Codex has prepared and identically replayed one exact CAD232.74 MAVERICK test proposal after fresh scoped consent and reviewed effect installation. Independent readback confirms one pending proposal and zero saved output estimates or accounting queue rows. Exact OPS save approval is still required. Codex authority expires at 19:03:03 UTC; Claude's window has not started. See the final native-preparation checkpoint below.
+
+## Historical owner-enrollment checkpoint
+
 Status (2026-09-08 17:49 UTC): released to production with both database migrations applied. The approved MAVERICK fictional setup and native Codex source readback are complete. Jackson enrolled the exact test policy through the repaired owner-review UI at 17:42 UTC; independent readback verifies the consumed preview, policy and source hashes. The temporary QuickBooks sandbox sync pause has been restored, with zero fixture accounting queue rows. Financial host preparation/save authority remains disabled; no financial binding or financial client was activated and no output draft was saved. Authenticated Codex/Claude financial acceptance remains unproven; ChatGPT was not exercised. Earlier integrated validation passed 670 regression tests, nine real local HTTP/protocol/SQL scenarios, eight focused owner-policy tests and 160 owner-policy SQL assertions. The owner-review repair separately passed 28 focused tests, full TypeScript validation and Astra review. These groups overlap and are not a combined total.
 
 ## Scope and decision
@@ -43,6 +47,8 @@ Local isolated fictional data proves real SQL arithmetic, owner enrollment, auth
 Web implementation evidence is under `docs/artifacts/phase16/` in the web worktree; fresh integrated release evidence is under its `release/` subdirectory. Source migrations are mirrored byte-for-byte under `migrations/20260908024426_financial_policy_readiness.sql` and `migrations/20260908033425_financial_trial_oauth.sql`. Exact production-ledger copies are also archived under versions `20260908054740` and `20260908054759`.
 
 ## Exact remaining business and host gates
+
+Historical pre-trial gate description; the separately approved native-host checkpoint below supersedes its ungranted activation status only.
 
 The web `activation-boundary.md` preserves the original proposed new fictional company and Claude/ChatGPT trial. Jackson subsequently approved MAVERICK as the existing test company and selected Codex plus user-operated Claude. That direct instruction supersedes the earlier MAVERICK prohibition and new-company proposal, but not the owner-review, exact-save, isolation or no-distribution boundaries. Preserve MAVERICK's CAD currency and default 7.75% tax: a two-hour CAD100/hour synthetic history totals CAD215.50; the +8% quote totals CAD232.74 (CAD216 subtotal). The approved setup and enrollment below record exact fixture and policy identities. No financial client IDs or absolute binding times exist yet. Do not transfer any user's membership or upgrade an existing OAuth grant.
 
@@ -103,3 +109,29 @@ Historical initial release checkpoint, 07:27 UTC. The owner-review repair and ap
 - Live discovery still advertises 21 scopes and excludes `ops.financial_documents.prepare`. Signed-out MCP and owner-policy requests return 401. No runtime errors were reported for the checked MCP, policy and token routes since 06:40 UTC. These release checks are not authenticated Claude/ChatGPT acceptance.
 
 See [release evidence](../docs/artifacts/phase16/release/release-verification.json), [database preflight](../docs/artifacts/phase16/release/production-preflight.json) and [independent database readback](../docs/artifacts/phase16/release/production-postflight.json). No financial business write, enrollment, fictional production fixture, delivery, host trial or financial effect reseal was performed during that initial release. The separately approved 17:09 UTC fixture setup and subsequent owner-review repair above supersede only the fixture and software checkpoints.
+
+## Native Codex financial preparation — 2026-09-08 18:56 UTC
+
+Jackson explicitly approved one new 30-minute MAVERICK-only connection for Codex and one for user-operated Claude after a server safety review. This supersedes the earlier closed activation gate, but does not approve any exact financial save, send, accounting action or existing-grant upgrade.
+
+Astra independently reviewed the complete reachable financial prepare/save/transitive database effect graph. Inventory retrieval covered 1,811 functions and 510 noninternal triggers; this is not a claim of manually auditing every unrelated function or all external runtime consumers. The reviewed effect literal `sha256:077c377b70d9531b436800593907f1c465d7ce668faa4a27baeac500d648ffa9` was installed with guarded exact-row SQL and independently matched the computed graph. The 28 focused regression tests passed again; no application code or schema changed during this trial.
+
+Two new public OAuth clients were registered with exact five-scope v17/v12 consent; existing clients and grants were not upgraded. Codex client `c15e9551-c7d3-4960-ac9a-e24439bc958f` uses its actual native loopback callback `http://127.0.0.1:63821/callback/ops_p16_codex_20260908`. Binding `64642db0-ac7e-4113-9848-a6e081cd10f8` runs from `2026-09-08T18:33:03.562099Z` until `2026-09-08T19:03:03.562099Z`. Do not extend it silently. Native Codex CLI 0.153.1 successfully completed OAuth through the real five-permission MAVERICK consent screen. Fresh grant `8923745b-7590-4209-a95c-85a26b0a5b2a` independently resolves the exact owner, company, client and scope set. Per-command MCP configuration leaves the existing global connector unchanged; the test used Astra with the existing ChatGPT login, not a paid API fallback.
+
+The first native invocation stopped at an incorrect harness expectation: company context intentionally does not return actor identity. Independent grant readback supplied that evidence for subsequent invocations. The first actual prepare then safely failed with server `FINANCIAL_DOCUMENT_HISTORY_UNSUPPORTED`, surfaced as `TEMPORARILY_UNAVAILABLE`, request `523bca2a-f700-4755-9730-4f619a899ee0`. Zero proposals persisted. The coordinator-created fictional historical project had status completed but no completion timestamp. Its exact test-only repair set `completed_at` to the fixture creation time, `2026-09-08T17:09:28.596584Z`, without changing status or other project fields except the normal update timestamp. A rollback rehearsal passed first; independent committed readback matches project hash `sha256:1a9e7d456e4d52ecd6d39f0db34024b056a279d4d3db4c9f771270e6d405a7f1`. No lifecycle event or accounting queue row was created; sandbox sync was restored inside the guarded repair transaction and no paused state was committed. Eligibility rules were not weakened and no real history was manufactured.
+
+Native Codex then inspected the unchanged policy/source hashes, prepared the exact historical-line +8% request and replayed identical arguments/key successfully:
+
+- One proposal/change set: `6fab8961-a5c0-44b2-a0a9-956cf9ff9374`.
+- One pending action: `79351bbc-8346-466a-98b7-17bc9f48a651`; run `ca4545a3-6b76-4cd9-b471-97c798248ba3`.
+- Exact preview: `sha256:69227424be8a415dcacea4852d2ab49ff730bc9fc1331573084e7eca3b65e1a4`.
+- Server arithmetic: two hours at CAD108.00, subtotal216.00, tax16.74, total232.74.
+- Replay returns the same IDs and preview with `replayed:true`; no duplicate.
+- Independent 18:56 UTC readback: one proposal, action pending, no reviewed/executed timestamp, no commit receipt, zero quote-project estimates and zero fixture accounting queue rows. Sandbox sync remains enabled.
+- Proposal expiry is `2026-09-08T19:25:14.79242Z`, but the earlier binding expiry at 19:03:03Z controls authorization. A later preview timestamp does not extend the connection.
+- Proposed `effects.estimates_created:1` describes the prospective approved save, not a completed business write. Nothing has been saved, numbered, sent or posted by this preparation.
+- OPS creates the internal persistent review notification at `/agent/queue`. The attempted browser handoff was blocked by the browser tool's URL policy because its prior native-loopback callback tab was on an error data URL; the assistant did not bypass that restriction or click any financial approval. Actual review/save UI acceptance remains unproven.
+
+Claude client `0769a35e-8d80-48e1-b6b6-c91c69895f7c` is registered but has no binding or fresh grant: its 30-minute clock has not started. Claude and ChatGPT financial acceptance are not claimed. Before any later trial, recheck exact current state; never renew an expired binding, upgrade an existing grant or manufacture owner approval. Each save still needs the named owner's exact OPS review. Disable the exact trial and revoke its credentials after completion; holds remain held.
+
+Evidence: [activation, consent and fixture-repair receipts](../docs/artifacts/phase16/host-acceptance/2026-09-08-trial-activation-and-consent.json), [reviewed effect graph](../docs/artifacts/phase16/host-acceptance/2026-09-08-effect-review.md), [native tool results and independent readback](../docs/artifacts/phase16/host-acceptance/2026-09-08-codex-financial-prepared.json). The review's zero-client count is its pre-registration observation, not the current state.
