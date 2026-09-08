@@ -2332,6 +2332,8 @@ $$;
 - RLS: `private.current_user_has_permission(text, text)` for the same
   logic in an `auth.uid()`-scoped context. Used in policies.
 
+**Execution grants (hardened 2026-08-07, ledger `20260807204914_agent_control_plane_actor_authority`):** `public.has_permission(uuid, text, text)` and the other actor-parameterised primitives (`private.permission_user_is_admin(uuid, uuid)`, `private.user_is_company_admin(uuid, uuid)`, `private.raw_permission_scope_for_user(...)`) are executable by `postgres` and `service_role` ONLY — a client must never be able to ask about an arbitrary actor. Anything that evaluates as the calling API role — RLS policy `USING`/`WITH CHECK` expressions, `security_invoker` views, SECURITY INVOKER functions granted to `anon`/`authenticated`, index expressions — must use the current-user forms instead: `private.current_user_has_permission_scoped(text, text)` (= `has_permission(private.get_current_user_id(), …)`, DEFINER, granted to anon/authenticated/service_role), `private.current_user_has_permission(text, text)`, `private.current_user_is_admin()`. EXECUTE is checked before SECURITY DEFINER is honoured, so a client-role caller of a service-only primitive fails `42501` even though the primitive is DEFINER. Violations found by catalog sweep on 2026-09-08: `public.project_table_rows` (every browser read failed since the hardening reached production — fixed, ledger `20260908182719`) and the `user_email_aliases_admin_read` policy (open bug, no browser reader yet).
+
 ### RLS on Permission Tables
 
 Permission tables have their own RLS policies:
