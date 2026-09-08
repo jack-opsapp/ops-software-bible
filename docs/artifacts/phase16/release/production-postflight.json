@@ -1,0 +1,182 @@
+{
+  "status": "MIGRATIONS_APPLIED_FINANCIAL_AUTHORITY_DISABLED",
+  "database": {
+    "lines": {
+      "hash": "571303a12f1b10b15bac1774975b5295",
+      "count": 169
+    },
+    "effect": [
+      {
+        "computed": "sha256:077c377b70d9531b436800593907f1c465d7ce668faa4a27baeac500d648ffa9",
+        "revision": "financial-document-draft:2026-09-07.v1",
+        "installed": "sha256:1dbb20f58a47881a7838a77a2ae69cb55aea8142ba41e5c9b62c0b73a21ae4c5"
+      }
+    ],
+    "grants": {
+      "hash": "3a68f353edc2df64783f98753337022b",
+      "count": 5,
+      "authority_hash": "b92bb72c0ed77b81edf605720eb4d39c"
+    },
+    "clients": {
+      "hash": "aaba2782b1c68056c714e4b0a26a6859",
+      "count": 13
+    },
+    "dormant": {
+      "actions": 0,
+      "policies": 0,
+      "proposals": 0,
+      "v17_grants": 0,
+      "v17_clients": 0,
+      "write_tokens": 0
+    },
+    "bindings": {
+      "hash": null,
+      "count": 0
+    },
+    "estimates": {
+      "hash": "5668c7540fe6f8dd424605dbd31f4488",
+      "held": 0,
+      "count": 27
+    },
+    "migrations": [
+      {
+        "name": "financial_policy_readiness",
+        "version": "20260908054740"
+      },
+      {
+        "name": "financial_trial_oauth",
+        "version": "20260908054759"
+      }
+    ],
+    "observed_at": "2026-09-08T05:49:02.171178+00:00",
+    "previews_table": "private.financial_policy_previews"
+  },
+  "security": {
+    "tables": [
+      {
+        "rls": true,
+        "table": "private.financial_document_policies",
+        "force_rls": true,
+        "anon_select": false,
+        "service_select": false,
+        "authenticated_select": false
+      },
+      {
+        "rls": true,
+        "table": "private.financial_policy_previews",
+        "force_rls": true,
+        "anon_select": false,
+        "service_select": false,
+        "authenticated_select": false
+      },
+      {
+        "rls": true,
+        "table": "private.mcp_oauth_canary_bindings",
+        "force_rls": true,
+        "anon_select": false,
+        "service_select": false,
+        "authenticated_select": false
+      }
+    ],
+    "routines": [
+      {
+        "md5": "c72d82b782b32d1743cefa2863ba2083",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "signature": "preview_financial_policy_as_actor(uuid,uuid,jsonb)",
+        "anon_execute": false,
+        "service_execute": true,
+        "security_definer": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "ec2df98c1d08bf2bf6bd7a3fed7ad55c",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "signature": "enroll_financial_policy_as_actor(uuid,uuid,uuid,text)",
+        "anon_execute": false,
+        "service_execute": true,
+        "security_definer": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "16405fb2a05dc44c403394aab7d9e568",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "signature": "revoke_financial_policy_as_actor(uuid,uuid,uuid,text)",
+        "anon_execute": false,
+        "service_execute": true,
+        "security_definer": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "cbafac9b608378791f85380c97323b26",
+        "config": [
+          "search_path=pg_catalog, public, private, pg_temp"
+        ],
+        "signature": "provision_mcp_oauth_canary_as_system(uuid,uuid,uuid,text,text,timestamp with time zone)",
+        "anon_execute": false,
+        "service_execute": true,
+        "security_definer": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "7c2b1d2164ee96b4a6ba348d2e2acf53",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "signature": "get_financial_policy_readiness_as_actor(uuid,uuid,uuid)",
+        "anon_execute": false,
+        "service_execute": true,
+        "security_definer": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "fbf02c9f90d8c555301e44da5e9609a7",
+        "config": [
+          "search_path=pg_catalog, public, private, pg_temp",
+          "TimeZone=UTC"
+        ],
+        "signature": "private.mcp_oauth_canary_is_current(uuid,uuid,uuid,text,text)",
+        "anon_execute": false,
+        "service_execute": false,
+        "security_definer": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "83a14e75c2fa0dfb943a26eb14024afb",
+        "config": [
+          "search_path=\"\""
+        ],
+        "signature": "provision_mcp_oauth_canary_as_system(uuid,uuid,uuid,text,text,timestamp with time zone,uuid,text,text)",
+        "anon_execute": false,
+        "service_execute": true,
+        "security_definer": true,
+        "authenticated_execute": false
+      }
+    ],
+    "migrations": [
+      {
+        "name": "financial_policy_readiness",
+        "version": "20260908054740",
+        "statement_count": 1,
+        "ledger_sql_sha256": "0cd104e43b1388898d97b23c1a0333d1853cadef6197c94daa5480c9e42169fe"
+      },
+      {
+        "name": "financial_trial_oauth",
+        "version": "20260908054759",
+        "statement_count": 1,
+        "ledger_sql_sha256": "20241fc0591d1ce5d54138099af12393646a0a7e1e26977876d226b736ddf10f"
+      }
+    ],
+    "previews_count": 0
+  },
+  "approval_boundary": "Phase16 software and two migrations only; no effect resealing, enrollment, financial bindings, grants, financial documents, fixture creation or authenticated host trials."
+}

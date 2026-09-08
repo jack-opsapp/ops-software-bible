@@ -1,0 +1,168 @@
+{
+  "status": "DEPLOYED_VERIFIED_FINANCIAL_AUTHORITY_DISABLED",
+  "verification_date": "2026-09-08",
+  "source_commit": "4bc3221cbd04f645e496d7490d9f6c416f334c0a",
+  "validated_application_commit": "2465637815a9a55e671f5b8399409b6fa45be10f",
+  "deployment": {
+    "id": "dpl_6FMCk537aRwSaeRB4EG7qRi3oiJu",
+    "state": "READY",
+    "alias": "app.opsapp.co",
+    "source_commit": "4bc3221cbd04f645e496d7490d9f6c416f334c0a",
+    "alias_readback": true
+  },
+  "local_validation": {
+    "regression_tests": 670,
+    "real_local_protocol_scenarios": 9,
+    "focused_owner_policy_tests": 8,
+    "owner_policy_sql_assertions": 160,
+    "counts_overlap": true,
+    "production_build": "passed",
+    "types": "passed",
+    "static_pages": 388,
+    "external_host_acceptance": false,
+    "web_evidence": "docs/artifacts/phase16/release/verification.json"
+  },
+  "migrations": [
+    {
+      "name": "financial_policy_readiness",
+      "version": "20260908054740",
+      "statement_count": 1,
+      "ledger_sql_sha256": "0cd104e43b1388898d97b23c1a0333d1853cadef6197c94daa5480c9e42169fe"
+    },
+    {
+      "name": "financial_trial_oauth",
+      "version": "20260908054759",
+      "statement_count": 1,
+      "ledger_sql_sha256": "20241fc0591d1ce5d54138099af12393646a0a7e1e26977876d226b736ddf10f"
+    }
+  ],
+  "database_final": {
+    "lines": {
+      "hash": "571303a12f1b10b15bac1774975b5295",
+      "count": 169
+    },
+    "effect": [
+      {
+        "computed": "sha256:077c377b70d9531b436800593907f1c465d7ce668faa4a27baeac500d648ffa9",
+        "revision": "financial-document-draft:2026-09-07.v1",
+        "installed": "sha256:1dbb20f58a47881a7838a77a2ae69cb55aea8142ba41e5c9b62c0b73a21ae4c5"
+      }
+    ],
+    "grants": {
+      "hash": "65ee375b26db10ea4b7c4985ddc2da40",
+      "count": 5,
+      "authority_hash": "b92bb72c0ed77b81edf605720eb4d39c"
+    },
+    "clients": {
+      "hash": "aaba2782b1c68056c714e4b0a26a6859",
+      "count": 13
+    },
+    "dormant": {
+      "actions": 0,
+      "policies": 0,
+      "proposals": 0,
+      "v17_grants": 0,
+      "v17_clients": 0,
+      "write_tokens": 0
+    },
+    "bindings": {
+      "hash": null,
+      "count": 0
+    },
+    "estimates": {
+      "hash": "5668c7540fe6f8dd424605dbd31f4488",
+      "held": 0,
+      "count": 27
+    },
+    "migrations": [
+      {
+        "name": "financial_policy_readiness",
+        "version": "20260908054740"
+      },
+      {
+        "name": "financial_trial_oauth",
+        "version": "20260908054759"
+      }
+    ],
+    "observed_at": "2026-09-08T07:27:54.705458+00:00",
+    "previews_table": "private.financial_policy_previews"
+  },
+  "live_http": {
+    "observed_response_date": "2026-09-08T07:23:06Z",
+    "discovery_scopes": 21,
+    "financial_prepare_advertised": false,
+    "mcp_signed_out_status": 401,
+    "owner_policy_signed_out_status": 401
+  },
+  "runtime": {
+    "routes": [
+      "/api/mcp",
+      "/api/agent/financial-policy",
+      "/api/mcp/oauth/token"
+    ],
+    "since": "2026-09-08T06:40:00Z",
+    "reported_errors": 0,
+    "authenticated_host_canary": false
+  },
+  "security_advisors": {
+    "total": 440,
+    "relevant": [
+      {
+        "name": "rls_enabled_no_policy",
+        "level": "INFO",
+        "object": "financial_document_effect_policy"
+      },
+      {
+        "name": "rls_enabled_no_policy",
+        "level": "INFO",
+        "object": "financial_document_policies"
+      },
+      {
+        "name": "rls_enabled_no_policy",
+        "level": "INFO",
+        "object": "financial_document_proposals"
+      },
+      {
+        "name": "rls_enabled_no_policy",
+        "level": "INFO",
+        "object": "financial_document_write_tokens"
+      },
+      {
+        "name": "rls_enabled_no_policy",
+        "level": "INFO",
+        "object": "financial_policy_previews"
+      },
+      {
+        "name": "rls_enabled_no_policy",
+        "level": "INFO",
+        "object": "mcp_oauth_canary_bindings"
+      },
+      {
+        "name": "anon_security_definer_function_executable",
+        "level": "WARN",
+        "object": "can_read_financial_document_action"
+      },
+      {
+        "name": "authenticated_security_definer_function_executable",
+        "level": "WARN",
+        "object": "can_read_financial_document_action"
+      }
+    ],
+    "interpretation": "Private default-deny RLS without policies is intentional. Two warnings concern the existing Phase15 can_read_financial_document_action predicate; Phase16 owner/provisioner RPCs are independently verified service-only. No project-wide clean-security claim."
+  },
+  "authorization": {
+    "software_release": true,
+    "two_migrations": true,
+    "effect_reseal": false,
+    "company_enrollment": false,
+    "financial_client_binding": false,
+    "grant_activation": false,
+    "production_fixture": false,
+    "financial_save": false,
+    "external_host_trial": false
+  },
+  "evidence": [
+    "production-preflight.json",
+    "production-postflight.json"
+  ]
+}

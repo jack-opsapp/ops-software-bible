@@ -1,0 +1,103 @@
+{
+  "status": "APPROVED_DORMANT_RELEASE_PREFLIGHT",
+  "project": "ijeekuhbatykdomumfjx",
+  "preflight": {
+    "lines": {
+      "hash": "571303a12f1b10b15bac1774975b5295",
+      "count": 169
+    },
+    "effect": [
+      {
+        "computed": "sha256:1dbb20f58a47881a7838a77a2ae69cb55aea8142ba41e5c9b62c0b73a21ae4c5",
+        "revision": "financial-document-draft:2026-09-07.v1",
+        "installed": "sha256:1dbb20f58a47881a7838a77a2ae69cb55aea8142ba41e5c9b62c0b73a21ae4c5"
+      }
+    ],
+    "grants": {
+      "hash": "3a68f353edc2df64783f98753337022b",
+      "count": 5,
+      "authority_hash": "b92bb72c0ed77b81edf605720eb4d39c"
+    },
+    "clients": {
+      "hash": "aaba2782b1c68056c714e4b0a26a6859",
+      "count": 13
+    },
+    "dormant": {
+      "actions": 0,
+      "policies": 0,
+      "proposals": 0,
+      "v17_grants": 0,
+      "v17_clients": 0,
+      "write_tokens": 0
+    },
+    "bindings": {
+      "hash": null,
+      "count": 0
+    },
+    "estimates": {
+      "hash": "5668c7540fe6f8dd424605dbd31f4488",
+      "held": 0,
+      "count": 27
+    },
+    "migrations": null,
+    "observed_at": "2026-09-08T05:37:51.26393+00:00",
+    "previews_table": null
+  },
+  "function_prerequisites": [
+    {
+      "signature": "private.assert_financial_document_authority(uuid,uuid,uuid,uuid,text,text[],text,text[],text,text,text,text)",
+      "expected_md5": "827d31ce25428a91edae5520c27be566",
+      "current_md5": "827d31ce25428a91edae5520c27be566",
+      "matches": true
+    },
+    {
+      "signature": "disable_mcp_oauth_canary_as_system(uuid,uuid,uuid)",
+      "expected_md5": "92f3419aabba817d318090584fd725ca",
+      "current_md5": "92f3419aabba817d318090584fd725ca",
+      "matches": true
+    },
+    {
+      "signature": "private.enforce_mcp_v3_canary_write()",
+      "expected_md5": "9963ea713caf1e5b84dd2fbb7ebb787a",
+      "current_md5": "9963ea713caf1e5b84dd2fbb7ebb787a",
+      "matches": true
+    },
+    {
+      "signature": "private.mcp_oauth_canary_is_current(uuid,uuid,uuid,text,text)",
+      "expected_md5": "4c3e73f9435b52d177fbe2c492701846",
+      "current_md5": "4c3e73f9435b52d177fbe2c492701846",
+      "matches": true
+    },
+    {
+      "signature": "private.mcp_oauth_labels_for_scopes(text[],text)",
+      "expected_md5": "9cf5d0bbde57d083133abd1d14a5b8ad",
+      "current_md5": "9cf5d0bbde57d083133abd1d14a5b8ad",
+      "matches": true
+    },
+    {
+      "signature": "resolve_mcp_oauth_access_token_as_system(text,text)",
+      "expected_md5": "e11c6ea61cd748aa465c4dd103964dd3",
+      "current_md5": "e11c6ea61cd748aa465c4dd103964dd3",
+      "matches": true
+    },
+    {
+      "signature": "rotate_mcp_oauth_refresh_token_as_system(text,uuid,text[],text,text,timestamp with time zone,timestamp with time zone)",
+      "expected_md5": "b69ca68f6b3c2b6c0c0c39a04d96509f",
+      "current_md5": "b69ca68f6b3c2b6c0c0c39a04d96509f",
+      "matches": true
+    },
+    {
+      "signature": "public.resolve_mcp_oauth_canary_as_system(uuid,uuid,uuid,text,text)",
+      "expected_md5": "b52694d45d53580fc3fdbaf071ff14aa",
+      "current_md5": "b52694d45d53580fc3fdbaf071ff14aa",
+      "matches": true
+    },
+    {
+      "signature": "private.financial_document_source(uuid,uuid,jsonb)",
+      "expected_md5": "45bcfccd1d5b2f9203cf0113022d3ada",
+      "current_md5": "45bcfccd1d5b2f9203cf0113022d3ada",
+      "matches": true
+    }
+  ],
+  "authority": "Direct user approval in parent task for Phase16 release and two database updates only. No financial effect resealing, business policy enrollment, OAuth binding/grant activation, fictional production fixtures or financial trial."
+}
