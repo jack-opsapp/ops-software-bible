@@ -10360,26 +10360,52 @@ update op (jobs) — offline-safe.
 toast (`VIEW` action), Settings › DATA › `Pending Work` (live mono count, `—` at
 zero), and Notifications sync section `VIEW ALL →`.
 
-**Placement (2026-09-07, bug `417aac7b`, third close).** The pill is superimposed
-on each root's `AppHeader`, hung off the header's bottom edge by
-`HeaderSyncStatusOverlay` — never in flow, never in an app-level band. It reserves
-no layout, so nothing below the header moves when an attention item appears, and
-it is free to cover header TEXT (greeting, company line, screen title) because
-attention outranks a greeting. It is never free to cover a CONTROL: the overlay
-reserves the header's trailing-cluster column from that cluster's measured bounds
-(`OPSHeaderTrailingSlotBoundsKey`), so a tall accessibility-size pill cannot reach
-Home's avatar or any root's search button, and bottom-anchoring keeps it inside
-the header instead of on the row below. The two earlier closes both got this
-wrong — an in-flow header row pushed `TODAY [TASKS] / ACTIVE / ALL` and the map
-down, then an app-level band offset by the header's measured height landed on top
-of the `ALL` chip. Home project mode is the single exception: `AppHeader` leaves
-the screen and `OPSMapContainer`'s project stack hosts the same control via
+**Placement (2026-09-08, bug `417aac7b`, fourth close).** The pill is an overlay
+on each root's `AppHeader` title BAND — `HeaderSyncStatusOverlay`, never in flow,
+never in an app-level band. It shares the band's `touchTargetMin` control row
+with the header's trailing cluster and is painted OVER it: flush to the band's
+own trailing inset, bottom-anchored inside that row, growing upward and leftward
+as the count or the type size grows. It reserves no layout, so nothing below the
+header moves when an attention item appears, and it is free to cover header TEXT
+(greeting, company line, screen title) AND the trailing control itself, because
+attention outranks both. Jackson's direction (2026-09-08): *"It is being
+influenced by the avatar. It should appear ONTOP of the avatar"*, *"with a
+dropshadow"* — so it keeps `Layout.floatingElevation` (`isElevated` is true for
+the `.header` placement; MOBILE.md §8's shadow exception, now literal since the
+pill floats over a control).
+
+**Tap ownership is the accepted consequence:** while the pill is up, taps in the
+trailing control's region open PENDING WORK, not notifications/search. The pill
+is transient — it is addressed or cancelled, and the control returns. Do not
+restore the control's taps by shrinking, offsetting, or hit-testing around it.
+
+Two invariants hold by construction, trusting no font metric: the pill always
+overlaps the trailing control (both end on the same row edge and both are at
+least a touch target tall), and it can NEVER reach the content below the header
+(the row's bottom edge is `bandHeight/2 + touchTargetMin/2`, never past the
+band). `HeaderSyncStatusGeometry` carries the derivation.
+
+Three earlier closes got this wrong: an in-flow header row pushed
+`TODAY [TASKS] / ACTIVE / ALL` and the map down; then an app-level band offset by
+the header's measured height landed on top of the `ALL` chip; then the overlay
+reserved the trailing cluster's column (`OPSHeaderTrailingSlotBoundsKey`), which
+staggered the pill below-left of Home's avatar. That reservation is retired —
+the key is now published only so the layout proofs can measure the shipped
+cluster; nothing in production consumes it.
+
+Home project mode is the single exception: `AppHeader` leaves the screen and
+`OPSMapContainer`'s project stack hosts the same control via
 `SyncStatusIndicator(placement: .projectHeader)`, gated by
-`HomeSyncStatusPlacementPolicy.showsProjectModeFallback`. Proof:
-`HomeSyncStatusLayoutTests.testStatusPillNeverCoversAnInteractiveControl` (plus a
-retired-band characterization so that invariant can never go vacuous) and
-`SyncPillHeaderLayoutTests` — the real `AppHeader`, seven header types, two
-widths, four Dynamic Type sizes.
+`HomeSyncStatusPlacementPolicy.showsProjectModeFallback` — a plain row member,
+no elevation.
+
+Proof: `HomeSyncStatusLayoutTests.testStatusPillIsPaintedOverTheNotificationsAvatar`
+and `.testStatusPillNeverReachesTheContentBelowTheHeader` (plus
+`testTheRetiredBandPlacementIsWhatThisProofMustReject`, a retired-band
+characterization so the second can never go vacuous), and
+`SyncPillHeaderLayoutTests.testPillIsPaintedOverTheTrailingActionsOnEverySearchHeader`
+/ `.testPillStaysInsideTheHeaderAndClearsTheContentBelowIt` — the real
+`AppHeader`, seven header types, two widths, four Dynamic Type sizes.
 
 **Refresh (updated 2026-08-10):** both surfaces — the pill and this screen — were
 rebuilding the inventory on a 2-second `.common`-mode poll, which fires during
