@@ -4143,7 +4143,7 @@ Phase 1 of the Google Ads engine (`specs/2026-09-08-google-ads-engine-design.md`
 |---|---|---|
 | `20260909120000_ads_conversion_outbox.sql` | `20260909023503` | `ads_conversion_actions`, `ads_conversion_events`, `trial_attributions.gbraid/wbraid`, `ads_plan_annual_value`, `ads_enqueue_conversion_event`, trigger `projects_ads_enqueue_trial_activation`, widened `seed_trial_attribution_for_company` / `pmf_update_first_paid_at` / `record_first_touch_attribution` / `expire_attribution_click_ids` |
 | `20260909123000_ads_warehouse_grain.sql` | `20260909041702` | `ads_daily_ad_group`, `ads_daily_ad`, `ads_daily_asset`, `ads_daily_keyword` (dropped + recreated), `ads_entities`, `ads_click_map`, view `ads_funnel_by_keyword` |
-| `20260909180000_ads_entities_campaign_shared_set.sql` | **not applied** | Widens the `ads_entities.entity_type` check to admit `campaign_shared_set`. One statement on a table holding 0 rows; must land before the daily sync writes an attachment. |
+| `20260909180000_ads_entities_campaign_shared_set.sql` | `20260909203603` | Widens the `ads_entities.entity_type` check to admit `campaign_shared_set`. Applied 2026-09-09 on a table holding 0 rows; verified by object (constraint carries ten values, `convalidated`), and by behaviour (production accepted a `campaign_shared_set` row and still refuses an unknown type with `23514`). |
 
 ### `ads_conversion_actions`
 
