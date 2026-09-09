@@ -6882,7 +6882,7 @@ Exact function contracts: `04_API_AND_INTEGRATION.md` § Cloud Instagram editori
 
 ## Existing-job email correspondence storage (2026-09-09)
 
-**Status (2026-09-09): implemented locally; production migration and web release are pending explicit approval.**
+**Status (2026-09-09): released to production after explicit approval.** Database journal `20260909061758`; customer app `app.opsapp.co` verified on ops-web `d86d5664b` at 06:26 UTC. [Release evidence](docs/artifacts/email-work-correspondence-release.md).
 
 No new table is added. Existing `activities` rows hold the provider source, full/clean body and customer/project relationship. `company_id`, `client_id`, `opportunity_id` and `email_connection_id` are UUIDs; `project_id` is text. `match_confidence` uses `work_routing_pending`, `existing_job` and `work_intent_review` as durable routing states. Non-sales correspondence has `opportunity_id = NULL`; review has `project_id = NULL` and `match_needs_review = true` until acknowledged.
 
@@ -6890,4 +6890,4 @@ The service-only `route_email_work_correspondence_as_system` RPC atomically vali
 
 Live schema and RLS were read through Supabase before implementation. `activities.company_isolation` combines with restrictive `assigned_lead_scope_select` / `private.current_user_can_view_activity`, so the project timeline uses the signed-in client to retain mailbox and project access restrictions. Email bodies are not copied into broadly visible project notes or notification text.
 
-Migration source: ops-web `supabase/migrations/20260909051427_email_existing_job_correspondence.sql`; an identical **unapplied** reference is under `migrations/pending/`. Implementation commit: ops-web `61a806b4e`. See Chapter 10 for purpose classification and Chapter 04 for the RPC/API contract.
+Migration source: ops-web `supabase/migrations/20260909051427_email_existing_job_correspondence.sql`; an identical applied reference is under `migrations/`. Supabase recorded this migration as version `20260909061758` with name `email_existing_job_correspondence`; the source filename preserves its CLI-generated timestamp. Implementation commits: ops-web `61a806b4e` and `d86d5664b` (shared-mailbox notification constraint guard). See Chapter 10 for purpose classification and Chapter 04 for the RPC/API contract.

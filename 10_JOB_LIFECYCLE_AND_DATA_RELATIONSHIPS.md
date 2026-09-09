@@ -1783,7 +1783,7 @@ The `Project.projectImages` field (comma-separated string) is deprecated. Migrat
 
 ### Existing-job correspondence boundary (2026-09-09)
 
-**Status (2026-09-09): implemented locally; production migration and web release are pending explicit approval.**
+**Status (2026-09-09): released to production after explicit approval.** Database journal `20260909061758`; customer app `app.opsapp.co` verified on ops-web `d86d5664b` at 06:26 UTC. [Release evidence](docs/artifacts/email-work-correspondence-release.md).
 
 A customer email about work already underway or delivered is not new-sales authority. Damage, reimbursement, invoice deductions, warranty, callbacks, access and scheduling stay on the existing job when identity and project are proven; ambiguity stays visible in email review. Archiving an old opportunity does not erase the customer, subcontacts or project history.
 
@@ -1797,7 +1797,7 @@ The guard covers automatic sync, deferred/recovery classification, outbound init
 
 The web project activity timeline reads authorized `existing_job` email activities under mailbox/project RLS. The review panel displays the retained body; its Done action acknowledges the exact activity through mailbox authorization, including message-scoped forwards. The notification contract is in Chapter 07 §14. This change does not add an iOS inbox or claim an iOS release.
 
-Sources: ops-web `src/lib/email/email-work-routing.ts`, `src/lib/email/import-email-work-review.ts`, `src/lib/api/services/sync-engine.ts`, `src/lib/api/services/phase-c-autonomy-router.ts`; migration `20260909051427_email_existing_job_correspondence.sql`. Implementation commit: ops-web `61a806b4e`.
+Sources: ops-web `src/lib/email/email-work-routing.ts`, `src/lib/email/import-email-work-review.ts`, `src/lib/api/services/sync-engine.ts`, `src/lib/api/services/phase-c-autonomy-router.ts`; migration `20260909051427_email_existing_job_correspondence.sql`. Implementation commits: ops-web `61a806b4e` and `d86d5664b` (shared-mailbox notification constraint guard).
 
 
 > **Platform status**: Email integration is implemented on OPS-Web with support for both Gmail and Microsoft 365. API routes under `/api/integrations/email/`, plus a provider abstraction layer, pattern detection engine, AI classification system, webhook-driven sync, and a 5-step "Import Your Pipeline" wizard. iOS does not connect or sync mailboxes and has no full inbox; its one provider-backed exception is the authenticated hold-to-review Due/Overdue follow-up, which delegates all mailbox/thread/template/signature work to OPS-Web. The `email_connections` table (renamed from `gmail_connections`) stores per-connection provider, tokens, sync profile, webhook subscription, and AI feature flags.

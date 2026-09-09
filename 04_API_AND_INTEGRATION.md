@@ -2434,7 +2434,7 @@ Every entity uses **upsert on `bubble_id` conflict**, making the migration safe 
 
 ### Existing-job email routing and review (2026-09-09)
 
-**Status (2026-09-09): implemented locally; production migration and web release are pending explicit approval.**
+**Status (2026-09-09): released to production after explicit approval.** Database journal `20260909061758`; customer app `app.opsapp.co` verified on ops-web `d86d5664b` at 06:26 UTC. [Release evidence](docs/artifacts/email-work-correspondence-release.md).
 
 `public.route_email_work_correspondence_as_system(p_company_id uuid, p_connection_id uuid, p_activity_id uuid, p_provider_message_id text, p_provider_thread_id text, p_client_id uuid, p_project_id uuid, p_needs_review boolean) -> boolean` is `SECURITY INVOKER`, fixed empty search path, executable only by `service_role` (also checked at runtime). It is not a signed-in client write API.
 
@@ -2444,7 +2444,7 @@ Sync and import callers persist the source activity before finalizing through th
 
 `GET /api/integrations/gmail/review-items` includes authorized `work_intent_review` activities outside the usual 30-day window and returns their retained body. Ordinary matching cards remain Gmail-only; Microsoft365 inclusion is limited to work-intent review because its ordinary matching actions are not generalized in this change. `POST /api/integrations/gmail/ignore` acknowledges a work-review activity using the canonical mailbox inbox-action authorization and archive permission, exact source ownership and no-parent comparison. It works for message-scoped forwards without a thread row. `reject-match` cannot clear finalized correspondence receipts. Project activity reads remain subject to signed-in RLS, not a service-role content endpoint.
 
-Sources: ops-web `src/lib/email/persist-email-work-routing.ts`, `src/lib/email/import-email-work-review.ts`, the import/review/ignore/reject routes, and migration `20260909051427_email_existing_job_correspondence.sql`. Implementation commit: ops-web `61a806b4e`.
+Sources: ops-web `src/lib/email/persist-email-work-routing.ts`, `src/lib/email/import-email-work-review.ts`, the import/review/ignore/reject routes, and migration `20260909051427_email_existing_job_correspondence.sql`. Implementation commits: ops-web `61a806b4e` and `d86d5664b` (shared-mailbox notification constraint guard).
 
 
 The Email Pipeline system adds 24 API routes across 6 route groups. All routes live in `OPS-Web/src/app/api/`. Unless noted, all routes use `getServiceRoleClient()` with `setSupabaseOverride()` for Supabase access (bypassing RLS). That module-global override is not race-safe: an overlapping request's `finally { setSupabaseOverride(null) }` can clear it mid-flight and drop a service that resolves through `requireSupabase()` onto the anon browser client (observed once in production as PostgreSQL `42501 permission denied for table email_connections` on route 21, bug `5ff083cf`). Routes 21 and 22 therefore run inside `runWithSupabase()` (AsyncLocalStorage-scoped) as of ops-web `aac04c312`, live on main `3c6344efd` 2026-09-05; migrate any other route here to `runWithSupabase` when touched. All long-running routes set `maxDuration = 300` (5 min, Vercel Pro limit).
