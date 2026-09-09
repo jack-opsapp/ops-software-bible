@@ -4087,6 +4087,14 @@ New type `ads_engine`, recipient `PMF_OPERATOR_USER_ID` / `PMF_OPERATOR_COMPANY_
 | `ADS CHANGE FAILED` | yes | `ads-engine:apply-failed:<proposal id>` | `/admin/google-ads#engine` | an approved or auto-mode proposal failed to apply (Google validation or transport); the error is on the proposal |
 | `ADS ENGINE STALLED` | yes | `ads-engine:stalled:<Vancouver date>` | `/admin/google-ads#engine` | `check_ads_engine_stall`: engine campaigns are live and the routine has not claimed for `stall_hours` (50); once per day; the worker resolves open stall rows as soon as the heartbeat is fresh |
 
+### Google Ads conversion outbox notification (2026-09-09; phase 1, built, NOT deployed)
+
+Type `ads_conversion_alert`, recipient `PMF_OPERATOR_USER_ID` / `PMF_OPERATOR_COMPANY_ID` (`getOptionalPmfOperatorIdentity()`; unset → logged and skipped), written directly by the service-role repository in `ops-web/src/lib/ads/conversion-outbox.ts` from `/api/cron/ads-conversions`:
+
+| Title | Persistent | Dedupe key | Action | When |
+|---|---|---|---|---|
+| `ADS CONVERSIONS FAILING` | yes | `ads-conversions:failed` | `/admin/google-ads` · `VIEW ADS` | a run moved one or more `ads_conversion_events` rows to `failed` (five attempts exhausted). Body: `<n> conversion event(s) could not reach Google after 5 attempts. Fix the cause, then requeue from the runbook.` Raised once — an open (unread, unresolved) row with the key is left alone, and a `23505` on the open-notification index is treated as already raised. The next fully clean run with zero `failed` rows resolves it (`resolved_at`, `resolution_reason = outbox_drained`). |
+
 `ADS CONVERSIONS FAILING` belongs to phase 1 (the conversion outbox). Alerts other than READY and STALLED ride the `ads_engine_alerts` outbox so a failed rail insert is retried next tick; inserts use `on conflict do nothing` against the open-notification dedupe indexes, so a re-raised alert whose first row is still unread is acknowledged without a duplicate.
 
 ### OpenAI Provider Quota Incident

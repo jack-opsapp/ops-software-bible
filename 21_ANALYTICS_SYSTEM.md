@@ -766,6 +766,10 @@ $$ LANGUAGE sql STABLE;
 
 ## 10. Firebase Analytics (Google Ads Conversions)
 
+### Server-side conversion path (2026-09-09, authoritative for bidding)
+
+The Firebase events below still fire, but since 2026-09-09 the conversions Google bids on come from the **server**: database triggers enqueue `trial_started` (company created, any platform), `trial_activated` (first real project), and `paid` (first `invoice.paid`) into `ads_conversion_events`, and `/api/cron/ads-conversions` sends them hourly to the Data Manager API against the three OPS `UPLOAD_CLICKS` actions, matched by `gclid` / `gbraid` / `wbraid` from `trial_attributions` or the owner's hashed email. Only `OPS · Trial started` is primary; the Firebase iOS `sign_up` / `login` / `first_open` actions are secondary (observation) so an app login no longer counts as a conversion. Contract and setup: `04_API_AND_INTEGRATION.md` § Google Ads Conversion Events; tables: `03_DATA_ARCHITECTURE.md` § Google Ads Engine Tables; operations: `ops-web/docs/ads/runbook.md`.
+
 ### iOS: `AnalyticsManager.swift`
 
 **Location:** `ops-ios/OPS/Utilities/AnalyticsManager.swift`
@@ -801,7 +805,7 @@ These systems continue operating independently. They are NOT replaced by `analyt
 | Wizard Analytics | `wizard_analytics` | Guided tour engagement with offline queue | Active (iOS) |
 | Tutorial Analytics | `tutorial_analytics` | Tutorial phase progression | Active (iOS + Android) |
 | GA4 (server-side) | N/A | Marketing site traffic, used in admin `/analytics` | Active (Web) |
-| Google Ads | N/A | Campaign/keyword performance, used in admin `/google-ads` | Active (Web) |
+| Google Ads | `ads_daily_account/campaign/search_term/ad_group/ad/asset/keyword`, `ads_entities`, `ads_click_map`, view `ads_funnel_by_keyword`, `ads_conversion_events` | Campaign → keyword → click grain warehoused daily; conversions sent server-side through the Data Manager API; readiness ledger + engine surfaces on admin `/google-ads` | Active (Web, 2026-09-09) |
 | `app_events` | `app_events` | Website user flow analysis (Flow Galaxy) | Active (Web) |
 
 ---

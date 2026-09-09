@@ -4108,6 +4108,77 @@ Phase 2 deck framing can emit additive `components[]` rows for `joist`, `beam`, 
 
 ---
 
+## Google Ads Engine Tables (2026-09-09)
+
+Phase 1 of the Google Ads engine (`specs/2026-09-08-google-ads-engine-design.md` §3). All server-only: RLS on, `anon` / `authenticated` grants revoked, `service_role` bypasses. Applied to prod through `apply_migration` and verified by object; mirrors in `migrations/` are byte-identical to the ledger SQL.
+
+| Migration (ops-web file) | Ledger version | Contents |
+|---|---|---|
+| `20260909120000_ads_conversion_outbox.sql` | `20260909023503` | `ads_conversion_actions`, `ads_conversion_events`, `trial_attributions.gbraid/wbraid`, `ads_plan_annual_value`, `ads_enqueue_conversion_event`, trigger `projects_ads_enqueue_trial_activation`, widened `seed_trial_attribution_for_company` / `pmf_update_first_paid_at` / `record_first_touch_attribution` / `expire_attribution_click_ids` |
+| `20260909123000_ads_warehouse_grain.sql` | `20260909041702` | `ads_daily_ad_group`, `ads_daily_ad`, `ads_daily_asset`, `ads_daily_keyword` (dropped + recreated), `ads_entities`, `ads_click_map`, view `ads_funnel_by_keyword` |
+
+### `ads_conversion_actions`
+
+The Google resource names of the three OPS `UPLOAD_CLICKS` conversion actions, recorded by `POST /api/internal/ads/setup/conversion-actions` after each apply (self-healing on every run).
+
+```sql
+ads_conversion_actions
+  kind           text PK  check in ('trial_started','trial_activated','paid')
+  resource_name  text NOT NULL   -- customers/4454506598/conversionActions/<id>
+  google_id      text NOT NULL   -- 7754797893 / 7754797896 / 7754797899 (applied 2026-09-09)
+  name           text NOT NULL   -- 'OPS · Trial started' / 'OPS · Trial activated' / 'OPS · Paid subscription'
+  synced_at      timestamptz NOT NULL default now()
+```
+
+### `ads_conversion_events` (the conversion outbox)
+
+One row per company and kind, enqueued by database triggers; drained hourly by `/api/cron/ads-conversions` to Google's Data Manager API. `transaction_id = kind:company_id` is Google's dedupe key, so a re-send never double counts. Never deleted — requeue by setting `state = 'queued'`.
+
+```sql
+ads_conversion_events
+  id                 uuid PK default gen_random_uuid()
+  company_id         uuid NOT NULL → companies(id) ON DELETE CASCADE
+  kind               text NOT NULL  check in ('trial_started','trial_activated','paid')
+  occurred_at        timestamptz NOT NULL      -- the business moment, in the account's zone when sent
+  value              numeric(12,2)             -- paid only: ads_plan_annual_value(plan, amount_cents)
+  currency           text NOT NULL default 'CAD'
+  transaction_id     text NOT NULL UNIQUE      -- kind:company_id
+  state              text NOT NULL default 'queued' check in ('queued','sent','failed','skipped')
+  attempts           integer NOT NULL default 0 -- 5 max, 15 min · 2^n backoff
+  next_attempt_at    timestamptz NOT NULL default now()
+  last_error         text                      -- Google's answer, or the skip reason
+  sent_at            timestamptz
+  google_request_id  text                      -- Google's receipt
+  created_at         timestamptz NOT NULL default now()
+  -- index ads_conversion_events_ready_idx (state, next_attempt_at) where state = 'queued'
+  -- index ads_conversion_events_company_idx (company_id, kind)
+```
+
+Writers: `seed_trial_attribution_for_company` (companies AFTER INSERT → `trial_started`, every platform), `ads_enqueue_trial_activation` (projects AFTER INSERT → `trial_activated` on the first non-deleted project at least 2 minutes after the company's birth; earlier rows are bulk imports and never count, before or after), `pmf_update_first_paid_at` (billing_events AFTER INSERT → `paid` on the first `invoice.paid`, alongside the existing `first_paid_at` stamp). Every enqueue is exception-wrapped: a business write never aborts because attribution failed. `ads_enqueue_conversion_event(uuid, text, timestamptz, numeric)` is SECURITY DEFINER, executable by `service_role` only (the Stripe webhook's role runs `pmf_update_first_paid_at` as the invoker).
+
+### `trial_attributions.gbraid`, `trial_attributions.wbraid`
+
+Google's click-id variants issued when `gclid` is unavailable (iOS app-to-web `gbraid`, iOS web-to-web `wbraid`). Captured by all three cookie writers (ops-site, try-ops, app.opsapp.co), stored by `record_first_touch_attribution` under the same rules as `gclid` (512-char cap, nulled when the touch is older than 30 days, also written into `touchpoints.click_ids`), scrubbed by `expire_attribution_click_ids`. `classifyAttribution` treats any of the three as `google_ads` / `verified_click_id` / `google_click_id_present`.
+
+### Warehouse grains
+
+```sql
+ads_daily_ad_group   PK (date, ad_group_id)                 campaign_id, campaign_name, ad_group_name, status, spend, clicks, impressions, conversions, ctr, synced_at
+ads_daily_ad         PK (date, ad_id)                       ad_group_id, ad_type, status, ad_strength, approval_status, review_status, final_url, spend, clicks, impressions, conversions, ctr, synced_at
+ads_daily_asset      PK (date, ad_id, asset_id, field_type) performance_label, pinned_field, text, impressions, clicks, conversions, synced_at
+ads_daily_keyword    PK (date, ad_group_id, criterion_id)   campaign_id, campaign_name, ad_group_name, keyword, match_type, status, quality_score, spend, clicks, impressions, conversions, average_cpc, synced_at
+ads_entities         PK (resource_name)                     entity_type check in (campaign, campaign_budget, ad_group, ad, keyword, negative_keyword, shared_set, shared_criterion, label), parent_resource_name, name, status, payload jsonb, labels text[], snapshot_at
+ads_click_map        PK (gclid)                             click_date, campaign_id, ad_group_id, ad_id, criterion_id, keyword, synced_at
+```
+
+`ads_daily_keyword` was dropped and recreated (it held 0 rows; its old key `(date, keyword)` could not hold one keyword living in two ad groups). Each `ads_daily_*` table carries a `(date desc)` index; `ads_click_map` a `(click_date desc)` index. `ads_entities` is a daily snapshot of the live account structure (full RSA assets and pins ride in `payload`), so the engine and the console never need a live call to know what exists. `ads_click_map` is filled from `click_view` one day per query (Google exposes 90 days; OPS keeps it forever).
+
+### `ads_funnel_by_keyword` (view)
+
+Keyword grain (campaign / ad group / criterion): `clicks` and `spend` from `ads_daily_keyword`; `trials` = companies whose `trial_attributions.gclid` maps to the keyword through `ads_click_map`; `activated` = a `trial_activated` outbox row exists (any delivery state — the moment happened); `paid` = `first_paid_at` set; `cost_per_trial` / `cost_per_paid` = spend over each count, null at zero. Owner-run (no `security_invoker`), `service_role` only. The only place "which keyword bought a paying customer" is answered.
+
+---
+
 ## Enums Reference
 
 ### Status (Project Status)

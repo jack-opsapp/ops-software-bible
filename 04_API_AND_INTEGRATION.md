@@ -1259,8 +1259,20 @@ Singleton for tracking conversion events via Firebase Analytics. Events flow to 
 
 ### Google Ads Conversion Events
 
-These events are automatically sent to Google Ads:
-1. `sign_up` - Primary acquisition conversion
+**Server-side (2026-09-09, Google Ads engine phase 1) — the measured funnel.** Three `UPLOAD_CLICKS` conversion actions on the serving account carry the business truth to Google through the **Data Manager API** (`POST https://datamanager.googleapis.com/v1/events:ingest`, scope `https://www.googleapis.com/auth/datamanager`; the Ads API's `UploadClickConversions` is closed to developer tokens without prior usage since 2026-06-15):
+
+| kind | Google action | id | role |
+|---|---|---|---|
+| `trial_started` | OPS · Trial started | `7754797893` | primary — the only action in "Conversions" (SIGNUP, one per click, 30-day lookback) |
+| `trial_activated` | OPS · Trial activated | `7754797896` | secondary (QUALIFIED_LEAD, 30-day) |
+| `paid` | OPS · Paid subscription | `7754797899` | secondary, valued: plan monthly price × 12 CAD (SUBSCRIBE_PAID, 90-day) |
+
+Events are enqueued by triggers into `ads_conversion_events` (`03_DATA_ARCHITECTURE.md` § Google Ads Engine Tables) and sent hourly by `/api/cron/ads-conversions` (`ops-web/src/lib/ads/conversion-outbox.ts`): one request per kind (≤ 2,000 events), `eventSource WEB`, `transactionId = kind:company_id`, `eventTimestamp` RFC 3339 in America/Vancouver, `adIdentifiers.{gclid|gbraid|wbraid}` from `trial_attributions`, `userData.userIdentifiers[].emailAddress` = SHA-256 of the owner's normalised email (Gmail dots removed), `consent` GRANTED, `conversionValue` + `currency` on `paid` only. Every company enqueues, including iOS-born ones with no click id — the hashed email is the only cross-device bridge. Google rejects a fabricated or expired click id with a per-event `NOT_FOUND` field violation; the sender re-sends the rest of the batch untouched and the rejected event once more without its click id, skipping it (`invalid_identifier`) only when no email remains. Five failed attempts (15 min · 2^n) raise the persistent `ADS CONVERSIONS FAILING` rail alert (`07_SPECIALIZED_FEATURES.md` § 14). Rehearsed live 2026-09-09 (request `3ac0bc8f-4d84-4bf2-98f2-1ebe4a3817e3`).
+
+Setup is a CRON_SECRET route, `POST /api/internal/ads/setup/conversion-actions[?validateOnly=1]`: a pure planner (`ops-web/src/lib/ads/conversion-actions.ts`) reconciles the live `conversion_action` list to the target state and applies through ConversionActionService **one phase at a time** (creates, updates, removes — a mixed batch answers `INTERNAL_ERROR` on every operation while validating cleanly). `include_in_conversions_metric` is read-only on Google's side and follows `primary_for_goal`. The same apply demoted the three Firebase iOS actions (`OPS APP First open`, `sign_up`, `login`) to secondary — `login` had been primary, so every login counted as a conversion — and removed the three Bubble-era page actions (`Join Ops SIgnup`, `Homepage Signup`, `Quiz Signup v2`, whose pages 301 to `/plans`). Idempotent: the second run plans nothing.
+
+**Client-side (Firebase, iOS) — kept for App campaigns, now secondary.** These events still fire from the apps via Firebase Analytics:
+1. `sign_up` - acquisition (secondary since 2026-09-09)
 2. `purchase` - Revenue conversion
 3. `create_first_project` - High-intent engagement
 4. `complete_onboarding` - Onboarding completion
@@ -1290,7 +1302,10 @@ Live conversion actions on the account (2025-02-20 → 2026-03-09): "Join Ops SI
 The reporting direction (Google Ads → OPS) is entirely separate from the conversion events above (OPS → Google Ads).
 
 **Client** — `ops-web/src/lib/analytics/google-ads-client.ts`:
-- REST (not gRPC), Google Ads API `v23`, paginated `googleAds:search`
+- REST (not gRPC), Google Ads API **`v25`** (moved from `v23` on 2026-09-09; `v22` sunsets 2026-10-07). Report reads use `googleAds:searchStream` (one request per report; the response is a JSON array of chunks concatenated in order; never `pageSize`); the tiny manager→client discovery keeps the paged `googleAds:search`.
+- Writes: `mutateGoogleAds(operations, { validateOnly, partialFailure })` over `googleAds:mutate` (no `responseContentType`: asking for `MUTABLE_RESOURCE` makes real conversion-action operations fail `INTERNAL_ERROR`) and `mutateConversionActions(operations, …)` over `conversionActions:mutate`. Both default `partialFailure: true`, decode `partialFailureError.details[].errors[]` positionally into `{ index, code, message }`, and log the `request-id` of every call. **Every write path in OPS calls `validateOnly: true` first and re-sends only on a clean pass** — `ensureConversionActions` enforces it structurally.
+- Grain reports: `queryDailyAdGroupData`, `queryDailyAdData`, `queryDailyAssetData`, `queryDailyKeywordData` (range), `queryClickMap(date)` (`click_view`, exactly one `segments.date`), `queryEntitySnapshot()` (nine resources), plus readiness reads `getConversionTrackingSetting()` and `getServiceAccountAccessRole(email)`.
+- Credentials come from the shared loader `ops-web/src/lib/google/service-account-credentials.ts` (also used by the Data Manager client `ops-web/src/lib/ads/data-manager-client.ts`).
 - Auth: the Firebase admin **service account** (`firebase-adminsdk-fbsvc@ops-ios-app.iam.gserviceaccount.com`) with the `adwords` OAuth scope — the SA is added as a user on the Google Ads account, so there is no refresh-token flow to expire
 - Env: `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CUSTOMER_ID` (5448339076), plus the Firebase admin credentials (already set in Vercel prod; token approval did not change the token string)
 
@@ -1298,13 +1313,19 @@ The reporting direction (Google Ads → OPS) is entirely separate from the conve
 | Surface | Source | Notes |
 |---------|--------|-------|
 | `/admin/google-ads` page | Live API, 5-min `unstable_cache` | KPIs, campaigns, keywords, search terms, daily spend, conversion breakdown (30-day default) |
-| `ads_daily_account/campaign/search_term` tables | `/api/cron/ads-sync` daily 08:04 UTC | Warehouse history; `ads_daily_keyword` exists but is not populated by design (keywords render live) |
+| `ads_daily_account/campaign/search_term` tables | `/api/cron/ads-sync` daily 08:04 UTC | Warehouse history for the account, campaign, and search-term grains |
+| `ads_daily_ad_group/ad/asset/keyword`, `ads_click_map`, `ads_entities` | same `ads-sync` run (2026-09-09) | Entity snapshot (9 searchStream calls) + trailing 3 days — 30 on Mondays, Google restates inside its lookback window — of every grain (4 range calls + 1 `click_view` call per day). ~16 calls a weekday. `ads_funnel_by_keyword` joins the click map to trials, activations, and payments |
+| Readiness ledger | `ads-sync` refreshes `ads_sync_status` row `engine-readiness` daily; `POST /api/internal/ads/setup/probe` (CRON_SECRET) on demand; `GET /api/admin/google-ads/readiness` serves the seven checks the admin page shows while the account is dark | Checks: service account can write, customer data terms, enhanced conversions for leads, Data Manager API reachable, conversion actions in place, click ids arriving, first event delivered (`ops-web/src/lib/ads/readiness.ts`) |
+| Conversion outbox | `/api/cron/ads-conversions` hourly at :41 UTC | Drains `ads_conversion_events` to the Data Manager API (§ Google Ads Conversion Events) |
+| Conversion-action setup | `POST /api/internal/ads/setup/conversion-actions[?validateOnly=1]` (CRON_SECRET, operator-run) | Idempotent plan + phased apply; records `ads_conversion_actions` |
 | 2-year history backfill | `IMPORT HISTORY` button on the page → `/api/admin/google-ads/backfill` → self-chaining 30-day chunk workers (CRON_SECRET auth) | Idempotent upserts; progress in `ads_sync_status` |
 | Weekly AI briefing | **retired 2026-09-10** — `/api/cron/ads-briefing` answers `410 GONE` and is out of `vercel.json`; the Google Ads engine's run summary is the briefing (§ Google Ads engine). The archive at `/admin/google-ads/briefings` stays readable. | |
 | Engine worker | `/api/cron/ads-engine` daily 14:59 UTC | Expires proposals, applies approved/auto proposals, concludes ad tests, scores changes, pauses disapproved ads, budget pacing, operator rail, stall alarm (§ Google Ads engine) |
 | `ad_spend_log` (PMF CAC/payback) | `/api/cron/pmf/google-ads-sync` daily 10:24 UTC | One account-level row per day, zero-row on no-spend days |
 
-**Sync state** lives in `ads_sync_status` (`daily-sync` + `backfill` rows). Cost: Google Ads API Basic access is free (15k operations/day quota; OPS usage is single-digit calls per day).
+**Sync state** lives in `ads_sync_status` (`daily-sync`, `backfill`, `provider-access`, and — since 2026-09-09 — `engine-readiness`, whose jsonb `backfill_progress` holds the last stored probe). Cost: Google Ads API Basic access is free (15k operations/day quota; OPS usage is ~16 searchStream calls a weekday, ~43 on Mondays). The Data Manager API is free.
+
+**Runbook:** `ops-web/docs/ads/runbook.md` — probe results, setup routes, outbox states and requeue, cron schedule, and what each artifact under `ops-web/docs/artifacts/ads-engine/p1/` proves.
 
 **Provider-access degrade contract (bug 964cf782, shipped 2026-08-29).** The bible previously claimed the status row alone was sufficient monitoring. The 2026-07-06 → 2026-08-03 incident disproved it: with the developer token unapproved, all three ads cron workflows hard-500'd on **every scheduled run for four weeks** — seven duplicate health filings, the PMF dashboard silently missing its spend series, and no single truthful signal anywhere. The rows were accurate; nothing was watching them. Access was granted 2026-08-05 and all three workflows have been green since (briefings emailed 08-10/17/24, daily sync current, PMF spend rows daily), so the remaining defect was the **failure mode**, not the credential.
 
@@ -4467,7 +4488,7 @@ The public boundary a homeowner touches. Design: `specs/2026-09-01-public-api-cu
 
 ## Google Ads engine (2026-09-10; built and tested, NOT deployed)
 
-Design: `specs/2026-09-08-google-ads-engine-design.md` §5–§7. Plan: `docs/plans/2026-09-08-google-ads-engine-p3-engine.md`. Source: `ops-web/src/lib/ads/engine/` (`handoff.ts` pure handlers, `handoff-runtime.ts` composition, `validate-proposal.ts`, `guardrails.ts`, `proposal-schemas.ts`, `brief.ts`, `apply.ts`, `worker.ts`, `admin.ts`, `repository.ts`), routes under `ops-web/src/app/api/internal/ads/engine/`, `ops-web/src/app/api/cron/ads-engine/`, `ops-web/src/app/api/admin/google-ads/engine/`. The routine that talks to these routes is `ops-web/docs/ads/engine-routine.md` (prompt `ads-routine-2026-09-10-v1`); the brief it receives is `ops-web/docs/ads/engine-brief-contract.md` (`ads-brief-2026-09-10-v1`). The routine never reaches Google; OPS applies after approval with `validateOnly` first.
+Design: `specs/2026-09-08-google-ads-engine-design.md` §5–§7. Plan: `docs/plans/2026-09-08-google-ads-engine-p3-engine.md`. Source: `ops-web/src/lib/ads/engine/` (`handoff.ts` pure handlers, `handoff-runtime.ts` composition, `validate-proposal.ts`, `guardrails.ts`, `proposal-schemas.ts`, `brief.ts`, `apply.ts`, `worker.ts`, `admin.ts`, `repository.ts`), routes under `ops-web/src/app/api/internal/ads/engine/`, `ops-web/src/app/api/cron/ads-engine/`, `ops-web/src/app/api/admin/google-ads/engine/`. The routine that talks to these routes is `ops-web/docs/ads/engine-routine.md` (prompt `ads-routine-2026-09-10-v2`); the brief it receives is `ops-web/docs/ads/engine-brief-contract.md` (`ads-brief-2026-09-10-v1`). The routine never reaches Google; OPS applies after approval with `validateOnly` first.
 
 **Handoff routes** — all POST-only, Node runtime, `maxDuration 60`, `cache-control: no-store`, bearer `ADS_ENGINE_TOKEN` (≥32 chars, constant-time compare; 503 `ADS_ENGINE_NOT_CONFIGURED`, 401 `ADS_ENGINE_INVALID`, 405 otherwise), 200 KB body limit (413). In the cloud the token is injected by Anthropic's agent proxy from an environment API credential for host `app.opsapp.co`; the routine never sees it.
 
