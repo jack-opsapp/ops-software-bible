@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-08
 **Status:** APPROVED 2026-09-08. Jackson locked the five calls in §2 on their recommended defaults and is performing the three account actions in §3.1.
-**Phase 3 status (2026-09-10):** §5, §6, §7 BUILT and tested on `ops-web` branch `feat/ads-engine-p3` (migration `20260910120000_ads_engine` applied to production; code not deployed; routine `OPS Google Ads engine` created DISABLED). Gate still open: the routine runs its first cycle only after phase 1's warehouse and phase 2's campaigns are live and Jackson adds `ADS_ENGINE_TOKEN` + the environment credential. Record: `scheduled-agents/ops-google-ads-engine.md`.
+**Phase 3 status (2026-09-10):** §5, §6, §7 BUILT, tested and rehearsed locally on `ops-web` branch `feat/ads-engine-p3` (migration `20260910120000_ads_engine` applied to production; code not deployed; routine `OPS Google Ads engine` = `trig_01LroGoQJLg9GCPEAK3SD4dg`, created DISABLED, connectors cleared, never run; rehearsal record `ops-web/docs/artifacts/ads-engine/p3/local-e2e-2026-09-08/README.md`). Gate still open: the routine runs its first cycle only after phase 1's warehouse and phase 2's campaigns are live and Jackson adds `ADS_ENGINE_TOKEN` + the environment credential. Record: `scheduled-agents/ops-google-ads-engine.md`.
 **Owner surface:** ops-web (`/admin/google-ads`, `/api/internal/ads/engine/*`, crons), try-ops (landing pages + click-id capture), one Claude Cloud Routine.
 **Research inputs:** `research/google-ads/2026-09-08-local-findings.md`, `research/google-ads/2026-09-08-google-ads-for-trades-saas.md`, `research/google-ads/2026-09-08-google-ads-api-engineering.md` (all committed alongside this spec).
 **Spawn prefix:** `GOOGLE ADS ENGINE - P<phase>-<n>`.
