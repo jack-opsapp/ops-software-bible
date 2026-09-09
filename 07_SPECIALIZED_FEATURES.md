@@ -4066,6 +4066,19 @@ Mirror the deterministic structuring + the per-family idempotent commit loop. Th
 
 ## 14. Notification System
 
+### Existing-job correspondence notifications (2026-09-09)
+
+**Status (2026-09-09): implemented locally; production migration and web release are pending explicit approval.**
+
+Inbound `existing_job` and `work_intent_review` receipts emit `type = email_correspondence` from the atomic routing RPC. The title is “Project email received” or “Email needs review”; body text is generic and never includes the customer message or subject. The recipient is the mailbox owner, falling back to its configured default intake owner. A mailbox with neither retains the existing company-notification semantics.
+
+Project actions open `/dashboard?openProject=<id>&mode=view`; review actions open `/pipeline?review=email`. The existing rail uses the inbox icon and EMAIL label. `dedupe_key = email-work-routing:<activity-id>` and the locked immutable receipt ensure one notification across replay/concurrency, including after operator acknowledgement. Outbound correspondence does not notify. These are correspondence notifications, never new-lead notifications.
+
+The project timeline reads `activities` under the signed-in user's mailbox/project RLS; no email content is copied to project notes. Review cards retain full readable source text, use Done to acknowledge without reclassifying as noise, and preserve the explicit operator Create lead action for a real new opportunity. No new visual surface or iOS inbox is introduced.
+
+Sources: ops-web migration `20260909051427_email_existing_job_correspondence.sql`, `notification-service.ts`, `notification-meta.ts`, `use-project-activity.ts`, `email-review-panel.tsx`. Implementation commit: ops-web `61a806b4e`.
+
+
 ### Overview
 Multi-layer notification system combining local (UNUserNotificationCenter), push (OneSignal), and in-app (Supabase `notifications` table) notifications. Features batching during sync, deep linking to projects, unread tracking, quiet hours, and per-type preference controls.
 

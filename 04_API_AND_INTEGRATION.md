@@ -4,7 +4,7 @@
 
 **Purpose**: This document provides comprehensive documentation of the OPS backend integration, sync architecture, and network operations. It covers the Supabase backend, repository layer, sync strategies, realtime subscriptions, conflict resolution, image handling, push notifications, and integration patterns. This enables any developer or AI agent to implement the entire sync system from scratch with complete fidelity to the iOS implementation.
 
-**Last Updated**: September 4, 2026
+**Last Updated**: September 9, 2026
 **iOS Reference**: `ops-ios/OPS/Network/` (Supabase/, Sync/, Auth/, Services/)
 **Android Reference**: C:\OPS\opsapp-android\app\src\main\java\co\opsapp\ops\data\ (planned)
 
@@ -2431,6 +2431,21 @@ Every entity uses **upsert on `bubble_id` conflict**, making the migration safe 
 ---
 
 ## Email Pipeline Integration Routes (24 Routes)
+
+### Existing-job email routing and review (2026-09-09)
+
+**Status (2026-09-09): implemented locally; production migration and web release are pending explicit approval.**
+
+`public.route_email_work_correspondence_as_system(p_company_id uuid, p_connection_id uuid, p_activity_id uuid, p_provider_message_id text, p_provider_thread_id text, p_client_id uuid, p_project_id uuid, p_needs_review boolean) -> boolean` is `SECURITY INVOKER`, fixed empty search path, executable only by `service_role` (also checked at runtime). It is not a signed-in client write API.
+
+The function locks the active/sync-enabled mailbox and exact company/mailbox/message/thread email activity; it rejects existing opportunity ownership and conflicting parent proposals. Customer identity must match the activity's inbound sender or outbound recipients through an exact current client/subcontact email. A project must belong to that customer/company, be nondeleted and have an eligible operational status. Final receipts must replay the same parents and routing. Only an exact `work_routing_pending` proposal may downgrade stale parents to safe review; legacy/null markers cannot use that recovery permission. It updates the latest no-parent thread and notification in the same transaction.
+
+Sync and import callers persist the source activity before finalizing through this RPC; failures keep the source pending for retry. Wizard review holds fetch the exact provider message/thread under `runEmailProviderMailboxOperation` before finalizing, rather than leaving metadata-only messages unreadable. Ordinary first-time imports do not incur this extra hydration path.
+
+`GET /api/integrations/gmail/review-items` includes authorized `work_intent_review` activities outside the usual 30-day window and returns their retained body. Ordinary matching cards remain Gmail-only; Microsoft365 inclusion is limited to work-intent review because its ordinary matching actions are not generalized in this change. `POST /api/integrations/gmail/ignore` acknowledges a work-review activity using the canonical mailbox inbox-action authorization and archive permission, exact source ownership and no-parent comparison. It works for message-scoped forwards without a thread row. `reject-match` cannot clear finalized correspondence receipts. Project activity reads remain subject to signed-in RLS, not a service-role content endpoint.
+
+Sources: ops-web `src/lib/email/persist-email-work-routing.ts`, `src/lib/email/import-email-work-review.ts`, the import/review/ignore/reject routes, and migration `20260909051427_email_existing_job_correspondence.sql`. Implementation commit: ops-web `61a806b4e`.
+
 
 The Email Pipeline system adds 24 API routes across 6 route groups. All routes live in `OPS-Web/src/app/api/`. Unless noted, all routes use `getServiceRoleClient()` with `setSupabaseOverride()` for Supabase access (bypassing RLS). That module-global override is not race-safe: an overlapping request's `finally { setSupabaseOverride(null) }` can clear it mid-flight and drop a service that resolves through `requireSupabase()` onto the anon browser client (observed once in production as PostgreSQL `42501 permission denied for table email_connections` on route 21, bug `5ff083cf`). Routes 21 and 22 therefore run inside `runWithSupabase()` (AsyncLocalStorage-scoped) as of ops-web `aac04c312`, live on main `3c6344efd` 2026-09-05; migrate any other route here to `runWithSupabase` when touched. All long-running routes set `maxDuration = 300` (5 min, Vercel Pro limit).
 

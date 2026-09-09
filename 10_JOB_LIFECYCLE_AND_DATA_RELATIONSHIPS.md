@@ -4,7 +4,7 @@
 
 **Purpose**: Defines the complete data flow for a trade job from first contact through to a paid invoice. Documents all entity relationships, automation triggers, new entities, and required changes to existing entities. This is the master reference for how leads, pipeline, clients, estimates, projects, tasks, and invoices inter-operate.
 
-**Last Updated**: August 4, 2026
+**Last Updated**: September 9, 2026
 **Designed With**: ops-web codebase + ops-software-bible review session
 
 ---
@@ -1780,6 +1780,25 @@ The `Project.projectImages` field (comma-separated string) is deprecated. Migrat
 ---
 
 ## Email Pipeline Integration
+
+### Existing-job correspondence boundary (2026-09-09)
+
+**Status (2026-09-09): implemented locally; production migration and web release are pending explicit approval.**
+
+A customer email about work already underway or delivered is not new-sales authority. Damage, reimbursement, invoice deductions, warranty, callbacks, access and scheduling stay on the existing job when identity and project are proven; ambiguity stays visible in email review. Archiving an old opportunity does not erase the customer, subcontacts or project history.
+
+The existing single-message and Stage B classifiers now return `workIntent` (`new_work`, `existing_job`, `uncertain`) and `newWorkEvidence`. New work for a customer with an existing project requires a verbatim span from the current message. Quoted thread history, including an old forwarded inquiry, cannot supply that evidence. An `existing_job` result survives sales-confidence filtering as correspondence; low confidence becomes review. The existing classification requests are extended; known-project pattern matches now enter classification instead of bypassing the work-purpose decision.
+
+Customer context is resolved independently of sales eligibility through exact company-scoped `clients.email` and `sub_clients.email`, excluding deleted/merged parents. Projects remain relevant even without an opportunity link. A unique eligible project can receive explicit existing-job correspondence. A supplied property address must match; a locality alone, conflicting property, multiple customers or multiple plausible projects causes review. A verified new-work request may proceed through the normal relationship and guarded opportunity-creation path.
+
+The guard covers automatic sync, deferred/recovery classification, outbound initiation, pattern promotion, historical import and wizard import. Already-owned messages/threads and authenticated external intake retain their existing authority. Historical scan metadata alone is not evidence of another sale: known-project imports are held for review and exact provider content is hydrated under the mailbox lease before their final receipt is written.
+
+`activities.match_confidence` records `work_routing_pending` until the atomic database projection succeeds, then `existing_job` or `work_intent_review`. The exact company/mailbox/message/thread identity survives retries. Final receipts are immutable; pending source proposals whose customer/project becomes stale safely fall back to review. No client or opportunity is created, archived lead reopened, sales stage advanced, lead-created counter incremented, or sales draft generated for these receipts. Phase C treats no-parent final receipts as held. Operator acknowledgement survives replay.
+
+The web project activity timeline reads authorized `existing_job` email activities under mailbox/project RLS. The review panel displays the retained body; its Done action acknowledges the exact activity through mailbox authorization, including message-scoped forwards. The notification contract is in Chapter 07 §14. This change does not add an iOS inbox or claim an iOS release.
+
+Sources: ops-web `src/lib/email/email-work-routing.ts`, `src/lib/email/import-email-work-review.ts`, `src/lib/api/services/sync-engine.ts`, `src/lib/api/services/phase-c-autonomy-router.ts`; migration `20260909051427_email_existing_job_correspondence.sql`. Implementation commit: ops-web `61a806b4e`.
+
 
 > **Platform status**: Email integration is implemented on OPS-Web with support for both Gmail and Microsoft 365. API routes under `/api/integrations/email/`, plus a provider abstraction layer, pattern detection engine, AI classification system, webhook-driven sync, and a 5-step "Import Your Pipeline" wizard. iOS does not connect or sync mailboxes and has no full inbox; its one provider-backed exception is the authenticated hold-to-review Due/Overdue follow-up, which delegates all mailbox/thread/template/signature work to OPS-Web. The `email_connections` table (renamed from `gmail_connections`) stores per-connection provider, tokens, sync profile, webhook subscription, and AI feature flags.
 
