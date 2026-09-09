@@ -40,7 +40,7 @@ Four layers, built in this order: **measurement**, **account rebuild**, **engine
 
 | # | Decision | Decision (locked) | Why it was his |
 |---|---|---|---|
-| 1 | Budget and commitment | **$1,500 CAD/month for 90 days ($4,500)**, Canada only, Search only | Money. $370/month buys no information; $1,500 buys ~250 clicks → ~10 trials/month → a readable quarter |
+| 1 | Budget and commitment | **$1,500 CAD/month for 90 days ($4,500)**, Search only. ~~Canada only~~ → **REVISED 2026-09-09: US primary, Canada secondary**, delegated to the agent by Jackson ("I will trust your judgement") after measured demand showed Canada holds 1,520 buyable searches/month against 8,720 in the US and real bids run ~2x the planning assumption. Evidence: `research/google-ads/2026-09-09-keyword-demand.md`; structure: P2 plan Task 2R. **Launch is HELD at Jackson's instruction (2026-09-09) until the web and iOS apps are refined** — everything is built PAUSED and waits. | Money. $370/month buys no information; the budget only becomes readable where the searches actually are |
 | 2 | Where paid clicks land | **try.opsapp.co dedicated pages with web signup**; never the App Store; the app is offered after signup | Product direction: paid traffic gets a web-first path while organic keeps its App Store CTAs |
 | 3 | Competitor names in ad text | **Yes, in the competitor campaign only**, in "Jobber alternative" form; honest price table on the landing page | Brand posture and trademark-complaint risk (complaint → ad disapproved, engine rewrites) |
 | 4 | Approval mode | **Every proposal reviewed by Jackson** for the first cycle; negatives and loser-pauses become automatic only on his later say-so | Control over spend and public copy |

@@ -8,7 +8,7 @@
 
 **Architecture:** `ops-web/config/ads/blueprint.json` is the source of truth for structure. A pure planner diffs the blueprint against the entity snapshot (`ads_entities`, P1 Task 8) and emits mutate operations in dependency order (budgets → campaigns → campaign criteria → ad groups → keywords → ads → shared sets → labels). A CRON_SECRET-protected setup route applies the plan with `validateOnly` first. Copy rules live in one module (`src/lib/ads/copy-rules.ts`) that Phase 3's engine reuses unchanged. Landing pages reuse try-ops's section registry with page-specific configs.
 
-**Tech Stack:** as Phase 1. Google Keyword Planner data arrives as a CSV export committed under `ops-web/config/ads/` (the API's `KeywordPlanIdeaService` needs the "Researching keywords" permissible use; do not block on it).
+**Tech Stack:** as Phase 1. Keyword demand comes from the API, not a manual export — `KeywordPlanIdeaService.GenerateKeywordIdeas` is confirmed working on this token (2026-09-09). See Task 3R.
 
 **Design System:** try-ops uses its own kit (`try-ops/tailwind.config.ts`, `# OPS LANDING PAGE - IMPLEMENTATION.txt`, `.claude/animation-studio.local.md`) — every colour/spacing/radius must come from that config's tokens; the ops-web console is untouched in this phase.
 
