@@ -4143,6 +4143,7 @@ Phase 1 of the Google Ads engine (`specs/2026-09-08-google-ads-engine-design.md`
 |---|---|---|
 | `20260909120000_ads_conversion_outbox.sql` | `20260909023503` | `ads_conversion_actions`, `ads_conversion_events`, `trial_attributions.gbraid/wbraid`, `ads_plan_annual_value`, `ads_enqueue_conversion_event`, trigger `projects_ads_enqueue_trial_activation`, widened `seed_trial_attribution_for_company` / `pmf_update_first_paid_at` / `record_first_touch_attribution` / `expire_attribution_click_ids` |
 | `20260909123000_ads_warehouse_grain.sql` | `20260909041702` | `ads_daily_ad_group`, `ads_daily_ad`, `ads_daily_asset`, `ads_daily_keyword` (dropped + recreated), `ads_entities`, `ads_click_map`, view `ads_funnel_by_keyword` |
+| `20260909180000_ads_entities_campaign_shared_set.sql` | **not applied** | Widens the `ads_entities.entity_type` check to admit `campaign_shared_set`. One statement on a table holding 0 rows; must land before the daily sync writes an attachment. |
 
 ### `ads_conversion_actions`
 
@@ -4194,11 +4195,11 @@ ads_daily_ad_group   PK (date, ad_group_id)                 campaign_id, campaig
 ads_daily_ad         PK (date, ad_id)                       ad_group_id, ad_type, status, ad_strength, approval_status, review_status, final_url, spend, clicks, impressions, conversions, ctr, synced_at
 ads_daily_asset      PK (date, ad_id, asset_id, field_type) performance_label, pinned_field, text, impressions, clicks, conversions, synced_at
 ads_daily_keyword    PK (date, ad_group_id, criterion_id)   campaign_id, campaign_name, ad_group_name, keyword, match_type, status, quality_score, spend, clicks, impressions, conversions, average_cpc, synced_at
-ads_entities         PK (resource_name)                     entity_type check in (campaign, campaign_budget, ad_group, ad, keyword, negative_keyword, shared_set, shared_criterion, label), parent_resource_name, name, status, payload jsonb, labels text[], snapshot_at
+ads_entities         PK (resource_name)                     entity_type check in (campaign, campaign_budget, ad_group, ad, keyword, negative_keyword, shared_set, shared_criterion, campaign_shared_set, label), parent_resource_name, name, status, payload jsonb, labels text[], snapshot_at
 ads_click_map        PK (gclid)                             click_date, campaign_id, ad_group_id, ad_id, criterion_id, keyword, synced_at
 ```
 
-`ads_daily_keyword` was dropped and recreated (it held 0 rows; its old key `(date, keyword)` could not hold one keyword living in two ad groups). Each `ads_daily_*` table carries a `(date desc)` index; `ads_click_map` a `(click_date desc)` index. `ads_entities` is a daily snapshot of the live account structure (full RSA assets and pins ride in `payload`), so the engine and the console never need a live call to know what exists. `ads_click_map` is filled from `click_view` one day per query (Google exposes 90 days; OPS keeps it forever).
+`ads_daily_keyword` was dropped and recreated (it held 0 rows; its old key `(date, keyword)` could not hold one keyword living in two ad groups). Each `ads_daily_*` table carries a `(date desc)` index; `ads_click_map` a `(click_date desc)` index. `ads_entities` is a daily snapshot of the live account structure (full RSA assets and pins ride in `payload`), so the engine and the console never need a live call to know what exists. `campaign_shared_set` rows are the attachments that say which negative-keyword list guards which campaign; they are stored under Google's own resource name, `customers/<id>/campaignSharedSets/<campaign>~<set>`, which is the collection the engine's snapshot mapper keys on. `ads_click_map` is filled from `click_view` one day per query (Google exposes 90 days; OPS keeps it forever).
 
 ### `ads_funnel_by_keyword` (view)
 
