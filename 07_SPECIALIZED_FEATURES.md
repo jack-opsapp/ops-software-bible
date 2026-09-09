@@ -1292,6 +1292,55 @@ failed tile stating that the bytes remain on the phone. Source commit
 `OPSTests/Sync/SharePhotoCreateBarrierTests.swift`. This is an iOS ordering fix,
 not a database migration; the live INSERT policy remains unchanged.
 
+**A photo may document a task (2026-09-09 — bug `a290934f`, ledger
+`20260909070929`).** Photos belong to the project; a photo could not say which
+task it documented, so an owner reviewing a job could not separate the vinyl
+install from the curb details. `project_photos` gains
+`task_id uuid NULL REFERENCES public.project_tasks(id) ON DELETE SET NULL` — one
+photo store, one gallery, one viewer, with an optional task link. Rejected:
+photos-as-task-notes (invisible to the canonical store and to the web) and a
+separate `task_photos` table (a second store splits the gallery).
+
+The partial index `project_photos_project_task_idx (project_id, task_id) WHERE
+deleted_at IS NULL AND task_id IS NOT NULL` serves the two hot reads (a task's
+photo strip, the gallery's task badges). Client roles hold column-scoped
+`INSERT (task_id)` **and** `UPDATE (task_id)`: capture stamps the link at insert
+time, the viewer reassigns it later. `trg_project_photos_00_write_guard` is now
+`BEFORE INSERT OR UPDATE` (it was UPDATE-only) so the insert-time link is
+validated too, and the function branches on `TG_OP` because `OLD` is unassigned
+during an INSERT. Its new rule mirrors the soft-delete rule exactly — a
+`task_id` change requires `lower(uploaded_by) = lower(private.resolve_uid()::text)`
+or `private.current_user_has_permission('projects.edit','all')`, matching the
+iOS gate `PermissionStore.can("projects.edit")`, whose `requiredScope` defaults
+to `all` — plus a membership rule: the task must be live and belong to the
+photo's project. That membership question is answered by the SECURITY DEFINER
+helper `private.project_photo_task_matches_project(uuid, text)`, deliberately
+**not** in invoker context: `project_tasks` SELECT is scope-gated
+(`private.current_user_can_view_task_row`), and a field photo must never fail to
+deliver because the uploader's read scope hides the task row. Authorization is
+the ownership/permission half above, which still runs in invoker context.
+`project_photos.project_id` is `text` while `project_tasks.project_id` is `uuid`,
+so the helper normalizes through the existing
+`private.project_table_project_id_from_text`, which also absorbs the UPPERCASE
+uuids legacy iOS wrote.
+
+Probed in production inside `begin … rollback` before it was applied: the
+uploader may link a same-project task; an other-project task is rejected `42501`
+on both UPDATE and INSERT; an unresolvable operator matches 0 rows (RLS
+`company_isolation`, not a bypass); unrelated caption updates still pass. The
+byte-exact applied SQL is archived at
+`ops-software-bible/migrations/20260909070929_project_photos_task_link.sql`.
+
+**Note for the ops-web session:** the column is nullable and the web app is
+untouched — its typed inserts and reads keep working with no change. When web
+picks this up, read/write `task_id` and honour the same membership rule the
+guard enforces.
+
+iOS side: SwiftData **V27** adds nullable `ProjectPhoto.taskId` (stored
+lowercased through `ProjectPhotoTaskLink.canonical`), with the released V9–V26
+photo shape frozen as `OPSSchemaLegacyProjectPhotoV26.ProjectPhoto`. See
+`03_DATA_ARCHITECTURE.md` § schema chain.
+
 ### Capture UI — one standardized camera (iOS)
 
 **`CameraBatchView` is the single photo-capture surface** across every flow

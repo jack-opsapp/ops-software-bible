@@ -61,7 +61,25 @@ The OPS data layer follows a **three-tier architecture**:
 
 ### The Current Registered Schema Models
 
-As defined by the version-scoped model groups in `OPSSchemaCommon`, plus `WizardState` and `CalendarMirrorMap`. The production container is built from the schema head through `OPSMigrationPlan` in `OPSApp.swift`. The head is declared exactly once, as the `OPSSchemaCurrent` typealias (`OPS/DataModels/Migrations/OPSSchemaCurrent.swift`, currently = `OPSSchemaV26` on local main, 2026-09-06; not yet released); the app container, the DEBUG QA hosts, and every current-schema test resolve through the alias, so adding a VersionedSchema means repointing one symbol instead of hunting call sites.
+As defined by the version-scoped model groups in `OPSSchemaCommon`, plus `WizardState` and `CalendarMirrorMap`. The production container is built from the schema head through `OPSMigrationPlan` in `OPSApp.swift`. The head is declared exactly once, as the `OPSSchemaCurrent` typealias (`OPS/DataModels/Migrations/OPSSchemaCurrent.swift`, currently = `OPSSchemaV27` on the task-photos branch, 2026-09-09; not yet released); the app container, the DEBUG QA hosts, and every current-schema test resolve through the alias, so adding a VersionedSchema means repointing one symbol instead of hunting call sites.
+
+**V26 → V27 (2026-09-09; built on `feat/task-photos-20260908`, not released):**
+A photo may document a task (bug `a290934f`). The live `ProjectPhoto` gains
+nullable `taskId`, mirroring the new server column `project_photos.task_id`
+(ledger `20260909070929`). The released V9–V26 photo shape is frozen as
+`OPSSchemaLegacyProjectPhotoV26.ProjectPhoto` and `OPSSchemaCommon.v9ProjectPhotoModels`
+points at it, so all V1–V26 fingerprints stay byte-identical;
+`OPSSchemaCommon.v27ProjectPhotoModel` carries the widened live model into
+`OPSSchemaV27`, and `OPSMigrationPlan.addProjectPhotoTaskLinkV26toV27` is an
+adjacent lightweight stage. Nothing is backfilled: an installed photo documents
+no task until someone assigns one. `taskId` is stored lowercased through
+`ProjectPhotoTaskLink.canonical` — `UUID().uuidString` is UPPERCASE and every id
+comparison in the app is case-sensitive string equality. Sources:
+`OPS/DataModels/Supabase/ProjectPhoto.swift`,
+`OPS/DataModels/Migrations/OPSSchemaV27.swift`,
+`OPS/DataModels/Migrations/OPSSchemaCommon.swift`,
+`OPS/DataModels/Migrations/OPSMigrationPlan.swift`, and
+`OPSTests/Fixtures/swiftdata-released-schema-fingerprints.json`.
 
 **iOS storage repair (2026-09-06; locally integrated and tested, not released):** The locally integrated IOS PERFORMANCE repair introduces `OPSSchemaV26` through the unchanged `OPSSchemaCurrent` alias. `OPSSchemaLegacyDeckDesignV25.DeckDesign` freezes the released V16–V25 shape; the adjacent V25→V26 lightweight migration adds nullable `syncedDrawingJSON` only to the new live graph. All V1–V25 committed fingerprints remain unchanged. An unknown merge base stays nil for an already-dirty upgraded drawing, including after an unchanged local save; local data must never become its own apparent server acknowledgement. Source commits: iOS `28be9966` and `9b5c0d92` (integration equivalents `cbf69ec6` and `257203c2`). The verified repair is on local iOS `main` at `622010a0`; it has not been pushed or installed on the phone or released.
 
