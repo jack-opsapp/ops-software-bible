@@ -2,7 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use `custom-skills:executing-plans` to implement this plan task-by-task. Read the design spec first: `ops-software-bible/specs/2026-09-08-google-ads-engine-design.md` (§2, §4, §5.5 are this phase). Prerequisite: Phase 1 landed on `feat/ads-engine-p1` with a green readiness probe (Task 1 of the P1 plan). Spawn title: `GOOGLE ADS ENGINE - P2-1`.
 
-**Goal:** Rebuild the Google Ads account from a versioned blueprint: three Canada-only Search campaigns on capped Maximize Clicks, shared negative lists seeded from the historical junk, two voice-checked responsive search ads per ad group, five dedicated landing pages on try.opsapp.co whose single CTA is the web signup, and the legacy campaigns labelled and left paused. Everything is created PAUSED and validated; campaigns are enabled only by a separate, explicit route call after Jackson approves the ads.
+> **REVISION 2026-09-09 (supersedes the Canada-only structure and the seed list in Tasks 2 and 3).** Measured demand — `ops-software-bible/research/google-ads/2026-09-09-keyword-demand.md`, pulled from `KeywordPlanIdeaService` — killed three assumptions. Canada holds 1,520 buyable searches/month against 8,720 in the US, so Canada cannot absorb the locked $1,500/month. Real bids run about twice the $4–8 planned. Seven of the seed terms in Task 3 have ZERO volume in both countries. Jackson delegated the geo call on 2026-09-09 ("I will trust your judgement") and instructed that **nothing runs yet — build it all ready to go**, because the web and iOS apps still need refinement before they meet paid traffic. The revised structure is **Task 2R** and the revised seeds are **Task 3R**; where they disagree with Tasks 2 and 3, the revisions win. Everything else stands, including the rule that campaigns are created PAUSED and enabled only by a separate route call on Jackson's explicit word.
+
+**Goal:** Rebuild the Google Ads account from a versioned blueprint: five Search campaigns (US primary, Canada secondary) on capped Maximize Clicks, shared negative lists seeded from the historical junk, two voice-checked responsive search ads per ad group, seven dedicated landing pages on try.opsapp.co whose single CTA is the web signup, and the legacy campaigns labelled and left paused. Everything is created PAUSED and validated; campaigns are enabled only by a separate, explicit route call after Jackson approves the ads.
 
 **Architecture:** `ops-web/config/ads/blueprint.json` is the source of truth for structure. A pure planner diffs the blueprint against the entity snapshot (`ads_entities`, P1 Task 8) and emits mutate operations in dependency order (budgets → campaigns → campaign criteria → ad groups → keywords → ads → shared sets → labels). A CRON_SECRET-protected setup route applies the plan with `validateOnly` first. Copy rules live in one module (`src/lib/ads/copy-rules.ts`) that Phase 3's engine reuses unchanged. Landing pages reuse try-ops's section registry with page-specific configs.
 
@@ -105,6 +107,76 @@ Negative lists are the spec §4.3 lists; `free` is excluded from `NEG · Generic
 
 ---
 
+## Task 2R: REVISED campaign structure (supersedes Task 2's blueprint shape)
+
+The schema, planner, and tests from Task 2 are unchanged. Only the `campaigns` array differs. Geo constants:
+US `geoTargetConstants/2840`, Canada `geoTargetConstants/2124`. Every campaign: `status: "PAUSED"`, Search
+network only (search partners OFF, Display OFF), `positiveGeoTargetType: "PRESENCE"`, `languageConstants/1000`,
+all five shared negative lists, `MAXIMIZE_CLICKS` with a `cpcBidCeilingMicros` except BRAND.
+
+| Campaign | kind | Daily budget | CPC cap | Ad groups → landing page |
+|---|---|---|---|---|
+| `BRAND · NA` | brand | $3 | $2 (MANUAL_CPC) | `Brand` → `/` |
+| `PRICING · US` | competitor | $18 | $9 | `Jobber pricing` → `/compare/jobber`; `Housecall Pro pricing` → `/compare/housecall-pro` |
+| `SWITCH · US` | competitor | $10 | $12 | `Jobber alternative` → `/compare/jobber`; `Housecall Pro alternative` → `/compare/housecall-pro`; `ServiceTitan alternative` → `/compare/servicetitan` |
+| `TRADE · US` | core | $12 | $9 | `Cleaning` → `/for/cleaning`; `Landscaping` → `/for/landscaping`; `Roofing` → `/for/roofing` |
+| `CORE · CA` | core | $7 | $9 | `Pricing` → `/compare/jobber`; `Switching` → `/compare/jobber`; `Category` → `/job-management` |
+
+Total $50/day ≈ $1,500/month, matching the locked budget — but **the money now sits where the searches are**.
+BRAND targets both countries (one campaign, two geo criteria); every other US campaign targets the US only, and
+`CORE · CA` Canada only.
+
+**Why this shape.** Pricing intent is the largest measured pocket by a wide margin (4,400 US + 1,000 CA monthly
+searches for `jobber pricing` alone, at the cheapest bids in the set, $10–60) and it is the exact moment OPS's
+published prices beat an incumbent who hides theirs — so it takes the most budget. Switching intent is small but
+carries the highest purchase intent, so it gets exact match and a tight budget. Trade terms are real in the US and
+negligible in Canada, which is why they are a US campaign rather than the month-two addition the original plan
+assumed. Canada keeps one blended campaign because no single Canadian lane can absorb a budget of its own.
+
+**Deliberately excluded at launch, with reasons:** `field service management software` (22,200 US searches but
+$55–119 bids and the wrong buyer — enterprise); `plumbing business software` ($65–444), `hvac scheduling software`
+($61–729), `electrician scheduling software` ($55–1,369) — real demand at bids that cannot pay back a $1,680 first
+year. Record all four in `docs/ads/runbook.md` under "Held back" so the engine can revisit them with real
+cost-per-trial evidence rather than rediscovering them as ideas.
+
+## Task 3R: REVISED seeds (supersedes Task 3's list and its manual CSV step)
+
+**The manual Keyword Planner export is deleted from this plan.** `KeywordPlanIdeaService.GenerateKeywordIdeas`
+works on the current token: `POST /v25/customers/4454506598:generateKeywordIdeas`, body
+`{ language: "languageConstants/1000", geoTargetConstants: [geo], keywordPlanNetwork: "GOOGLE_SEARCH", keywordSeed: { keywords } }`,
+**seeds chunked in tens** (more than 10 returns `400 INVALID_ARGUMENT`). Build this as
+`ops-web/scripts/ads/keyword-demand.mjs`, commit its output to `ops-web/config/ads/keyword-demand-<date>.json`,
+and cite it from the blueprint. Raw evidence already committed:
+`ops-software-bible/research/google-ads/2026-09-09-keyword-demand-ca-us.json`.
+
+Seeds, phrase + exact unless noted (monthly volume, low–high top-of-page bid):
+
+- **Jobber pricing** — `jobber pricing` (US 4,400 $10–60; CA 1,000 $12–77), `how much does jobber cost`, `jobber cost`, `jobber plans`
+- **Housecall Pro pricing** — `housecall pro pricing` (US 1,300 $12–65; CA 140), `housecall pro cost`, `how much is housecall pro`
+- **Jobber alternative** — `jobber alternative` (US 260 $25–102; CA 70), `jobber alternatives`, `jobber competitors`, `software like jobber`, `alternatives to jobber`, `free jobber alternatives`, `switch from jobber`
+- **Housecall Pro alternative** — `housecall pro alternative` (US 140 $50–116), `housecall pro alternatives`, `housecall pro competitors`
+- **ServiceTitan alternative** — `servicetitan alternative` (US 90 $28–86; CA 20), `servicetitan competitors`, `servicetitan pricing`
+- **Cleaning** — `cleaning business software` (US 880 $17–110; CA 90), `cleaning company software`, `janitorial software`, `cleaning business app`
+- **Landscaping** — `landscaping business software` (US 480 $14–138; CA 50), `lawn care software`, `landscaping software`, `lawn care business app`
+- **Roofing** — `roofing contractor software` (US 210 $18–182), `roofing software`, `roofing business software`
+- **Category / `CORE · CA`** — `job management app` (US 140 $16–71; CA 30), `crew scheduling app` (US 70 $15–63), `contractor scheduling app` (US 110 $33–83), `contractor invoicing app` (US 110 $23–83), `job management software for trades` (US 20)
+- **Brand, EXACT only** — `opsapp`, `ops app`, `opsapp.co`, `ops job management`
+
+**Dropped for zero volume in both countries** (do not re-add without new evidence): `job tracking app for trades`,
+`work order app for small business`, `scheduling software for trades`, `dispatch app for small crews`,
+`invoicing app for trades`, `quoting software for trades`, `estimate app for small business`. The "…for trades"
+construction is OPS's voice, not buyer search language.
+
+**On the word "contractor".** `contractor scheduling app` and `contractor invoicing app` carry real US volume and
+ARE bid on. The ban is on copy, not targeting: never print the word in an ad or on a page. The copy rules already
+enforce that (`CONTRACTOR` issue code), so a keyword and its own ad legitimately disagree.
+
+**Ads:** unchanged from Task 3 — a control and a challenger per ad group, written with `ops-copywriter`, every asset
+through `validateRsa`. Eleven ad groups means 22 ads. The pricing ad groups lead with OPS's actual price against a
+competitor who hides theirs; the switching ad groups lead with the per-crew total; the trade ad groups name the trade.
+
+---
+
 ## Task 4: Blueprint apply route + enable route
 
 **Files:**
@@ -122,9 +194,9 @@ Negative lists are the spec §4.3 lists; `free` is excluded from `NEG · Generic
 
 **Skills:** `frontend-design:frontend-design`, `ops-design`, `ops-copywriter:ops-copywriter`, `custom-skills:ui-ux-pro-max`, `custom-skills:audit-design-system`.
 
-**Files (try-ops):**
-- Create: `lib/landing/page-configs.ts` — five `VariantConfig`-shaped configs keyed by route, each a strict subset of the registry sections in this order: `Hero` (headline matched to the ad group; `heroMode: 'phone3d'` reused), `PricingSection` (moved up: prices above the fold on desktop, second screen on mobile), `FounderQuote`, `SolutionSection` (three features relevant to the group), `TestimonialsSection` only if a real named customer quote is supplied by Jackson (otherwise omitted — never invented), `FAQSection` (3 questions), `ClosingCTA`
-- Create: `app/(paid)/job-management/page.tsx`, `app/(paid)/scheduling/page.tsx`, `app/(paid)/quotes-invoices/page.tsx`, `app/(paid)/compare/jobber/page.tsx`, `app/(paid)/compare/housecall-pro/page.tsx` — server components rendering `<LandingPageClient config={...} variantId="paid:<slug>" ctaMode="web-signup" />`
+**Files (try-ops):** *(revised 2026-09-09 — seven pages, not five, per Task 2R)*
+- Create: `lib/landing/page-configs.ts` — seven `VariantConfig`-shaped configs keyed by route, each a strict subset of the registry sections in this order: `Hero` (headline matched to the ad group; `heroMode: 'phone3d'` reused), `PricingSection` (moved up: prices above the fold on desktop, second screen on mobile), `FounderQuote`, `SolutionSection` (three features relevant to the group), `TestimonialsSection` only if a real named customer quote is supplied by Jackson (otherwise omitted — never invented), `FAQSection` (3 questions), `ClosingCTA`
+- Create: `app/(paid)/job-management/page.tsx`, `app/(paid)/compare/jobber/page.tsx`, `app/(paid)/compare/housecall-pro/page.tsx`, `app/(paid)/compare/servicetitan/page.tsx`, `app/(paid)/for/cleaning/page.tsx`, `app/(paid)/for/landscaping/page.tsx`, `app/(paid)/for/roofing/page.tsx` — each compare page serves both a pricing ad group and a switching ad group, so it must answer "what does it cost" above the fold before it answers "why switch"; each trade page names the trade in the headline and in one proof line — server components rendering `<LandingPageClient config={...} variantId="paid:<slug>" ctaMode="web-signup" />`
 - Modify: `components/ab/LandingPageClient.tsx` — add `ctaMode?: "app-store" | "web-signup"`; in `web-signup` mode the primary CTA and `StickyCTA` link to `https://app.opsapp.co/register` (full navigation; the `.opsapp.co` cookie travels), the secondary CTA is removed (single CTA rule), the roadmap fetch is skipped, and `trackABClick` still fires with `variantId`
 - Create: `components/landing/CompareTable.tsx` — the honest per-crew arithmetic for the two compare pages (Jobber Connect $99/month is one user, +$29 per user, five users = $215/month before add-ons; Housecall Pro from its published tiers with the same per-crew framing; OPS $140/month for the crew, every feature) as a static table; every figure sourced in a comment with the URL and the date checked; registry entry `CompareTable`
 - Modify: `middleware.ts` matcher (P1 already covers the paths; verify)
