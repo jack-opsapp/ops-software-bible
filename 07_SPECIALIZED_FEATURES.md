@@ -10663,7 +10663,7 @@ The canonical update preserves scope composition and queues existing in-app and 
 
 `/settings/financial-policy?source=<exact company note UUID>` gives the current owner one source-and-rule review before enrollment. Source content is rendered as inert text, never HTML or instructions. A successful enrollment or exact revocation writes one standard notification atomically with its durable receipt, linking to `/settings/financial-policy`. Review itself creates no notification or financial document. Existing Phase15 per-draft persistent approval notifications remain the financial save authority. Revocation cannot release held drafts. See [Phase16 contract](specs/2026-09-08-ops-mcp-financial-readiness.md). The owner-review software and both database migrations were released on 2026-09-08; no enrollment, related notification or financial save was performed as part of release.
 
-## Phase17 exact catalog review (2026-09-08; dormant source)
+## Phase17 exact catalog review (2026-09-09; approved restricted rollout)
 
 `approve_catalog_changes` reuses the existing approval queue for both catalog and separately prepared stock adjustments. The detail view renders the sealed server proposal: source name, current item names, create/update/unchanged status, before/after money and relationships, exact source row, explicitly skipped rows and expiry. English and Spanish labels use the current OPS queue tokens. Source content is shown as escaped text and cannot approve its own changes.
 
