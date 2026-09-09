@@ -1,0 +1,54 @@
+{
+  "status": "CODEX_AUTHENTICATED_READ_PATH_PASSED_FINANCIAL_TRIAL_BLOCKED",
+  "observed_at": "2026-09-08T16:32:54.697Z",
+  "host": "Codex",
+  "host_assignment": "Jackson runs Claude separately. Codex evidence is not ChatGPT or Claude acceptance.",
+  "company": {
+    "id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+    "name": "MAVERICK PROJECTS LTD"
+  },
+  "actor_user_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+  "checks": {
+    "authenticated_company_context": true,
+    "list_detail_document_identity": true,
+    "list_detail_job_identity": true,
+    "summary_job_identity": true,
+    "list_detail_total": true,
+    "detail_rollup_total": true,
+    "seven_readable_lines": true,
+    "financial_inspection_not_callable": true,
+    "financial_preparation_not_callable": true
+  },
+  "unique_exercised_capabilities": [
+    "get_company_context",
+    "list_sales_documents",
+    "get_sales_document",
+    "get_job_summary"
+  ],
+  "available_capability_count": 35,
+  "proof_refs": {
+    "company": "ops_proof:v1:e1f2f9cf4ff0b3692ca993587bd216858c2340eb5cff209db7a597731a9e5fb6",
+    "list": "ops_proof:v1:db6caf6e1c9bde6ad20a07e2d13ed9ed28a227a9509b221c775cc2c4f236960f",
+    "detail": "ops_proof:v1:8a555a3de48ec1abca71b97a2f24bc031854e5ebf4dbe8c5dc89ee704352b970",
+    "summary_request": "ba1882ee-2c84-44ea-be49-77af0f8df35e"
+  },
+  "scope": {
+    "read_only": true,
+    "financial_trial_attempted": false,
+    "production_fixtures_created": false,
+    "authority_changed": false,
+    "business_records_changed": false,
+    "credentials_stored": false
+  },
+  "blockers": [
+    "Authenticated company is MAVERICK PROJECTS LTD, not the proposed isolated financial acceptance company.",
+    "Financial inspect/prepare capabilities are not callable in this Codex connection.",
+    "Exact test-company owner policy, host-specific authorization and separate per-draft OPS confirmation remain required."
+  ],
+  "not_proven": [
+    "Phase16 financial preparation or save through authenticated Codex",
+    "Claude host acceptance",
+    "ChatGPT host acceptance",
+    "Cross-tenant negative tests in this run"
+  ]
+}

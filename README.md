@@ -271,7 +271,31 @@ Start with the Executive Summary to understand the business context, then procee
 
 ---
 
-### 🧩 [22_TASK_GROUPS.md](22_TASK_GROUPS.md)
+### 📊 [21_ANALYTICS_SYSTEM.md](21_ANALYTICS_SYSTEM.md)
+**Cross-platform analytics architecture and verified deployment state**
+
+- Exact GA4 property registry and current access state
+- Search Console, App Store Connect, Firebase, and Supabase source ownership
+- Product-event, privacy, retention, freshness, and alert contracts
+- Clear separation between live production truth and the locally verified release candidate
+
+**Start here for:** Analytics implementation, source health, privacy, retention, or release certification
+
+---
+
+### 🎯 [22_GROWTH_MEASUREMENT_CONTRACT.md](22_GROWTH_MEASUREMENT_CONTRACT.md)
+**Canonical growth formulas, attribution precedence, and founder reporting contract**
+
+- Trial, seven-day activation, fourteen-day first value, paid, revenue, and coverage formulas
+- Attribution evidence precedence and channel classification
+- Source-state semantics and reconciliation requirements
+- Exact rollout gates before the contract becomes production truth
+
+**Start here for:** Any growth number, attribution decision, funnel definition, or founder analytics surface
+
+---
+
+### 🧩 [23_TASK_GROUPS.md](23_TASK_GROUPS.md)
 **Task Groups: One Visit, Many Scopes — schema, status law, composition, iOS/web surfaces, ship sequence**
 
 - The law: the visit is the schedulable unit; scopes are checkable units inside it; single-type tasks carry zero scope rows and stay byte-identical
@@ -360,8 +384,11 @@ Start with the Executive Summary to understand the business context, then procee
 **"I need to write copy / marketing / email / app store listing for a feature"**
 → Read [14_FEATURE_POSITIONING.md](14_FEATURE_POSITIONING.md)
 
+**"I need to understand analytics, attribution, or a growth metric"**
+→ Read [21_ANALYTICS_SYSTEM.md](21_ANALYTICS_SYSTEM.md) + [22_GROWTH_MEASUREMENT_CONTRACT.md](22_GROWTH_MEASUREMENT_CONTRACT.md)
+
 **"I need to understand or ship task groups (one visit, many scopes) — schema, RPCs, iOS/web behavior, the conversion gate"**
-→ Read [22_TASK_GROUPS.md](22_TASK_GROUPS.md)
+→ Read [23_TASK_GROUPS.md](23_TASK_GROUPS.md)
 
 **"I need to deploy to production"**
 → Read [08_DEPLOYMENT_AND_OPERATIONS.md](08_DEPLOYMENT_AND_OPERATIONS.md)

@@ -1,0 +1,98 @@
+{
+  "status": "OWNER_POLICY_ENROLLED_FINANCIAL_HOST_TRIAL_NOT_ACTIVATED",
+  "source": "Independent read-only production SQL after Jackson reported completing the OPS owner enrollment",
+  "enrollment": {
+    "preview": {
+      "id": "8fb55749-024b-4c52-9998-ff777ba1f9c2",
+      "receipt": {
+        "replayed": false,
+        "revision": "phase16-maverick-host-1",
+        "operation": "enroll",
+        "policy_id": "d815e12d-f12a-47a2-9e91-a54dd37ab813",
+        "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+        "preview_id": "8fb55749-024b-4c52-9998-ff777ba1f9c2",
+        "completed_at": "2026-09-08T17:42:25.971347+00:00",
+        "actor_user_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+        "policy_sha256": "sha256:f27b2ac1d237f72ff1214994394126928e78a6d87f91cc77b1602680b97fea87",
+        "source_sha256": "sha256:4b18713abd825a5a8f469f2e2ee3ed5b9408f7a9efb3fd1803f021ceeffac811",
+        "preparation_only": true,
+        "financial_documents_created": 0
+      },
+      "created_at": "2026-09-08T17:29:59.107869+00:00",
+      "expires_at": "2026-09-08T17:44:59.092694+00:00",
+      "consumed_at": "2026-09-08T17:42:25.971448+00:00",
+      "preview_sha256": "sha256:797d258732b442c64f8d74d3ddee06f28ba118fefba3ff83e31620f0a88f5886"
+    },
+    "policies": [
+      {
+        "id": "d815e12d-f12a-47a2-9e91-a54dd37ab813",
+        "terms": "Payment on completion",
+        "status": "active",
+        "revision": "phase16-maverick-host-1",
+        "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+        "created_at": "2026-09-08T17:42:25.970375+00:00",
+        "approved_at": "2026-09-08T17:42:25.970375+00:00",
+        "approved_by": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+        "currency_code": "CAD",
+        "source_sha256": "sha256:4b18713abd825a5a8f469f2e2ee3ed5b9408f7a9efb3fd1803f021ceeffac811",
+        "permitted_units": [
+          "hour"
+        ],
+        "source_document_id": "ebb45d42-dd6a-4282-ac73-6a2e1af74278",
+        "approval_preview_id": "8fb55749-024b-4c52-9998-ff777ba1f9c2",
+        "permitted_price_sources": [
+          "historical_line",
+          "operator"
+        ]
+      }
+    ],
+    "verified_at": "2026-09-08T17:47:45.625811+00:00",
+    "output_drafts": 0,
+    "financial_clients": 0,
+    "financial_bindings": 0,
+    "sandbox_sync_enabled": true
+  },
+  "integrity": {
+    "tax": {
+      "id": "d0000000-0000-4000-d000-000000000001",
+      "name": "CA Sales Tax",
+      "rate": 0.0775
+    },
+    "policy_id": "d815e12d-f12a-47a2-9e91-a54dd37ab813",
+    "policy_hash": "sha256:f27b2ac1d237f72ff1214994394126928e78a6d87f91cc77b1602680b97fea87",
+    "source_hash": "sha256:4b18713abd825a5a8f469f2e2ee3ed5b9408f7a9efb3fd1803f021ceeffac811",
+    "verified_at": "2026-09-08T17:49:17.902297+00:00",
+    "effect_current": "sha256:077c377b70d9531b436800593907f1c465d7ce668faa4a27baeac500d648ffa9",
+    "source_note_id": "ebb45d42-dd6a-4282-ac73-6a2e1af74278",
+    "effect_installed": "sha256:1dbb20f58a47881a7838a77a2ae69cb55aea8142ba41e5c9b62c0b73a21ae4c5",
+    "fixture_queue_rows": 0,
+    "source_matches_enrollment": true,
+    "policy_hash_matches_receipt": true,
+    "exact_review_consumed_before_expiry": true
+  },
+  "next_trial_proposal": {
+    "status": "AWAITING_SEPARATE_ACTIVATION_APPROVAL_AND_COMPLETE_EFFECT_REVIEW",
+    "company_id": "ddee107c-33cd-483e-8278-0f8d8a180181",
+    "actor_user_id": "8e811f98-9f2b-4f64-b409-ed56074b7dc8",
+    "policy_id": "d815e12d-f12a-47a2-9e91-a54dd37ab813",
+    "policy_sha256": "sha256:f27b2ac1d237f72ff1214994394126928e78a6d87f91cc77b1602680b97fea87",
+    "quote_project_id": "775d8bc4-edd6-4e45-854f-c7e1cf12e3e7",
+    "historical_estimate_id": "323f486f-1a05-496b-9e4f-d725384d007d",
+    "hosts": [
+      "Codex",
+      "Claude"
+    ],
+    "new_exact_client_per_host": true,
+    "existing_clients_unchanged": true,
+    "duration_minutes_per_host": 30,
+    "absolute_binding_times": null,
+    "client_ids": null,
+    "maximum_held_estimates_per_host": 1,
+    "separate_exact_ops_save_approval_required": true,
+    "expected_quote_total_cad": "232.74",
+    "no_delivery_issue_payment_accounting_sync_or_hold_release": true,
+    "review_complete_effect_graph_before_installing_exact_literal": true,
+    "temporary_sandbox_pause_and_restore_required_before_trial_business_writes": true
+  },
+  "assistant_database_mutations_this_checkpoint": 0
+}

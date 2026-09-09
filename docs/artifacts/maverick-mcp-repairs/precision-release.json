@@ -1,0 +1,195 @@
+{
+  "deployment": {
+    "id": "dpl_GLWfrf9ptukEqCdWySBexDACUQNg",
+    "state": "READY",
+    "sha": "e7c530015d9e4715626e4c32be3b0e82177d6cb6",
+    "ready_at": "2026-09-06T00:05:57.422Z",
+    "domain": "app.opsapp.co",
+    "domain_matches": true
+  },
+  "final_readback": {
+    "at": "2026-09-06T00:06:35.589243+00:00",
+    "all_post_apply_invariants_unchanged": true,
+    "proposals": 0
+  },
+  "http": [
+    {
+      "url": "https://app.opsapp.co/.well-known/oauth-protected-resource",
+      "status": 200,
+      "resource": "https://app.opsapp.co/api/mcp",
+      "scope_count": 21
+    },
+    {
+      "url": "https://app.opsapp.co/api/mcp",
+      "status": 401,
+      "bearer_challenge": true
+    }
+  ],
+  "source_commit": "bed1329769a3342808dbf314cb9676cbedb9a6e5",
+  "integration_commit": "e7c530015d9e4715626e4c32be3b0e82177d6cb6",
+  "migration": {
+    "ledger": "20260905235844",
+    "name": "agent_customer_update_source_precision",
+    "sha256": "73d4218ee05f74c2230295790e69581ebe8ad1dcb33abbf0defc2b256afe927d",
+    "bytes": 1388,
+    "ledger_matches_source": true
+  },
+  "preflight_at": "2026-09-05T23:58:06.848594+00:00",
+  "postflight_at": "2026-09-05T23:59:10.079331+00:00",
+  "functions_before": [
+    {
+      "acl": [
+        "postgres=X/postgres"
+      ],
+      "md5": "2d092254d4f118e63cfff0ff445d4d88",
+      "oid": "118933",
+      "name": "agent_rfc3339_utc",
+      "owner": "16384",
+      "schema": "private",
+      "settings": [
+        "search_path=pg_catalog, pg_temp"
+      ],
+      "volatility": "i",
+      "security_definer": false
+    },
+    {
+      "acl": [
+        "postgres=X/postgres"
+      ],
+      "md5": "852bdb66015ff700499b3c9027a481fc",
+      "oid": "130986",
+      "name": "assert_agent_customer_update_authority",
+      "owner": "16384",
+      "schema": "private",
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "security_definer": true
+    },
+    {
+      "acl": [
+        "postgres=X/postgres",
+        "service_role=X/postgres"
+      ],
+      "md5": "b0929ffca87e74056ce779362fd6aedc",
+      "oid": "130999",
+      "name": "prepare_agent_customer_update_as_system",
+      "owner": "16384",
+      "schema": "public",
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "security_definer": true
+    },
+    {
+      "acl": [
+        "postgres=X/postgres"
+      ],
+      "md5": "128a904a5ddaa81ab387fdddf95210e4",
+      "oid": "119075",
+      "name": "read_agent_job_summary_as_system_v6_core",
+      "owner": "16384",
+      "schema": "private",
+      "settings": [
+        "search_path=pg_catalog, public, private, extensions, pg_temp"
+      ],
+      "volatility": "s",
+      "security_definer": true
+    }
+  ],
+  "functions_after": [
+    {
+      "acl": [
+        "postgres=X/postgres"
+      ],
+      "md5": "2d092254d4f118e63cfff0ff445d4d88",
+      "oid": "118933",
+      "name": "agent_rfc3339_utc",
+      "owner": "16384",
+      "schema": "private",
+      "settings": [
+        "search_path=pg_catalog, pg_temp"
+      ],
+      "volatility": "i",
+      "security_definer": false
+    },
+    {
+      "acl": [
+        "postgres=X/postgres"
+      ],
+      "md5": "852bdb66015ff700499b3c9027a481fc",
+      "oid": "130986",
+      "name": "assert_agent_customer_update_authority",
+      "owner": "16384",
+      "schema": "private",
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "security_definer": true
+    },
+    {
+      "acl": [
+        "postgres=X/postgres",
+        "service_role=X/postgres"
+      ],
+      "md5": "b0929ffca87e74056ce779362fd6aedc",
+      "oid": "130999",
+      "name": "prepare_agent_customer_update_as_system",
+      "owner": "16384",
+      "schema": "public",
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "security_definer": true
+    },
+    {
+      "acl": [
+        "postgres=X/postgres"
+      ],
+      "md5": "e8ddba2e98fb82a468aa2ce1e0a792e1",
+      "oid": "119075",
+      "name": "read_agent_job_summary_as_system_v6_core",
+      "owner": "16384",
+      "schema": "private",
+      "settings": [
+        "search_path=pg_catalog, public, private, extensions, pg_temp"
+      ],
+      "volatility": "s",
+      "security_definer": true
+    }
+  ],
+  "unchanged": {
+    "opportunity": true,
+    "task": true,
+    "grant": true
+  },
+  "proposals_before": 0,
+  "proposals_after": 0,
+  "application_tests": {
+    "passed": 178,
+    "files": 4,
+    "run": "integrated source after preserving current main"
+  },
+  "database_checks": {
+    "passed": 12,
+    "replay": "passed",
+    "unexpected_drift": "rejected"
+  },
+  "ci": {
+    "run": 34000083879,
+    "url": "https://github.com/jack-opsapp/ops-web/actions/runs/34000083879",
+    "result": "pre-existing delivery-source fixture fails at line 498",
+    "error": "agent_provider_delivery_source_idempotency_conflict"
+  },
+  "signed_in_canary": {
+    "status": "blocked",
+    "reason": "OPS MCP client startup timed out after 30 seconds; native tools not exposed; resource and template retries fail identically",
+    "configured_auth": "OAuth",
+    "replacement_credentials_or_grants_created": false,
+    "no_change_probe_attempted_this_release": false
+  }
+}
