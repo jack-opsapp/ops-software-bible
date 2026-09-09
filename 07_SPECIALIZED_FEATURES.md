@@ -4075,6 +4075,20 @@ Multi-layer notification system combining local (UNUserNotificationCenter), push
 
 New type `social_editorial` is written by service-only `notify_social_editorial(text,text)` in `20260905185527_create_social_editorial.sql`. A `prepared` run produces standard `INSTAGRAM DRAFT READY`; a `failed` run produces persistent `INSTAGRAM PREPARATION STOPPED`. Both link to `/admin/social#cloud-production` with `VIEW SOCIAL`. Recipient IDs use `SOCIAL_OPERATOR_*`, falling back to `PMF_OPERATOR_*`; since ops-web `2e3cfcb77` the app-side social rail items (`social_post_review`, `social_post_published`, recovery) resolve them through the same trimmed `getEditorialOperator`, because the production values carry trailing whitespace and `notifications_company_id_canonical` rejected the untrimmed company id. The run's `notified_at` is acknowledged in the same transaction as insertion, under row locks; notification failures stay replayable and successful replays insert zero duplicates. Skipped editorial ideas remain in the run history without a failure alert. The notification outbox is active with preparation, but no draft or failure notification has yet been generated in production; the first eligible slot is Monday 2026-09-07 10:00 Vancouver. The fallback recipient was independently verified as active Jackson Sweet with a matching active company; the cloud worker trims existing trailing whitespace and rejects incomplete social-specific override pairs. See §22 and the cloud editorial runbook.
 
+### Google Ads engine notifications (2026-09-10; built, NOT deployed)
+
+New type `ads_engine`, recipient `PMF_OPERATOR_USER_ID` / `PMF_OPERATOR_COMPANY_ID` (trimmed, `ops-web/src/lib/ads/engine/operator.ts`), all `action_label` `VIEW ADS`, written by the service-only RPCs in `20260910120000_ads_engine.sql` and delivered by the daily `/api/cron/ads-engine` tick:
+
+| Title | Persistent | Dedupe key | Action | When |
+|---|---|---|---|---|
+| `ADS PROPOSALS READY · n` | no | `ads-engine:proposals:<run id>` | `/admin/google-ads#proposals` | `notify_ads_engine`: a run has proposals waiting for Jackson (one notification per run; `n` = proposals still waiting) |
+| `AD DISAPPROVED` | yes | `ads-engine:disapproved:<ad resource>` | `/admin/google-ads#engine` | the worker found an enabled engine ad with `approval_status = DISAPPROVED`; it paused it (validateOnly then real) or says it could not |
+| `ADS BUDGET PACING` | no | `ads-engine:pacing:<campaign id>:<date>` | `/admin/google-ads#engine` | `search_budget_lost_impression_share > 0.3` three days running on an engine campaign |
+| `ADS CHANGE FAILED` | yes | `ads-engine:apply-failed:<proposal id>` | `/admin/google-ads#engine` | an approved or auto-mode proposal failed to apply (Google validation or transport); the error is on the proposal |
+| `ADS ENGINE STALLED` | yes | `ads-engine:stalled:<Vancouver date>` | `/admin/google-ads#engine` | `check_ads_engine_stall`: engine campaigns are live and the routine has not claimed for `stall_hours` (50); once per day; the worker resolves open stall rows as soon as the heartbeat is fresh |
+
+`ADS CONVERSIONS FAILING` belongs to phase 1 (the conversion outbox). Alerts other than READY and STALLED ride the `ads_engine_alerts` outbox so a failed rail insert is retried next tick; inserts use `on conflict do nothing` against the open-notification dedupe indexes, so a re-raised alert whose first row is still unread is acknowledged without a duplicate.
+
 ### OpenAI Provider Quota Incident
 
 Every production OpenAI workload is constructed through the monitored factory in `ops-web/src/lib/api/services/openai-clients.ts`. A provider response opens an incident only when the cloned response body contains the exact code `error.code = 'insufficient_quota'`; ordinary HTTP 429 throttling remains retryable and never creates a credit alert.
