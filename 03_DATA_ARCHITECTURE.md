@@ -1,6 +1,6 @@
 # 03: Data Architecture
 
-**Last Updated**: 2026-09-04
+**Last Updated**: 2026-09-09
 **Status**: Comprehensive Reference
 **Purpose**: Complete data layer specification for OPS iOS/Android applications
 
@@ -15,16 +15,17 @@
 5. [Permissions System Tables](#permissions-system-tables)
 6. [Catalog & Variant Model](#catalog--variant-model)
 7. [Bridge & Audit Tables](#bridge--audit-tables)
-8. [Enums Reference](#enums-reference)
-9. [Relationship Map](#relationship-map)
-10. [BubbleFields Constants (Legacy/Deprecated)](#bubblefields-constants-legacydeprecated)
-11. [Data Transfer Objects (DTOs)](#data-transfer-objects-dtos)
-12. [Supabase DTOs](#supabase-dtos)
-13. [Soft Delete Strategy](#soft-delete-strategy)
-14. [Computed Properties & Business Logic](#computed-properties--business-logic)
-15. [Migration History](#migration-history)
-16. [Query Predicates & Filtering](#query-predicates--filtering)
-17. [Defensive Programming Patterns](#defensive-programming-patterns)
+8. [Google Ads Engine Tables (2026-09-09)](#google-ads-engine-tables-2026-09-09)
+9. [Enums Reference](#enums-reference)
+10. [Relationship Map](#relationship-map)
+11. [BubbleFields Constants (Legacy/Deprecated)](#bubblefields-constants-legacydeprecated)
+12. [Data Transfer Objects (DTOs)](#data-transfer-objects-dtos)
+13. [Supabase DTOs](#supabase-dtos)
+14. [Soft Delete Strategy](#soft-delete-strategy)
+15. [Computed Properties & Business Logic](#computed-properties--business-logic)
+16. [Migration History](#migration-history)
+17. [Query Predicates & Filtering](#query-predicates--filtering)
+18. [Defensive Programming Patterns](#defensive-programming-patterns)
 
 ---
 
@@ -60,7 +61,25 @@ The OPS data layer follows a **three-tier architecture**:
 
 ### The Current Registered Schema Models
 
-As defined by the version-scoped model groups in `OPSSchemaCommon`, plus `WizardState` and `CalendarMirrorMap`. The production container is built from the schema head through `OPSMigrationPlan` in `OPSApp.swift`. The head is declared exactly once, as the `OPSSchemaCurrent` typealias (`OPS/DataModels/Migrations/OPSSchemaCurrent.swift`, currently = `OPSSchemaV26` on local main, 2026-09-06; not yet released); the app container, the DEBUG QA hosts, and every current-schema test resolve through the alias, so adding a VersionedSchema means repointing one symbol instead of hunting call sites.
+As defined by the version-scoped model groups in `OPSSchemaCommon`, plus `WizardState` and `CalendarMirrorMap`. The production container is built from the schema head through `OPSMigrationPlan` in `OPSApp.swift`. The head is declared exactly once, as the `OPSSchemaCurrent` typealias (`OPS/DataModels/Migrations/OPSSchemaCurrent.swift`, currently = `OPSSchemaV27` on the task-photos branch, 2026-09-09; not yet released); the app container, the DEBUG QA hosts, and every current-schema test resolve through the alias, so adding a VersionedSchema means repointing one symbol instead of hunting call sites.
+
+**V26 → V27 (2026-09-09; built on `feat/task-photos-20260908`, not released):**
+A photo may document a task (bug `a290934f`). The live `ProjectPhoto` gains
+nullable `taskId`, mirroring the new server column `project_photos.task_id`
+(ledger `20260909070929`). The released V9–V26 photo shape is frozen as
+`OPSSchemaLegacyProjectPhotoV26.ProjectPhoto` and `OPSSchemaCommon.v9ProjectPhotoModels`
+points at it, so all V1–V26 fingerprints stay byte-identical;
+`OPSSchemaCommon.v27ProjectPhotoModel` carries the widened live model into
+`OPSSchemaV27`, and `OPSMigrationPlan.addProjectPhotoTaskLinkV26toV27` is an
+adjacent lightweight stage. Nothing is backfilled: an installed photo documents
+no task until someone assigns one. `taskId` is stored lowercased through
+`ProjectPhotoTaskLink.canonical` — `UUID().uuidString` is UPPERCASE and every id
+comparison in the app is case-sensitive string equality. Sources:
+`OPS/DataModels/Supabase/ProjectPhoto.swift`,
+`OPS/DataModels/Migrations/OPSSchemaV27.swift`,
+`OPS/DataModels/Migrations/OPSSchemaCommon.swift`,
+`OPS/DataModels/Migrations/OPSMigrationPlan.swift`, and
+`OPSTests/Fixtures/swiftdata-released-schema-fingerprints.json`.
 
 **iOS storage repair (2026-09-06; locally integrated and tested, not released):** The locally integrated IOS PERFORMANCE repair introduces `OPSSchemaV26` through the unchanged `OPSSchemaCurrent` alias. `OPSSchemaLegacyDeckDesignV25.DeckDesign` freezes the released V16–V25 shape; the adjacent V25→V26 lightweight migration adds nullable `syncedDrawingJSON` only to the new live graph. All V1–V25 committed fingerprints remain unchanged. An unknown merge base stays nil for an already-dirty upgraded drawing, including after an unchanged local save; local data must never become its own apparent server acknowledgement. Source commits: iOS `28be9966` and `9b5c0d92` (integration equivalents `cbf69ec6` and `257203c2`). The verified repair is on local iOS `main` at `622010a0`; it has not been pushed or installed on the phone or released.
 
@@ -2332,6 +2351,16 @@ $$;
 - RLS: `private.current_user_has_permission(text, text)` for the same
   logic in an `auth.uid()`-scoped context. Used in policies.
 
+**Execution grants (hardened 2026-08-07, ledger `20260807204914_agent_control_plane_actor_authority`):** `public.has_permission(uuid, text, text)` and the other actor-parameterised primitives (`private.permission_user_is_admin(uuid, uuid)`, `private.user_is_company_admin(uuid, uuid)`, `private.raw_permission_scope_for_user(...)`) are executable by `postgres` and `service_role` ONLY — a client must never be able to ask about an arbitrary actor. Anything that evaluates as the calling API role — RLS policy `USING`/`WITH CHECK` expressions, `security_invoker` views, SECURITY INVOKER functions granted to `anon`/`authenticated`, index expressions — must use the current-user forms instead: `private.current_user_has_permission_scoped(text, text)` (= `has_permission(private.get_current_user_id(), …)`, DEFINER, granted to anon/authenticated/service_role), `private.current_user_has_permission(text, text)`, `private.current_user_is_admin()`. EXECUTE is checked before SECURITY DEFINER is honoured, so a client-role caller of a service-only primitive fails `42501` even though the primitive is DEFINER. Violations found by catalog sweep on 2026-09-08: `public.project_table_rows` (every browser read failed since the hardening reached production — fixed, ledger `20260908182719`) and the `user_email_aliases_admin_read` policy (open bug, no browser reader yet).
+
+### search_workspace() RPC — universal search (2026-09-09, ledgers `20260909051424` v1 → `20260909055047` v2)
+
+`public.search_workspace(p_query text, p_limit_per_kind integer default 8) returns jsonb` powers the OPS-Web ⌘K palette. One call returns the top hits per kind — `projects`, `clients`, `leads` (opportunities), `tasks`, `documents` (invoices ∪ estimates) — each as `{ total, items[] }` plus the normalized `query` and `tokens` (max 8). Every token must match at least one of the kind's fields (projects: title, address, notes, description, trade, client name · clients: name, email, phone, address, notes · leads: title, description, contact name/email/phone, address · tasks: title, notes, task type, project title · documents: number by contains on the alnum-folded number, subject/title, client name); phone tokens also match digit-normalized phone columns. Rank per row: 0 exact primary, 1 prefix, 2 all tokens in the primary, 3 scattered; then `updated_at desc`. `p_limit_per_kind` clamps to `[1, 25]`; a query that normalizes to under 2 characters returns the empty envelope, never an error. Deleted rows, merged clients and merged leads are excluded; closed/archived/lost rows are included and carry their status.
+
+**Authority and shape.** SECURITY INVOKER — row visibility is the caller's RLS, exactly as on every list surface. Cost is kept O(matches), not O(company rows), by `private.search_workspace_candidates(p_company, p_query, p_frags, p_phones, p_doc_keys)`: a SECURITY DEFINER pre-filter that reads the base tables without RLS, restricted to the caller's own company (it re-derives the company from the JWT and raises `SEARCH_WORKSPACE_CANDIDATES_COMPANY_MISMATCH` if the argument differs), returning only ids + rank; `search_workspace` then reads those rows back under RLS. Accepted residual: a client calling the helper directly learns opaque ids of rows in its own company that its row scope hides — no content, no other company. Text folding is `private.search_norm(text)` = `extensions.unaccent(lower(btrim(whitespace-collapsed)))` (the `unaccent` extension was installed for this, schema `extensions`); it deliberately carries no `SET search_path` so it inlines (≈40 ms per broad search) — every name inside is schema-qualified and the migration proves identical output under `search_path = pg_temp`; it is the one accepted entry in the advisor's `function_search_path_mutable` group from this work. Grants: `search_workspace`, the candidates helper and `search_norm` are executable by `anon`, `authenticated`, `service_role` and revoked from `public`, per the execution-grant rule above.
+
+**Measured (Canpro, the largest company, warm):** broad 2-character query 204 ms, typical 3-token query 51 ms (v1 without the pre-filter: ~780 ms — the per-row RLS helper on every company row). No new indexes; the existing `*_agent_discovery_*_trgm_idx` indexes cannot serve a six-field OR, and volumes (≤ 600 rows per kind per company) do not need them. Probes and a v1↔v2 differential over 35 persona/query pairs: `ops-web/docs/superpowers/plans/2026-09-08-search-workspace-probes.md`.
+
 ### RLS on Permission Tables
 
 Permission tables have their own RLS policies:
@@ -4103,6 +4132,77 @@ Phase 2 deck framing can emit additive `components[]` rows for `joist`, `beam`, 
 **Purpose**: Threshold-driven restock orders. See § "Catalog & Variant Model" → `CatalogOrder` / `CatalogOrderItem` for SwiftData declarations.
 **Lifecycle**: `suggested` (computed on demand from variants below warning threshold) → `draft` (user opened the suggestion sheet and committed) → `sent` (PO emitted to supplier) → `fulfilled` (stock arrived; quantity is added back to `catalog_variants`) → `cancelled`.
 **RLS**: company_isolation on both tables.
+
+---
+
+## Google Ads Engine Tables (2026-09-09)
+
+Phase 1 of the Google Ads engine (`specs/2026-09-08-google-ads-engine-design.md` §3). All server-only: RLS on, `anon` / `authenticated` grants revoked, `service_role` bypasses. Applied to prod through `apply_migration` and verified by object; mirrors in `migrations/` are byte-identical to the ledger SQL.
+
+| Migration (ops-web file) | Ledger version | Contents |
+|---|---|---|
+| `20260909120000_ads_conversion_outbox.sql` | `20260909023503` | `ads_conversion_actions`, `ads_conversion_events`, `trial_attributions.gbraid/wbraid`, `ads_plan_annual_value`, `ads_enqueue_conversion_event`, trigger `projects_ads_enqueue_trial_activation`, widened `seed_trial_attribution_for_company` / `pmf_update_first_paid_at` / `record_first_touch_attribution` / `expire_attribution_click_ids` |
+| `20260909123000_ads_warehouse_grain.sql` | `20260909041702` | `ads_daily_ad_group`, `ads_daily_ad`, `ads_daily_asset`, `ads_daily_keyword` (dropped + recreated), `ads_entities`, `ads_click_map`, view `ads_funnel_by_keyword` |
+
+### `ads_conversion_actions`
+
+The Google resource names of the three OPS `UPLOAD_CLICKS` conversion actions, recorded by `POST /api/internal/ads/setup/conversion-actions` after each apply (self-healing on every run).
+
+```sql
+ads_conversion_actions
+  kind           text PK  check in ('trial_started','trial_activated','paid')
+  resource_name  text NOT NULL   -- customers/4454506598/conversionActions/<id>
+  google_id      text NOT NULL   -- 7754797893 / 7754797896 / 7754797899 (applied 2026-09-09)
+  name           text NOT NULL   -- 'OPS · Trial started' / 'OPS · Trial activated' / 'OPS · Paid subscription'
+  synced_at      timestamptz NOT NULL default now()
+```
+
+### `ads_conversion_events` (the conversion outbox)
+
+One row per company and kind, enqueued by database triggers; drained hourly by `/api/cron/ads-conversions` to Google's Data Manager API. `transaction_id = kind:company_id` is Google's dedupe key, so a re-send never double counts. Never deleted — requeue by setting `state = 'queued'`.
+
+```sql
+ads_conversion_events
+  id                 uuid PK default gen_random_uuid()
+  company_id         uuid NOT NULL → companies(id) ON DELETE CASCADE
+  kind               text NOT NULL  check in ('trial_started','trial_activated','paid')
+  occurred_at        timestamptz NOT NULL      -- the business moment, in the account's zone when sent
+  value              numeric(12,2)             -- paid only: ads_plan_annual_value(plan, amount_cents)
+  currency           text NOT NULL default 'CAD'
+  transaction_id     text NOT NULL UNIQUE      -- kind:company_id
+  state              text NOT NULL default 'queued' check in ('queued','sent','failed','skipped')
+  attempts           integer NOT NULL default 0 -- 5 max, 15 min · 2^n backoff
+  next_attempt_at    timestamptz NOT NULL default now()
+  last_error         text                      -- Google's answer, or the skip reason
+  sent_at            timestamptz
+  google_request_id  text                      -- Google's receipt
+  created_at         timestamptz NOT NULL default now()
+  -- index ads_conversion_events_ready_idx (state, next_attempt_at) where state = 'queued'
+  -- index ads_conversion_events_company_idx (company_id, kind)
+```
+
+Writers: `seed_trial_attribution_for_company` (companies AFTER INSERT → `trial_started`, every platform), `ads_enqueue_trial_activation` (projects AFTER INSERT → `trial_activated` on the first non-deleted project at least 2 minutes after the company's birth; earlier rows are bulk imports and never count, before or after), `pmf_update_first_paid_at` (billing_events AFTER INSERT → `paid` on the first `invoice.paid`, alongside the existing `first_paid_at` stamp). Every enqueue is exception-wrapped: a business write never aborts because attribution failed. `ads_enqueue_conversion_event(uuid, text, timestamptz, numeric)` is SECURITY DEFINER, executable by `service_role` only (the Stripe webhook's role runs `pmf_update_first_paid_at` as the invoker).
+
+### `trial_attributions.gbraid`, `trial_attributions.wbraid`
+
+Google's click-id variants issued when `gclid` is unavailable (iOS app-to-web `gbraid`, iOS web-to-web `wbraid`). Captured by all three cookie writers (ops-site, try-ops, app.opsapp.co), stored by `record_first_touch_attribution` under the same rules as `gclid` (512-char cap, nulled when the touch is older than 30 days, also written into `touchpoints.click_ids`), scrubbed by `expire_attribution_click_ids`. `classifyAttribution` treats any of the three as `google_ads` / `verified_click_id` / `google_click_id_present`.
+
+### Warehouse grains
+
+```sql
+ads_daily_ad_group   PK (date, ad_group_id)                 campaign_id, campaign_name, ad_group_name, status, spend, clicks, impressions, conversions, ctr, synced_at
+ads_daily_ad         PK (date, ad_id)                       ad_group_id, ad_type, status, ad_strength, approval_status, review_status, final_url, spend, clicks, impressions, conversions, ctr, synced_at
+ads_daily_asset      PK (date, ad_id, asset_id, field_type) performance_label, pinned_field, text, impressions, clicks, conversions, synced_at
+ads_daily_keyword    PK (date, ad_group_id, criterion_id)   campaign_id, campaign_name, ad_group_name, keyword, match_type, status, quality_score, spend, clicks, impressions, conversions, average_cpc, synced_at
+ads_entities         PK (resource_name)                     entity_type check in (campaign, campaign_budget, ad_group, ad, keyword, negative_keyword, shared_set, shared_criterion, label), parent_resource_name, name, status, payload jsonb, labels text[], snapshot_at
+ads_click_map        PK (gclid)                             click_date, campaign_id, ad_group_id, ad_id, criterion_id, keyword, synced_at
+```
+
+`ads_daily_keyword` was dropped and recreated (it held 0 rows; its old key `(date, keyword)` could not hold one keyword living in two ad groups). Each `ads_daily_*` table carries a `(date desc)` index; `ads_click_map` a `(click_date desc)` index. `ads_entities` is a daily snapshot of the live account structure (full RSA assets and pins ride in `payload`), so the engine and the console never need a live call to know what exists. `ads_click_map` is filled from `click_view` one day per query (Google exposes 90 days; OPS keeps it forever).
+
+### `ads_funnel_by_keyword` (view)
+
+Keyword grain (campaign / ad group / criterion): `clicks` and `spend` from `ads_daily_keyword`; `trials` = companies whose `trial_attributions.gclid` maps to the keyword through `ads_click_map`; `activated` = a `trial_activated` outbox row exists (any delivery state — the moment happened); `paid` = `first_paid_at` set; `cost_per_trial` / `cost_per_paid` = spend over each count, null at zero. Owner-run (no `security_invoker`), `service_role` only. The only place "which keyword bought a paying customer" is answered.
 
 ---
 
@@ -6761,12 +6861,25 @@ Source: OPS-Web commit `d0879395f`. The three migrations named below are mirrore
 
 ---
 
+## Google Ads engine ledger (2026-09-10; migration applied to production, code NOT deployed)
+
+Source: `ops-web/supabase/migrations/20260910120000_ads_engine.sql`, applied to production 2026-09-08 (ledger row `20260909012547 ads_engine`; verified by object — `ops-web/docs/artifacts/ads-engine/p3/migration-verify.txt`), mirrored at `migrations/20260910120000_ads_engine.sql`. Self-contained: references only `public.notifications`, so it orders freely against the phase 1 warehouse migrations. Every table has RLS enabled, no policy, public/anon/authenticated revoked, service_role CRUD. Every function is `security invoker` with `search_path=''` and executable by service_role only. Harness: `ops-web/tests/sql/ads-engine-runtime.mjs` (PG17, carries the production notification dedupe indexes).
+
+- `public.ads_engine_settings` — singleton (`id boolean` PK constrained true). `modes jsonb` (all eleven proposal kinds → `propose|auto|off`, validated by `ads_engine_modes_valid`; default all `propose`), `monthly_cap numeric(12,2)` 1500, `daily_cap` 60, `max_budget_change_pct` 15 (1–50), `budget_cooldown_days` 14 (1–90), `max_structural_per_run` 3 (0–20), `lease_minutes` 40 (10–120), `stall_hours` 50 (6–240), `target_cost_per_trial numeric(12,2)` 150, `heartbeat_at timestamptz` (every claim, including refused ones), `stall_notified_on date`, `updated_at`.
+- `public.ads_engine_runs` — `id uuid` PK; `state` claimed/released/expired; `worker text` (`routine`'s session id, or `ops-worker` for the follow-up proposals the daily tick files); `claim_token uuid`; `lease_until`; `duties text[]`; `brief_version`; `summary` (≤20,000 chars, the run's briefing); `outcome` done/error/nothing_to_do/brief_unavailable/lease_expired; `proposals_accepted`, `proposals_rejected`; `submission_counts jsonb` (per proposal index, budget 3); `submission_log jsonb` (last 60 attempts); `created_at`, `released_at`, `updated_at`. Index `(state, created_at desc)`.
+- `public.ads_proposals` — `id uuid` PK; `run_id → ads_engine_runs`; `kind` ∈ `add_negatives, pause_keyword, add_keywords, create_rsa_challenger, promote_challenger, pause_ad, adjust_budget, adjust_cpc_cap, set_bidding_strategy, add_ad_group, observation`; `target text` (normalised key of the entity acted on; open proposals never share one); `submission_index`; `payload jsonb` (normalised by the validator); `evidence jsonb`; `rationale`; `state` proposed/approved/rejected/applied/failed/expired; `mode_at_submit` propose/auto; `google_validation jsonb`; `reviewed_by text` (the admin's email), `review_notes`, `reviewed_at`; `applied_at`, `applied_by` operator/auto, `applied_resource_names text[]`, `label` (`gen-<run id>`), `error`; `notified_at`; `expires_at` (14 days); `created_at`, `updated_at`. Indexes on `(state, created_at desc)`, `(run_id)`, partial `(target)` where open. **Proposals never enter `agent_actions`** (company-scoped).
+- `public.ads_changes` — `id uuid` PK; `proposal_id → ads_proposals`; `kind`; `campaign_id`, `ad_group_id` (Google ids); `resource_names text[]`; `before`, `after jsonb`; `label`; `applied_at`; `measure_from`, `measure_to date` (applied+1 day, 14 days); `pre_metrics`, `post_metrics jsonb` (impressions, clicks, conversions, ctr, deltaPct, window, scope); `verdict` pending/better/worse/flat/no_verdict; `verdict_at`. Partial index on pending `measure_to`.
+- `public.ads_tests` — `id uuid` PK; `campaign_id`, `ad_group_id`, `ad_group_name`; `control_ad_id`, `challenger_ad_id` (distinct); `proposal_id` (the challenger creation), `concluded_proposal_id` (the follow-up); `label`; `started_at`; `min_days` 14, `min_impressions` 2000, `max_days` 56; `state` running/control_won/challenger_won/no_verdict/cancelled; `stats jsonb` (both arms' impressions/clicks/ctr/trials, days, z, p, veto, reason, window, computed_at — updated every tick while running); `verdict_at`; timestamps. Unique partial index: one running test per ad group.
+- `public.ads_engine_alerts` — the durable outbox for the rail: `id`, `kind` ad_disapproved/budget_pacing/apply_failed, `dedupe_key text` unique (`ads-engine:…`), `title`, `body`, `persistent`, `action_url` (default `/admin/google-ads#engine`), `created_at`, `notified_at`.
+- Service-only RPCs: `claim_ads_engine_run(uuid,text)` (locks settings, bumps `heartbeat_at`, expires overdue leases, refuses when every mode is `off` or a run is live; returns 0–1 rows); `checkpoint_ads_engine_run(uuid,uuid,text[],text)`; `record_ads_engine_submission(uuid,uuid,integer,jsonb)` → count for that index; `accept_ads_proposal(uuid,uuid,text,text,integer,jsonb,jsonb,text,text)` → id; `release_ads_engine_run(uuid,uuid,text,text)`; `expire_ads_proposals()`; `review_ads_proposal(uuid,text,text,text)` (proposed → approved/rejected, once, before expiry); `mark_ads_proposal_applied(uuid,text,jsonb,text[],text,text)` (approved, or proposed+auto → applied/failed); `notify_ads_engine(text,text)` (one `ADS PROPOSALS READY · n` per run with proposals waiting, then the alert outbox; `on conflict do nothing` against the open-notification dedupe indexes, acknowledged in the same transaction); `check_ads_engine_stall(text,text,integer,boolean)` (once per Vancouver day, only while `p_campaigns_live`).
+- The weekly market digest is cached in `ads_sync_status` row `id='market-digest'` (`backfill_progress` jsonb `{text, generated_at}`; documented reuse of the existing jsonb column, the same pattern as phase 1's `engine-readiness` row).
+
 ## Cloud Instagram editorial ledger (production preparation active 2026-09-05)
 
 **Assignment ledger (2026-09-07; migration written and proven locally, NOT applied to production).** `ops-web/supabase/migrations/20260907004500_create_social_editorial_assignments.sql` (mirror into `migrations/` with its applied version number at apply time). Additive except two `create or replace` supersets (`notify_social_editorial`, `guard_cloud_editorial_handoff`).
 
 - `public.social_editorial_settings` gains `discovery_since timestamptz not null default now()` (rollout boundary; the 78 pre-existing articles are never backfilled), `delivery_gap_minutes integer default 1200` (60–10080), `authoring_lease_minutes integer default 40` (10–120), `authoring_heartbeat_at timestamptz` (last routine contact, updated on every claim including idle), `authoring_stall_notified_on date`.
-- `public.social_editorial_assignments`: `id uuid` PK; `identity text` unique, `blog:<uuid>` or `(protocol|product|rotation):<YYYY-MM-DD>`; `kind` blog/protocol/product/rotation; `blog_id uuid` (blog kind only) / `slot_date date` (recurring only), enforced by check constraints; `mode` prepare/publish stamped at claim; `state` queued/authoring/drafted/prepared/submitted/blocked; `attempts` 0–3; `submissions` 0–3 (per claim); `claim_token uuid`, `lease_until`, `next_attempt_at`, `claimed_by text`; `source_id`, `source_snapshot jsonb`; `brief_version`, `guide_sha256`; `package jsonb` (submission, evidence, review, usage, references, brief_version), `preview jsonb`; `attempt_log jsonb` (≤9 entries); `post_id uuid → social_posts`; `last_code text ~ '^[A-Z_]{1,80}$'`; `drafted_at`, `prepared_at`, `submitted_at`, `blocked_at`, `notified_at`, `created_at`, `updated_at`. Indexes on `(state, next_attempt_at, created_at)` and partial `(blog_id)`. RLS enabled; no anon/authenticated privileges; service_role CRUD.
+- `public.social_editorial_assignments`: `id uuid` PK; `identity text` unique, `blog:<uuid>` or `(protocol|product|rotation):<YYYY-MM-DD>`; `kind` blog/protocol/product/rotation; `blog_id uuid` (blog kind only) / `slot_date date` (recurring only), enforced by check constraints; `mode` prepare/publish stamped at claim; `state` queued/authoring/drafted/prepared/submitted/blocked; `attempts` 0–3; `submissions` 0–3 (per claim); `claim_token uuid`, `lease_until`, `next_attempt_at`, `claimed_by text`; `source_id`, `source_snapshot jsonb`; `brief_version`, `guide_sha256`; `package jsonb` (submission, evidence, review, usage, references — since 2026-09-08 both the OPS copywriter brief and the Sam Parr guide as `{path, sha256}` — brief_version), `preview jsonb`; `attempt_log jsonb` (≤9 entries); `post_id uuid → social_posts`; `last_code text ~ '^[A-Z_]{1,80}$'`; `drafted_at`, `prepared_at`, `submitted_at`, `blocked_at`, `notified_at`, `created_at`, `updated_at`. Indexes on `(state, next_attempt_at, created_at)` and partial `(blog_id)`. RLS enabled; no anon/authenticated privileges; service_role CRUD.
 - Service-only RPCs (`security invoker`, empty search path, execution revoked from public/anon/authenticated): `discover_social_editorial_assignments(date,text)` → `{blogs,recurring}`; `recover_social_editorial_assignments()`; `claim_social_editorial_assignment(uuid,text)` (locks settings, expires stale leases, bumps heartbeat, returns 0–1 rows, refuses in `off`); `checkpoint_social_editorial_assignment(uuid,uuid,jsonb,text,text)`; `record_social_editorial_assignment_attempt(uuid,uuid,jsonb)`; `finish_social_editorial_assignment(uuid,uuid,text,text,jsonb)` (authoring → drafted/queued/blocked; retry delays 2 h, 6 h for `EDITOR_REJECTED`/`SUBMISSIONS_EXHAUSTED`; third attempt blocks; drafted replay returns `drafted`); `promote_social_editorial_assignment(uuid,text,text,jsonb,uuid,jsonb)` (drafted → prepared/submitted/queued/blocked); `annotate_social_editorial_assignment(uuid,jsonb,jsonb,jsonb)`; `check_social_editorial_authoring(text,text,integer)`; replaced `notify_social_editorial(text,text)` (legacy runs, then assignments; inserts `on conflict do nothing` against the open-notification dedupe indexes and acknowledges `notified_at` in the same transaction); replaced `guard_cloud_editorial_handoff()` (`cloud-editorial-v1:` keys always rejected; `cloud-editorial-v2:<identity>` keys require settings `publish`, assignment `drafted` with `mode='publish'` and a package, and a live blog for blog kind).
 - Downstream idempotency key `cloud-editorial-v2:<identity>`; preview post id `editorialPreviewId(identity)`. Harness: `ops-web/tests/sql/social-editorial-assignments-runtime.mjs` (carries production's `idx_notifications_unread_dedup` and `notifications_open_dedupe_key` stand-ins).
 
@@ -6784,3 +6897,15 @@ Source: `ops-web/supabase/migrations/20260905185527_create_social_editorial.sql`
 Exact function contracts: `04_API_AND_INTEGRATION.md` § Cloud Instagram editorial. Feature and release boundary: `07_SPECIALIZED_FEATURES.md` §22. Local PostgreSQL tests exercise the exact migration, grants, concurrent claims and recovery; production scheduling and preparation activation are verified. First scheduled generation is Monday 2026-09-07 10:00 Vancouver; cloud generation, asset storage and draft-notification delivery remain unobserved until that eligible slot.
 
 **End of Data Architecture Documentation**
+
+## Existing-job email correspondence storage (2026-09-09)
+
+**Status (2026-09-09): released to production after explicit approval.** Database journal `20260909061758`; customer app `app.opsapp.co` verified on ops-web `d86d5664b` at 06:26 UTC. [Release evidence](docs/artifacts/email-work-correspondence-release.md).
+
+No new table is added. Existing `activities` rows hold the provider source, full/clean body and customer/project relationship. `company_id`, `client_id`, `opportunity_id` and `email_connection_id` are UUIDs; `project_id` is text. `match_confidence` uses `work_routing_pending`, `existing_job` and `work_intent_review` as durable routing states. Non-sales correspondence has `opportunity_id = NULL`; review has `project_id = NULL` and `match_needs_review = true` until acknowledged.
+
+The service-only `route_email_work_correspondence_as_system` RPC atomically validates and projects one exact activity, disarms the latest no-parent `email_threads` sales work, and emits a generic inbound `email_correspondence` notification. It validates active/sync-enabled mailbox, company, provider message/thread, sender/recipient customer membership and project ownership/status. Final receipt replay is idempotent and preserves acknowledgement; exact pending proposals with stale parents are downgraded to review. Other ownership/source mismatches fail without side effects.
+
+Live schema and RLS were read through Supabase before implementation. `activities.company_isolation` combines with restrictive `assigned_lead_scope_select` / `private.current_user_can_view_activity`, so the project timeline uses the signed-in client to retain mailbox and project access restrictions. Email bodies are not copied into broadly visible project notes or notification text.
+
+Migration source: ops-web `supabase/migrations/20260909051427_email_existing_job_correspondence.sql`; an identical applied reference is under `migrations/`. Supabase recorded this migration as version `20260909061758` with name `email_existing_job_correspondence`; the source filename preserves its CLI-generated timestamp. Implementation commits: ops-web `61a806b4e` and `d86d5664b` (shared-mailbox notification constraint guard). See Chapter 10 for purpose classification and Chapter 04 for the RPC/API contract.

@@ -1292,6 +1292,55 @@ failed tile stating that the bytes remain on the phone. Source commit
 `OPSTests/Sync/SharePhotoCreateBarrierTests.swift`. This is an iOS ordering fix,
 not a database migration; the live INSERT policy remains unchanged.
 
+**A photo may document a task (2026-09-09 — bug `a290934f`, ledger
+`20260909070929`).** Photos belong to the project; a photo could not say which
+task it documented, so an owner reviewing a job could not separate the vinyl
+install from the curb details. `project_photos` gains
+`task_id uuid NULL REFERENCES public.project_tasks(id) ON DELETE SET NULL` — one
+photo store, one gallery, one viewer, with an optional task link. Rejected:
+photos-as-task-notes (invisible to the canonical store and to the web) and a
+separate `task_photos` table (a second store splits the gallery).
+
+The partial index `project_photos_project_task_idx (project_id, task_id) WHERE
+deleted_at IS NULL AND task_id IS NOT NULL` serves the two hot reads (a task's
+photo strip, the gallery's task badges). Client roles hold column-scoped
+`INSERT (task_id)` **and** `UPDATE (task_id)`: capture stamps the link at insert
+time, the viewer reassigns it later. `trg_project_photos_00_write_guard` is now
+`BEFORE INSERT OR UPDATE` (it was UPDATE-only) so the insert-time link is
+validated too, and the function branches on `TG_OP` because `OLD` is unassigned
+during an INSERT. Its new rule mirrors the soft-delete rule exactly — a
+`task_id` change requires `lower(uploaded_by) = lower(private.resolve_uid()::text)`
+or `private.current_user_has_permission('projects.edit','all')`, matching the
+iOS gate `PermissionStore.can("projects.edit")`, whose `requiredScope` defaults
+to `all` — plus a membership rule: the task must be live and belong to the
+photo's project. That membership question is answered by the SECURITY DEFINER
+helper `private.project_photo_task_matches_project(uuid, text)`, deliberately
+**not** in invoker context: `project_tasks` SELECT is scope-gated
+(`private.current_user_can_view_task_row`), and a field photo must never fail to
+deliver because the uploader's read scope hides the task row. Authorization is
+the ownership/permission half above, which still runs in invoker context.
+`project_photos.project_id` is `text` while `project_tasks.project_id` is `uuid`,
+so the helper normalizes through the existing
+`private.project_table_project_id_from_text`, which also absorbs the UPPERCASE
+uuids legacy iOS wrote.
+
+Probed in production inside `begin … rollback` before it was applied: the
+uploader may link a same-project task; an other-project task is rejected `42501`
+on both UPDATE and INSERT; an unresolvable operator matches 0 rows (RLS
+`company_isolation`, not a bypass); unrelated caption updates still pass. The
+byte-exact applied SQL is archived at
+`ops-software-bible/migrations/20260909070929_project_photos_task_link.sql`.
+
+**Note for the ops-web session:** the column is nullable and the web app is
+untouched — its typed inserts and reads keep working with no change. When web
+picks this up, read/write `task_id` and honour the same membership rule the
+guard enforces.
+
+iOS side: SwiftData **V27** adds nullable `ProjectPhoto.taskId` (stored
+lowercased through `ProjectPhotoTaskLink.canonical`), with the released V9–V26
+photo shape frozen as `OPSSchemaLegacyProjectPhotoV26.ProjectPhoto`. See
+`03_DATA_ARCHITECTURE.md` § schema chain.
+
 ### Capture UI — one standardized camera (iOS)
 
 **`CameraBatchView` is the single photo-capture surface** across every flow
@@ -4066,6 +4115,19 @@ Mirror the deterministic structuring + the per-family idempotent commit loop. Th
 
 ## 14. Notification System
 
+### Existing-job correspondence notifications (2026-09-09)
+
+**Status (2026-09-09): released to production after explicit approval.** Database journal `20260909061758`; customer app `app.opsapp.co` verified on ops-web `d86d5664b` at 06:26 UTC. [Release evidence](docs/artifacts/email-work-correspondence-release.md).
+
+Inbound `existing_job` and `work_intent_review` receipts emit `type = email_correspondence` from the atomic routing RPC. The title is “Project email received” or “Email needs review”; body text is generic and never includes the customer message or subject. The recipient is the mailbox owner, falling back to its configured default intake owner. A mailbox with neither retains authorized timeline/review visibility without attempting a notification with a NULL recipient; `notifications.user_id` is non-nullable.
+
+Project actions open `/dashboard?openProject=<id>&mode=view`; review actions open `/pipeline?review=email`. The existing rail uses the inbox icon and EMAIL label. `dedupe_key = email-work-routing:<activity-id>` and the locked immutable receipt ensure one notification across replay/concurrency, including after operator acknowledgement. Outbound correspondence does not notify. These are correspondence notifications, never new-lead notifications.
+
+The project timeline reads `activities` under the signed-in user's mailbox/project RLS; no email content is copied to project notes. Review cards retain full readable source text, use Done to acknowledge without reclassifying as noise, and preserve the explicit operator Create lead action for a real new opportunity. No new visual surface or iOS inbox is introduced.
+
+Sources: ops-web migration `20260909051427_email_existing_job_correspondence.sql`, `notification-service.ts`, `notification-meta.ts`, `use-project-activity.ts`, `email-review-panel.tsx`. Implementation commits: ops-web `61a806b4e` and `d86d5664b` (shared-mailbox notification constraint guard).
+
+
 ### Overview
 Multi-layer notification system combining local (UNUserNotificationCenter), push (OneSignal), and in-app (Supabase `notifications` table) notifications. Features batching during sync, deep linking to projects, unread tracking, quiet hours, and per-type preference controls.
 
@@ -4073,7 +4135,29 @@ Multi-layer notification system combining local (UNUserNotificationCenter), push
 
 ### Cloud Instagram editorial notifications (2026-09-05; production preparation active)
 
-New type `social_editorial` is written by service-only `notify_social_editorial(text,text)` in `20260905185527_create_social_editorial.sql`. A `prepared` run produces standard `INSTAGRAM DRAFT READY`; a `failed` run produces persistent `INSTAGRAM PREPARATION STOPPED`. Both link to `/admin/social#cloud-production` with `VIEW SOCIAL`. Recipient IDs use `SOCIAL_OPERATOR_*`, falling back to `PMF_OPERATOR_*`. The run's `notified_at` is acknowledged in the same transaction as insertion, under row locks; notification failures stay replayable and successful replays insert zero duplicates. Skipped editorial ideas remain in the run history without a failure alert. The notification outbox is active with preparation, but no draft or failure notification has yet been generated in production; the first eligible slot is Monday 2026-09-07 10:00 Vancouver. The fallback recipient was independently verified as active Jackson Sweet with a matching active company; the cloud worker trims existing trailing whitespace and rejects incomplete social-specific override pairs. See §22 and the cloud editorial runbook.
+New type `social_editorial` is written by service-only `notify_social_editorial(text,text)` in `20260905185527_create_social_editorial.sql`. A `prepared` run produces standard `INSTAGRAM DRAFT READY`; a `failed` run produces persistent `INSTAGRAM PREPARATION STOPPED`. Both link to `/admin/social#cloud-production` with `VIEW SOCIAL`. Recipient IDs use `SOCIAL_OPERATOR_*`, falling back to `PMF_OPERATOR_*`; since ops-web `2e3cfcb77` the app-side social rail items (`social_post_review`, `social_post_published`, recovery) resolve them through the same trimmed `getEditorialOperator`, because the production values carry trailing whitespace and `notifications_company_id_canonical` rejected the untrimmed company id. The run's `notified_at` is acknowledged in the same transaction as insertion, under row locks; notification failures stay replayable and successful replays insert zero duplicates. Skipped editorial ideas remain in the run history without a failure alert. The notification outbox is active with preparation, but no draft or failure notification has yet been generated in production; the first eligible slot is Monday 2026-09-07 10:00 Vancouver. The fallback recipient was independently verified as active Jackson Sweet with a matching active company; the cloud worker trims existing trailing whitespace and rejects incomplete social-specific override pairs. See §22 and the cloud editorial runbook.
+
+### Google Ads engine notifications (2026-09-10; built, NOT deployed)
+
+New type `ads_engine`, recipient `PMF_OPERATOR_USER_ID` / `PMF_OPERATOR_COMPANY_ID` (trimmed, `ops-web/src/lib/ads/engine/operator.ts`), all `action_label` `VIEW ADS`, written by the service-only RPCs in `20260910120000_ads_engine.sql` and delivered by the daily `/api/cron/ads-engine` tick:
+
+| Title | Persistent | Dedupe key | Action | When |
+|---|---|---|---|---|
+| `ADS PROPOSALS READY · n` | no | `ads-engine:proposals:<run id>` | `/admin/google-ads#proposals` | `notify_ads_engine`: a run has proposals waiting for Jackson (one notification per run; `n` = proposals still waiting) |
+| `AD DISAPPROVED` | yes | `ads-engine:disapproved:<ad resource>` | `/admin/google-ads#engine` | the worker found an enabled engine ad with `approval_status = DISAPPROVED`; it paused it (validateOnly then real) or says it could not |
+| `ADS BUDGET PACING` | no | `ads-engine:pacing:<campaign id>:<date>` | `/admin/google-ads#engine` | `search_budget_lost_impression_share > 0.3` three days running on an engine campaign |
+| `ADS CHANGE FAILED` | yes | `ads-engine:apply-failed:<proposal id>` | `/admin/google-ads#engine` | an approved or auto-mode proposal failed to apply (Google validation or transport); the error is on the proposal |
+| `ADS ENGINE STALLED` | yes | `ads-engine:stalled:<Vancouver date>` | `/admin/google-ads#engine` | `check_ads_engine_stall`: engine campaigns are live and the routine has not claimed for `stall_hours` (50); once per day; the worker resolves open stall rows as soon as the heartbeat is fresh |
+
+### Google Ads conversion outbox notification (2026-09-09; phase 1, built, NOT deployed)
+
+Type `ads_conversion_alert`, recipient `PMF_OPERATOR_USER_ID` / `PMF_OPERATOR_COMPANY_ID` (`getOptionalPmfOperatorIdentity()`; unset → logged and skipped), written directly by the service-role repository in `ops-web/src/lib/ads/conversion-outbox.ts` from `/api/cron/ads-conversions`:
+
+| Title | Persistent | Dedupe key | Action | When |
+|---|---|---|---|---|
+| `ADS CONVERSIONS FAILING` | yes | `ads-conversions:failed` | `/admin/google-ads` · `VIEW ADS` | a run moved one or more `ads_conversion_events` rows to `failed` (five attempts exhausted). Body: `<n> conversion event(s) could not reach Google after 5 attempts. Fix the cause, then requeue from the runbook.` Raised once — an open (unread, unresolved) row with the key is left alone, and a `23505` on the open-notification index is treated as already raised. The next fully clean run with zero `failed` rows resolves it (`resolved_at`, `resolution_reason = outbox_drained`). |
+
+`ADS CONVERSIONS FAILING` belongs to phase 1 (the conversion outbox). Alerts other than READY and STALLED ride the `ads_engine_alerts` outbox so a failed rail insert is retried next tick; inserts use `on conflict do nothing` against the open-notification dedupe indexes, so a re-raised alert whose first row is still unread is acknowledged without a duplicate.
 
 ### OpenAI Provider Quota Incident
 
@@ -4803,6 +4887,8 @@ Migration `20260715181600_task_mutation_automation_outbox.sql` moves ordinary ta
 - `schedule_change` uses the union of the before/after assignee snapshots for real schedule changes. A removed user still receives a generic no-link rail notice, while current authorized users receive the task/project destination. Removal-only changes never claim that the task was rescheduled.
 
 The immutable monotonic event sequence closes same-timestamp and UUID-order races. Later per-recipient events suppress stale ABA deliveries, and the `task-mutation:<event-id>` unique notification key survives read/resolution state and worker retries. The in-app rail is always created for eligible recipients; push alone respects per-event and global push preferences. The recurrence generator relies on the same database trigger and no longer emits a second direct notification.
+
+**Push degradation contract (bug `77113c23`, repaired locally 2026-08-30; deployment pending).** Once the rail RPC reports `processed`, a later OneSignal rejection cannot make the durable task event retry: replay would only revisit an event whose authoritative in-app row already exists. The worker completes the event as `processed` and records `result.deliveryState = degraded`, `inAppDelivery = persisted`, `pushDelivery = failed`, recipient count, and bounded provider status/detail. Its batch result increments `degraded` and the shared cron returns `503` for that run, preserving operational visibility without burning ten attempts on unsubscribed devices. Database-completion failures remain retryable because the durable state transition itself did not finish.
 
 This migration was applied to production after Operator activation on 2026-07-17.
 
@@ -8595,9 +8681,9 @@ Both OPS-Web and ops-site render the same `blog_posts` data:
 
 ### Overview
 
-**Subscription-funded authoring: DEPLOYED and live-verified (2026-09-07 06:30 UTC).** Migration applied as `20260907055055`; production `app.opsapp.co` runs the release (ops-web `main` `d80fbbb72`, deployed under `37da7dee3`); `SOCIAL_AUTHORING_TOKEN` + `SOCIAL_STORAGE_BACKEND=supabase` set; `discovery_since` rolled back to 2026-09-01 so the Fable and Cape Breton articles were assigned. First native cloud run (manual Run now, 06:12–06:22 UTC, session `cse_01J9N2Nra5QmrLVtDMZ1UCxb`, `ROUTINE_RUN_STATUS_SUCCEEDED`): token injected by the environment credential (unset inside the sandbox), two claims, editor loop rejected→revised→approved on Fable, both drafts handed back; 06:23 tick rendered 7 + 7 slides into the Supabase `social-media` bucket (all 14 URLs HTTP 200, 1080 × 1350), two `INSTAGRAM DRAFT READY` notifications, `social_posts` = 0. Evidence `ops-web/docs/artifacts/social-editorial/cloud-run-2026-09-07/`. Still unproven: a scheduled (non-manual) fire (routine paused at 06:30 UTC), any Instagram publication, `publish` mode. The paragraph below records the pre-deploy state. **Subscription-funded authoring release candidate (2026-09-07; built and tested locally, NOT deployed).** Branch `feat/instagram-cloud-editorial` in `ops-web` (worktree `/private/tmp/ops-instagram-diagnostics-release-20260904`) replaces the date-keyed OpenAI worker with (1) a durable assignment ledger, `social_editorial_assignments`, one row per newly published blog (`blog:<id>`) plus one per Tuesday protocol / Wednesday product / Friday rotation day, discovered every 15-minute tick under the existing `social-editorial` workload lease; (2) a native Claude Cloud Routine on Jackson's subscription, `OPS Instagram authoring` (`trig_011aQJD1UqqmG2DVkzHAQTS1`, cron `0 15,21 * * *` UTC, `claude-opus-5`, no repositories, no connectors, **disabled**), which claims one assignment at a time over three bearer-authenticated handoff routes, writes the draft with an independent editor subagent, and hands back a held draft that the endpoint can only store, never render or queue; (3) the cron worker promoting `drafted` rows to a held preview (`prepare`) or to the existing queue with a paced `publish_at` (`publish`: one post per `delivery_gap_minutes`, default 20 h, inside 10:00–20:00 Vancouver, FIFO); (4) the renderer repair (every treatment renders `slide.body`; blog carousels always take `editorial_cover`: cover = image + hook + article title + date, `TAKEAWAY 01…` text slides, server-owned closing slide printing `opsapp.co/journal/<slug>`; footer shows only the page counter); (5) notifications `INSTAGRAM DRAFT READY`, `INSTAGRAM POST BLOCKED`, `INSTAGRAM POST QUEUED · <ID>` (now names the launch time), `INSTAGRAM AUTHORING STALLED` (queued work + no routine contact for 26 h, once per Vancouver day); (6) the OpenAI editorial generator, `scripts/social-generators/` and the `social-publish-instagram` edge-function source removed from the repo (the deployed edge function still exists). Proof: 322 focused tests, both SQL harnesses, clean `tsc` and production build, 24 render-proof images, and a local rehearsal that drove the exact routine prompt through the real handoff, editor loop, preview render and publish-mode queue entry against a disposable database (`ops-web/docs/artifacts/social-editorial/local-e2e-2026-09-07/`, `…/render-proof-2026-09-07/`). Not yet true: production deploy, migration `20260907004500_create_social_editorial_assignments.sql` applied, `SOCIAL_AUTHORING_TOKEN` / `SOCIAL_STORAGE_BACKEND` set, cloud environment API credential for `app.opsapp.co`, any cloud run against production, any Instagram publication. Runbook: `ops-web/docs/social/cloud-editorial-operations.md`; routine definition: `ops-web/docs/social/cloud-authoring-routine.md`; plan: `ops-web/docs/plans/2026-09-07-instagram-subscription-authoring.md`. The paragraphs below describe the currently deployed (retired-in-source) model.
+**First automatic Instagram publication: VERIFIED LIVE (2026-09-08 14:43 Vancouver).** The routine's first scheduled fire (21:05 UTC, session `cse_01GQqRtzC5jqtGJxEKxi4Hq5`, success) drafted `blog:171b2086…` (Kauaʻi hurricane article) and `protocol:2026-09-08` under prompt `routine-prompt-2026-09-08-v2`; the 21:24 UTC tick rendered both (7 and 5 assets) and submitted them with `mode=publish`; the publisher posted the Kauaʻi carousel once (media `17899797792664494`, https://www.instagram.com/p/DdCrehGoC-n/, key `cloud-editorial-v2:blog:171b2086…`), and the protocol post sits in review for 2026-09-09 10:34 Vancouver by the 1200-minute pace. Evidence `ops-web/docs/artifacts/social-editorial/first-publication-2026-09-08/`. Two defects surfaced by the readout, fixed and deployed (ops-web `main` `5abad86ec`, READY on `app.opsapp.co` as `dpl_4S6zEgFVALt7hqnCmR1QL13izgpa` at 2026-09-08 18:08 Vancouver): `notification-service.ts` read `PMF_OPERATOR_*` untrimmed, so the `INSTAGRAM POST QUEUED` and `INSTAGRAM POST LIVE` rows failed `notifications_company_id_canonical` silently (`2e3cfcb77`, every rail item now resolves through `getEditorialOperator`); and the persistent `INSTAGRAM AUTHORING STALLED` alarm was never resolved (`197f87d5c`, the tick resolves it once the heartbeat is fresh). The voice bundle (`01326cad5`: `docs/social/voice/ops-copywriter-brief.md` served as `voice`, brief version v4) shipped in the same deploy — and broke the editorial tick: `next.config.ts` `outputFileTracingIncludes` traced only the Sam Parr guide and only for the cron route, so the brief was absent from the production bundle and every tick from 18:08 threw (`private.cron_workload_controls` `social-editorial`: last success 17:53, failures through 21:08; the claim route would have failed identically). Hotfix `89d6e167f` includes `docs/social/voice/*.md` for all four consuming routes and reads each document by its literal path; proven in a local production build (both files in every route trace) and pushed to `main` as `4bddcf182` at 21:32 Vancouver; `dpl_6SuqqoWKPZuJr2e2CrRyVkHxxEgB` READY at 21:27 and the 21:38 tick succeeded and resolved the stall alarm (both fixes verified live). Rule: any file read from disk at runtime must be named in `outputFileTracingIncludes` for every route that reads it; the two 2026-09-06 drafts remain held under the old voice pending an operator reset. **Subscription-funded authoring: DEPLOYED and live-verified (2026-09-07 06:30 UTC).** Migration applied as `20260907055055`; production `app.opsapp.co` runs the release (ops-web `main` `d80fbbb72`, deployed under `37da7dee3`); `SOCIAL_AUTHORING_TOKEN` + `SOCIAL_STORAGE_BACKEND=supabase` set; `discovery_since` rolled back to 2026-09-01 so the Fable and Cape Breton articles were assigned. First native cloud run (manual Run now, 06:12–06:22 UTC, session `cse_01J9N2Nra5QmrLVtDMZ1UCxb`, `ROUTINE_RUN_STATUS_SUCCEEDED`): token injected by the environment credential (unset inside the sandbox), two claims, editor loop rejected→revised→approved on Fable, both drafts handed back; 06:23 tick rendered 7 + 7 slides into the Supabase `social-media` bucket (all 14 URLs HTTP 200, 1080 × 1350), two `INSTAGRAM DRAFT READY` notifications, `social_posts` = 0. Evidence `ops-web/docs/artifacts/social-editorial/cloud-run-2026-09-07/`. Still unproven: a scheduled (non-manual) fire (routine paused at 06:30 UTC), any Instagram publication, `publish` mode. The paragraph below records the pre-deploy state. **Subscription-funded authoring release candidate (2026-09-07; built and tested locally, NOT deployed).** Branch `feat/instagram-cloud-editorial` in `ops-web` (worktree `/private/tmp/ops-instagram-diagnostics-release-20260904`) replaces the date-keyed OpenAI worker with (1) a durable assignment ledger, `social_editorial_assignments`, one row per newly published blog (`blog:<id>`) plus one per Tuesday protocol / Wednesday product / Friday rotation day, discovered every 15-minute tick under the existing `social-editorial` workload lease; (2) a native Claude Cloud Routine on Jackson's subscription, `OPS Instagram authoring` (`trig_011aQJD1UqqmG2DVkzHAQTS1`, cron `0 15,21 * * *` UTC, `claude-opus-5`, no repositories, no connectors, **disabled**), which claims one assignment at a time over three bearer-authenticated handoff routes, writes the draft with an independent editor subagent, and hands back a held draft that the endpoint can only store, never render or queue; (3) the cron worker promoting `drafted` rows to a held preview (`prepare`) or to the existing queue with a paced `publish_at` (`publish`: one post per `delivery_gap_minutes`, default 20 h, inside 10:00–20:00 Vancouver, FIFO); (4) the renderer repair (every treatment renders `slide.body`; blog carousels always take `editorial_cover`: cover = image + hook + article title + date, `TAKEAWAY 01…` text slides, server-owned closing slide printing `opsapp.co/journal/<slug>`; footer shows only the page counter); (5) notifications `INSTAGRAM DRAFT READY`, `INSTAGRAM POST BLOCKED`, `INSTAGRAM POST QUEUED · <ID>` (now names the launch time), `INSTAGRAM AUTHORING STALLED` (queued work + no routine contact for 26 h, once per Vancouver day); (6) the OpenAI editorial generator, `scripts/social-generators/` and the `social-publish-instagram` edge-function source removed from the repo (the deployed edge function still exists). Proof: 322 focused tests, both SQL harnesses, clean `tsc` and production build, 24 render-proof images, and a local rehearsal that drove the exact routine prompt through the real handoff, editor loop, preview render and publish-mode queue entry against a disposable database (`ops-web/docs/artifacts/social-editorial/local-e2e-2026-09-07/`, `…/render-proof-2026-09-07/`). Not yet true: production deploy, migration `20260907004500_create_social_editorial_assignments.sql` applied, `SOCIAL_AUTHORING_TOKEN` / `SOCIAL_STORAGE_BACKEND` set, cloud environment API credential for `app.opsapp.co`, any cloud run against production, any Instagram publication. Runbook: `ops-web/docs/social/cloud-editorial-operations.md`; routine definition: `ops-web/docs/social/cloud-authoring-routine.md`; plan: `ops-web/docs/plans/2026-09-07-instagram-subscription-authoring.md`. The paragraphs below describe the currently deployed (retired-in-source) model.
 
-**Subscription-funded authoring release candidate (2026-09-07; built and tested locally, NOT deployed).** Branch `feat/instagram-cloud-editorial` in `ops-web` (worktree `/private/tmp/ops-instagram-diagnostics-release-20260904`) replaces the date-keyed OpenAI worker with (1) a durable assignment ledger, `social_editorial_assignments`, one row per newly published blog (`blog:<id>`) plus one per Tuesday protocol / Wednesday product / Friday rotation day, discovered every 15-minute tick under the existing `social-editorial` workload lease; (2) a native Claude Cloud Routine on Jackson's subscription, `OPS Instagram authoring` (`trig_011aQJD1UqqmG2DVkzHAQTS1`, cron `0 15,21 * * *` UTC, `claude-opus-5`, no repositories, no connectors, **disabled**), which claims one assignment at a time over three bearer-authenticated handoff routes, writes the draft with an independent editor subagent, and hands back a held draft that the endpoint can only store, never render or queue; (3) the cron worker promoting `drafted` rows to a held preview (`prepare`) or to the existing queue with a paced `publish_at` (`publish`: one post per `delivery_gap_minutes`, default 20 h, inside 10:00–20:00 Vancouver, FIFO); (4) the renderer repair (every treatment renders `slide.body`; blog carousels always take `editorial_cover`: cover = image + hook + article title + date, `TAKEAWAY 01…` text slides, server-owned closing slide printing `opsapp.co/journal/<slug>`; footer shows only the page counter); (5) notifications `INSTAGRAM DRAFT READY`, `INSTAGRAM POST BLOCKED`, `INSTAGRAM POST QUEUED · <ID>` (now names the launch time), `INSTAGRAM AUTHORING STALLED` (queued work + no routine contact for 26 h, once per Vancouver day); (6) the OpenAI editorial generator, `scripts/social-generators/` and the `social-publish-instagram` edge-function source removed from the repo (the deployed edge function still exists). Proof: 322 focused tests, both SQL harnesses, clean `tsc` and production build, 24 render-proof images, and a local rehearsal that drove the exact routine prompt through the real handoff, editor loop, preview render and publish-mode queue entry against a disposable database (`ops-web/docs/artifacts/social-editorial/local-e2e-2026-09-07/`, `…/render-proof-2026-09-07/`). Not yet true: production deploy, migration `20260907004500_create_social_editorial_assignments.sql` applied, `SOCIAL_AUTHORING_TOKEN` / `SOCIAL_STORAGE_BACKEND` set, cloud environment API credential for `app.opsapp.co`, any cloud run against production, any Instagram publication. Runbook: `ops-web/docs/social/cloud-editorial-operations.md`; routine definition: `ops-web/docs/social/cloud-authoring-routine.md`; plan: `ops-web/docs/plans/2026-09-07-instagram-subscription-authoring.md`. The paragraphs below describe the currently deployed (retired-in-source) model.
+OPS Web now owns a durable scheduled-agent → Instagram production system. A scheduled writer submits a versioned editorial package; OPS Web validates the live source and OPS voice rules, deterministically selects one of seven visual treatments, renders public 1080 × 1350 JPEGs, opens a 10-minute operator veto window after rendering finishes, and publishes through Meta with atomic claims, quota checks, bounded retries, notifications, and a complete audit trail.
 
 **Release state (verified 2026-09-05 05:23:59 UTC): Instagram OAuth is connected as `@opsapp.co`.** Both social migrations and production code are deployed. The independent production readback contains one encrypted connection with both required scopes and a valid 60-day credential. The operator reported the connected UI. Current production is source `3a89c08ca1f5b827ccac2f6194842e83f8f7abc8`, deployment `dpl_CTSMvUZksuStAK6yxFNxp5hWPmco`, READY and aliased to `app.opsapp.co`. The queue contains zero posts; the first real Instagram publication remains separately unauthorized and unverified. Automatic renewal has not yet reached its first live window. The dated incident notes below are historical; the connection-resolution entry supersedes their pending/blocker statements. The older Slack/Python/edge-function pipeline below is historical context.
 
@@ -8622,7 +8708,7 @@ The run exposed two code bugs, both reproduced and fixed locally: Node's all-add
 
 OPS Web implementation `4193daef1`, full-guide integration `e1c6b32aa`, recipient correction `532e8e9c2`, final production source `baa32daadafd37a931bd2bae9b6cee2147eb17fb`. A fresh cloud producer replaces dependence on unreliable local Claude schedules. Vercel calls `/api/cron/social-editorial` every 15 minutes at :08, :23, :38 and :53 (`8-59/15 * * * *`, the last full-day 15-minute grid inside the three-lane cron budget; the `*/15` schedule that shipped on 2026-09-05 stacked a fourth lane on every `*/5` minute already carrying three and was corrected on 2026-09-06, together with the missing durable guard). Each run takes the shared durable cron workload lease `social-editorial` (`200 already_running` while held; fails closed with `503` on `circuit_open` / `control_unavailable`; an `off` or outside-window tick completes the lease as an idle success). A durable Supabase ledger admits one weekday slot from 10:00 until 20:00 Vancouver time (permanent UTC−7), so the first eligible tick of a window is 10:08 Vancouver (17:08 UTC) once the corrected schedule deploys. Monday/Thursday prefer blog adaptations, Tuesday a protocol, Wednesday a supported product behavior or practical protocol, and Friday a supported rotating story. Unsupported or repetitive ideas are skipped. Other formats are grounded in public live blog sources; no private customer records or inferred shipped features are inputs.
 
-`ops-web/src/lib/social/editorial/` implements a bounded writer and independent editor, the complete versioned Sam Parr field guide for both stages with its SHA-256 retained in approved packages and rejected editor audits, strict evidence/voice/length checks, source snapshots, history suppression, three-attempt leases, conservative monthly reservations and stable downstream keys. It reuses the production renderer and existing ten-minute veto queue. Source snapshots and completed packages survive retries. A database guard serializes automatic handoff with the mode control, including a mode change during rendering.
+`ops-web/src/lib/social/editorial/` implements a bounded writer and independent editor, the OPS copywriter voice brief (`docs/social/voice/ops-copywriter-brief.md`, the governing founder voice since 2026-09-08) and the complete versioned Sam Parr field guide (pacing layer) for both stages with their SHA-256 retained in approved packages and rejected editor audits, strict evidence/voice/length checks, source snapshots, history suppression, three-attempt leases, conservative monthly reservations and stable downstream keys. It reuses the production renderer and existing ten-minute veto queue. Source snapshots and completed packages survive retries. A database guard serializes automatic handoff with the mode control, including a mode change during rendering.
 
 The new service-only setting defaults to `off`. `prepare` renders and stores actual previews without creating a `social_posts` row. `publish` permits new publishing-mode runs to enter the existing queue; changing modes never releases old prepared drafts. The admin-only read route `/api/admin/social/editorial` and a compact inspection section on `/admin/social` expose held slides, caption, source and status. Existing review rows retain their STOP/veto lifecycle even if the producer is switched off.
 
@@ -10358,26 +10444,52 @@ update op (jobs) — offline-safe.
 toast (`VIEW` action), Settings › DATA › `Pending Work` (live mono count, `—` at
 zero), and Notifications sync section `VIEW ALL →`.
 
-**Placement (2026-09-07, bug `417aac7b`, third close).** The pill is superimposed
-on each root's `AppHeader`, hung off the header's bottom edge by
-`HeaderSyncStatusOverlay` — never in flow, never in an app-level band. It reserves
-no layout, so nothing below the header moves when an attention item appears, and
-it is free to cover header TEXT (greeting, company line, screen title) because
-attention outranks a greeting. It is never free to cover a CONTROL: the overlay
-reserves the header's trailing-cluster column from that cluster's measured bounds
-(`OPSHeaderTrailingSlotBoundsKey`), so a tall accessibility-size pill cannot reach
-Home's avatar or any root's search button, and bottom-anchoring keeps it inside
-the header instead of on the row below. The two earlier closes both got this
-wrong — an in-flow header row pushed `TODAY [TASKS] / ACTIVE / ALL` and the map
-down, then an app-level band offset by the header's measured height landed on top
-of the `ALL` chip. Home project mode is the single exception: `AppHeader` leaves
-the screen and `OPSMapContainer`'s project stack hosts the same control via
+**Placement (2026-09-08, bug `417aac7b`, fourth close).** The pill is an overlay
+on each root's `AppHeader` title BAND — `HeaderSyncStatusOverlay`, never in flow,
+never in an app-level band. It shares the band's `touchTargetMin` control row
+with the header's trailing cluster and is painted OVER it: flush to the band's
+own trailing inset, bottom-anchored inside that row, growing upward and leftward
+as the count or the type size grows. It reserves no layout, so nothing below the
+header moves when an attention item appears, and it is free to cover header TEXT
+(greeting, company line, screen title) AND the trailing control itself, because
+attention outranks both. Jackson's direction (2026-09-08): *"It is being
+influenced by the avatar. It should appear ONTOP of the avatar"*, *"with a
+dropshadow"* — so it keeps `Layout.floatingElevation` (`isElevated` is true for
+the `.header` placement; MOBILE.md §8's shadow exception, now literal since the
+pill floats over a control).
+
+**Tap ownership is the accepted consequence:** while the pill is up, taps in the
+trailing control's region open PENDING WORK, not notifications/search. The pill
+is transient — it is addressed or cancelled, and the control returns. Do not
+restore the control's taps by shrinking, offsetting, or hit-testing around it.
+
+Two invariants hold by construction, trusting no font metric: the pill always
+overlaps the trailing control (both end on the same row edge and both are at
+least a touch target tall), and it can NEVER reach the content below the header
+(the row's bottom edge is `bandHeight/2 + touchTargetMin/2`, never past the
+band). `HeaderSyncStatusGeometry` carries the derivation.
+
+Three earlier closes got this wrong: an in-flow header row pushed
+`TODAY [TASKS] / ACTIVE / ALL` and the map down; then an app-level band offset by
+the header's measured height landed on top of the `ALL` chip; then the overlay
+reserved the trailing cluster's column (`OPSHeaderTrailingSlotBoundsKey`), which
+staggered the pill below-left of Home's avatar. That reservation is retired —
+the key is now published only so the layout proofs can measure the shipped
+cluster; nothing in production consumes it.
+
+Home project mode is the single exception: `AppHeader` leaves the screen and
+`OPSMapContainer`'s project stack hosts the same control via
 `SyncStatusIndicator(placement: .projectHeader)`, gated by
-`HomeSyncStatusPlacementPolicy.showsProjectModeFallback`. Proof:
-`HomeSyncStatusLayoutTests.testStatusPillNeverCoversAnInteractiveControl` (plus a
-retired-band characterization so that invariant can never go vacuous) and
-`SyncPillHeaderLayoutTests` — the real `AppHeader`, seven header types, two
-widths, four Dynamic Type sizes.
+`HomeSyncStatusPlacementPolicy.showsProjectModeFallback` — a plain row member,
+no elevation.
+
+Proof: `HomeSyncStatusLayoutTests.testStatusPillIsPaintedOverTheNotificationsAvatar`
+and `.testStatusPillNeverReachesTheContentBelowTheHeader` (plus
+`testTheRetiredBandPlacementIsWhatThisProofMustReject`, a retired-band
+characterization so the second can never go vacuous), and
+`SyncPillHeaderLayoutTests.testPillIsPaintedOverTheTrailingActionsOnEverySearchHeader`
+/ `.testPillStaysInsideTheHeaderAndClearsTheContentBelowIt` — the real
+`AppHeader`, seven header types, two widths, four Dynamic Type sizes.
 
 **Refresh (updated 2026-08-10):** both surfaces — the pill and this screen — were
 rebuilding the inventory on a 2-second `.common`-mode poll, which fires during
@@ -10530,8 +10642,6 @@ P1-18 tests with zero failures before main integration. It becomes
 customer-distributed only after Jackson runs the signed device/App Store
 release gate.
 
----
-
 ## 37. Agent Queue — Approval Desk (Web, 2026-09-01)
 
 **What it is.** `/agent/queue` is the single human approval gate for everything the automation proposes. Every proposal is a `public.agent_actions` row (`status = pending`) with an `action_type`, a `context_summary`, an `action_data` payload, a `priority`, a `confidence`, and an `expires_at`. Nothing executes until an operator approves it on this page (or through the same API); rejected rows record `review_notes`; rows nobody reviews before `expires_at` are flipped to `expired` by the expiry sweep. Approval runs the type's executor inside `ApprovalQueueService.approveAction` and lands the row on `executed` (or `failed` with `error_message`).
@@ -10551,5 +10661,7 @@ release gate.
 **Shipped.** ops-web `main` `f0c020f7` (fast-forward push 2026-09-02, after merging the 65 intervening main commits with no conflicts); Vercel production deployment `ops-3rg8q3ifs` Ready, serving `app.opsapp.co`. Gate on the pushed tree: `tsc --noEmit` clean except 8 pre-existing errors in the bug-report element-picker test files (sibling merge `5017459d`), which do not fail Vercel builds; 53/53 queue-related tests green.
 
 **Observed state at the rebuild (Canpro, 2026-09-01).** 54 pending, 292 expired, 1 rejected; the oldest pending row dated 2026-08-22; average review latency ≈ 35 h. Roughly five in six proposals had been expiring unreviewed because the page was unusable, not because the proposals were wrong — track the expired share after the rebuild before tuning any producer.
+
+---
 
 **End of Document**

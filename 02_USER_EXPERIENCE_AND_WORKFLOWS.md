@@ -925,6 +925,16 @@ Opened from the search button in the header (`AppState.showingJobBoardSearch = t
 
 ---
 
+#### Universal Search — OPS-Web ⌘K palette (database-backed, 2026-09-09)
+
+Opened by ⌘K, the `\` key outside inputs, or the header search button (`src/components/ops/command-palette.tsx`). From two characters on, every typing pause (150 ms debounce) makes ONE database call — `public.search_workspace` (ch03 § search_workspace) — and renders five fixed-order groups: **Projects · Clients · Leads · Tasks · Documents** (invoices + estimates), up to eight rows each, the heading carrying ` · N` when more matched. Matching is every-word-must-match across each kind's fields (ch03 lists them), accent- and case-insensitive, phone digits match phone columns, document numbers match by contains (`104` finds `INV-1042`); ranking is exact name → starts-with → all words in the name → scattered, then most recently updated. Closed, archived and lost items are included and carry their status tag; deleted items never appear. Rows: name plus one secondary line (project → address · status; client → phone or email; lead → contact · stage; task → its project · status; document → number, client · amount · status). Previous results stay on screen while the next query runs (no flicker); `// NO MATCHES` only after the search has settled with nothing; a failed search shows `// SEARCH UNAVAILABLE` with a Retry row and leaves the command groups usable. The Documents group renders only for operators with `invoices.view` or `estimates.view`; row visibility everywhere is the caller's RLS. The command groups (Create · Navigation · Settings · System) sit beneath the results. Copy lives in the `command-palette` dictionary (en + es).
+
+**Selection targets:** project → project workspace window; client → client window; lead → `/pipeline?opportunity=<id>`; task → its project's window; invoice → `/books?segment=invoices&invoice=<id>`; estimate → `/books?segment=estimates&estimate=<id>`.
+
+**Books open-by-link contract (`src/components/books/use-open-document-from-url.ts`):** the invoices/estimates segment reads its id param, fetches with its own detail query, opens the existing detail modal once, then removes only that param (`router.replace`, other params kept) so closing the modal or pressing Back never reopens it. Not found / not visible (PGRST116, 404, 406) → `// INVOICE NOT FOUND` / `// ESTIMATE NOT FOUND` and the param is cleared; any other failure (network, 5xx, paused offline) → `// COULDN'T OPEN INVOICE` / `// COULDN'T OPEN ESTIMATE` and the param is KEPT so a reload retries; a paused query (`data === undefined`) is never treated as an answer. A link to a segment the operator cannot see is answered by `books-page.tsx` itself (not-found toast, param stripped) once permissions have hydrated. The invoice/estimate fetch services attach the PostgREST `status`/`code` to thrown errors so the global retry policy stops on 4xx.
+
+---
+
 ### Project Details Screen
 
 **Purpose:** Comprehensive view of a single project with all related data.
