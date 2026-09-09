@@ -1,6 +1,6 @@
 # OPS Google Ads engine (Cloud Routine)
 
-Status (2026-09-09): routine **created on Jackson's claude.ai account, DISABLED, never run** (`trig_01LroGoQJLg9GCPEAK3SD4dg`, connectors cleared). Enable only after the phase 1 warehouse and phase 2 campaigns are live, the ops-web release with the engine routes is deployed, `ADS_ENGINE_TOKEN` is set in Vercel Production, the environment API credential exists, and Jackson gives the go.
+Status (2026-09-09): routine **created on Jackson's claude.ai account, DISABLED, never run** (`trig_01LroGoQJLg9GCPEAK3SD4dg`, connectors cleared). Enable only after the phase 1 warehouse and phase 2 campaigns are live, the ops-web release with the engine routes is deployed, `ADS_ENGINE_TOKEN` is set in Vercel Production (same value as `SOCIAL_AUTHORING_TOKEN`; the environment credential already exists), and Jackson gives the go.
 
 | Field | Value |
 |---|---|
@@ -8,7 +8,7 @@ Status (2026-09-09): routine **created on Jackson's claude.ai account, DISABLED,
 | Name | `OPS Google Ads engine` |
 | Schedule | `0 15 * * *` UTC (08:00 Vancouver, daily) — after the 08:04 UTC warehouse sync and one minute after the 14:59 UTC worker tick |
 | Model | `claude-opus-5` |
-| Environment | `Default` with an API credential for host `app.opsapp.co` (Bearer `ADS_ENGINE_TOKEN`) |
+| Environment | `env_01SbMVBKxZJvyDPXKYoNkkW5` (Default), whose existing `app.opsapp.co` API credential (created for the Instagram routine) is injected on every call; Vercel `ADS_ENGINE_TOKEN` must equal `SOCIAL_AUTHORING_TOKEN`, no second credential |
 | Repositories / connectors | none / none (cleared after creation; `RemoteTrigger create` attaches every connector by default) |
 | Tools | `Bash, Read, Write, Edit, Agent` |
 | Prompt | canonical copy in `ops-web/docs/ads/engine-routine.md`, version `ads-routine-2026-09-10-v2`; edit there first, then `/schedule update` |
