@@ -1,6 +1,6 @@
 # OPS Google Ads engine (Cloud Routine)
 
-Status (2026-09-09): routine **created on Jackson's claude.ai account, DISABLED, never run** (`trig_01LroGoQJLg9GCPEAK3SD4dg`, connectors cleared). Enable only after the phase 1 warehouse and phase 2 campaigns are live, the ops-web release with the engine routes is deployed, `ADS_ENGINE_TOKEN` is set in Vercel Production (same value as `SOCIAL_AUTHORING_TOKEN`; the environment credential already exists), and Jackson gives the go.
+Status (2026-09-10): routine **created on Jackson's claude.ai account, DISABLED, never run** (`trig_01LroGoQJLg9GCPEAK3SD4dg`, connectors cleared). The routes it calls are **LIVE** (ops-web `3bdc81e00`, verified by contract) and `ADS_ENGINE_TOKEN` is set in Vercel Production. Two gates remain before enabling: phase 2's campaigns must exist (currently blocked on measured Canadian search demand), and Jackson gives the go. Enabling it before there are `engine`-labelled campaigns just produces runs with nothing to do.
 
 | Field | Value |
 |---|---|
