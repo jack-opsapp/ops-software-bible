@@ -774,6 +774,7 @@ struct CalendarSchedulerSheet: View {
 
 **Schedule Entry Contracts (iOS):**
 - Task schedule writes use `DataController.updateTaskSchedule(task:startDate:endDate:)` and write `project_tasks.start_date` / `project_tasks.end_date`.
+- **Deleted/pending schedule contract (2026-09-10):** ordinary edits require a live task and parent; local dates and the outbound operation persist atomically. Project timeline/card/search displays derive dates from `Project.liveTasks` including a meaningful nil, never falling back to stale server-backed project date caches. The local task transaction also refreshes its linked parent display cache without enqueueing a project write: calendar permission must not imply project-edit permission, and a scope-filtered local task list must not overwrite the company's aggregate server dates.
 - Project rows are not manual scheduling targets. Project start/end dates are computed from the project's task schedule span; `projects.start_date` / `projects.end_date` are maintained as task-derived sync/cache fields, not operator-editable schedule inputs.
 - Universal Search project-row quick schedule only targets active, non-deleted, non-terminal tasks. If the project has zero schedulable tasks, the schedule control is hidden/disabled. If it has one schedulable task, the scheduler opens that task. If it has multiple schedulable tasks, the operator must choose the task before the scheduler opens.
 - `UnscheduledTaskReviewView` auto-schedule placement failures are persistent recovery states: the toast uses operator-readable copy and opens `CalendarSchedulerSheet` for manual task scheduling instead of ending at a no-action error.
@@ -1248,7 +1249,7 @@ idempotency block and before disposition routing:
 | Failure | Reconciliation |
 |---|---|
 | `projectPhoto` **create** vs `project_photos_active_site_visit_url*` | Look the row up by natural key, adopt the server id locally (merging and deleting a local twin the inbound merge already materialized under that id), back-fill the metadata the conversion RPC does not carry, complete the op. |
-| `projectTask` **update** raising `task_not_found` against a soft-deleted task | Tombstone-wins: stamp the server's `deleted_at` on the local task, clear its pending flag, complete the op. |
+| `projectTask` **update** raising `task_not_found` or the zero-row UPDATE marker | Empty/inaccessible reads remain unresolved. An explicit same-task, same-company tombstone may be applied only without an unresolved create/restore. Schedule-bearing operations remain recoverable; reconciliation never clears their local pending flag. |
 
 Detection is deliberately narrow — a `_pkey` conflict or any other 23505 still
 parks for a human. Annotations bind by `photoURL`, never by photo id, so healing
@@ -1264,6 +1265,16 @@ so `SyncEngine.reenqueueRecoverableOperations` now also calls
 connectivity: matching ops resolve against server state and PENDING WORK empties
 itself with no user action. Cover:
 `OPSTests/Sync/SyncOperationReconcilerTests.swift`.
+
+**Deleted-task scheduling and lifecycle ordering (2026-09-10, local iOS repair).** A read-only copy of the reporting iPhone's SwiftData store and its retained queue proved that a task already marked deleted on both phone and server was scheduled locally afterwards. Project details rendered the deleted relationship as an ordinary task with TODAY; both calendars correctly excluded it. The retained schedule update was marked completed while its dates were absent on the server. The pre-fix settlement sweep can retire this exact shape; because the installed binary revision is unknown and the original error was cleared, the retained record does not uniquely prove which completion path ran. A completed queue status is therefore not sufficient proof that the intended schedule reached the server, especially in older clients. The installed `3.0.5` version does not identify a compiled source revision.
+
+`Project.liveTasks` filters by exact project/company ownership, excludes deleted identities (including an old live duplicate), and preserves live completed/cancelled tasks. Project details, selection, previous/next navigation and computed project date ranges use that projection. Ordinary task mutation affordances and the controller reject deleted tasks/parents, including retained references. Restore is an explicit Trash workflow.
+
+`DataController.updateTaskSchedule` and generic date clears commit task changes and their SyncOperation together, with rollback on staging/persistence failure. Task type changes in full details use that same guarded field path. Task date rows display `NOT SYNCED` while local work remains pending; both outbound drivers clear the dirty flag only after success with no other unresolved task edit in that company. The reschedule notification dispatcher also requires a live, synchronized task after flush.
+
+`TaskLifecycleSync` keeps delete/restore commands in chronological order through coalescing and holds subsequent edits behind unresolved lifecycle commands, including parked restores. `DeletedProjectTaskOperationSettlement` excludes schedule-bearing updates, lifecycle operations, conflicting local identities and unresolved create/restore intents. Empty authenticated reads never cause local resurrection, inferred deletion, or schedule completion. Historical operations already completed by an older client are not automatically replayed or used to infer a restoration request.
+
+Sources: `OPS/Network/Sync/TaskLifecycleSync.swift`, `SyncOperationReconcilers.swift`, `DeletedProjectTaskOperationSettlement.swift`, both outbound drivers, `OPS/Utilities/DataController.swift`, `OPS/DataModels/Project.swift`, and `ProjectTask.swift`. Focused behavioral and UI proof: `OPSTests/TaskCalendarDeletionTests.swift`, `OPSTests/Views/TaskDetailSheetSnapshotTests.swift`, and `docs/artifacts/calendar-discrepancy-20260910/findings.md`. This source change does not constitute an iOS release, installation on the reporting phone, or live record restoration.
 
 **Delete affordance, second surface (2026-08-29).** `ProjectPhotosGrid`'s
 long-press delete was ungated — it offered a delete on every tile regardless of
