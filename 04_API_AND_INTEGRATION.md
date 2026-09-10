@@ -2984,6 +2984,36 @@ team address in To/CC and an exact signature phone may corroborate a candidate;
 names, phone fragments, shared public email domains, and fuzzy private-domain
 matches never confer staff identity.
 
+**Quoted-signature and retention repair (2026-09-10, ops-web `b295b6972`,
+implemented locally; not yet deployed):** `email-ingestion-routing.ts` now takes signature identity
+evidence only from the author's unquoted body. Prefixed, nested, indented,
+wrapped, forwarded, and Outlook reply history is removed before matching;
+`email-parsing.ts::stripQuotedHistoryForIdentity` cannot substitute nested
+contact-form content or restore a quoted preview. An explicitly empty body
+does not fall back to the provider snippet. Genuine unquoted staff signatures
+still create pending review candidates.
+
+`SyncEngine::processSentEmail` retains new and previously pending alias
+messages as unlinked `staff_alias_pending` review activities before the
+internal-recipient short circuit, including signature-free follow-ups and
+discovered inbox mail when optional sent-mail sync is disabled. A failed
+durable write holds the cursor. Pending review bypasses staff style learning,
+customer/lead matching, and thread/opportunity projection; the later outbound
+reconciliation pass cannot adopt it. Existing activity identity remains
+immutable. This repairs a path that silently dropped customer replies after
+quoted staff signatures produced false alias candidates.
+
+Verification: all nine privately audited source messages changed from false
+pending aliases to inbound classification; 252 focused tests and six focused
+full-sync/recovery cases passed, along with scoped TypeScript. The legacy full
+sync file retains baseline failures (37 before, 36 after; no newly failing
+test names). The sanitized evidence is in ops-web
+`docs/artifacts/email-work-correspondence/staff-alias-quoted-replies-verification.md`.
+Production alias correction and missing-message restoration remain pending:
+the existing exact recovery runner retains its seven-day limit, and older
+history requires separately bounded restoration that preserves existing
+project/review ownership, archive state, and terminal stages.
+
 #### Property-level address identity boundary (live 2026-07-29)
 
 Migration `20260728160000_property_address_identity_boundary` and ops-web
