@@ -1322,6 +1322,8 @@ The reporting direction (Google Ads → OPS) is entirely separate from the conve
 | Readiness ledger | `ads-sync` refreshes `ads_sync_status` row `engine-readiness` daily; `POST /api/internal/ads/setup/probe` (CRON_SECRET) on demand; `GET /api/admin/google-ads/readiness` serves the seven checks the admin page shows while the account is dark | Checks: service account can write, customer data terms, enhanced conversions for leads, Data Manager API reachable, conversion actions in place, click ids arriving, first event delivered (`ops-web/src/lib/ads/readiness.ts`) |
 | Conversion outbox | `/api/cron/ads-conversions` hourly at :41 UTC | Drains `ads_conversion_events` to the Data Manager API (§ Google Ads Conversion Events) |
 | Conversion-action setup | `POST /api/internal/ads/setup/conversion-actions[?validateOnly=1]` (CRON_SECRET, operator-run) | Idempotent plan + phased apply; records `ads_conversion_actions` |
+| Account blueprint apply | `POST /api/internal/ads/setup/blueprint[?validateOnly=0]` (CRON_SECRET, operator-run) | Builds the account from `ops-web/config/ads/blueprint.json` (§ Google Ads account blueprint). Dry-runs by default; `validateOnly=0` writes. Records `ads_sync_status` row `blueprint-apply` |
+| Campaign enable / pause | `POST /api/internal/ads/setup/enable` (CRON_SECRET, operator-run) | The only path that changes a campaign's status. Enabling requires the `engine` label and ≥ 2 `APPROVED` ads; pausing has no gate. Records `ads_sync_status` row `campaign-enable` |
 | 2-year history backfill | `IMPORT HISTORY` button on the page → `/api/admin/google-ads/backfill` → self-chaining 30-day chunk workers (CRON_SECRET auth) | Idempotent upserts; progress in `ads_sync_status` |
 | Weekly AI briefing | **retired 2026-09-10** — `/api/cron/ads-briefing` answers `410 GONE` and is out of `vercel.json`; the Google Ads engine's run summary is the briefing (§ Google Ads engine). The archive at `/admin/google-ads/briefings` stays readable. | |
 | Engine worker | `/api/cron/ads-engine` daily 14:59 UTC | Expires proposals, applies approved/auto proposals, concludes ad tests, scores changes, pauses disapproved ads, budget pacing, operator rail, stall alarm (§ Google Ads engine) |
@@ -1330,6 +1332,69 @@ The reporting direction (Google Ads → OPS) is entirely separate from the conve
 **Sync state** lives in `ads_sync_status` (`daily-sync`, `backfill`, `provider-access`, and — since 2026-09-09 — `engine-readiness`, whose jsonb `backfill_progress` holds the last stored probe). Cost: Google Ads API Basic access is free (15k operations/day quota; OPS usage is ~16 searchStream calls a weekday, ~43 on Mondays). The Data Manager API is free.
 
 **Runbook:** `ops-web/docs/ads/runbook.md` — probe results, setup routes, outbox states and requeue, cron schedule, and what each artifact under `ops-web/docs/artifacts/ads-engine/p1/` proves.
+
+### Google Ads account blueprint (phase 2, 2026-09-09)
+
+**The account is built from a file, not by hand.** `ops-web/config/ads/blueprint.json`
+(zod-validated by `src/lib/ads/blueprint.ts`) is the source of truth for every campaign,
+ad group, keyword, shared negative list and responsive search ad. `planBlueprint()`
+(`src/lib/ads/blueprint-planner.ts`) is pure — blueprint + entity snapshot → mutate
+operations in dependency order (budgets → campaigns → campaign criteria → ad groups →
+keywords → ads → shared sets → labels) — and diffs by name, so re-running plans nothing.
+It only ever creates and updates; nothing is removed, so the legacy account stays
+queryable. Editing Google directly puts the account out of sync with the file and the
+next apply will not put it back.
+
+Two structural refusals, both throwing `PlannerError`: `BROAD_MATCH_REJECTED` on any
+broad positive keyword, and `NEGATIVE_BLOCKS_KEYWORD` when a negative would block a
+keyword the same campaign bids on — money committed to a keyword that can never serve,
+with nothing in Google's interface to say so. A shared set is atomic in Google's model,
+so a negative that must apply to some campaigns and not others (`free`, `servicetitan`)
+lives in per-campaign `campaignNegatives` rather than in a list.
+
+`applyBlueprint()` (`src/lib/ads/blueprint-apply.ts`) validates every batch with
+`validateOnly: true` and sends the real mutate only on a clean pass, with
+`partialFailure: false` so a rejected ad fails the whole tree. It runs **two passes** with
+a snapshot refresh between them: labels attach only to entities that exist, so pass one
+creates the tree and pass two labels what it created. Every campaign is created `PAUSED`;
+the schema will not describe an enabled one.
+
+`enableCampaigns()` is the only code path that changes a campaign's status. Enabling
+refuses a campaign without the `engine` label (proof the blueprint built it) or with
+fewer than two ads at `approval_status = APPROVED`. Pausing has no gate — stopping spend
+must never be blocked by a precondition — which makes the same route the emergency stop.
+
+**Field names come from the v25 proto, not the rendered docs.** Maximize Clicks is
+`target_spend`; `Campaign` has no `maximize_clicks` field, and reading the bid ceiling off
+one made every capped campaign look uncapped to the engine's guardrails (fixed
+2026-09-09 in `src/lib/ads/engine/snapshot.ts` and `apply.ts`). Every v25 campaign create
+also requires `contains_eu_political_advertising`; OPS self-declares
+`DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING`.
+
+**Copy rules** (`src/lib/ads/copy-rules.ts`, shared unchanged with the phase 3 engine)
+gate every ad asset: lengths, the brand-facts number allowlist, the banned-word list,
+no exclamation marks, never "contractor" for the audience, never leading with "AI",
+competitor names only in the competitor lane and only as `<Brand> alternative` /
+`Switching from <Brand>?` / `Tired of <Brand>?`, and a pin plan of two or three headlines
+on position one. An ad group may override the campaign's copy kind (`copyKind`) only when
+its landing page is a `/compare/` page — intent lives at the ad group, not the campaign.
+
+**Demand is measured, never assumed.** `scripts/ads/keyword-demand.mjs` pulls volume and
+top-of-page bids from `KeywordPlanIdeaService.GenerateKeywordIdeas` (seeds chunked in
+tens; more than ten returns `400 INVALID_ARGUMENT`) and commits the result;
+`scripts/ads/annotate-blueprint-demand.mjs` stamps those numbers onto the blueprint so it
+cannot drift from its own evidence. `scripts/ads/account-state.mjs` reads the account
+straight from Google — it hardcodes the **serving** customer `4454506598`, because
+`GOOGLE_ADS_CUSTOMER_ID` holds the manager id `5448339076` and querying that returns an
+empty result indistinguishable from a wiped account.
+
+**Landing pages** live in try-ops (`lib/landing/page-configs.ts`, `app/(paid)/…`) — seven
+fixed pages, one per ad group, each with a single CTA to `https://app.opsapp.co/register`
+so the `.opsapp.co` first-touch cookie travels. The rotating A/B experiment stays on `/`.
+
+**Status:** BUILT 2026-09-09. Five campaigns exist, all PAUSED, all labelled `engine`;
+24 ads in policy review; 21 legacy campaigns labelled `legacy`. Nothing has spent, and
+nothing can until the enable route is called on Jackson's explicit word.
 
 **Provider-access degrade contract (bug 964cf782, shipped 2026-08-29).** The bible previously claimed the status row alone was sufficient monitoring. The 2026-07-06 → 2026-08-03 incident disproved it: with the developer token unapproved, all three ads cron workflows hard-500'd on **every scheduled run for four weeks** — seven duplicate health filings, the PMF dashboard silently missing its spend series, and no single truthful signal anywhere. The rows were accurate; nothing was watching them. Access was granted 2026-08-05 and all three workflows have been green since (briefings emailed 08-10/17/24, daily sync current, PMF spend rows daily), so the remaining defect was the **failure mode**, not the credential.
 

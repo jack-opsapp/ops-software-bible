@@ -105,6 +105,23 @@ The daily sync (`/api/cron/ads-sync`, 08:00 UTC) grows to cover these; the searc
 
 ## 4. Layer 2 — Account rebuild (Phase 2)
 
+> **STATUS: BUILT 2026-09-09, campaigns PAUSED pending Jackson's ad approval.** The account
+> is rebuilt from `ops-web/config/ads/blueprint.json`: five campaigns, 12 ad groups, 54
+> keywords, 24 ads and five shared negative lists, applied in 328 operations with zero
+> failures, and a re-run plans nothing. All five campaigns carry the `engine` label and are
+> `PAUSED`; the 21 legacy campaigns carry `legacy` and are otherwise untouched. Nothing has
+> spent, and the enable route is the only thing that can change that.
+>
+> **The structure below in §4.2 is superseded** by the revision of 2026-09-09 (P2 plan Task
+> 2R): US primary at $43/day, Canada secondary at $7/day, and pricing intent rather than
+> category terms as the anchor. Measured demand — `research/google-ads/2026-09-09-keyword-demand.md`
+> — showed Canada holds 1,520 buyable searches a month against 8,720 in the US, real bids
+> run about twice the planning assumption, and seven of §4.2's seeds have zero volume in
+> both countries. §4.5's five landing pages became seven, listed in
+> `research/google-ads/2026-09-09-keyword-candidates.md`. The API contract as built is in
+> `04_API_AND_INTEGRATION.md` § Google Ads account blueprint; the operating procedure is in
+> `ops-web/docs/ads/runbook.md`.
+
 ### 4.1 Blueprint, not clicks
 
 The account is rebuilt from a declarative blueprint file in the repo (`ops-web/config/ads/blueprint.json`, versioned) that the build applies through the API with `validateOnly` first. The blueprint is the source of truth for structure; the engine may later propose diffs to it, never edit Google by hand.
