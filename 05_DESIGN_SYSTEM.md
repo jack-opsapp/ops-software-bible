@@ -856,8 +856,10 @@ FormTextEditor(title: "Notes", text: $notes, height: 150)
 - Section label (uppercase)
 - Customizable height
 - Font: body
-- Background: cardBackground
+- Background: surfaceInput
 ```
+
+**iOS description input (2026-09-10, local implementation; not released):** `OPS/Styles/Components/FormInputs.swift` keeps the `FormTextEditor` API and read-only presentation, but owns a UIKit multiline input for editing. The text container, caret, and placeholder share `OPSStyle.Layout.spacing3` insets and the canonical body font, with zero extra line-fragment padding. The font follows Dynamic Type, including changes during editing; preferred system-font fallbacks are resolved directly against the current traits rather than scaled twice; placeholder font and right-to-left alignment stay matched to the input. The UIKit surface is transparent so the field shell paints `surfaceInput` once. Native editing updates the binding and focus border without replacing marked text or dismissing the responder during ordinary SwiftUI updates. The editor prepares the canonical `OPSKeyboardDoneAccessory` before first focus; DONE dismisses only that keyboard and preserves the draft. The sole production caller is the site-visit type settings description. Source fixes: `a3aa5179`, `814d1e9b`, `208c36c1`; regression suite: `SiteVisitTypeSettingsInputTests` passed all 11 tests in the full iOS app on an iPhone 17 simulator running iOS 26.5. TextKit measured the actual text origin at 16pt, matching the placeholder and the center of the native 2pt caret; its painted left edge is 15pt. Local main `ce4a6e24` retains both the focus observer and the separately added bug-report field marker. The submitted missing-DONE screenshot contains no visible keyboard, so its original cause is not established by the alignment repair.
 
 #### Form Toggle
 
