@@ -2984,8 +2984,8 @@ team address in To/CC and an exact signature phone may corroborate a candidate;
 names, phone fragments, shared public email domains, and fuzzy private-domain
 matches never confer staff identity.
 
-**Quoted-signature and retention repair (2026-09-10, ops-web `b295b6972`,
-implemented locally; not yet deployed):** `email-ingestion-routing.ts` now takes signature identity
+**Quoted-signature and retention repair (live 2026-09-10, ops-web
+`23ffe646a`, including fix `b295b6972`):** `email-ingestion-routing.ts` now takes signature identity
 evidence only from the author's unquoted body. Prefixed, nested, indented,
 wrapped, forwarded, and Outlook reply history is removed before matching;
 `email-parsing.ts::stripQuotedHistoryForIdentity` cannot substitute nested
@@ -3009,10 +3009,21 @@ full-sync/recovery cases passed, along with scoped TypeScript. The legacy full
 sync file retains baseline failures (37 before, 36 after; no newly failing
 test names). The sanitized evidence is in ops-web
 `docs/artifacts/email-work-correspondence/staff-alias-quoted-replies-verification.md`.
-Production alias correction and missing-message restoration remain pending:
-the existing exact recovery runner retains its seven-day limit, and older
-history requires separately bounded restoration that preserves existing
-project/review ownership, archive state, and terminal stages.
+Vercel deployment `dpl_C1JXrygTkScb9pQhCi8ywu7V15Sa` reached READY and serves
+`app.opsapp.co`. The approved incident repair rejected exactly nine proven
+false staff aliases while preserving the genuine verified alias. All 23 missing
+emails were restored: three through the unchanged seven-day exact recovery
+runner and 20 through a separately bounded historical restoration. Independent
+readback confirmed 23 unique activities, 23 exact immutable provider sources,
+15 corresponding lead events, and all 14 pre-existing activities unchanged.
+Historical project/review ownership, archive states, and terminal stages were
+preserved; fresh replies resurfaced their original lead through normal inbound
+behavior. The other four affected historical lead summaries were refreshed
+through guarded snapshot writes, with exact summary hash/timestamp readback
+and their stages and archive states unchanged. No new lead was created during
+the repair. The active mailbox completed subsequent production syncs, with its
+watermark reaching `2026-09-10T22:10:12.606Z` and the sync lock released. Customer evidence and
+exact repair identities remain outside the public repository.
 
 #### Property-level address identity boundary (live 2026-07-29)
 
