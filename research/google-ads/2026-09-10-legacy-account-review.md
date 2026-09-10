@@ -75,3 +75,53 @@ confirm each of the rebuild's defences against a failure it actually suffered:
 
 The one positive signal — `apps similar to jobber`, competitor-switching intent — is already a keyword in
 `SWITCH · US`. No change to the blueprint follows from this review.
+
+## The copy — what grabbed attention, line by line
+
+Source: every legacy ad's text (`adText.json`) and Google's per-line results (`assetPerf.json`, 114 text
+lines scored). The signal is attention, not sales — no line can be tied to a paying customer, search lines ran
+on broad-match junk traffic, and in-app placements inflate app and display click rates. Read it as "what made
+people look", nothing stronger.
+
+**Concrete pain in the owner's own words won on every channel.**
+
+| Line | Channel | Click rate | Impressions |
+|---|---|---:|---:|
+| Would you hire a crew member who pays for themselves? That's OPS. | Search | 18.2% | 203 |
+| Eliminate status check calls. | App | 12.2% | 2,181 |
+| No more "where's the job?" | App | 7.6% | 2,762 |
+| Zero learning curve = Zero training cost (Tested on old-timers) | App | 7.4% | 4,104 |
+| Cut The Slack. Get OPS. | Search | 6.4% | 373 |
+
+**Maker credibility with specifics won too:** `Built By Trades, For Trades.` (8.9% app, 2.6% search), `Built by
+necessity on actual job sites. Not VC-funded guesswork.` (6.9%), `Never Built In A Meeting Room` (6.1%, Google
+rated BEST), `Every feature tested on real job sites. Overcomplicated ones got deleted.` (BEST).
+
+**The military swagger lost everywhere.** Fourteen bracketed search headlines — `[ Dominate Jobs. ]`,
+`[ Crush Inefficiency. ]`, `[ Zero Slack. All Results. ]`, `[ OPS: Maximum Efficiency. ]` — drew **zero clicks
+across roughly 5,000 impressions**. In app ads, `Run an elite unit.` (2.3%), `Own your operation.` (1.3%) and the
+`elite operators` descriptions were rated LOW.
+
+**Money claims drew clicks but cannot be proven.** `Earns $400/Month For You.` (4.2%), `122% or more ROI Every
+Month.` (3.5%), `2 Hours Saved Weekly = Saves you $4800 annually` (6.9%). The copy rules reject every one; the
+honest form of the money angle is the published price.
+
+**Naming the competitor worked when it said something:** `Jobber is overcomplicated.` 3.2% against
+`Housecall Pro? OPS.` at 1.2%. (The first also breaks the trademark forms the copy rules allow.)
+
+**Against the 2026-09-09 ads:** one legacy line survives verbatim (`Built by trades, for trades`). The new ads
+lean on price (13 lines) and competitors (9), carry the crew-knows-where-to-go pain only in softer phrasing, and
+use maker credibility twice. They carry none of the losing swagger. The proven pain and maker lines that pass
+the copy rules — status check calls, "where's the job?", never built in a meeting room, tested on old-timers, a
+crew member who pays for themselves — are the obvious challenger material.
+
+## The app campaigns — cheapest attention, no proven customers
+
+Three app-install campaigns spent $659 (December 2025 $401, January 2026 $247) for 1,817 clicks and 129 first
+opens — $5.11 each, the cheapest result in the account. Decoding the creation time from each record's Bubble id
+(the migration overwrote `created_at`): December 2025 was the busiest month for new users (44, against 21 in
+November) but not for new companies — 11 in November with no app spend, 11 in December with it. **None of the 22
+companies that joined in November–December 2025 is paying today.** January 2026: 4 new companies, 1 paying.
+
+An app-install campaign would also send paid clicks to the App Store, which Jackson's locked call #2 rules out
+(paid traffic lands on web signup), and the app is being refined before it meets paid traffic. Not added.
