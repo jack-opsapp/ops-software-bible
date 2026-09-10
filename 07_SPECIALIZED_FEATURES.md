@@ -4149,6 +4149,10 @@ Multi-layer notification system combining local (UNUserNotificationCenter), push
 
 New type `social_editorial` is written by service-only `notify_social_editorial(text,text)` in `20260905185527_create_social_editorial.sql`. A `prepared` run produces standard `INSTAGRAM DRAFT READY`; a `failed` run produces persistent `INSTAGRAM PREPARATION STOPPED`. Both link to `/admin/social#cloud-production` with `VIEW SOCIAL`. Recipient IDs use `SOCIAL_OPERATOR_*`, falling back to `PMF_OPERATOR_*`; since ops-web `2e3cfcb77` the app-side social rail items (`social_post_review`, `social_post_published`, recovery) resolve them through the same trimmed `getEditorialOperator`, because the production values carry trailing whitespace and `notifications_company_id_canonical` rejected the untrimmed company id. The run's `notified_at` is acknowledged in the same transaction as insertion, under row locks; notification failures stay replayable and successful replays insert zero duplicates. Skipped editorial ideas remain in the run history without a failure alert. The notification outbox is active with preparation, but no draft or failure notification has yet been generated in production; the first eligible slot is Monday 2026-09-07 10:00 Vancouver. The fallback recipient was independently verified as active Jackson Sweet with a matching active company; the cloud worker trims existing trailing whitespace and rejects incomplete social-specific override pairs. See §22 and the cloud editorial runbook.
 
+### Weekly journal notifications (2026-09-10; built, NOT deployed)
+
+New type `journal_editorial`, delivered by the hourly journal worker (`ops-web/src/lib/journal/editorial/worker.ts`) through service-only `deliver_journal_editorial_notification(...)`, which resolves superseded items, inserts against the open-notification dedupe indexes and marks the slot's `notified_state` in one transaction. `JOURNAL POST READY` — persistent; the body names the Vancouver launch (`… goes live Mon Sep 14 · 06:00 unless you stop it.`) or says the post waits for a go; action `/admin/blog?journal=<id>` `PREVIEW`. `JOURNAL POST LIVE` — standard. `JOURNAL POST BLOCKED` — persistent, reason copy per `last_code`. `JOURNAL WRITER STALLED` — persistent, at most once per Vancouver day while a queued slot is inside 12 hours of its launch; `resolve_journal_editorial_stall` clears it once nothing is at risk. Recipient: `SOCIAL_OPERATOR_*`, falling back to `PMF_OPERATOR_*`, always through the trimmed `getEditorialOperator`. Dedupe keys `journal:<identity>:ready|live|blocked` and `journal:writer-stalled:<date>`. See §21.
+
 ### Google Ads engine notifications (2026-09-10; built, NOT deployed)
 
 New type `ads_engine`, recipient `PMF_OPERATOR_USER_ID` / `PMF_OPERATOR_COMPANY_ID` (trimmed, `ops-web/src/lib/ads/engine/operator.ts`), all `action_label` `VIEW ADS`, written by the service-only RPCs in `20260910120000_ads_engine.sql` and delivered by the daily `/api/cron/ads-engine` tick:
@@ -8576,116 +8580,81 @@ dismissed  ──[re-enable in settings]──→ notStarted (doNotShow = false)
 
 ## 21. Blog & Content Marketing Pipeline
 
-### Overview
+### Producers today (verified 2026-09-10)
 
-OPS runs a fully automated weekly content pipeline orchestrated by Cowork scheduled tasks, with human review/veto checkpoints via Slack. The pipeline covers topic research → drafting → publishing → newsletter → social media generation → Instagram publishing. Jackson's only required actions are optional: pick a blog topic, approve/revise drafts, or veto social posts with a ❌ reaction. Everything else auto-fires on schedule.
+Posts live in `public.blog_posts` and are rendered at `https://opsapp.co/journal/<slug>` (ops-site). Two producers write them, told apart by `source`; neither is in the ops-web codebase.
 
-### Weekly Cadence
+| Producer | `source` | What runs | Needs the Mac | State (2026-09-10) |
+|---|---|---|---|---|
+| Weekly evergreen post | `weekly` | Cowork scheduled tasks in `~/Documents/Claude/Scheduled/`: `blog-topic-scout` (Sat 08:00), `blog-auto-draft` (Sun 20:01: HTML post + newsletter + LinkedIn + image, saved `is_live=false`), `blog-auto-publish` (Mon 05:09: sets `is_live` + `published_at` unless a revision was requested in `#blog-drafts`), `blog-newsletter-sender` (Tue 10:00, gated by `app_settings.blog_newsletter_enabled`) | yes | About one post a week since 2026-08-10 (Sunday ~20:05 draft, Monday ~05:10 live, author "The Ops Team"). No draft was created Sunday 2026-09-06 and nothing went live Monday 2026-09-07. Two drafts created Friday 2026-09-04 12:45 (`your-jobs-are-hiding-the-money`, `stop-bleeding-tools`) never went live. The task definitions are unreadable from Claude Code (macOS privacy), so the cause of the gap is unconfirmed. Being replaced by the cloud weekly writer below; the Cowork blog tasks are retired only after the cloud path is proven live, with Jackson. |
+| Breaking news | `breaking` | Codex automation `ops-emergency-trades-radar` ("OPS Emergency Trades Radar", `~/.codex/automations/ops-emergency-trades-radar/`), local execution on Jackson's Mac, model `gpt-5.6-sol`, daily around 23:00 Vancouver. Reviews recent posts, researches Canada/U.S. news, triages (IGNORE / WATCH / MENTION / PUBLISH NOW), writes the article, generates a hero with Codex's image tool, uploads it to S3 `ops-app-files-prod/blog/<ms>-<hex>.<ext>` through `ops-site/scripts/ops-emergency-blog-assets.mjs` (AWS keys read from `ops-web/.env.local`, presigned top-level curl), inserts or corrects `blog_posts` directly through the Supabase connector (author "OPS Team", live immediately), and posts status to `#blog-drafts` by webhook. Run log: the automation's `memory.md`; package artifacts under `ops-site/docs/artifacts/ops-emergency-trades-radar/` | yes | About three posts a week since mid-July; last new post 2026-09-06 23:29 (Kauaʻi). Since 2026-09-09 (and on 2026-09-03 to 09-05) Codex's approval guard refuses its customer-facing production writes, so each run ends `PUBLISH BLOCKED`, posts to Slack, and waits for Jackson's approval in Codex. Jackson decided on 2026-09-10 to keep breaking news on this automation. |
 
-Content is generated in two phases: blog on Saturday–Sunday, social on Sunday evening. Jackson reviews all social content in a single Sunday batch. Posts publish on their scheduled days throughout the week.
+The Cowork social tasks listed here until 2026-09-10 (`social-blog-promo`, `opp-weekly`, `social-feature-release`, `social-insight`, `social-auto-publish`) are superseded by the cloud Instagram editorial (§22) and must stay off.
 
-**Phase 1 — Blog (Saturday → Monday)**
+### Weekly journal post on the cloud routine (2026-09-10; built and tested locally, NOT deployed)
 
-| Day | Time | Task ID | What Happens | Slack Channel | Human Action |
-|-----|------|---------|--------------|---------------|--------------|
-| Saturday | 8:00 AM | `blog-topic-scout` | Researches trending trades topics, suggests 3–5 options | `#blog-drafts` | Pick a topic (or #1 auto-selects) |
-| Sunday | 8:01 PM | `blog-auto-draft` | Writes full HTML post + newsletter + LinkedIn + image, saves as draft (`is_live=false`) | `#blog-drafts` | Approve, request revisions, or ignore (auto-publishes Mon) |
-| Monday | 5:09 AM | `blog-auto-publish` | Sets `is_live=true` + `published_at` if approved or no response | `#blog-drafts` | None (or request revisions to hold) |
-| Tuesday | 10:00 AM | `blog-newsletter-sender` | Sends newsletter for posts published in last 6 days, checks `email_log` for dupes | `#blog-drafts` | None |
+Replaces the Cowork weekly tasks with a Mac-off pipeline: a native Claude Cloud Routine on Jackson's subscription researches, writes and edits; OPS owns every assignment, source, validation, image, preview, veto, publication and alert. Branch `feat/journal-cloud-editorial` in ops-web. Plan `ops-web/docs/plans/2026-09-10-journal-cloud-weekly.md`; runbook `ops-web/docs/journal/cloud-editorial-operations.md`; routine prompt `ops-web/docs/journal/cloud-authoring-routine.md`; routine record `scheduled-agents/ops-journal-authoring.md`.
 
-**Phase 2 — Social Content Batch (Sunday evening → week)**
+Decisions (Jackson, 2026-09-10): one evergreen post a week, live Monday 06:00 Vancouver, written Sunday with the preview in the rail all Sunday; byline `OPS Team`; newsletter built but off until he has reviewed a test send; breaking news stays on the Codex radar.
 
-All social content is generated Sunday evening and posted to `#social-media` for batch review. Each post includes a `publish_day` tag. Jackson reviews everything at once on Sunday night.
-
-| Day | Time | Task ID | What Happens | Publishes | Slack Channel |
-|-----|------|---------|--------------|-----------|---------------|
-| Sunday | 8:30 PM | `social-blog-promo` | IG carousel (4–5 slides, 1080×1350) + LinkedIn post from blog draft | Monday 9 AM | `#social-media` |
-| Sunday | 8:45 PM | `opp-weekly` | OPS Performance Protocol graphic (1080×1080) + caption | Thursday 9 AM | `#social-media` |
-| Sunday | 9:00 PM | `social-feature-release` | Even ISO weeks: feature carousel (3–5 slides, 1080×1350) | Wednesday 9 AM | `#social-media` |
-| Sunday | 9:00 PM | `social-insight` | Odd ISO weeks: data insight graphic (1080×1080) | Wednesday 9 AM | `#social-media` |
-
-**Phase 3 — Scheduled Publishing**
-
-| Day | Time | Task ID | What Publishes |
-|-----|------|---------|----------------|
-| Monday | 9:00 AM | `social-auto-publish` | Blog carousel → Instagram |
-| Wednesday | 9:00 AM | `social-auto-publish` | Feature release or Insight → Instagram |
-| Thursday | 9:00 AM | `social-auto-publish` | OPP → Instagram |
-
-### Approval / Veto Mechanics
-
-- **Blog drafts:** Post to `#blog-drafts`. "approve" publishes immediately. Revision requests hold the post. No response → auto-publishes Monday 5 AM.
-- **Social posts:** All generated Sunday evening, posted to `#social-media` with scheduled publish day. ❌ reaction kills the post. Text replies with revisions trigger re-generation. Posts publish on their scheduled day at 9 AM unless killed. Jackson reviews the entire week's content in one Sunday session.
-- **Newsletter:** Fully automatic. Checks `app_settings.blog_newsletter_enabled` kill switch and `email_log` for duplicate prevention. No approval needed.
+- **Ledger:** `journal_editorial_*` (`03_DATA_ARCHITECTURE.md` § Weekly journal ledger). One slot per Monday (`weekly:<date>`), opened 72 hours ahead; claim, lease, three attempts, drafted → scheduled → published exactly once; `SLOT_MISSED` 72 hours after an undrafted launch.
+- **Routine:** `OPS Journal authoring`, Sunday 06:00 and 14:00 Vancouver, `claude-opus-5`, tools Bash/Read/Write/Edit/Agent/WebSearch (no WebFetch), no repositories or connectors, environment `OPS Journal` with an API credential for `app.opsapp.co`. It reads the journal brief (`ops-web/docs/journal/voice/ops-journal-brief.md`, distilled from the `ops-copywriter` skill), the Sam Parr blog layer and the OPS product facts (every OPS claim traces to `14_FEATURE_POSITIONING.md`), chooses an evergreen topic (unused `blog_topics` first), has OPS fetch every source, writes, runs one independent editor subagent, revises once, and hands the draft back.
+- **Grounding and currency (deterministic):** every evidence quote must be verbatim in a page OPS fetched and kept; every number must be in a cited page, the product facts, or a declared worked example; links only to live posts, ops-site industry pages or cited sources; OPS renders the HTML and the Sources list; relative-time framing, banned words, "contractor", exclamation points and an AI lead are rejected; 1,000–1,400 words, 6–8 FAQs, 8–12 internal links, sentence-case headings, a closing one-line blockquote. Contracts: `04_API_AND_INTEGRATION.md` § Weekly journal authoring.
+- **Image:** OPS renders a black typographic plate (mark, hairline, `// OPS JOURNAL`, the post's sharpest line in Cake Mono Light), composed to survive ops-site's article-header crop and white fade, the phone crop and the 16:10 card; stored at `blog/journal/<slot>-<sha16>.jpg` on the product's blog image backend; a public HEAD must answer 200 before a preview is promised. Instagram adapts posts with these plates as imageless, so its cover never stacks text on text. No paid image service.
+- **Preview and veto:** the hourly worker schedules the draft for its slot (a late draft keeps a 6-hour minimum veto and never launches outside 06:00–20:00); `JOURNAL POST READY` in the rail links to the WEEKLY POST strip on `/admin/blog`, with PUBLISH NOW, STOP, WRITE ANOTHER and SEND TEST TO ME. Modes `off` / `prepare` (held for a manual go) / `publish` (goes live at `publish_at` unless stopped).
+- **Publication and Instagram coupling:** the guarded publish inserts the live row with `published_at = now()`; it refuses a taken slug, an 8-day-old draft, and a second weekly post inside 5 days (a still-running Cowork task can never double the week; a manual publish may override that one guard). The Instagram editorial cron discovers the new post (`published_at > discovery_since`) and creates `blog:<id>`; the 08:00 Instagram routine run adapts it and pacing spreads carousels. Old posts are never flipped back live.
+- **Alerts:** `journal_editorial` rail items (§14): READY, LIVE, BLOCKED, and a once-a-day `JOURNAL WRITER STALLED` when a queued slot is within 12 hours of launch, cleared by the tick.
+- **Newsletter:** a Tuesday 10:00 lane that mails each weekly post once when `blog_newsletter_enabled` is true, records `skipped` while it is false so old posts are never mailed later, and leaves a failed send claimed rather than mailing twice. 13 active subscribers (2026-09-10); no blog newsletter has ever been sent.
+- **Proof so far:** 17-function SQL harness, 190+ focused unit/integration tests, hero crop proofs `ops-web/docs/artifacts/journal-editorial/hero-proof-2026-09-10/`, and a local rehearsal on a disposable stack (`ops-web/docs/artifacts/journal-editorial/local-e2e-2026-09-10/`). Not yet true: migration applied, deployment, `JOURNAL_AUTHORING_TOKEN`, the `OPS Journal` environment, the routine, any cloud run or publication.
 
 ### Architecture Components
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| Blog Admin Dashboard | `OPS-Web/src/app/admin/blog/page.tsx` | Manual list, create, edit, delete posts |
-| Blog Post Editor | `OPS-Web/src/app/admin/blog/_components/blog-post-editor.tsx` | Rich text editor with FAQ, slug, categories |
-| Image Upload Route | `OPS-Web/src/app/api/admin/blog/upload/route.ts` | Uploads to `images` bucket at `blog/{timestamp}-{random}.{ext}` |
-| Public Blog (OPS-Web) | `OPS-Web/src/app/blog/page.tsx`, `[slug]/page.tsx` | ISR-cached public rendering, JSON-LD schema |
-| Public Blog (ops-site) | `ops-site/src/lib/blog.ts` | Static marketing site reads same `blog_posts` table |
-| Blog API | `OPS-Web/src/app/api/blog/posts/route.ts` | GET (list), POST (create), PUT (update) |
-| Newsletter API | `OPS-Web/src/app/api/blog/newsletter/route.ts` | Send post to subscribers via SendGrid |
-| Scheduled Tasks | `~/Documents/Claude/Scheduled/` | Cowork automation — 11 tasks orchestrate the full pipeline |
+| Blog Admin Dashboard | `ops-web/src/app/admin/blog/page.tsx` | Weekly post strip, list, create, edit, delete posts |
+| Weekly post strip | `ops-web/src/app/admin/blog/_components/weekly-post-panel.tsx` | Preview and veto for the cloud weekly post (`?journal=<id>`) |
+| Blog Post Editor | `ops-web/src/app/admin/blog/_components/blog-post-editor.tsx` | Rich text editor with FAQ, slug, categories |
+| Image Upload Route | `ops-web/src/app/api/admin/blog/upload/route.ts` | Uploads to S3 `ops-app-files-prod/blog/{timestamp}-{random}.{ext}` by default; Supabase `images` bucket when `STORAGE_BACKEND=supabase` |
+| Public Blog (ops-web) | `ops-web/src/app/blog/page.tsx`, `[slug]/page.tsx` | ISR-cached rendering, JSON-LD |
+| Public Journal (ops-site) | `ops-site/src/lib/blog.ts`, `src/app/journal/**` | Canonical public surface; service-role reads of live posts, ISR 300 s; does not filter a future `published_at` |
+| Blog API | `ops-web/src/app/api/blog/posts/route.ts` | GET (list), POST (create), PUT (update); `BLOG_API_KEY` bearer or admin |
+| Newsletter API | `ops-web/src/app/api/blog/newsletter/route.ts` | Send a post to subscribers via SendGrid (kill switch; `test_email` bypass) |
+| Weekly journal pipeline | `ops-web/src/lib/journal/editorial/`, `api/internal/journal/editorial/**`, `api/cron/journal-editorial`, `api/admin/journal/editorial/**` | Cloud weekly writer (above) |
+| Cowork weekly tasks | `~/Documents/Claude/Scheduled/` | Legacy weekly producer, Mac-dependent |
+| Codex breaking radar | `~/.codex/automations/ops-emergency-trades-radar/` | Breaking producer, Mac-dependent |
 
 ### Database Tables
 
-**`blog_posts`** — Core content table:
-- `id` (uuid pk), `title`, `subtitle`, `slug` (unique), `author`, `content` (HTML), `summary`, `teaser`, `meta_title`
-- `thumbnail_url` — public URL in `images` bucket
-- `category_id`, `category2_id` — FK to `blog_categories`
-- `is_live` (boolean) — draft/published toggle
-- `display_views` (int), `word_count` (int)
-- `faqs` (jsonb) — array of `{question, answer}` for FAQ schema
-- `published_at`, `created_at`, `updated_at`
+**`blog_posts`** — `id` (uuid pk), `title`, `subtitle`, `slug` (unique), `author`, `content` (HTML), `summary`, `teaser`, `meta_title`, `thumbnail_url` (public URL, S3 `blog/` for new posts), `category_id`, `category2_id` (FK `blog_categories`), `is_live`, `display_views`, `word_count`, `faqs` (jsonb `{question, answer}`), `published_at`, `created_at`, `updated_at` (set by writers; no trigger), `email_content`, `linkedin_article` (no reader in any codebase), `image_prompt`, `source` (`weekly` | `breaking`, default `breaking`). RLS: `private.is_ops_admin()` for authenticated; producers write with the service role. No audit trail.
 
-**`blog_categories`** — `id`, `name`, `slug` (unique), `created_at`
+**`blog_categories`** — `id`, `name`, `slug` (unique), `created_at`. Six rows: Growth, Industry Intel, Leadership & Crew, Money & Margins, Operations, Technology.
 
-**`blog_topics`** — Content idea backlog: `id`, `topic`, `author`, `image_url`, `used` (boolean), `created_at`, `updated_at`
+**`blog_topics`** — backlog: `id`, `topic`, `author`, `image_url`, `used`, `created_at`, `updated_at`. The cloud writer offers unused topics first and marks one used when its post goes live.
 
-**`newsletter_subscribers`** — `id`, `email` (unique), `first_name`, `source`, `is_active`, `subscribed_at`, `unsubscribed_at`
+**`newsletter_subscribers`**, **`newsletter_content`**, **`email_log`**, **`app_settings`** — unchanged; `app_settings.blog_newsletter_enabled` gates every blog newsletter.
 
-**`newsletter_content`** — Monthly product update emails: `id`, `month`, `year`, `shipped` (array), `in_progress` (array), `bug_fixes` (array), `coming_up` (array), `custom_intro`, `custom_outro`, `status`, `created_at`, `updated_at`
-
-**`email_log`** — Audit trail: `id`, `user_id`, `email_type`, `recipient_email`, `subject`, `sent_at`, `status`, `error_message`, `metadata` (jsonb)
-
-**`app_settings`** — Kill switches: `key` (text pk), `value` (jsonb), `updated_at`. Key `blog_newsletter_enabled` gates newsletter sends.
+**`journal_editorial_*`** — the cloud weekly ledger; see `03_DATA_ARCHITECTURE.md`.
 
 ### Storage Conventions
 
-| Bucket | Public | Purpose | RLS |
-|--------|--------|---------|-----|
-| `images` | Yes | Blog thumbnails, in-post images | Public read (URL); **service_role** write (server upload routes). Anon write policies revoked — W3 §7 (`03_DATA_ARCHITECTURE.md`) |
-| `social-media` | Yes | Generated social graphics | Public read (URL); **service_role** write (`supabase_upload.py`). Anon write policies revoked — W3 §7 |
-
-- Blog thumbnails: `images/blog-thumbnails/{name}.webp`
-- In-post images: `images/blog/{timestamp}-{random}.{ext}`
-- Social images: `social-media/{prefix}/{timestamp}/slide_*.png`
+| Location | Public | Purpose |
+|--------|--------|---------|
+| S3 `ops-app-files-prod/blog/` | Yes | Blog thumbnails and in-post images (admin upload, Codex radar) |
+| S3 `ops-app-files-prod/blog/journal/` | Yes | OPS-rendered weekly plates (`<slot>-<sha16>.jpg`) |
+| Supabase `images` | Yes | Legacy blog images and the `STORAGE_BACKEND=supabase` fallback; service-role write only |
+| Supabase `social-media` | Yes | Instagram artwork (§22) |
 
 ### Auth Gating
 
-Blog admin routes require Firebase auth + `isAdminEmail()` check (`verifyAdminAuth`). Public `/blog/*` routes and ops-site reads are unauthenticated. Newsletter send requires Bearer token (`BLOG_API_KEY` env var).
+Blog admin routes require Firebase auth plus `isAdminEmail()` (`verifyAdminAuth`). Public `/blog/*` and ops-site reads are unauthenticated. The Blog API and newsletter route accept the `BLOG_API_KEY` bearer. The weekly journal handoff routes accept only `JOURNAL_AUTHORING_TOKEN`; its cron only `CRON_SECRET`.
 
 ### Public Rendering
 
-Both OPS-Web and ops-site render the same `blog_posts` data:
-- **OPS-Web** `/blog/[slug]` — ISR with 300s revalidation, full OpenGraph/Twitter cards, JSON-LD Article + FAQPage schema
-- **ops-site** — static build via `getLatestPosts()`, `getPostBySlug()` from `ops-site/src/lib/blog.ts` (service role key)
+ops-site `/journal/<slug>` is canonical (ISR 300 s, OpenGraph 1200 × 630, JSON-LD Article + FAQPage, author fallback "OPS Team"). ops-web `/blog/[slug]` renders the same rows. Because ops-site does not filter future dates, a post must go live by inserting or flipping the row at publication time, never by pre-dating `published_at`.
 
-### Newsletter Flow (Automated)
+### Newsletter
 
-1. `blog-newsletter-sender` fires Tuesday 10 AM
-2. Queries Supabase for blog posts published in last 6 days
-3. Checks `email_log` to prevent duplicate sends
-4. Verifies `app_settings.blog_newsletter_enabled` kill switch
-5. Calls `POST /api/blog/newsletter` with `post_id`
-6. Route queries `newsletter_subscribers` where `is_active = true`
-7. Sends via SendGrid using post's `title`, `teaser`, `thumbnail_url`, `content`
-8. Logs each send to `email_log` with status and error
-9. Posts status summary to `#blog-drafts` (sent count, errors, or skip reason)
+`POST /api/blog/newsletter` (`post_id`, optional `test_email`) sends through `sendBlogNewsletter` to active subscribers and logs `email_log`; it honours the kill switch unless `test_email` is set. The article link is `https://opsapp.co/journal/<slug>` (fixed 2026-09-10; it previously pointed at the app's `/blog/<slug>`). The Cowork `blog-newsletter-sender` and the cloud Tuesday lane both depend on `blog_newsletter_enabled`, which is `false`.
 
 ---
 
