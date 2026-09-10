@@ -8,9 +8,16 @@ backfilled keyword, ad or ad-group history, and its search-term table covers $99
 
 ## The answer
 
-**Nothing in the old account can be shown to have produced a customer.** It spent $4,777.80 between
-February 2025 and March 2026 (nothing since), bought 8,495 clicks and reported 355 conversions — and not one
-of those conversions was an OPS trial.
+> **Correction, 2026-09-10 (Jackson).** At the time these ads ran, success was measured as **signups for
+> web traffic and downloads for app campaigns** — and the app was badly broken: people could not get through
+> onboarding, and their progress was not tracked. The first draft of this review judged the ads on today's
+> paying customers, which blames the ads for what happened after the click. The sections below are judged on
+> the metric each campaign was bought for.
+
+**Judged on what it was bought to do, the app-install channel was the best in the account and search was the
+worst.** The account spent $4,777.80 between February 2025 and March 2026 (nothing since), bought 8,495 clicks
+and reported 355 results — web signups and app downloads, none of them an OPS trial as the account defines one
+today. Whether any became customers cannot be read: the onboarding that should have carried them was broken.
 
 | What Google counted | Count | What it really was |
 |---|---:|---|
@@ -115,13 +122,34 @@ use maker credibility twice. They carry none of the losing swagger. The proven p
 the copy rules — status check calls, "where's the job?", never built in a meeting room, tested on old-timers, a
 crew member who pays for themselves — are the obvious challenger material.
 
-## The app campaigns — cheapest attention, no proven customers
+## By the metric of the time — and the app campaigns
 
-Three app-install campaigns spent $659 (December 2025 $401, January 2026 $247) for 1,817 clicks and 129 first
-opens — $5.11 each, the cheapest result in the account. Decoding the creation time from each record's Bubble id
-(the migration overwrote `created_at`): December 2025 was the busiest month for new users (44, against 21 in
-November) but not for new companies — 11 in November with no app spend, 11 in December with it. **None of the 22
-companies that joined in November–December 2025 is paying today.** January 2026: 4 new companies, 1 paying.
+| Channel | Spend | What it was bought for | Result | Cost per result |
+|---|---:|---|---:|---:|
+| App install | $659 | Downloads | 129 | **$5.11** |
+| Display | $1,344 | Web signups | 130 | $10.34 |
+| Performance Max | $1,356 | Web signups | 90 | $15.07 |
+| Search | $1,418 | Web signups | 6 | **$236** |
 
-An app-install campaign would also send paid clicks to the App Store, which Jackson's locked call #2 rules out
-(paid traffic lands on web signup), and the app is being refined before it meets paid traffic. Not added.
+`TRY OPS 2026` (Performance Max, $511) recorded zero — consistent with the tracking gap of the time, not
+evidence that it bought nothing.
+
+**Inside the app campaigns, the maker-credibility ad bought the cheapest downloads**, in the same order as the
+click rates: `What Makes Us Different` (`Built By Railings Contractor`, `Never Built In A Meeting Room`,
+`We Deleted More Than We Built`) $2.63 per download; `Value You Can't Get Elsewhere` (`Works When Wi-Fi
+Doesn't`) $3.11; `Advanced Value Propositions` (`No more "what's my job?"`) $3.87 in 2025, $9.12 in 2026;
+`Operating Unit` (`Run an elite unit.`) $6.43.
+
+What the downloads became cannot be read. Decoding creation times from Bubble ids (the migration overwrote
+`created_at`), 22 companies joined in November–December 2025 and none pays today — evidence about the app at
+the time, not about the ads.
+
+**What this means.** The app-install channel bought interested downloads at half the cost of a display signup
+and a fraction of a search one. It is the strongest candidate for the next channel once the refined app carries
+people through onboarding — measured on trials through the hashed-email bridge, not on downloads. It stays out
+of the launch: paid traffic lands on web signup (call #2), and the app is being refined before it meets paid
+traffic.
+
+Search was the worst channel by its own metric, at $236 a signup. The traffic was broad-match junk, so it says
+little about pricing-intent exact and phrase keywords — but it is a real caution for a search-only launch, and
+exactly what the day-90 stop rule (cost per trial above $250) exists to catch.
