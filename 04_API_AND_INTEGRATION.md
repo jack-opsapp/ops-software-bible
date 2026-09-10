@@ -1392,6 +1392,34 @@ empty result indistinguishable from a wiped account.
 fixed pages, one per ad group, each with a single CTA to `https://app.opsapp.co/register`
 so the `.opsapp.co` first-touch cookie travels. The rotating A/B experiment stays on `/`.
 
+**Assets and retirement (2026-09-10).** Each campaign may carry an `assets`
+block — sitelinks, callouts, a structured snippet, price tiers, a business name,
+a business logo and search images. `planAssets()` (`src/lib/ads/blueprint-assets.ts`)
+is pure: blueprint + the account's asset state read live from Google
+(`queryAssetState()` — the warehouse does not hold assets) → operations at stage 9,
+after the ad plan, in the same mutate. It diffs by content, reuses an identical
+asset already in the account, and never removes: a link someone paused is
+re-enabled, and account-level assets the blueprint retires (`retire.customerAssets`)
+are paused. Ads the blueprint replaces (`retire.adIds`) are paused by the ad planner —
+only the ids named, so the engine's own challengers are never touched.
+
+**Images need Jackson's approval on record.** Every entry in `blueprint.images`
+carries `approvedBy` and `approvedAt`; the schema refuses an image without them and a
+campaign naming an image the blueprint does not define. Jackson's rule (2026-09-10):
+no picture reaches an ad until he has seen it.
+
+**What the API will and will not do here.** Search campaigns refuse
+`GENERATE_IMAGE_EXTRACTION` and `GENERATE_IMAGE_ENHANCEMENT` in
+`campaign.asset_automation_settings` (`ENUM_VALUE_NOT_PERMITTED`); on Search, image
+extraction follows the account-level *Dynamic image assets* control, which only the
+Google Ads UI exposes (Assets → ⋮ → Account-level automated assets). Text automation
+stays opted out per campaign. None of the five campaigns has `ai_max_setting` set or a
+campaign-wide match type, so the September 2026 AI Max auto-upgrade does not apply.
+An ad reviewed before its landing page existed keeps a cached
+`DESTINATION_NOT_WORKING` verdict, and that verdict also blocks creating new ads to the
+same page — `validateOnly` answers `POLICY_FINDING`, type `PROHIBITED`, not exemptible —
+until Google re-crawls. `scripts/ads/wait-for-destination-review.mjs` watches for it.
+
 **Status:** BUILT 2026-09-09. Five campaigns exist, all PAUSED, all labelled `engine`;
 24 ads in policy review; 21 legacy campaigns labelled `legacy`. Nothing has spent, and
 nothing can until the enable route is called on Jackson's explicit word.
