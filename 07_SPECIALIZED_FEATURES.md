@@ -4161,6 +4161,19 @@ Sources: ops-web migration `20260909051427_email_existing_job_correspondence.sql
 
 **Inquiry-boundary follow-up (released 2026-09-09 local / 2026-09-10 UTC):** Ops-web `5b12d9823` sends unclassified parsed forms and message-scoped forwards to the same readable work-intent review receipt. Borderline forms persist the classifier audit before the final receipt, with one activity/notification across replay. Only a classified new-work request with source-matching current-message evidence can enter automatic client/lead creation and its lead notifications. Platform administrative notices retain inbox visibility without becoming leads. If `phase_c` classification is disabled, recognized forms remain in review; the inbox visibility flag is unchanged. No new notification type, copy, UI, or SQL migration is introduced. See `04_API_AND_INTEGRATION.md` → “Automatic inquiry creation boundary” and ops-web `docs/artifacts/email-work-correspondence/inquiry-boundary-verification.md` (320 passing affected tests). [Production release evidence](docs/artifacts/email-inquiry-boundary-release.md) records alias/build verification and the absence of a fresh incoming-message canary.
 
+### Phase C appointment review notifications (2026-09-11; built, NOT deployed)
+
+`phase_c_appointment_review` remains the durable review type, owned by the
+requested appointment owner and deduped by
+`phase-c-bilateral:v1:<handoff-id>:review`. A handoff whose only missing fact is
+the date or time produces a standard dismissible nudge instead of a persistent
+failure: `Set a time for <lead>`, `Email mentioned <event>. No date or time.`,
+and `OPEN LEAD` to the linked pipeline record. Both push strings are bounded to
+50 characters. Other review reasons remain persistent and continue to use the
+specific correction copy for their blocking condition. Source:
+`ops-web/src/lib/api/services/phase-c-bilateral-event-consumer-runtime.ts`,
+OPS-Web `22eca1b89`.
+
 **Phase 14 addition (2026-09-06, dormant; migration applied 2026-09-07):** `approve_schedule_change` preparation creates an actor-owned persistent review notification linking to the approval desk. Commit/rejection resolves it atomically. Successful task changes retain existing assignment/schedule in-app and preference-dependent OneSignal push events; receipt language reports queued effects, never delivered pushes. No automatic customer-message event is created. See [Phase 14 contract](specs/2026-09-06-ops-mcp-schedule-crew-approval.md).
 
 ### Overview
@@ -7161,11 +7174,16 @@ For scheduling, Phase C evaluates the complete exact-opportunity history after
 quoted text is removed. It may persist `ready` only when distinct authorized
 parties explicitly proposed and accepted the same resolved event, with owner,
 title, start/end, timezone, location when known, and both operator/customer
-attendee roles. Missing authority, bilateral acceptance, owner, attendee,
-date/time, or timezone produces `review`; unrelated calendar-like inbound text
-does nothing. The result is only a `phase_c_bilateral_event_handoffs` envelope.
-P1-17 owns duplicate/conflict/permission checks, one canonical OPS event or
-site visit, envelope consumption, and connected-provider synchronization.
+attendee roles. The full company-user and verified-alias roster proves sender
+authority only; it is never serialized as attendees. The appointment's operator
+attendee is the requested owner's registered email, and an owner email outside
+the authorized roster leaves the envelope in review. Missing authority,
+bilateral acceptance, owner, attendee, date/time, or timezone produces
+`review`; unrelated calendar-like inbound text does nothing. The result is only
+a `phase_c_bilateral_event_handoffs` envelope. P1-17 owns
+duplicate/conflict/permission checks, one canonical OPS event or site visit,
+envelope consumption, and connected-provider synchronization. This attendee
+boundary is implemented in OPS-Web `22eca1b89`.
 
 Crystal Elton regression contract: the 2026-08-20 reply requesting a call to
 discuss moving forward with the quote is material correspondence. It must
