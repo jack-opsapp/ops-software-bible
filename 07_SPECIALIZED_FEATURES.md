@@ -7514,7 +7514,22 @@ unsatisfiable rather than merely strict:
    stands in for the whole-summary re-parse; when it does not, the contract
    stays in place and still throws.
 
-Non-convergence is now bounded instead of infinite.
+**2026-09-11 recurrence repair (OPS-Web `006b69a8a`; not deployed):** seven exact
+production source snapshots reproduced failures in
+`src/lib/api/services/lead-summary-service.ts` even with the earlier fixes.
+The commercial context still demanded a generic follow-up/payment action while
+the current-fact context and renderer selected the customer's concrete request.
+Both contracts now use that resolved request. Next-action validation and display
+share greeting/link cleanup; a bare photo URL is not a mandatory action, and
+cleanup preserves question marks so tentative scheduling evidence stays tentative.
+For the deterministic renderer only, superseded actions are checked against its
+action clause and superseded schedules against its schedule/action clauses.
+Scope vocabulary and historical objection text no longer masquerade as stale
+actions or schedules. Model output retains whole-summary stale-fact checks;
+money and scope checks remain global in both paths. No customer fields, queue
+rows, identity checks or guarded `commit_lead_summary_snapshot` writes change.
+
+The older **mailbox continuation** bounds non-convergence.
 `LEAD_SUMMARY_DEFERRAL_ATTEMPT_CAP = 3` consecutive failures per opportunity,
 and only a `model_contract` or `model_refusal` reason consumes budget: a
 provider outage is an infrastructure condition, not a poison lead, and a lead
@@ -7523,9 +7538,14 @@ opportunity leaves the envelope — which is what lets the mailbox complete — 
 lands in `public.lead_summary_refresh_quarantine` with one persistent,
 open-deduped rail notification per lead deep-linked to the lead. A quarantined
 lead is released by newer evidence: the scheduled sweep admits it again only
-when its latest context timestamp is newer than `quarantined_at`, while the targeted
-refresh path — always driven by concrete new evidence for those exact leads —
-releases unconditionally and grants one more bounded round.
+when its latest context timestamp is newer than `quarantined_at`, while the
+targeted refresh path releases unconditionally. The durable
+`opportunity_phase_c_work` worker also calls that targeted path for retries of
+the same event; the three-attempt continuation cap does **not** bound that worker.
+Its summary component remains pending until one guarded write succeeds, and it
+never acknowledges a failed/deferred/skipped write as applied. The September 11
+repair addresses the reproduced renderer failures; it does not introduce an
+event-aware Phase C quarantine or claim that all future retries are bounded.
 `/api/cron/lead-summary-refresh` reports `quarantinedCount` and `quarantined`
 and stays HTTP 200: a per-lead data problem is not a workload failure and must
 not trip the circuit.

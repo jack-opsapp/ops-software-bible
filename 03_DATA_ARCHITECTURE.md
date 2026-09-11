@@ -6146,8 +6146,10 @@ cannot regress it. Bug `d26b3a98`.
 
 ### `lead_summary_refresh_quarantine`
 
-Written by migration `20260830110000_lead_summary_refresh_quarantine.sql` on
-OPS-Web branch `fix/bugsweep-email-20260828` (2026-08-29); **not applied**. Lead
+Defined by migration `20260830110000_lead_summary_refresh_quarantine.sql` on
+OPS-Web branch `fix/bugsweep-email-20260828` (2026-08-29). **Live table presence
+verified 2026-09-11 at 17:00 UTC**; the earlier "not applied" note is stale.
+The September 11 summary repair applies no migration. Lead
 summaries are derived data, but a lead whose summary could not converge stayed
 in the mailbox continuation envelope forever, and a non-empty envelope means
 "sync incomplete" — so one such lead froze the whole mailbox cursor and every
@@ -6173,8 +6175,13 @@ deletes the row and resolves the open alert with reason
 
 Only `model_contract` and `model_refusal` reasons ever reach this table; a
 provider outage is an infrastructure condition and never consumes budget. The
-cap is three consecutive failures, tracked per opportunity in the continuation
-envelope's `pendingLeadSummaryAttempts` map. See
+cap is three consecutive failures, tracked per opportunity in the mailbox
+continuation envelope's `pendingLeadSummaryAttempts` map. This does not apply to
+`opportunity_phase_c_work`: its runtime calls targeted refresh again for the same
+required event, and targeted refresh releases quarantine unconditionally. The
+seven repeatedly failing summaries observed September 11 had no quarantine row;
+they require summary convergence and a successful guarded write before the
+summary component can acknowledge completion. See
 `07_SPECIALIZED_FEATURES.md` § Lead-summary convergence and quarantine.
 
 ### `opportunity_lifecycle_decisions`

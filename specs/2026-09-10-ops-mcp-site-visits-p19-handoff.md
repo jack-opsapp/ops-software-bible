@@ -40,6 +40,8 @@ Phone integration commit `187a36d631a7413ced22d631c3cc153c62eb195f` merges exact
 
 Bible merge `ef8313d0a486caf085149d77170e571e875a5b0d` combines the accepted docs with exact main `91b52e679980a0b9c60a2fd4a2ab71716d5a4d36`, retaining the site-visit candidate and deployed deck/Canpro sections. The six SQL sources and mirrors were not changed. The shared build slot was returned after the P19 process exited. Worktrees and original phase commits are preserved. No release or activation action is authorized by this record.
 
+Final reconciliation also retains the independently completed email-summary repair that advanced web main to `df2b0ae80` and Bible main to `2112db8` during phone testing. Its code changes are outside the verified MCP/approval/migration paths; those phase paths are byte-identical after integration and focused production TypeScript was rechecked. No email behavior is newly claimed as verified by the P19 test counts.
+
 ### Remaining release order
 
 1. **Complete locally on 2026-09-11:** all three repositories reconciled with the exact main snapshots above, with fresh bounded web and combined phone verification. The separately owned calendar-address change and unrelated workspace edits are preserved. Any future source drift still requires proportionate verification before release.
