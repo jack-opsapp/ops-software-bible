@@ -856,8 +856,10 @@ FormTextEditor(title: "Notes", text: $notes, height: 150)
 - Section label (uppercase)
 - Customizable height
 - Font: body
-- Background: cardBackground
+- Background: surfaceInput
 ```
+
+**iOS description input (2026-09-10, local implementation; not released):** `OPS/Styles/Components/FormInputs.swift` keeps the `FormTextEditor` API and read-only presentation, but owns a UIKit multiline input for editing. The text container, caret, and placeholder share `OPSStyle.Layout.spacing3` insets and the canonical body font, with zero extra line-fragment padding. The font follows Dynamic Type, including changes during editing; preferred system-font fallbacks are resolved directly against the current traits rather than scaled twice; placeholder font and right-to-left alignment stay matched to the input. The UIKit surface is transparent so the field shell paints `surfaceInput` once. Native editing updates the binding and focus border without replacing marked text or dismissing the responder during ordinary SwiftUI updates. The editor prepares the canonical `OPSKeyboardDoneAccessory` before first focus; DONE dismisses only that keyboard and preserves the draft. The sole production caller is the site-visit type settings description. Source fixes: `a3aa5179`, `814d1e9b`, `208c36c1`; regression suite: `SiteVisitTypeSettingsInputTests` passed all 11 tests in the full iOS app on an iPhone 17 simulator running iOS 26.5. TextKit measured the actual text origin at 16pt, matching the placeholder and the center of the native 2pt caret; its painted left edge is 15pt. Local main `ce4a6e24` retains both the focus observer and the separately added bug-report field marker. The submitted missing-DONE screenshot contains no visible keyboard, so its original cause is not established by the alignment repair.
 
 #### Form Toggle
 
@@ -1334,7 +1336,7 @@ ClientProjectBadges(client: client)
 - `OPS/Styles/Components/Feedback.swift` — the **catalog**: every feedback event as `Feedback.<Domain>.<event>` (≈135 events) plus `Feedback.Err.*` error labels. All toast copy lives here — call sites reference symbols, never inline strings. One `ops-copywriter` pass governs the whole set. `FeedbackCatalogTests` guards the voice contract (`// ` prefix, UPPERCASE).
 - `OPS/Styles/Components/View+ErrorToast.swift` — `.errorToast($vm.error, label:)` and the single-action variant; replaces the old `.alert("Error", isPresented:)` boilerplate.
 
-**Queue behavior** — single toast visible at a time; identical consecutive labels coalesce (a burst reads as one); a backlog drains on a compressed interval; error toasts with `autoDismissAfter: 0` hold until tapped.
+**Queue behavior** — single toast visible at a time; identical consecutive labels coalesce by default (a burst reads as one); an optional `coalescingKey` preserves separate destinations for entity-specific confirmations; a backlog drains on a compressed interval; error toasts with `autoDismissAfter: 0` hold until tapped.
 
 **Tones** — success = olive (nominal/done), warning = tan (attention: rejected/flagged/archived/expiring), error = rose (failure).
 
@@ -1345,6 +1347,14 @@ ClientProjectBadges(client: client)
 **What stays separate (by design)** — blocking confirmations; the Supabase-backed **notification inbox** (`NotificationListView`, bell icon — an inbox, not a transient event); ambient/persistent status (`NetworkStatusIndicator`, avatar sync overlay, `SyncStatusSection`, `ImageSyncProgressView`, `GracePeriodBanner`); server-driven full-screen notices (`AppMessageView`); wizard chrome; the geofence action banner.
 
 **Usage** — `ToastCenter.shared.present(Feedback.Invoice.sent)`; errors via `.errorToast($vm.error, label: Feedback.Err.saveFailed)`. Parameterized factories carry glanceable context where it matters (e.g. `Feedback.Task.scheduledFor(start:end:)` → `// SCHEDULED FOR MON JAN 27 – WED JAN 29`).
+
+**Project-created navigation (2026-09-11, local main `ba7e0a9b`, bug `083eed9e`):** `ProjectFormSheet` captures the saved project's immutable ID and resolved title in `ProjectCreationCompletion`. The success notification waits for completed UIKit dismissal; save and dismissal may finish in either order. `ContentView` presents `Feedback.JobBoard.projectCreated(title:projectID:openProject:)` through the shared toast window. The message and `VIEW` button open that exact project. Missing or tutorial IDs produce a plain confirmation. This toast opts into `bodyTapInvokesAction` and uses `project-created:<id>` for coalescing. Taps check the visible toast ID before action and dismissal, preventing a second tap from consuming the next queued toast. Other toast bodies retain dismiss-only behavior.
+
+Task Form, Universal Search, and Contact Details provide a local SwiftUI presentation endpoint through `projectCreationToastHost()`. The target holds its endpoint weakly and conveys presentation context, never authority. `MainTabView` keeps its PIN, feature-flag, permission, scope, deleted-row, and local-first resolution checks, then delivers the validated project or access denial to that parent. The project appears above the parent draft and closes back to it. If the parent has gone away, delivery falls back to the existing root route. The host reuses `ProjectDetailsView` and `AccessDeniedSheet` with inherited SwiftUI environment; `AppState`, persisted models, and the root project-sheet implementation are unchanged.
+
+Toast taps enter the existing `DeepLinkCoordinator.receive` / `drain` lifecycle before notification delivery. The pending link retains the exact project ID and typed weak presentation target through PIN unlock. Resolution, denial, and replacement retire the retained target; the wrapper never retains the parent form.
+
+Independent source review is clear. App-hosted iPhone 17 / iOS 26.5 verification passed **90/90 tests**, with zero failures or skips: 48 toast, dismissal, parent presentation, weak-target, and PIN replay checks plus 42 existing notification-routing checks. The hosted PIN test models the PIN return and uses the actual coordinator and presentation host; it does not mount the complete MainTab/PINGatedView authorization chain. The final toast screenshot was visually inspected. Evidence: `ops-ios/docs/artifacts/ios-bugs-p2-20260910/repair-summary.md` and `toast-test-summary-3.json`. Signed distribution and customer-device verification remain pending.
 
 ---
 

@@ -82,6 +82,14 @@ Advertising storage or personalization must not be enabled until the privacy pol
 
 **Production-host boundary (prepared locally 2026-09-03; not production-live until OPS-Web, ops-site, and try-ops are pushed and deployed).** Browser configuration now has an exact allowlist before `dataLayer` is created or `gtag('config')` is called. The primary marketing deployment accepts only `opsapp.co` and `www.opsapp.co`; the acquisition landing app accepts only `try.opsapp.co`; the logged-in product accepts only `app.opsapp.co`. Localhost, loopback addresses, Vercel previews, and arbitrary aliases do not configure GA or Google Ads. The acquisition landing app also suppresses its `onboarding_events` and `tutorial_analytics` writes outside `try.opsapp.co`, at both the client and API-route boundaries. Preview analytics require a separate QA property rather than writing into production reporting.
 
+### Fixed acquisition-page events — local repair, September 11, 2026
+
+The paid landing pages emit `paid:<route>` identities; the fallback landing page emits `fallback`. These are not UUID experiment variants. Live schema verification confirmed that `ab_events.variant_id` is a required UUID foreign key, so inserting these identities into the experiment ledger fails. The repair is committed as `try-ops` source `da0b6093843024c4a994900882801eaaa739b437` and merged into local main `ab2b3f1e7195db16ca9d572e85d8d0eca66f9daa`; it is **not deployed**.
+
+`POST /api/ab-events` validates the identity, session, event type, and optional telemetry fields. Real UUID variants retain the existing `ab_events` writes and experiment counters. The configured paid-page identities and `fallback` instead use the existing `onboarding_events` ledger: `variant` keeps the fixed identity, `event_type` is prefixed with `landing_`, and `metadata` preserves the accepted event payload, including attribution, session, and interaction fields. Fixed pages never increment experiment counters; `landing_signup_complete` does not masquerade as canonical onboarding `signup_complete`.
+
+The endpoint follows the existing exact `try.opsapp.co` collection boundary. Invalid production payloads return 400 before database access; storage failures remain 500. No schema, RLS, GA, Google Ads, or production configuration change is part of this repair. Failed historical telemetry is not reconstructed. Deployment and natural production event readback remain required.
+
 ### First-party product events
 
 The production event contract is version `1`:

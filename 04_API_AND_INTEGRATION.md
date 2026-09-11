@@ -1193,6 +1193,16 @@ In `NotificationManager.swift`:
 
 ---
 
+### Acquisition landing telemetry: `POST /api/ab-events`
+
+**September 11, 2026 — verified local repair, not deployed.** Source: `try-ops` commit `da0b6093843024c4a994900882801eaaa739b437`, local-main merge `ab2b3f1e7195db16ca9d572e85d8d0eca66f9daa`.
+
+The JSON body requires `variant_id` (a UUID, a configured `paid:<route>` identity, or `fallback`), a nonempty `session_id`, and one of `page_view`, `signup_start`, `signup_complete`, `section_view`, `element_click`, `scroll_depth`, or `app_store_click`. Existing optional campaign, referrer, device, section, element, scroll, and dwell fields remain supported. Unknown identities, invalid field types, unsupported events, and malformed JSON return 400 without a database write.
+
+UUID identities write to `ab_events` and retain the page-view/signup experiment counters. Fixed identities write to existing `onboarding_events`, with `variant` equal to the fixed identity, `event_type` equal to `landing_<event_type>`, and the accepted event body in `metadata`. Fixed identities never write a non-UUID into the experiment foreign key or increment experiment counters. These landing events are distinct from canonical onboarding completions and business conversions.
+
+Only requests whose URL hostname is exactly `try.opsapp.co` collect first-party telemetry; other hosts receive a successful skipped response before body parsing or database access. Successful writes return 200; storage failures return 500. This repair requires deployment but no migration or provider configuration changes. Passing local tests do not prove production receipt or recover earlier failed events. See `21_ANALYTICS_SYSTEM.md` for the collection contract and release boundary.
+
 ## Firebase Analytics
 
 Firebase serves two distinct roles in OPS: verified identity for legacy/bridged API flows and a deliberately narrow iOS conversion feed. Supabase remains the database and business source of truth.
@@ -1402,6 +1412,22 @@ asset already in the account, and never removes: a link someone paused is
 re-enabled, and account-level assets the blueprint retires (`retire.customerAssets`)
 are paused. Ads the blueprint replaces (`retire.adIds`) are paused by the ad planner —
 only the ids named, so the engine's own challengers are never touched.
+
+**Applied 2026-09-11.** Once Google cleared the stale destination verdict (08:29Z), the blueprint
+applied in two passes — 129 operations, zero failures, a re-run plans nothing: the eleven approved
+challengers replaced the old ones (paused, never removed), every engine campaign carries its sitelinks,
+callouts, snippet and business name, the three price campaigns their CAD tiers, and the four
+account-level sitelinks are paused. No image or logo is attached while Jackson's second look at the
+image set is pending. All five campaigns remain PAUSED.
+
+**The guardrail stranded good ads (2026-09-10).** The engine worker's `pauseDisapproved` pauses any
+enabled, disapproved ad in an engine campaign at its daily tick. At 14:59Z it paused all 22 non-brand
+ads while each carried the stale `DESTINATION_NOT_WORKING` verdict, raised 22 persistent "AD DISAPPROVED"
+alerts promising a replacement the disabled routine never writes, and has no path to restore an ad
+once Google approves it again. The eleven controls were restored by hand on 2026-09-11
+(`docs/artifacts/ads-engine/p2/restore-lead-ads-2026-09-11.mjs`, validateOnly first). The fix — record
+why the guardrail paused an ad, restore it when approved, resolve its alert, and make the alert copy
+truthful — is spawned as GOOGLE ADS ENGINE - P2-1-1.
 
 **Images need Jackson's approval on record.** Every entry in `blueprint.images`
 carries `approvedBy` and `approvedAt`; the schema refuses an image without them and a
@@ -2983,6 +3009,47 @@ its exact external recipients remain eligible customer contacts. A registered
 team address in To/CC and an exact signature phone may corroborate a candidate;
 names, phone fragments, shared public email domains, and fuzzy private-domain
 matches never confer staff identity.
+
+**Quoted-signature and retention repair (live 2026-09-10, ops-web
+`23ffe646a`, including fix `b295b6972`):** `email-ingestion-routing.ts` now takes signature identity
+evidence only from the author's unquoted body. Prefixed, nested, indented,
+wrapped, forwarded, and Outlook reply history is removed before matching;
+`email-parsing.ts::stripQuotedHistoryForIdentity` cannot substitute nested
+contact-form content or restore a quoted preview. An explicitly empty body
+does not fall back to the provider snippet. Genuine unquoted staff signatures
+still create pending review candidates.
+
+`SyncEngine::processSentEmail` retains new and previously pending alias
+messages as unlinked `staff_alias_pending` review activities before the
+internal-recipient short circuit, including signature-free follow-ups and
+discovered inbox mail when optional sent-mail sync is disabled. A failed
+durable write holds the cursor. Pending review bypasses staff style learning,
+customer/lead matching, and thread/opportunity projection; the later outbound
+reconciliation pass cannot adopt it. Existing activity identity remains
+immutable. This repairs a path that silently dropped customer replies after
+quoted staff signatures produced false alias candidates.
+
+Verification: all nine privately audited source messages changed from false
+pending aliases to inbound classification; 252 focused tests and six focused
+full-sync/recovery cases passed, along with scoped TypeScript. The legacy full
+sync file retains baseline failures (37 before, 36 after; no newly failing
+test names). The sanitized evidence is in ops-web
+`docs/artifacts/email-work-correspondence/staff-alias-quoted-replies-verification.md`.
+Vercel deployment `dpl_C1JXrygTkScb9pQhCi8ywu7V15Sa` reached READY and serves
+`app.opsapp.co`. The approved incident repair rejected exactly nine proven
+false staff aliases while preserving the genuine verified alias. All 23 missing
+emails were restored: three through the unchanged seven-day exact recovery
+runner and 20 through a separately bounded historical restoration. Independent
+readback confirmed 23 unique activities, 23 exact immutable provider sources,
+15 corresponding lead events, and all 14 pre-existing activities unchanged.
+Historical project/review ownership, archive states, and terminal stages were
+preserved; fresh replies resurfaced their original lead through normal inbound
+behavior. The other four affected historical lead summaries were refreshed
+through guarded snapshot writes, with exact summary hash/timestamp readback
+and their stages and archive states unchanged. No new lead was created during
+the repair. The active mailbox completed subsequent production syncs, with its
+watermark reaching `2026-09-10T22:10:12.606Z` and the sync lock released. Customer evidence and
+exact repair identities remain outside the public repository.
 
 #### Property-level address identity boundary (live 2026-07-29)
 
@@ -4996,6 +5063,8 @@ The trusted site-visit workflow service exposes eleven bounded discovery/prepara
 
 The candidate also retains ten existing reads for customer/lead/job/visit/deck/company/crew discovery. Its exact read/prepare scope union excludes unrelated catalog, financial and customer prepares; their separately pinned grant authority is unchanged. The [final handoff](specs/2026-09-10-ops-mcp-site-visits-p19-handoff.md) identifies complete local commits, accepted independent reviews and production/host/device release prerequisites.
 
+Parent web integration on 2026-09-11 merged the complete phase with current local main in `ce49225089f745c060e0400dbc7c85279bbdcfe6`; evidence commit `b0e8d89c7` is also on local main. Public V23/V9 and historical pins are preserved. Only the unpublished V22 candidate additionally selects the released deck geometry result v2, so valid native drawings with no lower stair edge no longer fail in the site-visit workflow. The caller cannot select this revision. V22/V17 remain publicly unselectable, with no new grantable public scopes. Fresh bounded web proof is 671 distinct passing tests plus focused production/protocol/deck TypeScript and an independent no-findings review; exact logs and the reproduced pre-fix failure are in web `docs/artifacts/phase19/parent-integration-20260911.md`. Local integration is not deployment or native-host acceptance.
+
 Server RPCs are `inspect_site_visit_workflow_as_system(request_id, context, request)`, `read_site_visit_workflow_as_system(request_id, context, request)`, and `prepare_site_visit_workflow_as_system(request_id, context, request)`. OPS review invokes `commit_site_visit_workflow_as_actor(actor_user_id, company_id, action_id, change_set_id, preview_sha256, idempotency_key)`; rejection uses the exact actor/company/action RPC. These RPCs revalidate current actor, exact records, grant/client/revision/scopes and accepted consent. Receipt replay reauthorizes before returning the original effect.
 
 Phone writes use actor-bound command/receipt wrappers and preserve original revisions. `discard_site_visit_capture(command_id, capture, discarded_at, expected_actor)` atomically closes eligible unbooked capture packets; `complete_site_visit_capture` delegates to canonical completion and one activity. Neither is a new host capability. Dedicated candidate limiter `consume_site_visit_workflow_rate_limit_as_system` covers all eleven tools with shared 6 actor / 6 grant / 30 company units per minute and unchanged prior phase policies.
@@ -5003,3 +5072,47 @@ Phone writes use actor-bound command/receipt wrappers and preserve original revi
 Read pages are bounded and pinned to source revision; missing or changed coverage cannot masquerade as a complete empty result. Appointment proof comes from PostgreSQL; commit recompiles and invalidates changed timezone interpretations. A null per-visit reminder uses crew defaults; reschedule null keeps the current override and `-1` clears it. `calendar_reconciled:false` means queued work has not been verified with the provider.
 
 Canonical source: [Phase 19 implementation](specs/2026-09-10-ops-mcp-site-visits-p19-implementation.md), web `contracts/site-visit-workflow.ts`, `services/site-visit-workflow/site-visit-workflow-service.ts`, and the six named unapplied phase migrations in chapter 03. Local MCP protocol fixtures do not establish native-host acceptance or rollout.
+
+### MCP deck geometry result v2 and measured perimeter (local implementation, 2026-09-10)
+
+**Status (2026-09-10 23:44 UTC):** Application and database are production-live. `app.opsapp.co` resolves directly to READY deployment `dpl_BeVYjbj6AnY1AKg6b7euqkcR23Ln`, exact web source `4f6f49f1ec541627df4ab5aa5f7826dde2f9a902`. The full hosted build passed compilation and TypeScript. Production ledger `20260910233314` independently matches the archived SQL byte-for-byte. The original repair is integrated with the previously released Canpro OAuth source `ab42b042613d487413f3d9f36f535cbe27a40504`. Live metadata retains exactly 21 scopes and PKCE S256; anonymous MCP and userinfo requests return HTTP401 with no-store caching. An actual existing signed-in Codex company read succeeds after deployment. A fresh Claude registration/consent and replay of the original deck request remain unverified; deployment and read compatibility do not establish that host-specific acceptance. Result v2 is distinct from older MCP exposure v2. Redacted release proof: `docs/artifacts/2026-09-10-mcp-deck-geometry-release.json`.
+
+`get_deck_design_geometry` keeps its strict existing business arguments and original nominal v8 authorization, repository source custody, current grant/permission/scope checks, opaque source references, freshness fence, size limits, safe serialization, audit and rate limits. The caller cannot choose the result version, exposure, actor or company. Server-internal `DomainCallOptions.deckGeometryResultRevision` is the only representation selector; omitted selects v1. Primary code: `src/lib/agent-control-plane/services/p2/deck-design/deck-geometry-reads.ts`, `deck-geometry-proof.ts`, `services/p2/domain-service.ts`, and `mcp/server-factory.ts`.
+
+| Representation | Contract and behavior |
+| --- | --- |
+| Frozen v1 | Schema `2026-08-22.v1`, calculator `deck-geometry-calculator:2026-08-22.v1`, original fields and configured quantities remain. `lower_edge_ref` stays a required string. A valid drawing requiring a null destination produces a nonretryable public `INTERNAL` compatibility error with an incident ID, not `INVALID_ARGUMENT`; internal reason is `DECK_GEOMETRY_RESULT_REVISION_UNSUPPORTED`. |
+| Explicit v2 | Result `deck-geometry-result:2026-09-10.v2`, calculator `deck-geometry-calculator:2026-09-10.v2`. Native absent/null `lowerEdgeId` is represented as null without deleting the stair or inventing an edge. Adds `measurement_basis`, `railing_estimate`, and `stair_placements`. Source fence and complete entity proof bind the selected calculator/result. |
+| Invalid saved geometry | Public `INTERNAL`, nonretryable, with an incident ID and drawing-review explanation. Only deck-specific `INVALID_GEOMETRY` and the compatibility reason changed transport classification; other domains' `SOURCE_DATA_INVALID` behavior is unchanged. |
+
+`contracts/deck-design-geometry-v2.ts` validates complete local edge/stair coverage, dimensions, arithmetic, state/total consistency, placement references, proof/timestamps, and forbidden fields. `services/p2/deck-design/deck-railing-estimate.ts` enumerates every edge as included, excluded, or unresolved. Saved dimensions are inches; positions are drawing units. Positions are never promoted to measured lengths. Configured flat railing zero remains valid configured coverage, separately from the perimeter scenario. Flat perimeter deductions and two-sided sloped stair geometry remain separate; `order_ready` is always false. See the deck chapter's “MCP measured perimeter and native stair projection” section for estimation rules.
+
+`2026-09-10.mcp-exposure.v23` is the full V14 successor: exactly the same ordered 35 tools and 21 grantable scopes, existing customer-update capability manifest v20, P2 v8 policy/authorization and V9 consent. The candidate module now re-exports this one definition; normal `createOpsMcpServer` selects result v2 for V23 and v1 for old pins. New registrations select V23, while old client/grant snapshots remain immutable and old V14 enrollment still works. No sibling capability is activated. The reserved manifest v28 and consent v18 remain unused.
+
+Migration `20260910233314_agent_deck_geometry_v23_exposure.sql` extends access resolution plus customer-update authority, queued reauthorization and rate limiting. New service-only `prepare_agent_customer_update_for_grant_as_system` derives the immutable grant exposure; it does not accept an exposure argument. The unchanged original preparation routine performs the full authority/evidence/no-change/policy checks and canonical company-first locking. The wrapper adds no early shared row lock. Old V14 proposals remain approvable after migration. Original preparation, refresh and immutable-consent routines stay frozen. Parent production readback confirmed expected hashes/security plus unchanged original client/grant, trial binding rows, customer effect hash and policy rows; the pre-existing stale policy remains stale. Zero V23 clients/grants existed before code deployment.
+
+The migration verifies 12 captured function bodies/security/ACLs, full wrapper definition on replay, and exact enabled immutable triggers. It locks catalog and canary binding tables in SHARE mode and refuses any enabled unexpired V17/V19 trial. Concurrent binding insertions block until the transaction finishes. Financial/catalog computed effect hashes include all public/private functions and therefore change; their policy and expired binding rows are preserved and never resealed. The customer-update effect hash and policy rows must remain identical. The pre-existing stale customer-update policy remains stale and refuses preparation; this release does not repair or bypass that independent condition.
+
+**Integration and host acceptance:** The additive SQL was applied and read back before active-V23 code was deployed. Fresh Claude authorization/new registration with the full existing tool/scope set is still required. Refreshing an old token cannot promote its immutable exposure. The existing full V14 Claude connection already has `ops.files.read`; no scope expansion is required. The current Codex connection lacks that scope, so its successful company read is not a deck acceptance test. Replay the original request after fresh Claude consent and verify source identity, retained null lower destination/stair, configured zero, partial measured perimeter, and full tool discovery. Local proof does not replace this host canary. Once V23 grants exist, rollback must keep V23 resolution/representation while separately stopping new V23 registrations, or repair forward; a preintegration deployment rejects V23.
+
+**Local proof:** 860/860 post-merge Node22 tests across 42 registry/OAuth/protocol/transport/customer-update files; 316 PostgreSQL17.11 assertions with current live function definitions, synthetic identities and real approval/commit core. Database proof includes exact consent/code/refresh custody, old client/grant/token readback, stale-policy/no-change refusal, old V14 proposal carried across migration, actual limiter binding, active-trial refusal, concurrent insertion locks, expired-binding preservation and zero-change replay. The newly live Canpro exact callback and read-only ceiling also pass on V23. Bounded changed-dependency TypeScript and targeted ESLint pass; whole-repository TypeScript exceeded Node's default heap and is not claimed. Known unrelated baselines remain: original dispatcher expects 50 methods instead of its existing 53; three dormant schedule-candidate tests hit the existing Node22 timezone-data guard. Byte comparisons establish those implementation files are unchanged. Parent independently verified 139/139 stable geometry/error/v1 tests on Node22 and replayed the exact private source without changing it, then verified the merged OAuth/normal-factory set. No private source, business identities or quantities are committed. Exact commits, commands, checksum, logs and rollout limits: web `docs/artifacts/deck-geometry-2026-09-10/HANDOFF.md`.
+
+## Canpro cloud OAuth callback and bearer identity (2026-09-10; application and migration live)
+
+**Release status (2026-09-10 23:14 UTC):** application and migration are live. Direct Vercel resolution of `app.opsapp.co` returns READY deployment `dpl_FPVmSqmfQJVgRrjBtRvYGrgr4wLW` at exact web source `ab42b042613d487413f3d9f36f535cbe27a40504`; GitHub main independently matches. The unchanged OAuth patch from `ce68bd2ad223f2b51c29b13fd2fb29a3e2c0009f` was integrated onto prior production `c217c3bc4ff83976068d66c6ab6fcfb35b07e4db`, preserving all intervening changes. Anonymous production `GET /api/mcp/oauth/userinfo` independently returned HTTP401 with `Cache-Control: no-store` and `Pragma: no-cache`. This proves deployed authentication rejection, not an authenticated owner grant. Fresh owner consent and live authenticated cloud-canary acceptance remain unproven in this release record. Existing live exposure, financial trial and approval boundaries still apply.
+
+**Migration checkpoint (2026-09-10, after the build):** actual production migration history is `20260910230913_mcp_oauth_canpro_cloud_callback`, independently confirmed through OPS MCP metadata with the expected function definition hash and ACL. The release owner verified all 21 pre-existing clients and 12 grants unchanged by applying the migration. The earlier 23:08 staged alias check below is retained as historical evidence; the live alias proof above records the subsequent approved promotion.
+
+**Fresh public client (2026-09-10):** normal registration created client `f1eac033-7750-4934-bdd0-7cdbcfcbe6f3` at `2026-09-10T23:11:57.880152Z`. Independent readback confirms `token_endpoint_auth_method=none`, exactly one redirect URI `https://bpgayztkcuencdzinfxv.supabase.co/functions/v1/source-oauth`, and both stored scope and scope ceiling exactly `ops.company.read ops.jobs.read ops.purchasing.read`; `disabled_at` is null. Consent catalog revision is `2026-09-04.mcp-consent-catalog.v9`, exposure revision `2026-09-04.mcp-exposure.v14`. The release owner reported no consent grant yet; registration itself confers no read or write authority. Fresh owner consent and authenticated source identity verification remain separate steps.
+
+The cloud callback is exactly `https://bpgayztkcuencdzinfxv.supabase.co/functions/v1/source-oauth`. Both application registration (`src/lib/agent-control-plane/mcp/oauth/clients.ts`) and the existing service-only SQL registration RPC permit this one additional family, with byte-exact storage and no mixed connector families. No other Supabase project, URL alias, trailing slash, query or fragment is accepted. Cloud registration requires explicit scopes and limits its ceiling to the twenty immutable v2 read scopes, even though active v14 includes `ops.customers.prepare`. The intended Canpro source grant requests exactly `ops.company.read ops.jobs.read ops.purchasing.read`. Existing clients and scope/exposure/consent catalogues are unchanged. This remains an OAuth public client (`token_endpoint_auth_method: none`), using fresh owner consent, authorization code + PKCE S256 and rotating refresh; no client secret, desktop credential transplant or write scope.
+
+`GET /api/mcp/oauth/userinfo` (`src/app/api/mcp/oauth/userinfo/route.ts`) returns exactly `{actorId,companyId}` from the existing `resolveMcpBearer` and current `resolveActorContext` path. It requires `ops.company.read` and the existing MCP audience `https://app.opsapp.co/api/mcp`, not the identity route as a new audience. It accepts only header bearer authentication; all query arguments and external browser origins are rejected. Responses use `Cache-Control: no-store` and `Pragma: no-cache`. Missing/invalid/revoked/expired/wrong-issuer/wrong-resource credentials return 401; inactive/removed/mismatched membership and missing scope return 403; the existing per-grant transport limiter returns 429; unavailable dependencies fail closed with 503. Unsupported methods return 405. Errors do not return grant facts, scopes beyond the required challenge, tokens, credential digests or internal exception details. No business lookup is performed.
+
+This path is a deterministic OAuth bearer identity binding, not an OpenID Connect UserInfo implementation. No `openid` scope, ID token or OIDC metadata is added. Existing `CompanyContextResultSchema` exposes company identity and company settings, not the current actor. OPS can authorize company-bound reads without disclosing actor identity to a host, but that alone does not allow Canpro to prove the grant belongs to its configured owner. The narrow endpoint closes that separately requested source-binding gap.
+
+Migration source: OPS-Web `20260910180330_mcp_oauth_canpro_cloud_callback.sql`; applied OPS history version: `20260910230913`, name `mcp_oauth_canpro_cloud_callback`; Bible archive: `migrations/20260910230913_mcp_oauth_canpro_cloud_callback.sql`. The checked-in source timestamp and applied history version are distinct. Migration/deployment and fresh registration/consent remain separately authorized actions. The cloud host owns single-use expiring state, S256 verifier, callback issuer validation, encrypted renewable-token custody and exclusive refresh/atomic pair replacement. Existing 600-second access and 30-day rotating refresh TTLs remain; old refresh-token reuse revokes the whole family. The source must independently verify actor/company before reads. Local tests do not prove a live authenticated cloud grant, post-expiry rotation, revocation recovery or Mac-off operation.
+
+**Local verification:** 18 focused OAuth/bearer/consent/exposure/identity files, 718 tests passed; PostgreSQL 17 passed 104 existing OAuth and 52 Canpro assertions. Changed files and their real transitive dependencies pass TypeScript with a 6 GiB heap cap; ESLint, formatting and source diff hygiene pass. Full-repository TypeScript exhausted the default 4 GiB heap. One existing principal-boundary source allowlist test failed on the same four unrelated service files on both candidate and untouched production base; the other five checks in that file passed. A first 6 GiB production-build attempt passed full TypeScript before missing local Supabase configuration stopped page collection. The configured retry passed compilation but was intentionally interrupted after 40m 37.52s of sustained memory pressure, exit 130; neither local attempt is a full-build pass. The integration onto current production subsequently passed all 237 tests in four focused OAuth files. Evidence: web `docs/artifacts/canpro-oauth/` plus the release handoff's bounded-build and integration logs. No authenticated cloud canary is claimed.
+
+**Staged build verification (2026-09-10):** Vercel `dpl_FPVmSqmfQJVgRrjBtRvYGrgr4wLW`, [staged application](https://ops-mv1bu2bay-jacksons-projects-f76fa6e8.vercel.app), records exact source `ab42b042613d487413f3d9f36f535cbe27a40504` and reached READY at 23:03:29 UTC. The complete build log shows the ordinary template check (`inserts=0, unchanged=52, mismatches=0`), successful compilation, full TypeScript validation, all 483 static pages, function tracing and output deployment; `/api/mcp/oauth/userinfo` appears in the built routes. The 4-core/8-GB builder used Node 22.x because `package.json` engines overrides the project's 24.x setting. Direct alias resolution at 23:08:13 UTC proved `app.opsapp.co` still targets `dpl_37ADibw9R99tyKrsKBpvt2d63DMF` at source `c217c3bc4ff83976068d66c6ab6fcfb35b07e4db`; GitHub main matched that source. The convenience alias `ops-web-jacksons-projects-f76fa6e8.vercel.app` did move to the staged deployment despite `--skip-domain`. The build closes the remaining full-build gate; migration, owner consent, the authenticated no-change canary and customer promotion remain distinct release evidence.

@@ -779,7 +779,7 @@ struct CalendarSchedulerSheet: View {
 - Universal Search project-row quick schedule only targets active, non-deleted, non-terminal tasks. If the project has zero schedulable tasks, the schedule control is hidden/disabled. If it has one schedulable task, the scheduler opens that task. If it has multiple schedulable tasks, the operator must choose the task before the scheduler opens.
 - `UnscheduledTaskReviewView` auto-schedule placement failures are persistent recovery states: the toast uses operator-readable copy and opens `CalendarSchedulerSheet` for manual task scheduling instead of ending at a no-action error.
 - **iOS schedule quick actions (2026-07-21):** `CalendarEventCard` (week/start-day, continuation-day, and month day-detail routes) and the month-grid `EventBar` use one shared `ScheduleQuickActionMenu`. Editable tasks expose compact Push, Extend, and Cascade submenus plus Pick new date; the month badge also includes Pull back. Cascade uses `DataController.planCascade` + `CascadePreviewSheet` before `pushTaskWithCascade`, and every delayed commit rechecks `calendar.edit` scope before writing. Save failures use the standard operation-failed toast instead of reporting success early.
-- Month badges retain a 44pt interaction row while keeping their compact visual treatment. The month allocator reserves the `+N` row only when overflow is real, so two events remain independently visible at the default cell height and multi-day lanes stay collinear across the week.
+- **Month preview density (2026-09-10, local implementation; not released):** below the existing 180pt expanded threshold, `MonthGridEventLayout` uses the 10/14pt badge height plus `spacing1` per preview row. The full day cell owns taps and announces its date, holiday, and every unique event title to VoiceOver, including overflow. Five bars fit at the default 120pt cell height; overflow reserves one count lane only where needed and counts each hidden event on every covered day. Multi-day lanes stay collinear across the visible week. Expanded mode retains 44pt independent event actions and drag behavior. Its event tap and View details resolve against the displayed week's dates, including a multi-day continuation's first visible day. Source fix: `9d849681`, integrated into local main `ce4a6e24`; regression suite: `MonthGridEventSlotPlannerTests`. The full iOS app build executed all 11 planner/span tests plus the expanded month-event long-press UI test with zero skips or failures. An additional exact-source macOS harness passed the same 11 planner/span tests. Physical-device and VoiceOver interaction remain separate from this simulator proof. Event caches, filtering, task-group badges, site visits, and scheduling writes are unchanged.
 - Each schedule card owns exactly one context menu. Host views inject the shared actions into that owner rather than stacking a second menu, preserving both long-press actions and native drag-to-reschedule.
 
 **Tests:** `ops-ios/OPSTests/Scheduling/SchedulerDayContextTests.swift` (ranged user-event fetch, dependency floor + parity with the auto-scheduler, day signals, attribution, distance, interpretation priority, the unified suggestion walk incl. past-floor clamp and 60-day cap, `lengthDays` pass-through, self-exclusion, single-pass day index), `SchedulerSelectionTests.swift` (selection machine, day roles, `spanPosition`, `SchedulerSpanCurve` seam exactness / falloff / short-span waist / sum-vs-max equivalence for 4+ day spans / number-band flip decisions, `SpanEdgeStroke` geometry, day-cell render smoke), and `ComparableJobLengthTests.swift` (size band incl. its 1.3 boundary, the three-comp floor, median rounding, and in-memory-store resolution: elapsed-only, cancelled/deleted exclusion, latest-design-wins, cross-company and cross-type isolation, plus `spanEnd`'s working-day walk). Suggestion-walk cases are anchored relative to today rather than pinned to fixed dates — the walk never starts before tomorrow, so fixed literals would age into false failures. Visual proofs: `OPSTests/Views/SchedulerSheetSnapshotTests.swift` states `13_span_gradient_wrap`, `17_short_span_gradient`, `18_five_day_gradient`, `19_length_suggestion_chip`.
@@ -3295,6 +3295,18 @@ performance.
 
 **Project Details 3D viewer:** House/wall edges render as roughly 8 ft tall walls above the deck plane. When the deck level is elevated above grade, the same house/wall edge also renders a lower wall-to-grade panel from ground level up to the deck elevation, so elevated decks do not visually float away from the house face.
 
+### MCP measured perimeter and native stair projection (local implementation, 2026-09-10)
+
+OPS-Web commits `237d151aba2a1ca28b349c5596b8e8ba2b56642c`, `9006d343d4dc10d3724b5627bfa26fa0d4a1eb7a` and shared integration `1ecd310fda5110f8ef329e3229a4497ce23b39ed` add a host-neutral geometry result v2. The full V14-equivalent V23 successor is production-live at `app.opsapp.co` on web `4f6f49f1ec541627df4ab5aa5f7826dde2f9a902`, READY deployment `dpl_BeVYjbj6AnY1AKg6b7euqkcR23Ln` (2026-09-10 23:44 UTC), with guarded migration `20260910233314` independently verified. Public discovery and existing signed-in Codex company reads pass; fresh Claude consent and the original authenticated deck replay remain pending. The strict v1 result remains a separate representation; see the API chapter's dated MCP deck geometry section for compatibility, authorization, full successor exposure and release gates.
+
+**Native source contract.** `ops-ios/OPS/DeckBuilder/Models/DeckLevel.swift` and `ops-decks-ios/Packages/DeckKit/Sources/DeckKit/Models/DeckLevel.swift` declare `LevelConnection.lowerEdgeId` optional. The MCP calculator accepts absent/null values, keeps the real connection and its stair geometry, and rejects an invalid named edge. V2 emits null `lower_edge_ref` plus alignment, offset, flip direction and full/partial connection position. A lower destination uses the native named edge's original endpoint midpoint, or the lower level's original vertex mean when no edge is named. This is a drawing-space destination, not a measured landing or polygon centroid. Local `vertex_refs` retain its source basis even when topology welding chooses nearby representative vertices. Missing destination evidence remains unavailable. No Swift source or drawing data was edited.
+
+**Configured quantities versus perimeter.** Existing flat railing measures count configured edges, parapet measures count configured wall edges, and stair railing measures use native two-sided stair geometry. Existing component behavior, including its 36-inch gate allowance, remains unchanged. V2 labels those bases explicitly. A zero configured flat quantity does not imply zero perimeter railing need. The separate `railing_estimate` is a measured perimeter scenario with `order_ready: false`, not a compliance determination, supplier takeoff or order quantity.
+
+**Measured perimeter rules.** `deck-railing-estimate.ts` enumerates every local edge and uses saved, non-stale inch dimensions. Canvas lengths are never converted into measurements. Explicit house/wall boundaries and proved shared same-height boundaries are excluded; an interior edge is excluded only when its geometry proves it lies inside a surface without crossing a boundary or hole. Open outlines, unresolved boundary membership, invalid/self-touching/crossing boundaries, overlapping levels, missing/stale dimensions, and ambiguous shared boundaries remain unresolved. Each included edge reports gross inches, located stair/opening deductions and net linear feet. Multiple ambiguous openings and widths exceeding an edge block that edge. A gate's missing width remains unknown; the scenario does not substitute the native component's 36-inch allowance. An unlinked lower stair destination leaves the lower landing opening unlocated, so affected perimeter coverage is partial/unavailable rather than a fabricated complete total.
+
+**Stairs and uncertainty.** Sloped stair quantities report one-side and assumed two-side native stringer lengths separately from flat perimeter. They disclose configured rail assignment and native default use; conflicting ownership or unavailable stair/transition geometry remains unavailable. The scenario lists missing site boundary/guard decisions, gate and landing locations/dimensions, actual rail sides/handrails/returns/extensions, rail system, waste, stock, prices and order quantities. `flat.known_linear_feet` sums only resolved included edges. `flat.total_linear_feet` is null while any boundary is unresolved, and an empty drawing is unavailable rather than a confirmed zero. All final lengths are rounded to two decimals in linear feet. Source-bound proofs cover the complete result and chosen calculator revision.
+
 ### Deck Builder Stairs & Level Heights (iOS — overhauled 2026-07-21)
 
 Embedded Deck Builder (`ops-ios/OPS/DeckBuilder/`), not the standalone Deckset editor.
@@ -4148,6 +4160,19 @@ The project timeline reads `activities` under the signed-in user's mailbox/proje
 Sources: ops-web migration `20260909051427_email_existing_job_correspondence.sql`, `notification-service.ts`, `notification-meta.ts`, `use-project-activity.ts`, `email-review-panel.tsx`. Implementation commits: ops-web `61a806b4e` and `d86d5664b` (shared-mailbox notification constraint guard).
 
 **Inquiry-boundary follow-up (released 2026-09-09 local / 2026-09-10 UTC):** Ops-web `5b12d9823` sends unclassified parsed forms and message-scoped forwards to the same readable work-intent review receipt. Borderline forms persist the classifier audit before the final receipt, with one activity/notification across replay. Only a classified new-work request with source-matching current-message evidence can enter automatic client/lead creation and its lead notifications. Platform administrative notices retain inbox visibility without becoming leads. If `phase_c` classification is disabled, recognized forms remain in review; the inbox visibility flag is unchanged. No new notification type, copy, UI, or SQL migration is introduced. See `04_API_AND_INTEGRATION.md` → “Automatic inquiry creation boundary” and ops-web `docs/artifacts/email-work-correspondence/inquiry-boundary-verification.md` (320 passing affected tests). [Production release evidence](docs/artifacts/email-inquiry-boundary-release.md) records alias/build verification and the absence of a fresh incoming-message canary.
+
+### Phase C appointment review notifications (2026-09-11; built, NOT deployed)
+
+`phase_c_appointment_review` remains the durable review type, owned by the
+requested appointment owner and deduped by
+`phase-c-bilateral:v1:<handoff-id>:review`. A handoff whose only missing fact is
+the date or time produces a standard dismissible nudge instead of a persistent
+failure: `Set a time for <lead>`, `Email mentioned <event>. No date or time.`,
+and `OPEN LEAD` to the linked pipeline record. Both push strings are bounded to
+50 characters. Other review reasons remain persistent and continue to use the
+specific correction copy for their blocking condition. Source:
+`ops-web/src/lib/api/services/phase-c-bilateral-event-consumer-runtime.ts`,
+OPS-Web `22eca1b89`.
 
 **Phase 14 addition (2026-09-06, dormant; migration applied 2026-09-07):** `approve_schedule_change` preparation creates an actor-owned persistent review notification linking to the approval desk. Commit/rejection resolves it atomically. Successful task changes retain existing assignment/schedule in-app and preference-dependent OneSignal push events; receipt language reports queued effects, never delivered pushes. No automatic customer-message event is created. See [Phase 14 contract](specs/2026-09-06-ops-mcp-schedule-crew-approval.md).
 
@@ -5004,7 +5029,26 @@ Crops upload **after** the report row exists, through the existing screenshot ro
 
 **Triage.** No change was required: `GET /api/cron/bug-triage/bug` selects `*`, so the per-bug payload already carries `custom_metadata` and `additional_attachments`. The backlog endpoint's narrow column projection is a work-queue listing by design; the triage agent fetches the full row per bug.
 
-**Out of scope:** the iOS reporter (a different widget), marking multiple points on one screenshot, and editing a reference after selection — remove and re-pick instead.
+**Out of scope:** marking multiple points on one screenshot, and editing a reference after selection — remove and re-pick instead. The iOS reporter writes the same contract from its own picker — see the next section.
+
+#### Bug-Report Element Picker (OPS iOS — POINT AT IT, 2026-09-10, bug `14e5a792`)
+
+The iOS reporter's POINT AT IT step lets the operator pick the element the report is about **on the live app**, and writes it to the same `custom_metadata.elementReferences` array the web picker writes, so the admin `ELEMENTS (n)` section renders iOS picks unchanged. It replaces the 5aabcc3a version (tap a frozen screenshot, resolve against a flattened UIView tree), which recorded SwiftUI rendering containers (`PlatformGroupContainer`, no label) and was retired together with its `custom_metadata.element` key. Status: merged to ops-ios local `main` at `011cbaec` (2026-09-10), not yet pushed.
+
+**Flow.** POINT AT IT on the report sheet's evidence card → the sheet (in the bug report's overlay window, alert+1) steps aside → a transparent pick layer covers the live app: a glass-dense bar `// TAP THE PROBLEM` · `CANCEL`. Finger down/drag outlines the element under the finger (`text` white, `Border.outline` 1.5pt, button radius; a text pick's outline stands one spacing step off the glyphs), dims the rest (`overlayMedium`), and tags it with what will be recorded (`BUTTON · START`). The bar hides while a finger is down, so a drag that starts anywhere can finish on an element under it. Lift → medium haptic → the sheet returns 250ms later showing `SPOT MARKED`, `START · BUTTON`, and the pick-time screenshot with the element outlined. `CLEAR` restores the trigger screenshot. The draft (description, category, screenshot, mark) lives in `BugReportDraft`, owned by `BugReportPresenter`, so nothing typed is lost. No accent on the pick layer; Reduce Motion is opacity-only.
+
+**Resolution order.**
+1. **Component probes.** House components call `.bugReportPickable(role, label:)` inside themselves (`OPSButtonStyle.*`, `FormField`/`FormTextEditor`/`FormSelectField`/`FormToggle`, `glassSurface`/`glassDense`/`nestedCard`/`commandCard`, `FilterChipRow`/`ValueChipRow` chips, `ListItem`, `TaskLineItem`, `NotificationRowChrome`, `NotificationActionButton`, `OPSActionBarButton`, `LeadSiteVisitBanner` verbs + headline, `CustomTabBar` items). While — and only while — `BugReportPickMode` is active, each mounts a transparent non-interactive UIView probe that registers weakly. Outside a pick the modifier adds no view, pixel or layout (tested). Parked keep-alive tabs (`isActiveTab == false`) mount nothing. At the pick point a probe is eligible when it is in the app window, inside the frontmost presentation (window hit-test → owning presented/root controller; content under a sheet never wins), not hidden, cumulative layer opacity > 0.01, and the point is inside every clipping ancestor. Smallest area wins; deeper wins a tie; then role specificity (button › field/select/toggle › chip › row › card).
+2. **Text.** Vision `VNRecognizeTextRequest` (accurate, no language correction) runs once when the layer arms, on a capture of the app window. With no probe under the finger, the line whose box (grown 8pt) contains the point wins; role `text`.
+3. **Region.** Otherwise a 44×44pt square around the point; role `region`.
+
+**Label.** The probe's explicit label, else the recognized lines centred inside the rect in reading order (≤80 chars), else the role name.
+
+**Screenshot.** On lift the app window is re-captured and becomes the report's screenshot, so `rect` lines up with the attached image. Without a pick the trigger capture stands.
+
+**Payload mapping (iOS → `ElementReference`).** `id` lowercase uuid · `label`, `role`, `text` from resolution · `rect` and `page` in app-window points (`page` = rect origin; an iOS window does not scroll) · `viewport` = window size · `componentChain` = the source file of the component that mounted the probe (e.g. `["LeadSiteVisitBanner"]`), `[]` for text/region · `capturedAt` ISO-8601 ms UTC · `selector`, `classes`, `tag` = `""` (DOM-only; the contract types them as strings and the admin reader drops a reference whose `selector` is not a string) · `testId` = null · `attachmentIndex` = null (it indexes element-crop `additional_attachments`; iOS uploads no crop — the rect is measured on the report's own screenshot). iOS adds `source` (`component`/`text`/`region`), `screen` (current screen name) and `point` (lift point). Older queued reports carrying `custom_metadata.element` still decode (metadata is free-form JSON in the outbox).
+
+**Files.** `OPS/Services/BugReport/BugReportElementPick.swift` (pure rules + payload), `BugReportPickProbe.swift` (mode, probe, modifier, collector), `BugReportTextRecognizer.swift`, `BugReportPickSession.swift` (session + draft), `BugReportPresenter.swift`; `OPS/Views/BugReport/BugReportPickLayer.swift`, `BugReportSheet.swift`, `BugReportScreenshotViewer.swift` (display only). Tests: `BugReportPickResolverTests`, `BugReportPickableTests` (hosted), `BugReportPointAtItRoundTripTests` (the real presenter: sheet steps aside → pick → sheet returns with the mark and the typed draft; cancel returns unmarked — driven through a DEBUG-only presenter seam), `BugReportPointAtItSnapshotTests` (proof PNGs), `BugReportPresenterLatchTests`.
 
 ### §14.3.4 Expenses Ready for Review — server-side auto-send (2026-06-01)
 
@@ -7130,11 +7174,16 @@ For scheduling, Phase C evaluates the complete exact-opportunity history after
 quoted text is removed. It may persist `ready` only when distinct authorized
 parties explicitly proposed and accepted the same resolved event, with owner,
 title, start/end, timezone, location when known, and both operator/customer
-attendee roles. Missing authority, bilateral acceptance, owner, attendee,
-date/time, or timezone produces `review`; unrelated calendar-like inbound text
-does nothing. The result is only a `phase_c_bilateral_event_handoffs` envelope.
-P1-17 owns duplicate/conflict/permission checks, one canonical OPS event or
-site visit, envelope consumption, and connected-provider synchronization.
+attendee roles. The full company-user and verified-alias roster proves sender
+authority only; it is never serialized as attendees. The appointment's operator
+attendee is the requested owner's registered email, and an owner email outside
+the authorized roster leaves the envelope in review. Missing authority,
+bilateral acceptance, owner, attendee, date/time, or timezone produces
+`review`; unrelated calendar-like inbound text does nothing. The result is only
+a `phase_c_bilateral_event_handoffs` envelope. P1-17 owns
+duplicate/conflict/permission checks, one canonical OPS event or site visit,
+envelope consumption, and connected-provider synchronization. This attendee
+boundary is implemented in OPS-Web `22eca1b89`.
 
 Crystal Elton regression contract: the 2026-08-20 reply requesting a call to
 discuss moving forward with the quote is material correspondence. It must
@@ -9789,10 +9838,10 @@ One-way mirror from OPS schedule rows to a dedicated `OPS` calendar in the user'
 
 - `CalendarUserEvent` (personal events, time off — **any status**; title prefix reflects status)
 - `ProjectTask` where the current user is in `schedulingTeamMemberIds`
+- Booked `SiteVisit` appointments assigned to the current operator, inside the mirror window, neither cancelled nor deleted. Completed appointments remain in the personal record. Walk-up visits are excluded. Verified against `CalendarMirrorEligibility.swift` and `CalendarMirrorService.swift` on iOS local main `2f513445` (2026-09-11); this source inspection does not establish signed customer distribution.
 
 ### Excluded
 
-- `SiteVisit` — still excluded from the EventKit mirror. Durable DTO/repository/outbound/inbound/Realtime wiring exists and its database/web contract is production-live as of 2026-08-02, but `CalendarMirrorService` does not materialize visit rows into EventKit events. This is an explicit calendar-surface boundary, not evidence that site visits are phone-only. The updated iOS client is not customer-distributed until its signed device/App Store gate completes.
 - Direct Google Calendar / Outlook OAuth sync — provider credentials, token storage, consent copy, and per-provider write semantics belong to the backend integrations layer. iOS uses EventKit; Apple, Google, and Outlook accounts are supported when they are configured in the device Calendar app and exposed as writable EventKit sources.
 - Two-way sync — researched and rejected for the iOS EventKit mirror; the spec at `ops-ios/docs/superpowers/specs/2026-05-10-iphone-calendar-mirror-design.md` documents the rejected design space.
 
@@ -9817,7 +9866,8 @@ Past 30 days → future 12 months from `Date()`. Prevents history dumps. Outside
 | Component | Path |
 |---|---|
 | Singleton service (`@MainActor`-isolated, holds `EKEventStore`) | `OPS/Services/CalendarMirrorService.swift` |
-| Pure title/body/hash builder | `OPS/Services/CalendarMirror/CalendarMirrorContent.swift` |
+| Pure event payload/hash builder | `OPS/Services/CalendarMirror/CalendarMirrorContent.swift` |
+| Calendar-owned site-visit lead metadata and address precedence | `OPS/Services/CalendarSiteVisitLeadResolver.swift` |
 | Eligibility predicates (window + membership) | `OPS/Services/CalendarMirror/CalendarMirrorEligibility.swift` |
 | Bridge for non-View access to ModelContainer | `OPS/Services/CalendarMirror/ModelContainerHolder.swift` |
 | First-event-save permission sheet | `OPS/Views/CalendarMirror/CalendarMirrorPromptSheet.swift` |
@@ -9834,6 +9884,7 @@ Mirror writes are fired from:
 3. `DataController.updateTaskTeamMembers` — after team change (may add/remove current-user eligibility).
 4. `DataController.deleteTask` and cascaded soft-deletes — fires `unmirrorEvent`.
 5. `RealtimeProcessor` — after applying remote `project_tasks` changes. For `calendar_user_events` realtime, the branch triggers a full `reconcileAll()` because the local SwiftData write happens later via fetcher.
+6. `BookSiteVisitSheet` — after the locally booked visit is available; `RealtimeProcessor` also mirrors remotely received site-visit changes. Reconciliation backfills eligible booked visits.
 
 Reconcile runs on app launch, `UIApplication.didBecomeActiveNotification`, `.EKEventStoreChanged` (debounced 1s via Combine), Supabase realtime for `calendar_user_events`, and opportunistic `BGAppRefreshTask` registered as `com.ops.calendar.mirror.refresh` (Info.plist `BGTaskSchedulerPermittedIdentifiers`).
 
@@ -9847,7 +9898,9 @@ Reconcile runs on app launch, `UIApplication.didBecomeActiveNotification`, `.EKE
 3. Backfill any eligible source row that has no map entry.
 4. Orphan sweep: events in OPS calendar with no map entry. Try to recover by parsing `EKEvent.url` (`ops://event/<id>`). If unrecoverable, delete.
 
-The `contentHash` (SHA-256 of canonical "title|start|end|notes|allDay") makes idempotent reconcile near-free.
+The `contentHash` includes title, start, end, notes, all-day state, and native location. The writer and reconciler also compare actual EventKit fields, so a blank or manually changed location is repaired even when the stored hash already matches.
+
+**Native location repair (2026-09-11, local iOS main repair `e443e01a`, verification `192477f0`, bug `ed377153`):** `CalendarMirrorContent` supplies a whitespace-trimmed optional location for all three existing address-bearing sources. Personal events use their address; project tasks use the project address; site visits use canonical appointment location, then resolved lead address, then the visit address. `CalendarMirrorEventMapping` assigns `EKEvent.location` during both creation and updates and clears it when the effective source address is removed. Existing address text in notes is preserved. The payload and hash are transient values; no SwiftData schema or provider integration changes are introduced. Focused tests use unsaved EventKit events and do not create real calendar entries. The app-hosted iPhone 17 / iOS 26.5 simulator run passed 44/44 focused Calendar mirror, eligibility, and lead-resolver tests with zero failures or skips at `192477f0`. This proves local mapping/reconciliation behavior; no real calendar account or customer event was modified, and signed customer distribution remains pending.
 
 ### Event title format
 
@@ -9858,10 +9911,11 @@ The `contentHash` (SHA-256 of canonical "title|start|end|notes|allDay") makes id
 | `CalendarUserEvent.timeOff` (pending) | `[Pending] {title}` | `[Pending] Cottage` |
 | `CalendarUserEvent.timeOff` (denied) | `[Denied] {title}` | `[Denied] Cottage` |
 | `ProjectTask` | `{project.title} — {taskType.display}` | `Smith Deck — Plumbing rough-in` |
+| `SiteVisit` | Canonical appointment title, otherwise `Site visit — {lead display name}`, otherwise `Site visit` | `Site visit — Smith Deck` |
 
 Approver-booked time off is created as `approved`, so it mirrors through the approved title path immediately after `CalendarUserEventRepository.create`.
 
-`EKEvent.url` = `ops://event/<calendarUserEventId>` or `ops://projects/<projectId>/tasks/<taskId>` — doubles as deep-link tap-through and reconciler recovery anchor.
+`EKEvent.url` = `ops://event/<calendarUserEventId>`, `ops://projects/<projectId>/tasks/<taskId>`, or `ops://leads/<opportunityId>` for a booked site visit. Event/task URLs also provide a source-row identifier for orphan recovery; a lead URL identifies the opportunity, not a unique visit.
 
 ### Deep link
 

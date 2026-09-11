@@ -32,6 +32,14 @@ The [30-persona matrix](2026-09-10-ops-mcp-site-visits-p19-personas.md) maps rea
 
 ## Release sequence and exact boundaries
 
+### Parent integration progress — 2026-09-11
+
+Web local main now includes implementation merge `ce49225089f745c060e0400dbc7c85279bbdcfe6` and evidence `b0e8d89c771d3bfc2a58b9fc766bc0e3b5c6a518`, combining all phase commits with exact main `cabebb8caf9e8c19b5e2ee8f315391dd89af5ff7`. Fresh verification: 115 workflow/read tests, 146 candidate/runtime/limiter/UI tests, and 410 deck/OAuth tests (671 distinct tests); focused production, P19 protocol and deck/OAuth TypeScript pass. Independent merge-seam review found no actionable issues. V22 now selects corrected deck geometry v2 while remaining unpublished; V23/V9 and historical public pins retain their authority. All six SQL hashes/mirrors and all27 historical phone fingerprint entries are unchanged. The primary web checkout's 43 pre-existing tracked edits retain their original hashes.
+
+Phone integration commit `187a36d631a7413ced22d631c3cc153c62eb195f` merges exact main `b08de1042bed5d272d52daa83ef1bc30a501fa86` without overlapping source conflicts. The reviewed model/migration files are byte-identical to the accepted phone head. The app-hosted migration/site-visit/calendar regression is running in the private P19 simulator after the earlier external build exited; phone main has not yet been advanced. The Bible merge retains both the site-visit candidate and deployed deck/Canpro documentation. No release or activation action is authorized by this progress record.
+
+### Remaining release order
+
 1. Integrate all three repositories and reconcile shared registries plus SwiftData registration with current main. Preserve unrelated work and the separately owned calendar-address change. Run verification justified by integration differences.
 2. Under separate explicit authorization, refresh deployed schema/function/ACL state and apply the six reviewed SQL migrations in filename order. Their byte-identical mirrors, sizes and SHA-256 hashes are in [the unapplied migration index](../migrations/README.md#phase-19-site-visits--unapplied-local-candidates-2026-09-10). These are source filenames, not production ledger versions. A changed deployed effect graph requires fresh review; do not silently reseal other phases.
 3. Under iOS release authority, distribute and verify the compatible V28 phone client and pending-work recovery before company shared-write activation. Legacy clients are rejected safely for enrolled companies. Older queued operations without an originating actor remain recoverable but unbound; migration must not invent actor authority or rewrite attempted payloads.

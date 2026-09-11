@@ -1,0 +1,60 @@
+{
+  "checked_on": "2026-09-10",
+  "deployment": {
+    "id": "dpl_BeVYjbj6AnY1AKg6b7euqkcR23Ln",
+    "sha": "4f6f49f1ec541627df4ab5aa5f7826dde2f9a902",
+    "production_alias": "https://app.opsapp.co",
+    "status": "READY",
+    "ready_at": "2026-09-10T23:44:46.428Z",
+    "hosted_compilation": "passed",
+    "hosted_typescript": "passed"
+  },
+  "migration": {
+    "version": "20260910233314",
+    "name": "agent_deck_geometry_v23_exposure",
+    "statement_count": 1,
+    "bytes": 30386,
+    "sha256": "657578123aeb0196c91abff5004553af524aed5afb1146cd17029c6ca0222989"
+  },
+  "pre_post_custody": {
+    "original_client_and_grant_unchanged": true,
+    "expired_catalog_and_financial_binding_rows_unchanged": true,
+    "customer_effect_and_policy_rows_unchanged": true,
+    "customer_policy_was_stale_and_remains_stale": true,
+    "no_policy_reseal": true,
+    "no_scope_expansion": true,
+    "no_business_data_writes": true
+  },
+  "verification": {
+    "node": "22.23.2",
+    "postmerge_focused_tests": 860,
+    "postgres_local_assertions": 316,
+    "parent_independent_merged_tests": 131,
+    "parent_independent_geometry_tests": 139,
+    "private_saved_source_replay": "passed locally; source untouched; not committed",
+    "targeted_typecheck": "passed",
+    "targeted_lint": "passed",
+    "production_public_scope_count": 21,
+    "production_pkce": [
+      "S256"
+    ],
+    "anonymous_mcp_status": 401,
+    "anonymous_userinfo_status": 401,
+    "native_existing_codex_company_read_after_deployment": "passed",
+    "modified_routine_security_advisor_findings": 0,
+    "security_advisor_baseline_counts_unchanged": true,
+    "immediate_mcp_route_error_scan": "no errors found since 2026-09-10T23:44:46Z; bounded window only"
+  },
+  "acceptance": {
+    "fresh_claude_registration_and_consent": "pending",
+    "original_authenticated_deck_replay": "pending",
+    "native_codex_deck_read": "existing grant lacks ops.files.read; not widened",
+    "old_connection_refresh": "retains original exposure",
+    "rollback": "must retain V23 resolution/representation after V23 grants exist"
+  },
+  "baseline_limits": [
+    "Local whole-repository TypeScript exceeded default heap; hosted full TypeScript subsequently passed.",
+    "Unchanged dispatcher baseline expects 50 methods instead of 53.",
+    "Three dormant schedule-candidate tests fail on the existing Node22 timezone-data guard; scheduling implementation and runtime were not changed."
+  ]
+}

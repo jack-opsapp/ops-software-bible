@@ -2,7 +2,7 @@
 
 **Designed:** 2026-09-03
 **Documented:** 2026-09-04
-**Status:** Production database and OPS-Web source are released on production main as of 2026-09-04. iOS remains local/unreleased.
+**Status:** Production database and OPS-Web source are released on production main as of 2026-09-04. iOS source integration is complete, focused-test verified, and generic-device build verified on a local feature branch as of 2026-09-10; it remains unreleased.
 
 ## Purpose
 
@@ -112,7 +112,11 @@ Authentication uses the current Firebase actor. Repository reads and writes rema
 
 OPS-Web commit `bf3610e3e` adds Bills to Books, lifecycle filters, a capture surface, list/detail review, clearance checks, lines and allocations, hold/release, approval, payroll routing, and payment work. Action visibility follows the independent permissions. The source and its account-closure integration are published on production main at `f901c6d9c0e1bd63abddcb616a697f7fb9115ad6` through Git-triggered Vercel deployment `dpl_7BCJY52J5SB6KwmY7qdCrLSzCUH3`, which is `READY` and owns `app.opsapp.co`.
 
-OPS iOS local commit `c6269763` adds Bills to Books, PDF import, VisionKit scan-to-PDF, a protected company-scoped capture queue, a protected company-scoped summary/detail cache, five lifecycle filters, and read-only detail. Each queued PDF has a stable capture identity, survives relaunch and transient connectivity, and is removed only after the same identity is confirmed by the server. Permanent rejection retains the local source and requires attention. Cached data remains explicitly marked as an offline copy.
+OPS iOS local commit `c6269763` adds Bills to Books, PDF import, VisionKit scan-to-PDF, a protected company-scoped capture queue, a protected company-scoped summary/detail cache, five lifecycle filters, and read-only detail. Durability fix `99e8d536` canonicalizes queued timestamps at the persisted millisecond boundary so a capture preserves exact identity metadata across JSON storage and relaunch. Integration merge `2f513445` brings the complete source onto local iOS `main` commit `ce4a6e24` without changing the product boundary. Each queued PDF has a stable capture identity, survives relaunch and transient connectivity, and is removed only after the same identity is confirmed by the server. Permanent rejection retains the local source and requires attention. Cached data remains explicitly marked as an offline copy.
+
+A minimum-fit review against the Canpro finance, administration, supply, and payroll documentation confirmed the client matches the required operating split: material invoices include order/specification and receipt checks, subcontractor invoices apply the labour-rate controls, and employee invoices route to payroll without entering AP. The server-authoritative web workflow remains responsible for exact allocations, approval, payment ownership, planned payment date, and payment recording. The five iOS lifecycle views expose review, to pay, paid, held, and payroll without permitting field-side approval or payment mutation.
+
+The post-integration focused iOS suite passed 14 of 14 tests on 2026-09-10, covering company isolation, durable queue and cache behavior, file validation, exact capture identity, Canpro lifecycle decoding, retryable failure, offline reads, confirmed upload cleanup, and rejected-capture retention. The required generic iOS device build also passed, including application signing and validation of both embedded extensions.
 
 Key iOS files:
 
@@ -127,6 +131,6 @@ Key iOS files:
 
 Jackson approved the production database migration, source publication, Bible publication, and OPS-Web deployment on 2026-09-04. All three supplier-intake migrations are applied and the Git-triggered web deployment is `READY` at exact production-main commit `f901c6d9c0e1bd63abddcb616a697f7fb9115ad6` on `app.opsapp.co`. Release readback proved all six public intake tables have RLS, browser roles have company-scoped reads and no direct writes, guarded RPC execution is service-role-only, immutable documents/events remain insert/read-only for ordinary service work, and all 37 supplier-bill foreign-key repair indexes are present. The 267-table company-data scope and the 42-table delete-blocked snapshot match production exactly. Both private intent tables and all 17 public supplier/intake tables remained empty. Security advisors report no finding related to supplier bills, `purge_company_rows`, or the site-visit handoff foreign key.
 
-The OPS-Web source is on production main. The iOS implementation remains local and unreleased; it still requires a separate iOS release approval.
+The OPS-Web source is on production main. The iOS implementation is complete on local branch `feat/supplier-bills-canpro-ios` at `2f513445` and remains unpushed and unreleased. A separate iOS release approval is still required before archive, upload, App Store submission, or customer availability.
 
 `pdfjs-dist`, PDFKit, and VisionKit run locally and add no usage-priced vendor. The release introduces no new subscription; it uses the existing S3, Vercel, and Supabase infrastructure and is subject only to their ordinary storage, transfer, function, and database consumption.
