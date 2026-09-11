@@ -1403,6 +1403,22 @@ re-enabled, and account-level assets the blueprint retires (`retire.customerAsse
 are paused. Ads the blueprint replaces (`retire.adIds`) are paused by the ad planner —
 only the ids named, so the engine's own challengers are never touched.
 
+**Applied 2026-09-11.** Once Google cleared the stale destination verdict (08:29Z), the blueprint
+applied in two passes — 129 operations, zero failures, a re-run plans nothing: the eleven approved
+challengers replaced the old ones (paused, never removed), every engine campaign carries its sitelinks,
+callouts, snippet and business name, the three price campaigns their CAD tiers, and the four
+account-level sitelinks are paused. No image or logo is attached while Jackson's second look at the
+image set is pending. All five campaigns remain PAUSED.
+
+**The guardrail stranded good ads (2026-09-10).** The engine worker's `pauseDisapproved` pauses any
+enabled, disapproved ad in an engine campaign at its daily tick. At 14:59Z it paused all 22 non-brand
+ads while each carried the stale `DESTINATION_NOT_WORKING` verdict, raised 22 persistent "AD DISAPPROVED"
+alerts promising a replacement the disabled routine never writes, and has no path to restore an ad
+once Google approves it again. The eleven controls were restored by hand on 2026-09-11
+(`docs/artifacts/ads-engine/p2/restore-lead-ads-2026-09-11.mjs`, validateOnly first). The fix — record
+why the guardrail paused an ad, restore it when approved, resolve its alert, and make the alert copy
+truthful — is spawned as GOOGLE ADS ENGINE - P2-1-1.
+
 **Images need Jackson's approval on record.** Every entry in `blueprint.images`
 carries `approvedBy` and `approvedAt`; the schema refuses an image without them and a
 campaign naming an image the blueprint does not define. Jackson's rule (2026-09-10):
