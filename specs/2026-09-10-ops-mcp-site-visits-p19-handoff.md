@@ -2,7 +2,7 @@
 
 Date: 2026-09-10. Owner: parent task `01a0551f-df19-7942-a6d9-7e6e33f1bc9e`. Implementation task: `01a08ca5-857a-7323-a221-bf68a1bf4d80`.
 
-Status: local implementation complete. Final independent web and phone reviews accepted with no remaining actionable findings in scope. All three local repositories have committed code or documentation for parent integration. No release, production migration, live enrollment, consent/exposure change, provider write or customer message has been performed.
+Status updated 2026-09-11: local implementation and parent integration complete. Final independent reviews have no remaining scoped findings. Web and phone implementation are on local main with fresh combined verification; the Bible records the integrated contracts and release boundaries. No release, production migration, live enrollment, consent/exposure change, provider write or customer message has been performed by the site-visit task.
 
 ## Integrate the complete phase
 
@@ -32,15 +32,17 @@ The [30-persona matrix](2026-09-10-ops-mcp-site-visits-p19-personas.md) maps rea
 
 ## Release sequence and exact boundaries
 
-### Parent integration progress — 2026-09-11
+### Parent integration complete — 2026-09-11
 
 Web local main now includes implementation merge `ce49225089f745c060e0400dbc7c85279bbdcfe6` and evidence `b0e8d89c771d3bfc2a58b9fc766bc0e3b5c6a518`, combining all phase commits with exact main `cabebb8caf9e8c19b5e2ee8f315391dd89af5ff7`. Fresh verification: 115 workflow/read tests, 146 candidate/runtime/limiter/UI tests, and 410 deck/OAuth tests (671 distinct tests); focused production, P19 protocol and deck/OAuth TypeScript pass. Independent merge-seam review found no actionable issues. V22 now selects corrected deck geometry v2 while remaining unpublished; V23/V9 and historical public pins retain their authority. All six SQL hashes/mirrors and all27 historical phone fingerprint entries are unchanged. The primary web checkout's 43 pre-existing tracked edits retain their original hashes.
 
-Phone integration commit `187a36d631a7413ced22d631c3cc153c62eb195f` merges exact main `b08de1042bed5d272d52daa83ef1bc30a501fa86` without overlapping source conflicts. The reviewed model/migration files are byte-identical to the accepted phone head. The app-hosted migration/site-visit/calendar regression is running in the private P19 simulator after the earlier external build exited; phone main has not yet been advanced. The Bible merge retains both the site-visit candidate and deployed deck/Canpro documentation. No release or activation action is authorized by this progress record.
+Phone integration commit `187a36d631a7413ced22d631c3cc153c62eb195f` merges exact main `b08de1042bed5d272d52daa83ef1bc30a501fa86` without overlapping source conflicts. Evidence commit `35d4021055471fa9b0aa35fba66ff2e3ebed9b6e` is also on local iOS main. The reviewed model/migration files are byte-identical to the accepted phone head. One combined private, unsigned app-hosted run passed **138 tests, with two optional private-store-copy skips and zero failures**; Xcode exit0 and independent result-bundle readback agree. All released fingerprints, populated V27→V28 independent reopen, field/actor/receipt/media/recovery, calendar and settings-input suites passed. This closes the earlier split-run limitation for these selected cases. Exact evidence: iOS `docs/artifacts/phase19/parent-integration-20260911.md` and `parent-integration-result-20260911.json`.
+
+Bible merge `ef8313d0a486caf085149d77170e571e875a5b0d` combines the accepted docs with exact main `91b52e679980a0b9c60a2fd4a2ab71716d5a4d36`, retaining the site-visit candidate and deployed deck/Canpro sections. The six SQL sources and mirrors were not changed. The shared build slot was returned after the P19 process exited. Worktrees and original phase commits are preserved. No release or activation action is authorized by this record.
 
 ### Remaining release order
 
-1. Integrate all three repositories and reconcile shared registries plus SwiftData registration with current main. Preserve unrelated work and the separately owned calendar-address change. Run verification justified by integration differences.
+1. **Complete locally on 2026-09-11:** all three repositories reconciled with the exact main snapshots above, with fresh bounded web and combined phone verification. The separately owned calendar-address change and unrelated workspace edits are preserved. Any future source drift still requires proportionate verification before release.
 2. Under separate explicit authorization, refresh deployed schema/function/ACL state and apply the six reviewed SQL migrations in filename order. Their byte-identical mirrors, sizes and SHA-256 hashes are in [the unapplied migration index](../migrations/README.md#phase-19-site-visits--unapplied-local-candidates-2026-09-10). These are source filenames, not production ledger versions. A changed deployed effect graph requires fresh review; do not silently reseal other phases.
 3. Under iOS release authority, distribute and verify the compatible V28 phone client and pending-work recovery before company shared-write activation. Legacy clients are rejected safely for enrolled companies. Older queued operations without an originating actor remain recoverable but unbound; migration must not invent actor authority or rewrite attempted payloads.
 4. Under separate exact authority, establish reviewed compatibility/effect policy and candidate exposure/consent for the named actor/company/client/grant. Both compatibility and effect policy are empty in the migrations. Enrollment, a readable connection and an exact operator approval are separate authorities.
