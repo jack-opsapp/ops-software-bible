@@ -10711,6 +10711,19 @@ P1-18 tests with zero failures before main integration. It becomes
 customer-distributed only after Jackson runs the signed device/App Store
 release gate.
 
+**2026-09-11 rendered regression verification:** report
+`070a36d4-6f3c-4347-bcdd-b2e2ea6d2ca9` was checked against the unchanged
+`23de6cf2` production view. Four actual-view viewport/action checks and three
+existing behavior checks passed (7/7, zero skips). Controlled 375×667 standard
+and largest-accessibility-text fixtures and a 390×844 standard fixture showed
+no horizontal scroll range; all eight completion actions were reachable
+vertically at the 44-point minimum, and Later stayed outside the scroll area.
+Root inspected all six top/bottom PNGs retained with geometry at
+`ops-ios/docs/artifacts/ios-bugs-p3-overdue-20260911/`. The combined result bundle
+also contains three failing settings-keyboard tests and is not an all-green
+suite. This adds local iOS 26.5 simulator evidence; it does not establish a
+physical-device result or distribution of a new build.
+
 ---
 
 ## 37. Invisible Office Day Closeout (production-released dormant, not activated)
