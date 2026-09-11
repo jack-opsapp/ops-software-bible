@@ -9820,10 +9820,10 @@ One-way mirror from OPS schedule rows to a dedicated `OPS` calendar in the user'
 
 - `CalendarUserEvent` (personal events, time off — **any status**; title prefix reflects status)
 - `ProjectTask` where the current user is in `schedulingTeamMemberIds`
+- Booked `SiteVisit` appointments assigned to the current operator, inside the mirror window, neither cancelled nor deleted. Completed appointments remain in the personal record. Walk-up visits are excluded. Verified against `CalendarMirrorEligibility.swift` and `CalendarMirrorService.swift` on iOS local main `2f513445` (2026-09-11); this source inspection does not establish signed customer distribution.
 
 ### Excluded
 
-- `SiteVisit` — still excluded from the EventKit mirror. Durable DTO/repository/outbound/inbound/Realtime wiring exists and its database/web contract is production-live as of 2026-08-02, but `CalendarMirrorService` does not materialize visit rows into EventKit events. This is an explicit calendar-surface boundary, not evidence that site visits are phone-only. The updated iOS client is not customer-distributed until its signed device/App Store gate completes.
 - Direct Google Calendar / Outlook OAuth sync — provider credentials, token storage, consent copy, and per-provider write semantics belong to the backend integrations layer. iOS uses EventKit; Apple, Google, and Outlook accounts are supported when they are configured in the device Calendar app and exposed as writable EventKit sources.
 - Two-way sync — researched and rejected for the iOS EventKit mirror; the spec at `ops-ios/docs/superpowers/specs/2026-05-10-iphone-calendar-mirror-design.md` documents the rejected design space.
 
@@ -9848,7 +9848,8 @@ Past 30 days → future 12 months from `Date()`. Prevents history dumps. Outside
 | Component | Path |
 |---|---|
 | Singleton service (`@MainActor`-isolated, holds `EKEventStore`) | `OPS/Services/CalendarMirrorService.swift` |
-| Pure title/body/hash builder | `OPS/Services/CalendarMirror/CalendarMirrorContent.swift` |
+| Pure event payload/hash builder | `OPS/Services/CalendarMirror/CalendarMirrorContent.swift` |
+| Calendar-owned site-visit lead metadata and address precedence | `OPS/Services/CalendarSiteVisitLeadResolver.swift` |
 | Eligibility predicates (window + membership) | `OPS/Services/CalendarMirror/CalendarMirrorEligibility.swift` |
 | Bridge for non-View access to ModelContainer | `OPS/Services/CalendarMirror/ModelContainerHolder.swift` |
 | First-event-save permission sheet | `OPS/Views/CalendarMirror/CalendarMirrorPromptSheet.swift` |
@@ -9865,6 +9866,7 @@ Mirror writes are fired from:
 3. `DataController.updateTaskTeamMembers` — after team change (may add/remove current-user eligibility).
 4. `DataController.deleteTask` and cascaded soft-deletes — fires `unmirrorEvent`.
 5. `RealtimeProcessor` — after applying remote `project_tasks` changes. For `calendar_user_events` realtime, the branch triggers a full `reconcileAll()` because the local SwiftData write happens later via fetcher.
+6. `BookSiteVisitSheet` — after the locally booked visit is available; `RealtimeProcessor` also mirrors remotely received site-visit changes. Reconciliation backfills eligible booked visits.
 
 Reconcile runs on app launch, `UIApplication.didBecomeActiveNotification`, `.EKEventStoreChanged` (debounced 1s via Combine), Supabase realtime for `calendar_user_events`, and opportunistic `BGAppRefreshTask` registered as `com.ops.calendar.mirror.refresh` (Info.plist `BGTaskSchedulerPermittedIdentifiers`).
 
@@ -9878,7 +9880,9 @@ Reconcile runs on app launch, `UIApplication.didBecomeActiveNotification`, `.EKE
 3. Backfill any eligible source row that has no map entry.
 4. Orphan sweep: events in OPS calendar with no map entry. Try to recover by parsing `EKEvent.url` (`ops://event/<id>`). If unrecoverable, delete.
 
-The `contentHash` (SHA-256 of canonical "title|start|end|notes|allDay") makes idempotent reconcile near-free.
+The `contentHash` includes title, start, end, notes, all-day state, and native location. The writer and reconciler also compare actual EventKit fields, so a blank or manually changed location is repaired even when the stored hash already matches.
+
+**Native location repair (2026-09-11, local iOS main repair `e443e01a`, verification `192477f0`, bug `ed377153`):** `CalendarMirrorContent` supplies a whitespace-trimmed optional location for all three existing address-bearing sources. Personal events use their address; project tasks use the project address; site visits use canonical appointment location, then resolved lead address, then the visit address. `CalendarMirrorEventMapping` assigns `EKEvent.location` during both creation and updates and clears it when the effective source address is removed. Existing address text in notes is preserved. The payload and hash are transient values; no SwiftData schema or provider integration changes are introduced. Focused tests use unsaved EventKit events and do not create real calendar entries. The app-hosted iPhone 17 / iOS 26.5 simulator run passed 44/44 focused Calendar mirror, eligibility, and lead-resolver tests with zero failures or skips at `192477f0`. This proves local mapping/reconciliation behavior; no real calendar account or customer event was modified, and signed customer distribution remains pending.
 
 ### Event title format
 
@@ -9889,10 +9893,11 @@ The `contentHash` (SHA-256 of canonical "title|start|end|notes|allDay") makes id
 | `CalendarUserEvent.timeOff` (pending) | `[Pending] {title}` | `[Pending] Cottage` |
 | `CalendarUserEvent.timeOff` (denied) | `[Denied] {title}` | `[Denied] Cottage` |
 | `ProjectTask` | `{project.title} — {taskType.display}` | `Smith Deck — Plumbing rough-in` |
+| `SiteVisit` | Canonical appointment title, otherwise `Site visit — {lead display name}`, otherwise `Site visit` | `Site visit — Smith Deck` |
 
 Approver-booked time off is created as `approved`, so it mirrors through the approved title path immediately after `CalendarUserEventRepository.create`.
 
-`EKEvent.url` = `ops://event/<calendarUserEventId>` or `ops://projects/<projectId>/tasks/<taskId>` — doubles as deep-link tap-through and reconciler recovery anchor.
+`EKEvent.url` = `ops://event/<calendarUserEventId>`, `ops://projects/<projectId>/tasks/<taskId>`, or `ops://leads/<opportunityId>` for a booked site visit. Event/task URLs also provide a source-row identifier for orphan recovery; a lead URL identifies the opportunity, not a unique visit.
 
 ### Deep link
 
