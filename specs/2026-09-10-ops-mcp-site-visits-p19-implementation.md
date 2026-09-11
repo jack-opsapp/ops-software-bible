@@ -1,0 +1,67 @@
+# Phase 19 site visits — implementation contract (2026-09-10)
+
+Status: isolated local implementation; not pushed, deployed, migrated, activated, enrolled, or distributed to customers. The parent task owns integration and release. Local protocol fixtures are not acceptance by a signed-in Claude, ChatGPT, or Codex host.
+
+The approved scope is [the Phase 19 brief](2026-09-10-ops-mcp-site-visits-p19-brief.md). Web implementation: `ops-web/src/lib/agent-control-plane/{contracts/site-visit-workflow.ts,services/site-visit-workflow/,registry/site-visit-workflow-capability.ts}`. Phone implementation: `OPS/Services/SiteVisitPersistenceCoordinator.swift`, `OPS/Network/Sync/SiteVisitSyncOperation.swift`, `OPS/Network/Supabase/Repositories/SiteVisitRepository.swift`, `OPS/Views/SiteVisits/SiteVisitCaptureViewModel.swift`, plus their write-state, merge, conflict-review and receipt helpers.
+
+## Shared workflow
+
+The golden sequence resolves an exact lead, prepares a booking, saves its exact approval in OPS, reads the resulting visit, selects an existing checklist, saves that separate approval, reads current field snapshots, and prepares evidence-backed answer changes. Each change has its own outcome and receipt. A host never treats discovery, preparation, or a previous approval as authority to save another change.
+
+The eleven candidate tools are `list_site_visit_templates`, `get_site_visit_template`, `get_site_visit_form`, `get_site_visit_source`, `prepare_site_visit_booking`, `prepare_site_visit_reschedule`, `prepare_site_visit_booking_cancellation`, `prepare_site_visit_template`, `prepare_site_visit_template_edit`, `prepare_site_visit_checklist_selection`, and `prepare_site_visit_answers`. Existing bounded lead/visit discovery supplies exact identities; ambiguous names require the operator's choice. Callers never invent identifiers.
+
+All tools use the same trusted OPS domain service and validated actor context. There is no host-specific business state, generic row writer, Canpro special case, public commit tool, capture-start tool, or capture-complete tool. Exact approval is `approve_site_visit_changes` in the existing OPS review queue. The queue supplies only `change_set_id` and `preview_sha256`; the server re-reads the named operator's proposal and commits through `commit_site_visit_workflow_as_actor`.
+
+## Dormant candidates and authority
+
+Reserved snapshots are manifest `2026-09-10.capability-manifest.v27`, exposure `2026-09-10.mcp-exposure.v22`, and consent `2026-09-10.mcp-consent-catalog.v17`. They are explicit candidate factories, not active/default/selectable exposure. Existing active revisions stay unchanged. Parent integration must combine sibling revision work deliberately rather than replacing shared registries wholesale.
+
+The site-visit candidate exposes only its eleven operations and ten existing reads needed to resolve customers/leads, inspect jobs/visits/deck geometry, read company context and select crew/availability. Its scope ceiling is exactly the required read/prepare scopes of that allowlist. It does not inherit catalog, financial or customer preparation tools whose existing grant bindings belong to separate releases. Consent permits no write-class scope. Parent integration must verify each added family's authority rather than assuming a later revision inherits working mutations.
+
+The database validates exact actor, company, channel, current permission snapshot, grant, client, grant revision, scope ceiling, accepted labels, exposure and consent at preparation, approval, and receipt replay. Template writes require company settings and operator review authority; visit changes require exact record visibility/edit authority. Booking also requires lead conversion authority. Calendar/team permissions are required for availability; media/deck evidence requires its own current permissions and OAuth scopes. An unlinked visit is not implicitly visible to an assigned-only actor.
+
+`private.site_visit_concurrency_companies` and `private.agent_site_visit_workflow_effect_policy` are empty after migrations. Compatibility enrollment and the exact effect seal are separate release operations. Enrollment alone is not approval to mutate records. The effect seal includes relevant function definitions, schema, triggers and constraints; changing an installed writer invalidates the seal until explicitly reviewed and re-established by the release owner.
+
+Dedicated rate policy `mcp-site-visit-workflow:2026-09-10.v1` covers all eleven candidate operations. Its durable shared windows are six units per actor, six per grant, and thirty per company per minute. It revalidates current grant/client/scopes and leaves other phase buckets unchanged. No paid API fallback or new service purchase was introduced. Production activation would consume the existing web/database resources; local verification does not estimate production invocation cost.
+
+## Exact time and canonical booking
+
+PostgreSQL is the single IANA timezone authority for this phase. Authenticated SQL compiles company civil time into exact UTC plus offset, rejects nonexistent local times, and requires an explicit offset for repeated local times. The sealed proposal and saved receipt include civil time, timezone, UTC start/end, duration and offset. Node 22 checks structure, calendar validity, arithmetic and request/response binding without reinterpreting IANA rules through its own ICU. This specifically avoids divergence between Node 22 tzdata and PostgreSQL for Vancouver's updated rule. Existing schedule-change runtime guards are unchanged.
+
+Commit recompiles the full proposal using the database's current timezone rules. A tzdata update that changes an evaluated instant makes the old proposal differ and invalidates approval; unrelated rule changes that leave that appointment identical do not require artificial rejection. Company timezone edits and edits that return to their earlier value also change the source revision. Installed function/schema changes independently invalidate the effect policy. Tests exercise Vancouver, gap/fold, explicit offsets, half/quarter-hour zones, negative offsets and date/year crossings; they do not claim to install a new production tzdata package.
+
+The extracted private explicit-actor book/reschedule/cancel functions retain the captured canonical business bodies. Existing public app RPCs delegate with their actual authenticated actor, without rewriting JWT claims. `booked_at` remains the discriminator. Reschedule omitted/null values keep existing values; reminder `-1` clears the per-visit override. A null reminder means crew/user reminder defaults, not reminders disabled. Cancellation preserves historical crew and duration, including inactive users, null/empty crew and older durations outside new-booking bounds.
+
+Availability includes current tasks with civil-date semantics, crew calendar/time off, booked visits and public booking holds. Invalid relevant records block approval; missing company work hours and unknown external calendar coverage are disclosed. Complete graph table locks prevent insertion phantoms, use NOWAIT against in-flight ordinary writers, and preserve the shared short transaction deadline. This deliberately trades a retry under contention for incomplete availability claims.
+
+Stage movement, timeline events and provider work remain canonical. A calendar intent queued in OPS is not confirmation by Google Calendar. Receipts explicitly say `calendar_reconciled:false`; no customer message is sent. Capture and physical completion remain phone-owned.
+
+## Templates, snapshots and evidence
+
+Templates use the actual eight field kinds: checkbox, yes/no/not-applicable, short text, long text, measurement text, photo, annotated/dimensioned photo, and an existing deck design. Field IDs remain stable. Definitions include order, required state, visibility and help text. Default displacement is part of the exact approved rows. Template edits never rewrite existing visit snapshots or historical answers.
+
+Checklist selection adds missing visible snapshots and preserves existing work. Answer patches distinguish set, unknown and explicit clear, retain false and zero, preserve measurement units verbatim, and bind direct quotations or existing attachment references to verified sources. Contradictory evidence remains unknown with its original excerpts. A plain photo cannot satisfy a markup-only field; media must already exist in that visit with a usable remote asset. The host cannot fabricate photos, designs or file extraction. Business source text is marked untrusted and displayed as escaped text.
+
+Preparation may persist only the proposal, approval action and declared persistent review notification. No template, answer, booking or provider business effect occurs until exact confirmation. The private full source hash retains provenance; public review redacts earlier evidence the operator cannot currently access. Media permissions are checked again on queue visibility and receipt replay.
+
+## Phone coexistence and recovery
+
+Templates and answer snapshots carry server write revisions; compatible commands retain their original expected base through queue coalescing, crash/restart, account changes and retries. Server-side comparison applies across MCP, current phone and legacy writers for enrolled companies. Conflicts preserve both proposed and current versions and require an explicit decision; successful receipt acknowledgment advances only the exact submitted payload, never an edit made while a request was in flight.
+
+Ordering is parent, artifact metadata, upload plus remote metadata acknowledgment, linked answer, then completion. Already queued legacy dependency graphs are repaired without rewriting attempted immutable answer bytes. Atomic packet discard records its own actor-bound receipt and tombstones answers, media, identity draft and parent in one transaction; it can close a never-uploaded parent and prevents its delayed create from reopening it. Discard does not cancel a booked appointment or modify a completed visit. Canonical phone completion still produces one timeline activity and replays it after a lost response.
+
+Fresh inbound merges, accept-current recovery and the vault retain authoritative cleared/unknown answer state, preventing media hydration from resurrecting deliberately empty answers. Newly built phone commands canonicalize blank text and measurement clears to empty wire values. They preserve false, zero, nonblank units, original before values and already-attempted bytes. The final proof and exact implementation commits are recorded in the phase handoff.
+
+SwiftData V28 is reserved for this phase by the parent and active iOS bug coordinator. Commit `b15bf20f` freezes the exact pre-phase `SyncOperation`, `SiteVisitType` and `SiteVisitChecklistAnswer` shapes used by V1–V27, registers new nullable write metadata only in V28, and adds the adjacent V27→V28 stage through the existing current-schema alias. All27 released checksum entries are unchanged and match runtime measurement. Populated V27 migration and independent reopen preserve every template/answer/outbox scalar, with all seven new metadata properties nil. The final checksum/Deck/adjacency run passes7/7; two optional private-device-copy fixtures were skipped. This schema reservation is separate from the MCP manifest/exposure/consent numbers. Exact chronology and proof limits are in the [handoff](2026-09-10-ops-mcp-site-visits-p19-handoff.md).
+
+## Operator review and saved result
+
+The review shows exact visit context, company civil time and UTC offset, crew, duration, inherited/explicit reminder behavior, old/new template keys and definitions, before/after values, missing required fields, evidence and existing-media links. It exposes no editable raw proposal JSON. Expiry disables saving; corrections create a new proposal and invalidate the earlier one even when the corrected result needs more input.
+
+Business rows, successful receipt, action execution and notification resolution are atomic. Receipt validation checks exact actor/company/action/change/hash, operation, target visit, row identities, values, evidence, missing fields, effects and appointment/proof; an independent read of the executed action must match. Ambiguous transport retries use the same commit identity once. Current permission failures and stale approvals do not silently retry a different effect. Bulk/autonomous approval is excluded.
+
+## Verification and release handoff
+
+The web phase artifact report and SDD reviews record precise final test counts, migration hashes, code commits and any limitations. Fixtures use captured read-only production catalog definitions with synthetic local records; no production actor/grant data is copied into business test rows. Coverage includes canonical booking and completion, conflict ordering, forms, actual PostgreSQL output through Node 22 schemas and receipt binding, shared rate limits, both local MCP protocol eras, rendered English/Spanish approval review, and iOS hosted application tests. Broad-suite baselines are separate from focused evidence.
+
+The [30-persona matrix](2026-09-10-ops-mcp-site-visits-p19-personas.md) is a scenario-to-proof mapping, not thirty live trials. No native signed-in host, real customer device distribution, provider-delivery canary or customer-live rollout is claimed. Those require the release owner's exact authority and compatible client rollout after local integration.

@@ -7514,7 +7514,22 @@ unsatisfiable rather than merely strict:
    stands in for the whole-summary re-parse; when it does not, the contract
    stays in place and still throws.
 
-Non-convergence is now bounded instead of infinite.
+**2026-09-11 recurrence repair (OPS-Web `006b69a8a`; not deployed):** seven exact
+production source snapshots reproduced failures in
+`src/lib/api/services/lead-summary-service.ts` even with the earlier fixes.
+The commercial context still demanded a generic follow-up/payment action while
+the current-fact context and renderer selected the customer's concrete request.
+Both contracts now use that resolved request. Next-action validation and display
+share greeting/link cleanup; a bare photo URL is not a mandatory action, and
+cleanup preserves question marks so tentative scheduling evidence stays tentative.
+For the deterministic renderer only, superseded actions are checked against its
+action clause and superseded schedules against its schedule/action clauses.
+Scope vocabulary and historical objection text no longer masquerade as stale
+actions or schedules. Model output retains whole-summary stale-fact checks;
+money and scope checks remain global in both paths. No customer fields, queue
+rows, identity checks or guarded `commit_lead_summary_snapshot` writes change.
+
+The older **mailbox continuation** bounds non-convergence.
 `LEAD_SUMMARY_DEFERRAL_ATTEMPT_CAP = 3` consecutive failures per opportunity,
 and only a `model_contract` or `model_refusal` reason consumes budget: a
 provider outage is an infrastructure condition, not a poison lead, and a lead
@@ -7523,9 +7538,14 @@ opportunity leaves the envelope — which is what lets the mailbox complete — 
 lands in `public.lead_summary_refresh_quarantine` with one persistent,
 open-deduped rail notification per lead deep-linked to the lead. A quarantined
 lead is released by newer evidence: the scheduled sweep admits it again only
-when its latest context timestamp is newer than `quarantined_at`, while the targeted
-refresh path — always driven by concrete new evidence for those exact leads —
-releases unconditionally and grants one more bounded round.
+when its latest context timestamp is newer than `quarantined_at`, while the
+targeted refresh path releases unconditionally. The durable
+`opportunity_phase_c_work` worker also calls that targeted path for retries of
+the same event; the three-attempt continuation cap does **not** bound that worker.
+Its summary component remains pending until one guarded write succeeds, and it
+never acknowledges a failed/deferred/skipped write as applied. The September 11
+repair addresses the reproduced renderer failures; it does not introduce an
+event-aware Phase C quarantine or claim that all future retries are bounded.
 `/api/cron/lead-summary-refresh` reports `quarantinedCount` and `quarantined`
 and stays HTTP 200: a per-lead data problem is not a workload failure and must
 not trip the circuit.
@@ -10882,3 +10902,15 @@ Only the proposal's named operator can review and save it. Catalog actions are e
 Catalog price edits do not move stock. New variants start at zero; a stock count requires a separate proposal showing its effective counting unit and audit reason. Physical roll/lot/unit-backed inventory stays in the existing physical capture workflow. Existing canonical price mirroring, read revisions and product-mapping notification resolution are preserved by the server transaction. The unchanged web/iOS readers consume the same canonical records; this candidate is not an iOS release.
 
 Clearing a category shows its prior human-readable name; category cycles and unresolved ancestor changes return `needs_input` before approval. Legacy nullable fields remain visible without widening the strict input schema. Variant overrides show both the override and effective inherited unit price; supplier-cost fields remain omitted unless specifically authorized and requested. Component tests cover the actual English/Spanish dictionaries and escaped source text; they do not establish browser visual acceptance.
+
+## Phase 19 site-visit review and phone coexistence (2026-09-10; local, disabled)
+
+The new `approve_site_visit_changes` action is an exact operator review in the existing approval queue. It is excluded from bulk/autonomous execution. A pending proposal creates a declared persistent review notification with `context_source='site_visit'` and dedupe key `site-visit:<action_id>`; successful transaction or rejection resolves it. The action and receipt retain actual actor, target, time and outcome. Business changes never send a customer message implicitly.
+
+The review shows visit identity/context, exact civil time plus UTC offset, crew, duration and inherited reminder behavior; template field/key/default differences; before/after answers; missing required fields; escaped source excerpts and existing-media links. Restricted historical evidence stays redacted, and queue visibility rechecks current media/record permissions. Expired or invalid reviews cannot be saved. Correcting a request invalidates its earlier proposal even if the replacement still needs input.
+
+Phone recovery retains the proposed value and current server value instead of overwriting either. Parent/artifact/upload/answer dependencies survive restart, and successful receipts acknowledge only the submitted version. Packet discard is an atomic tombstone operation; completion remains a separate canonical phone action. Cross-device cleared/unknown values must survive fresh inbound state and reopen without automatic evidence refill. Compatibility activation requires the final corrected phone build and separately authorized distribution; a prior hosted-test count is not signed-device or customer-live evidence.
+
+See [Phase 19 implementation and release boundaries](specs/2026-09-10-ops-mcp-site-visits-p19-implementation.md), the [30-persona scenario mapping](specs/2026-09-10-ops-mcp-site-visits-p19-personas.md), and the [accepted local handoff](specs/2026-09-10-ops-mcp-site-visits-p19-handoff.md). The reserved SwiftData V28 update preserves all27 released fingerprints and populated-store custody; exact hosted results and skipped private-device fixtures are recorded there. All phase migrations and public candidates remain unapplied/disabled in this local task.
+
+Parent integration is verified locally on 2026-09-11: 671 distinct web tests, focused TypeScript and independent merge-seam review, plus one combined phone run with 138 passes, two optional private-store-copy skips and no failures. The phone run includes upgrade/reopen, originating-actor and pending-work recovery, calendar mirror/lead resolution, and site-visit settings input. Existing main's calendar, receipt and toast changes are retained. This closes the local combined-integration gate only; signed-device coexistence, production migrations and exact host/company activation remain separate release gates.
