@@ -1193,6 +1193,16 @@ In `NotificationManager.swift`:
 
 ---
 
+### Acquisition landing telemetry: `POST /api/ab-events`
+
+**September 11, 2026 — verified local repair, not deployed.** Source: `try-ops` commit `da0b6093843024c4a994900882801eaaa739b437`, local-main merge `ab2b3f1e7195db16ca9d572e85d8d0eca66f9daa`.
+
+The JSON body requires `variant_id` (a UUID, a configured `paid:<route>` identity, or `fallback`), a nonempty `session_id`, and one of `page_view`, `signup_start`, `signup_complete`, `section_view`, `element_click`, `scroll_depth`, or `app_store_click`. Existing optional campaign, referrer, device, section, element, scroll, and dwell fields remain supported. Unknown identities, invalid field types, unsupported events, and malformed JSON return 400 without a database write.
+
+UUID identities write to `ab_events` and retain the page-view/signup experiment counters. Fixed identities write to existing `onboarding_events`, with `variant` equal to the fixed identity, `event_type` equal to `landing_<event_type>`, and the accepted event body in `metadata`. Fixed identities never write a non-UUID into the experiment foreign key or increment experiment counters. These landing events are distinct from canonical onboarding completions and business conversions.
+
+Only requests whose URL hostname is exactly `try.opsapp.co` collect first-party telemetry; other hosts receive a successful skipped response before body parsing or database access. Successful writes return 200; storage failures return 500. This repair requires deployment but no migration or provider configuration changes. Passing local tests do not prove production receipt or recover earlier failed events. See `21_ANALYTICS_SYSTEM.md` for the collection contract and release boundary.
+
 ## Firebase Analytics
 
 Firebase serves two distinct roles in OPS: verified identity for legacy/bridged API flows and a deliberately narrow iOS conversion feed. Supabase remains the database and business source of truth.
