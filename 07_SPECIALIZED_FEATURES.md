@@ -7517,7 +7517,7 @@ unsatisfiable rather than merely strict:
    stands in for the whole-summary re-parse; when it does not, the contract
    stays in place and still throws.
 
-**2026-09-11 recurrence repair (OPS-Web `006b69a8a`; not deployed):** seven exact
+**2026-09-11 recurrence repair (OPS-Web `006b69a8a`; deployed):** seven exact
 production source snapshots reproduced failures in
 `src/lib/api/services/lead-summary-service.ts` even with the earlier fixes.
 The commercial context still demanded a generic follow-up/payment action while
@@ -7531,6 +7531,8 @@ Scope vocabulary and historical objection text no longer masquerade as stale
 actions or schedules. Model output retains whole-summary stale-fact checks;
 money and scope checks remain global in both paths. No customer fields, queue
 rows, identity checks or guarded `commit_lead_summary_snapshot` writes change.
+
+Release verified at 17:29 UTC: production deployment `dpl_JBak4gpTm8yyfbPgewH9Cup7gY1z` reached READY at 17:28:02 UTC, and `app.opsapp.co` resolved to the exact commit with HTTP 200 after normal login redirects. All seven summary completion markers still awaited their normal post-release retries. Deployment is confirmed; natural exact-event recovery is not yet confirmed. No replay or direct customer-record repair was performed.
 
 The older **mailbox continuation** bounds non-convergence.
 `LEAD_SUMMARY_DEFERRAL_ATTEMPT_CAP = 3` consecutive failures per opportunity,
