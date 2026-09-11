@@ -199,7 +199,7 @@ Headlines ≤30 chars, descriptions ≤90; 8–12 headlines, 3–4 descriptions;
 
 ### 5.6 Guardrails on money and pace
 
-Monthly cap and daily cap in settings (defaults $1,500 CAD and $60); no proposal may push the sum of daily budgets above the daily cap; budget and cap changes ≤15% and ≥14 days apart per campaign; at most 3 structural proposals per run; hygiene may propose any number of negatives. Any `DISAPPROVED` ad is paused by OPS immediately (not proposed) and reported.
+Monthly cap and daily cap in settings (defaults $1,500 CAD and $60); no proposal may push the sum of daily budgets above the daily cap; budget and cap changes ≤15% and ≥14 days apart per campaign; at most 3 structural proposals per run; hygiene may propose any number of negatives. Any `DISAPPROVED` ad is paused by OPS immediately (not proposed) and reported. **Amended 2026-09-11 (GOOGLE ADS ENGINE - P2-1-1):** a `DESTINATION_NOT_WORKING`-only verdict is held one daily check first (20 h) — a disapproved ad serves nothing, and that verdict is often one failed crawl; every pause is recorded with Google's policy topics (`ads_guardrail_pauses`), and OPS switches an ad it paused back on once Google approves it, only when the pause is provably its own (not retired by the blueprint, not claimed by an engine decision, and last touched by OPS's own pause in Google's change history). See `04_API_AND_INTEGRATION.md`, Google Ads engine → disapproved-ad guardrail.
 
 ### 5.7 The routine
 
@@ -216,7 +216,7 @@ Visuals follow the OPS design system and the dataviz rules (numbers in mono, `�
 
 ## 7. Notifications (admin rail, recipients `PMF_OPERATOR_*`)
 
-`ADS PROPOSALS READY · n` (standard, action → console), `AD DISAPPROVED` (persistent), `ADS CONVERSIONS FAILING` (persistent), `ADS ENGINE STALLED` (persistent, once per day), `ADS BUDGET PACING` (standard, when a campaign is capped by budget three days running).
+`ADS PROPOSALS READY · n` (standard, action → console), `AD DISAPPROVED` (persistent), `ADS CONVERSIONS FAILING` (persistent), `ADS ENGINE STALLED` (persistent, once per day), `ADS BUDGET PACING` (standard, when a campaign is capped by budget three days running). **Amended 2026-09-11:** the guardrail's restore path adds `AD STILL PAUSED` (persistent, a restore Google refused) and `AD BACK ON` / `ADS BACK ON` (standard, once per tick); `AD DISAPPROVED` is keyed per guardrail episode and resolved when the episode closes, and promises a replacement only when the routine is running and the brief will ask for one.
 
 ## 8. Phases, gates, spawn names
 
