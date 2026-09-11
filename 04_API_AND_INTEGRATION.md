@@ -4372,6 +4372,14 @@ Production ledger `20260822015049_agent_discovery_reads_20260820220000` installe
 
 At the 2026-08-22 checkpoint, live authenticated acceptance listed exactly eleven tools and exercised all eleven through the production endpoint. Nine calls returned successful results; conversation context and correspondence evidence returned their expected privacy-safe `NOT_FOUND` outcomes because the selected canary job had no matching records. The disposable grant was revoked, its next bearer request returned `401`, and all temporary OAuth client, code, grant, and token rows were deleted with zero-row readback. The immutable request audit remains. Claude's permanent client/grant was not changed. At that checkpoint, every write family and both site-visit capabilities were dark. A future v6-removal migration remains separate until old instances, jobs, cursors, and prepared calls drain.
 
+### Readable MCP tool titles (prepared locally 2026-09-11)
+
+OPS-Web commit `f4c79b6f9` repairs report `d1ed9ed1-35bb-42f9-91d3-7457d9a3d21b`: `mcp/server-factory.ts` publishes readable `title` and `annotations.title` from `mcp/tool-display-metadata.ts` and `src/i18n/dictionaries/en/mcp-tools.json`. For example, invocation ID `get_job_summary` displays as “View job summary.” IDs, ordered exposure membership, full descriptions, nested argument schemas, four safety hints, dispatch, grants and authorization remain unchanged. Metadata currently uses English, consistent with capability descriptions; no locale is negotiated. A trusted future registry ID has a readable fallback until explicit copy is added.
+
+Local proof:110/110 focused MCP tests, expanded focused TypeScript check, formatting/diff checks and independent review. Seventeen SHA256 snapshots cover the complete non-display `tools/list` metadata from baseline `cabebb8c`, omitting only the two title fields; every snapshot matches the repaired server. The original18 display assertions failed against that baseline. Discovery tests invoke no business, audit or rate-limit operations. Evidence and replay commands: OPS-Web `docs/artifacts/ios-bugs-p3-mcp-20260911/verification.md`.
+
+This is prepared local source, not a deployment or Claude rendering acceptance. A host may retain cached tool metadata or choose its own rendering. No production grant, business record, activation, push or deployment was changed.
+
 ### Safety rails
 
 - **Rate limits** (foundation § 13.3): `lightweight_read` 120/min/grant + 600/min/company; `evidence_search` 30/min/grant + 120/min/company; plus a coarse 300/min/grant transport ceiling. Backed by the shared limiter — Vercel KV is **not** provisioned, so enforcement degrades to per-instance in-memory (documented, accepted at current scale).
