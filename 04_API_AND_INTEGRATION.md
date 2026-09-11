@@ -4380,6 +4380,8 @@ Local proof:110/110 focused MCP tests, expanded focused TypeScript check, format
 
 This is prepared local source, not a deployment or Claude rendering acceptance. A host may retain cached tool metadata or choose its own rendering. No production grant, business record, activation, push or deployment was changed.
 
+Integration with completed P19 and concurrent email-repair main `464588ae` retains those boundaries: web integration `ad660b91` passes225/225 focused tests, including111 site-visit candidate and15 deck-geometry cases, with all17 original non-display metadata hashes unchanged. Expanded focused TypeScript and diff checks pass. Local integration does not activate the dormant site-visit candidate or apply its migrations.
+
 ### Safety rails
 
 - **Rate limits** (foundation § 13.3): `lightweight_read` 120/min/grant + 600/min/company; `evidence_search` 30/min/grant + 120/min/company; plus a coarse 300/min/grant transport ceiling. Backed by the shared limiter — Vercel KV is **not** provisioned, so enforcement degrades to per-instance in-memory (documented, accepted at current scale).
