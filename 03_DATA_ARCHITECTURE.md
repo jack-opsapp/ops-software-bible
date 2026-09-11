@@ -6209,7 +6209,15 @@ resolved start/end/timezone, location, attendees, and either `ready` or
 `review`. A `ready` row structurally requires bilateral evidence, a resolved
 owner, time interval, timezone, and both evidence events. `canonical_event_kind`,
 `canonical_event_id`, and `consumed_at` are reserved for P1-17's guarded OPS
-event/site-visit creation. This table does not create or synchronize a provider
+event/site-visit creation.
+
+Attendee identity is narrower than message-author authority (2026-09-11,
+OPS-Web `22eca1b89`). The Phase C evaluator may use every active company user
+and verified operator alias to prove who sent a message, but it serializes only
+the customer identities and the requested owner's registered email into
+`attendees`. An owner email outside that authorized roster leaves the handoff in
+`review` with `event_attendees_unresolved`; the company roster must never become
+a calendar guest list. This table does not create or synchronize a provider
 calendar event.
 
 ## Lead Intake Identity and Commercial Guards (live 2026-07-29)
