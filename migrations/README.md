@@ -354,7 +354,7 @@ Actual ledger archives, in the same order: `20260912003437_site_visit_concurrenc
 
 ## iOS bug repairs — UNAPPLIED local candidates (2026-09-11)
 
-The two files in `pending/` are byte-identical to the verified OPS-Web sources and are not production ledger entries. Local integration does not authorize applying either migration. The choice extension depends on the released Phase19 phone protocol; it changes the contract fingerprint without resealing effects or activating company/host policies. The expense repair preserves client decision APIs and does not enable accounting provider delivery.
+The two files in `pending/` are byte-identical to the verified OPS-Web sources and are not production ledger entries. Local integration does not authorize applying either migration. The choice extension depends on the released Phase 19 phone protocol; it changes the contract fingerprint without resealing effects or activating company/host policies. The expense repair preserves client decision APIs and does not enable accounting provider delivery.
 
 | Pending source | Bytes | SHA-256 |
 |---|---:|---|
