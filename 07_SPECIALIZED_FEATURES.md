@@ -7534,6 +7534,18 @@ rows, identity checks or guarded `commit_lead_summary_snapshot` writes change.
 
 Release verified at 17:29 UTC: production deployment `dpl_JBak4gpTm8yyfbPgewH9Cup7gY1z` reached READY at 17:28:02 UTC, and `app.opsapp.co` resolved to the exact commit with HTTP 200 after normal login redirects. All seven summary completion markers still awaited their normal post-release retries. Deployment is confirmed; natural exact-event recovery is not yet confirmed. No replay or direct customer-record repair was performed.
 
+**Natural recovery verified 2026-09-12 at 11:24 UTC:** all seven previously
+failing opportunities have fresh post-release summary writes, summary
+acknowledgements equal to their current required events, and no summary
+component error. Four retain the original required event and have all
+components completed. Three received newer correspondence: their summaries
+converged for the newer events, while independent event-handoff or commercial
+errors remain. Do not count those errors as recurring summary failures or
+claim the three superseded event snapshots were independently retained.
+Production `fd8591a9` contains the released summary repair. Read-only
+verification required no replay or customer-record edits; the broader workflow
+assessment remains separate from this recovered summary component.
+
 The older **mailbox continuation** bounds non-convergence.
 `LEAD_SUMMARY_DEFERRAL_ATTEMPT_CAP = 3` consecutive failures per opportunity,
 and only a `model_contract` or `model_refusal` reason consumes budget: a

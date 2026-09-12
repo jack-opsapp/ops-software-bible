@@ -6227,6 +6227,21 @@ the customer identities and the requested owner's registered email into
 a calendar guest list. This table does not create or synchronize a provider
 calendar event.
 
+**Replay lifecycle contract (2026-09-12, OPS-Web `c40b42494`, local main only):**
+The live `record_phase_c_bilateral_event_handoff` RPC introduced by
+`20260820222016_phase_c_bilateral_event_consumption.sql` validates the
+immutable `initial_status` and `initial_review_reason` on replay, then returns
+the current envelope. The consumer may already have changed `status` to
+`review`, `consumed`, or `cancelled`. The TypeScript receipt validator now
+compares the initial fields to the proposal and returns current status/reason;
+the lead-intelligence worker acknowledges review as review, cancellation as
+skipped, and ready/consumed as applied handoff work. This does not assert a
+booking or provider delivery. Unknown/malformed states and immutable replay
+conflicts still fail. Bug `5db8422f` reproduced the live ready-to-review case;
+55 focused tests and production-source type checks passed. Deployment and
+natural exact-event acknowledgement remain required; no migration or
+production queue mutation was performed.
+
 ## Lead Intake Identity and Commercial Guards (live 2026-07-29)
 
 These migrations are applied to production and mirrored in `migrations/`:
