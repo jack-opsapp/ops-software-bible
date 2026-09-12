@@ -1497,6 +1497,28 @@ responder; editing-activation installation is only the fallback for
 system-managed inputs. This avoids reloading the keyboard during a custom
 editor's focus transition.
 
+**SwiftUI focus replacement (2026-09-11, local repair).** Real site-visit
+settings-sheet diagnostics showed SwiftUI replacing the installed accessory
+with an empty view after editing activation. The coordinator now retains each
+UITextField's canonical accessory in weak-key storage and reconciles once on
+the next main-queue turn, guarded by the same coordinator lifecycle and actual
+first responder. This preserves accessory identity across refocus without
+polling, private SwiftUI type checks or changes to form drafts. Repair
+`f8515508` is on local iOS main `3f5eaffe`.
+
+Three real-editor tests passed with zero failures/skips, including focus across
+name, description and checklist label, DONE dismissal and retained drafts;
+11 description-input and six global-accessory checks also passed. Four raw
+before/after simulator screens were independently inspected, with actual
+keyboard crops and geometry retained at
+`ops-ios/docs/artifacts/ios-bugs-p3-settings-20260911/`. This visual integration
+suite uses its documented helper to capture the exact simulator screen because
+app-hosted XCTest cannot draw remote keyboard pixels and lacks XCUIScreen
+UI-testing authority. The helper follows test-host container replacement and
+checks fresh request identity and raw-image hashes; unavailable captures fail
+explicitly. This is iOS 26.5 simulator proof, not physical-device acceptance or
+customer distribution.
+
 The visible `DONE` control is a 44pt touch target centered in a 52pt accessory
 band, leaving one tokenized 4pt gutter above it and another between its border
 and the keyboard. It is a directly owned `UIButton`, not a `UIBarButtonItem`,
