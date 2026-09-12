@@ -1,0 +1,111 @@
+{
+  "status": "database_and_web_live_activation_disabled",
+  "verifiedAtUtc": "2026-09-12T01:02:05Z",
+  "deployment": {
+    "id": "dpl_4WmqWxpmkKnT7Sn2d6Ls1swrdzdj",
+    "source": "fd8591a9bccac366656223ba3a84454856821bba",
+    "state": "READY",
+    "alias": "app.opsapp.co",
+    "readyAt": "2026-09-12T00:46:09.963Z"
+  },
+  "migrations": [
+    {
+      "version": "20260912003437",
+      "name": "site_visit_concurrency_protocol",
+      "statement_count": 1,
+      "bytes": 7875,
+      "sha256": "99b35fe168d0bb0e6bf19dea8294994994acd6caffae1ed4cc750a84d2934356"
+    },
+    {
+      "version": "20260912003509",
+      "name": "site_visit_durable_writes",
+      "statement_count": 1,
+      "bytes": 42137,
+      "sha256": "30c7d95f54b081233b773ad2b53e7b555233b7cbc2da68ab18471fac298db92d"
+    },
+    {
+      "version": "20260912003525",
+      "name": "site_visit_canonical_actor_booking",
+      "statement_count": 1,
+      "bytes": 27203,
+      "sha256": "7baca0bbfbdb04d2e176c791a8debb306213e0278f8a0c01121fd5ee6ccde823"
+    },
+    {
+      "version": "20260912003615",
+      "name": "agent_site_visit_workflow",
+      "statement_count": 1,
+      "bytes": 85878,
+      "sha256": "5b66baa8933d21b292014ea7f3c879b4b7e1dc66f0b138235401da5dfc6e4bb1"
+    },
+    {
+      "version": "20260912003639",
+      "name": "site_visit_workflow_rate_limit",
+      "statement_count": 1,
+      "bytes": 8918,
+      "sha256": "c940b79eb07d59477e7773dd7cdd5c8e8ce4f48a7188024c7c0160b32068e3bc"
+    },
+    {
+      "version": "20260912003656",
+      "name": "site_visit_packet_discard",
+      "statement_count": 1,
+      "bytes": 4324,
+      "sha256": "53c01fdf4fa207b3f5c49632571cf443790342931f1e58bb5f8acb05324d9cbe"
+    }
+  ],
+  "verification": {
+    "webTests": 721,
+    "productionTypecheck": "pass",
+    "protocolTypecheck": "pass",
+    "hostedProductionBuild": "pass",
+    "installedFunctionsChecked": 52,
+    "unchangedDependencies": 37,
+    "unchangedRlsPolicies": 33,
+    "newNullableColumns": 6,
+    "enabledTriggers": 17,
+    "privateRlsTables": 10
+  },
+  "gates": {
+    "compatible_companies": 0,
+    "enabled_policies": 0,
+    "proposals": 0,
+    "phone_receipts": 0,
+    "corrections": 0,
+    "discards": 0
+  },
+  "existingPolicies": [
+    {
+      "domain": "catalog",
+      "revision": "2026-09-08.v1",
+      "stored_hash": "sha256:b91bf1f0db3f8a713a123df429fbc0ab5e57bc731f67ab8be4e7607e9856ef32",
+      "current_hash": "sha256:c4c18757701fe1814c7d47def942a6839d506cd370cca59a44c96dcd00c57384"
+    },
+    {
+      "domain": "financial",
+      "revision": "financial-document-draft:2026-09-07.v1",
+      "stored_hash": "sha256:077c377b70d9531b436800593907f1c465d7ce668faa4a27baeac500d648ffa9",
+      "current_hash": "sha256:2d588cd76e48cf1d7db40fa86b03d13a832f9b5188cc95913586322e812a05f0"
+    },
+    {
+      "domain": "customer_update",
+      "revision": "customer-opportunity-update:2026-09-04.v1",
+      "stored_hash": "sha256:1b8eddf1dc541cf69e3cb4d43202427cb8f6b7e747f6424ea328936249f73e4a",
+      "current_hash": "sha256:e6db6daf0b464888b793365cbae209a5b0b9d0cc48dd567134af9fb1600417a9"
+    }
+  ],
+  "authenticatedHost": {
+    "host": "Codex",
+    "companyRead": "pass_before_and_after",
+    "siteVisitRead": "insufficient_scope",
+    "siteVisitWrite": "not_activated_or_tested",
+    "businessWrites": false
+  },
+  "phone": {
+    "source": "3f5eaffebd3d81e22d9165140f3c002bc4d22edd",
+    "build": "Release arm64 development-signed",
+    "buildExitCode": 0,
+    "deepStrictSignature": "pass",
+    "installed": false,
+    "uploaded": false,
+    "appStoreReleased": false
+  }
+}
