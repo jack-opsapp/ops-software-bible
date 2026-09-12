@@ -1148,6 +1148,18 @@ Expenses can be attributed to zero or more projects via `expense_project_allocat
 | `public.mark_expense_batch_paid(p_batch_id uuid)` | Records a payout — permission-checked (`expenses.approve`); requires status ∈ (`approved`,`partially_approved`,`auto_approved`) and `paid_at IS NULL`; stamps `paid_at`/`paid_by` and flips the envelope's `approved` lines to **`reimbursed`** (shipped iOS already renders that as "paid" — zero iOS changes). OPS-Web dispatches the `expense_paid` notification client-side after success. `migrations/20260710180000_expense_batch_paid.sql`. |
 | `public.unmark_expense_batch_paid(p_batch_id uuid)` | Payout undo (mis-click recovery) — permission-checked; clears `paid_at`/`paid_by` and returns the envelope's `reimbursed` lines to `approved`. Same migration. |
 
+### Expense decision company authority (2026-09-11; local, unapplied)
+
+Migration [`20260912012607_expense_decision_company_authority.sql`](migrations/pending/20260912012607_expense_decision_company_authority.sql) preserves the four existing `void(uuid)` decision APIs and their released public role grants. Each now resolves the active actor and undeleted company, verifies `expenses.approve`, and locks a same-company target and its children before writes. Mixed-company expense-to-batch links fail closed. Early-clear rereads the locked expense and retries if its parent moved.
+
+The confirmed pre-repair gaps are payout/undo target-company checks, forged mixed-company child links, and a foreign deleted unbatched early-clear. Ordinary foreign approvals and ordinary foreign early-clears already rolled back through recalculation; they are not separate demonstrated exposures. A read-only live aggregate found zero existing mixed-company links. Synthetic negative cases establish the authorization defect, not observed customer misuse.
+
+The private dispatcher takes the existing `save_expense_atomic:<company>` advisory key before row locks. All original effects run inside a complete-attempt subtransaction, including placement, company revision triggers and notifications. A function-scoped 25ms lock timeout, nonblocking parent/child acquisition and ten bounded attempts avoid the canonical save/direct-refiling lock inversions. Each failed attempt releases its writes and locks before retry. Exhausted contention returns SQLSTATE `40001`; the caller's lock timeout is restored on exit. Existing status restrictions, approval and reimbursement stamps, recalculation and notification behavior remain unchanged.
+
+OPS-Web source `ed60d7414` is integrated on local main at `410774ff47db7d187db1ec34c7d67037d1aa7b3a`. A disposable PostgreSQL17 run passes 66 repaired authorization cases and four two-session contention cases; the 66 baseline cases also pass their original expectations, strict repaired expectations fail before migration, and applying the migration twice succeeds. All five live revision triggers are present in the fixture. Independent source review found no remaining actionable P1/P2. Concurrency cases reproduce canonical save lock order rather than invoke the complete save RPC. Evidence is in OPS-Web `docs/artifacts/expense-decision-authority/`.
+
+This migration is not applied to production. It does not alter accounting delivery, enqueue provider work or record a payment in QuickBooks/Sage. Replacement of the incompatible expense-sync endpoint still depends on the founder's answer about when crew reimbursement becomes a provider payment; it is not completed by this authority repair.
+
 ### Default Expense Categories (9)
 
 Seeded on first load via `ExpenseRepository.seedDefaultCategories()`:

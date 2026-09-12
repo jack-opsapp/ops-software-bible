@@ -348,3 +348,12 @@ These six files mirror the isolated web implementation byte-for-byte. They are *
 | `20260910205717_agent_site_visit_workflow.sql` | 85,878 | `5b66baa8933d21b292014ea7f3c879b4b7e1dc66f0b138235401da5dfc6e4bb1` |
 | `20260911010000_site_visit_workflow_rate_limit.sql` | 8,918 | `c940b79eb07d59477e7773dd7cdd5c8e8ce4f48a7188024c7c0160b32068e3bc` |
 | `20260911011000_site_visit_packet_discard.sql` | 4,324 | `53c01fdf4fa207b3f5c49632571cf443790342931f1e58bb5f8acb05324d9cbe` |
+
+## iOS bug repairs — UNAPPLIED local candidates (2026-09-11)
+
+The two files in `pending/` are byte-identical to the verified OPS-Web sources and are not production ledger entries. Local integration does not authorize applying either migration. The choice extension depends on the released Phase19 phone protocol; it changes the contract fingerprint without resealing effects or activating company/host policies. The expense repair preserves client decision APIs and does not enable accounting provider delivery.
+
+| Pending source | Bytes | SHA-256 |
+|---|---:|---|
+| [`20260912004121_site_visit_single_choice_v2.sql`](pending/20260912004121_site_visit_single_choice_v2.sql) | 41,531 | `0a88823d2bbe0aef8dee75398056de2ed243ad5487140609f1df4a9df8b87b8f` |
+| [`20260912012607_expense_decision_company_authority.sql`](pending/20260912012607_expense_decision_company_authority.sql) | 10,005 | `93f4d57097e05cda31b993d84445356bde43d21a44cb20acdf9575524d04b939` |
