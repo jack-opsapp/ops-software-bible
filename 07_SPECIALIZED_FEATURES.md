@@ -7546,6 +7546,16 @@ Production `fd8591a9` contains the released summary repair. Read-only
 verification required no replay or customer-record edits; the broader workflow
 assessment remains separate from this recovered summary component.
 
+**Handoff recovery verified 2026-09-12 at 20:30 UTC:** the separately blocked
+opportunity `2667c10d` completed its exact required event `c925b29e` naturally
+at 18:44:51 UTC after the handoff lifecycle replay fix `0334a00d8` deployed at
+17:26:01 UTC. Every component marker is current and errors are clear. The
+existing handoff's `review` / `event_time_unresolved` disposition is now
+truthfully acknowledged; the handoff itself and its existing notification
+timestamp remain unchanged. This is recovered processing, not an automatic
+appointment booking or terminal-record replay. The other opportunities'
+commercial and immutable-decision conflicts remain separate concerns.
+
 The older **mailbox continuation** bounds non-convergence.
 `LEAD_SUMMARY_DEFERRAL_ATTEMPT_CAP = 3` consecutive failures per opportunity,
 and only a `model_contract` or `model_refusal` reason consumes budget: a

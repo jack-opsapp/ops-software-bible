@@ -6227,7 +6227,7 @@ the customer identities and the requested owner's registered email into
 a calendar guest list. This table does not create or synchronize a provider
 calendar event.
 
-**Replay lifecycle contract (2026-09-12, OPS-Web `c40b42494`, local main only):**
+**Replay lifecycle contract (2026-09-12, OPS-Web `0334a00d8`, deployed):**
 The live `record_phase_c_bilateral_event_handoff` RPC introduced by
 `20260820222016_phase_c_bilateral_event_consumption.sql` validates the
 immutable `initial_status` and `initial_review_reason` on replay, then returns
@@ -6238,9 +6238,16 @@ the lead-intelligence worker acknowledges review as review, cancellation as
 skipped, and ready/consumed as applied handoff work. This does not assert a
 booking or provider delivery. Unknown/malformed states and immutable replay
 conflicts still fail. Bug `5db8422f` reproduced the live ready-to-review case;
-55 focused tests and production-source type checks passed. Deployment and
-natural exact-event acknowledgement remain required; no migration or
-production queue mutation was performed.
+55 focused tests and production-source type checks passed on local main.
+The isolated release of this fix onto production passed 51 focused tests and
+the production build/type checks, reaching READY at 17:26:01 UTC as
+`dpl_Daz1JAzsz53Rh1d493SUy4U2bNDc`. The four additional local tests belong to
+unreleased roster/notification changes. Exact opportunity `2667c10d` naturally
+acknowledged required event `c925b29e` at 18:44:51 UTC: all four component
+markers match, work is complete, and component errors are empty. Existing
+handoff `adb94ea2` remains in `review` / `event_time_unresolved`; no booking,
+notification replay, migration or direct production queue mutation occurred.
+Bug `5db8422f` is resolved after independent production readback.
 
 ## Lead Intake Identity and Commercial Guards (live 2026-07-29)
 
