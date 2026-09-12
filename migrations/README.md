@@ -360,3 +360,11 @@ The two files in `pending/` are byte-identical to the verified OPS-Web sources a
 |---|---:|---|
 | [`20260912004121_site_visit_single_choice_v2.sql`](pending/20260912004121_site_visit_single_choice_v2.sql) | 41,531 | `0a88823d2bbe0aef8dee75398056de2ed243ad5487140609f1df4a9df8b87b8f` |
 | [`20260912012607_expense_decision_company_authority.sql`](pending/20260912012607_expense_decision_company_authority.sql) | 10,005 | `93f4d57097e05cda31b993d84445356bde43d21a44cb20acdf9575524d04b939` |
+
+## P19 MCP choice coexistence — UNAPPLIED local candidate (2026-09-12)
+
+This SQL-only repair depends on the six released P19 migrations and the pending phone choice extension above. It replaces two existing owner-only private function bodies without adding public signatures, schemas, scopes, grants, company enrollment or effect resealing. Its CLI-generated source timestamp is not a production ledger version. Local OPS-Web commit `babe8ec1da3a15b417399eb872f979057278d755`; [verification record](../docs/artifacts/2026-09-12-site-visit-choice-coexistence.md). The separate expense candidate is not a prerequisite and is outside this release scope.
+
+| Pending source | Bytes | SHA-256 |
+|---|---:|---|
+| [`20260912203552_site_visit_mcp_choice_coexistence.sql`](pending/20260912203552_site_visit_mcp_choice_coexistence.sql) | 24,328 | `bdeb62a50eb1b5ccf9a3a166a43d34a6c534b664dc5c896082bdcdfa203d8fc9` |

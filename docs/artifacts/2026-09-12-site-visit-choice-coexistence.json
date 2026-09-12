@@ -1,0 +1,59 @@
+{
+  "verifiedAt": "2026-09-12T20:48:59.300955+00:00",
+  "webLocalCommit": "babe8ec1da3a15b417399eb872f979057278d755",
+  "migration": {
+    "file": "20260912203552_site_visit_mcp_choice_coexistence.sql",
+    "bytes": 24328,
+    "sha256": "bdeb62a50eb1b5ccf9a3a166a43d34a6c534b664dc5c896082bdcdfa203d8fc9",
+    "productionApplied": false,
+    "prerequisite": "20260912004121_site_visit_single_choice_v2.sql"
+  },
+  "checks": {
+    "newCoexistenceAssertions": 31,
+    "phoneProtocolAssertions": 71,
+    "phoneChoiceAssertions": 191,
+    "workflowVitestTests": 115,
+    "workflowVitestFiles": 9,
+    "focusedProductionTypeScriptExitCode": 0,
+    "postIntegrationWorkflowVitestTests": 115,
+    "independentReview": "no_remaining_scoped_P1_P2"
+  },
+  "production": {
+    "verified_at": "2026-09-12T20:48:59.300955+00:00",
+    "private_functions": [
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "name": "agent_site_visit_workflow_apply",
+        "source_md5": "2a16eadb4287914ae56f0559e69c5cfc"
+      },
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "name": "agent_site_visit_workflow_compile",
+        "source_md5": "cc44ea1eee5e157049e82de4d250f03b"
+      }
+    ],
+    "compatibility_rows": 0,
+    "choice_apply_installed": false,
+    "site_visit_effect_rows": 0,
+    "choice_snapshot_installed": false
+  },
+  "deployment": {
+    "id": "dpl_Daz1JAzsz53Rh1d493SUy4U2bNDc",
+    "source": "0334a00d80ff062ca809faaf46fba8e7c0903f34",
+    "readyState": "READY",
+    "changedByThisTask": false
+  },
+  "boundaries": {
+    "newPublicSchema": false,
+    "choiceTemplateAuthoring": false,
+    "choiceTemplateSelection": false,
+    "productionBusinessWrites": false,
+    "companyHostActivation": false,
+    "installedOnPhone": false,
+    "appStoreReleased": false
+  }
+}
