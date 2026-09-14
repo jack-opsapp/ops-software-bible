@@ -33,4 +33,6 @@ iOS evidence commit `b34a142b2365cf44fee491f9304b7826a4658310` records sanitized
 
 ## Still separate
 
+The subsequent [native-host readiness check](2026-09-14-site-visit-host-readiness.md) confirms that the restricted site-visit OAuth trial path still needs implementation. The native connector is bound to Canpro while the independent OPS web session is signed into MAVERICK; reconnecting alone does not activate V22. Company compatibility/effect tables remain empty at the fresh September 14 check.
+
 Exact company compatibility/effect and host actor/client/grant activation; signed-in native-host prepare → OPS review → save → independent readback/revocation; physical-device offline/reconnect/conflict/media acceptance; and App Store distribution remain separate. Expense migrations, provider messages, effect resealing and web push/deploy were not performed. No subscription or paid API setting changed; this record does not claim measured zero infrastructure cost. The detailed cross-task handoff was not sent after a privacy review rejected it.
