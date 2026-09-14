@@ -30,6 +30,12 @@ and rename the file to `<ledger_version>_<ledger_name>.sql`, then delete its ent
 
 _None._
 
+## Site-visit restricted OAuth trial (2026-09-14 UTC)
+
+`20260914204329_site_visit_trial_subject_indexes.sql` archives the additive actor/company FK indexes (source alias `20260914204207`): 420 bytes, SHA-256 `bb75e739b1a3e7a48d199aecd071ee863cbcfcf89ae4c45b93fbeed06558efd7`. All three trial subject FKs now have leading indexes; no row or authority state changed.
+
+`20260914203418_site_visit_oauth_trial.sql` is the exact production ledger archive of web source alias `20260914200524_site_visit_oauth_trial.sql`: one statement, 22,061 bytes, SHA-256 `849d7b420c530d78f9092bf333aee893e50d007e788203cb92b61a0a103d764a`. Ledger/source/archive match independently. It adds a private immutable two-hour subject binding and nine fingerprint-guarded lifecycle/review updates, but seeds no clients, grants, company compatibility, effects or business rows. Existing function settings and ACLs are unchanged. [Release evidence](../docs/artifacts/2026-09-14-site-visit-trial-release.md).
+
 ## Naming quirks (historical)
 
 - Ledger names sometimes embed an older working name, giving double-stamped or dated filenames, e.g.

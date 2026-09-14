@@ -1,5 +1,7 @@
 # Site-visit native-host readiness — 2026-09-14
 
+**Superseding implementation update:** the restricted connection path is now implemented and its database lifecycle is production-installed. See [the trial release record](2026-09-14-site-visit-trial-release.md) for application rollout and remaining phone/host prerequisites. The observations below remain the pre-implementation evidence; “unimplemented” below is historical, not the current source status.
+
 Status: database rollout and phone installation are complete as recorded in the [release receipt](2026-09-14-site-visit-choice-release.md). Native site-visit prepare/review/save acceptance remains blocked by the unimplemented restricted OAuth activation path and inactive company authority. No business write or permission change was performed during this check.
 
 ## Fresh observations
