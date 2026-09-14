@@ -7281,3 +7281,12 @@ Pending `20260914200910_expense_payroll_reimbursement_projection.sql` updates th
 The client adds no SwiftData stored properties or schema version. `ProjectRevisionCache` retains the raw server revision string under company/project identifiers because `Date` formatting loses Postgres microseconds. The immutable command copies this revision into the existing `SyncOperation.payload`; its UUID also identifies the queued operation. Scheduled task writes use the existing persisted `dependsOnId`.
 
 Verified locally: iOS `5d0e6da1` passes 159 focused tests; OPS-Web `2a7f6ff3d` passes 30 disposable database assertions. [Evidence and release boundary](docs/artifacts/2026-09-14-ios-bugs-p6-verification.md).
+
+
+## Crew expense correction custody (2026-09-14; pending migration)
+
+OPS-Web `134be2424` adds pending `20260914214748_expense_admin_correction_review.sql`. Private `expense_correction_requests` stores the immutable request UUID, company/actor/submitter/expense identities, command hash and before/after JSON snapshots. Historical category and project names are frozen with the values. `expense_correction_pending` retains unresolved return markers for sweep/resubmission custody; `expense_correction_scope` grants only the current transaction's exact authorized content update. All three tables have RLS enabled and no public, anon, authenticated or service-role table grants. History cannot be updated or deleted through ordinary SQL. No SwiftData stored shape changes.
+
+The pending migration extends the uploader-only edit trigger and placement functions without broadening ordinary saves. Source-body drift guards allow only the captured baseline or this exact replacement. Dependencies are the pending expense decision authority, accounting lifecycle and payroll projection migrations. The source is mirrored byte-for-byte in `migrations/pending/`; no correction RPC/history table is installed in production at the final read.
+
+Integrated iOS source `3353ecce` passes 115 focused simulator tests with zero failures/skips; evidence commit `95bfaf20` includes three inspected crew-history renders. [Exact verification and pending release](docs/artifacts/2026-09-14-ios-expense-correction-verification.md).

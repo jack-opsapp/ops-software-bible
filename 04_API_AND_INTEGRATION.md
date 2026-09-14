@@ -5203,3 +5203,16 @@ The request requires an active signed-in operator and canonical `projects.edit` 
 An identical retry rechecks current authority and returns the original receipt without applying another status change. This remains true after a newer archive; the receipt describes historical execution, not current project state. iOS `ProjectRepository.reopenForTask` validates exact command/receipt identity and target. Neither outbound processor copies receipt status back onto a current model. The client sends a distinct `reopenForTask` operation before its dependent task writes; metadata keys are never forwarded as project PATCH columns.
 
 Verified locally: iOS `5d0e6da1` passes 159 focused tests; OPS-Web `2a7f6ff3d` passes 30 disposable database assertions. [Evidence and release boundary](docs/artifacts/2026-09-14-ios-bugs-p6-verification.md).
+
+
+## Return a corrected crew expense (2026-09-14; pending release)
+
+`correct_expense_for_review(p_command jsonb)` is an authenticated, explicit reviewer command. It binds request UUID, expense/company/actor/submitter, expected status and exact server revision to a complete supported expense snapshot and allocations. `correction_note` is a required string key whose empty value is valid. Receipt/OCR, receipt exception metadata, approval, payment and submit fields are excluded. Ordinary `save_expense_atomic` remains uploader-only.
+
+The command resolves current active membership under canonical company/actor locks, holds submitter membership stable, requires all-scope expense approval/view authority or existing company-admin authority, and rejects self-correction. Only live submitted/rejected expenses without prior approval/export/payment/accounting evidence and with an absent or unreviewed/unpaid eligible envelope qualify. Stale row/child-allocation revisions are rejected; company serialization and NOWAIT row locks prevent deadlock-prone partial writes.
+
+The response is `{request_id,expense_id,company_id,actor_id,submitted_by,replayed,correction}`. The nested correction has matching IDs, timestamp, optional note and immutable `before`/`after` snapshots. Identical replay reauthorizes and returns historical proof; it never reapplies old values. `list_expense_corrections(p_expense_id,p_company_id)` returns newest-first records to the exact submitter or authorized company reviewer. Generic service-role and anon execution are denied. The iOS client independently reads current expense/envelope state after a validated receipt.
+
+The pending migration requires `20260912012607_expense_decision_company_authority.sql`, `20260912203328_expense_accounting_lifecycle.sql`, then `20260914200910_expense_payroll_reimbursement_projection.sql`. P6 archived-project reopening is independent. No production migration, provider write or app distribution occurred in this phase.
+
+Integrated iOS source `3353ecce` passes 115 focused simulator tests with zero failures/skips; evidence commit `95bfaf20` includes three inspected crew-history renders. [Exact verification and pending release](docs/artifacts/2026-09-14-ios-expense-correction-verification.md).
