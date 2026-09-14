@@ -2622,6 +2622,17 @@ Verification: 320 tests passed again in 20 affected files after integration with
 
 The Email Pipeline system adds 24 API routes across 6 route groups. All routes live in `OPS-Web/src/app/api/`. Unless noted, all routes use `getServiceRoleClient()` with `setSupabaseOverride()` for Supabase access (bypassing RLS). That module-global override is not race-safe: an overlapping request's `finally { setSupabaseOverride(null) }` can clear it mid-flight and drop a service that resolves through `requireSupabase()` onto the anon browser client (observed once in production as PostgreSQL `42501 permission denied for table email_connections` on route 21, bug `5ff083cf`). Routes 21 and 22 therefore run inside `runWithSupabase()` (AsyncLocalStorage-scoped) as of ops-web `aac04c312`, live on main `3c6344efd` 2026-09-05; migrate any other route here to `runWithSupabase` when touched. All long-running routes set `maxDuration = 300` (5 min, Vercel Pro limit).
 
+#### Ingestion continuation repair (2026-09-14)
+
+Application correction prepared and verified locally after a live post-release audit. Deployment and exact record recovery are separate proof gates.
+
+- Client and subcontact name review requires matching complete given name and surname, preserving short and Unicode names. Explicit email-less couple contacts retain a narrow first-name review exception; unrelated surname overlap cannot suppress a new inquiry.
+- An uncertain classified reply on a new provider thread may attach to one exact customer's open, unconverted lead only when no existing project competes. It cannot create a lead. Existing project routes and ambiguous project reviews retain precedence. Authorized exact recovery may reconsider an unlinked work-intent review receipt under the existing immutable activity/adoption guards.
+- Source-backed new-work classifications cannot inherit terminal customer relationships. A current affirmative introduction can identify one named external recipient as the referred customer, retaining the original author and excluding the referrer's signature phone/company/address. Quoted, negated, conditional, and ambiguous introductions are insufficient. Gmail preserves the required recipient display names; bare recipient addresses alone are insufficient.
+- Numeric delivery/work durations are not confirmed dates, and the noun “work” is not schedule acceptance. Commercial conversion still requires the existing independent project/client proof. Appointment review reasons use distinct immutable keys; an unchanged legacy review retains its existing key.
+
+Verification: 842 affected unit tests and 11 focused actual-sync-engine tests pass. Changed TypeScript files have zero scoped diagnostics. The broader sync suite has exactly the same 36 named failures on the unchanged integrated base and the repair; this does not establish a repository-wide green suite. Application changes require no schema migration. Customer evidence is retained privately. Source: ops-web `docs/artifacts/email-work-correspondence/2026-09-14-routing-continuation-verification.md`.
+
 ### 1. POST /api/integrations/email/analyze
 
 **Purpose:** Starts wizard Step 2 inbox analysis — pattern detection + AI classification.
