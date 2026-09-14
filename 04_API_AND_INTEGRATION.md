@@ -2624,7 +2624,7 @@ The Email Pipeline system adds 24 API routes across 6 route groups. All routes l
 
 #### Ingestion continuation repair (2026-09-14)
 
-Application correction prepared and verified locally after a live post-release audit. Deployment and exact record recovery are separate proof gates.
+Application correction released at 2026-09-14 20:17:52 UTC: ops-web `61cc787f9`, Vercel `dpl_5kZwgaDFAo6ZTTN3TjeAWaeji7LW`, independently verified on `app.opsapp.co`. The two-message recovery completed and replayed as a no-op. Cross-customer thread finalization remains separate pending migration approval.
 
 - Client and subcontact name review requires matching complete given name and surname, preserving short and Unicode names. Explicit email-less couple contacts retain a narrow first-name review exception; unrelated surname overlap cannot suppress a new inquiry.
 - An uncertain classified reply on a new provider thread may attach to one exact customer's open, unconverted lead only when no existing project competes. It cannot create a lead. Existing project routes and ambiguous project reviews retain precedence. Authorized exact recovery may reconsider an unlinked work-intent review receipt under the existing immutable activity/adoption guards.
