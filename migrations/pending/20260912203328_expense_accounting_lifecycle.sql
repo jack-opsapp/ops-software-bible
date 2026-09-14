@@ -25,6 +25,20 @@ create table if not exists public.expense_accounting_category_mappings (
   primary key (connection_id,category_id)
 );
 
+create table if not exists public.expense_accounting_project_mappings (
+  connection_id uuid not null references public.accounting_connections(id) on delete cascade,
+  company_id uuid not null references public.companies(id),
+  project_id uuid not null references public.projects(id),
+  external_project_id text not null check (btrim(external_project_id) <> ''),
+  primary key (connection_id,project_id)
+);
+alter table public.expense_accounting_project_mappings enable row level security;
+revoke all on public.expense_accounting_project_mappings from public,anon,authenticated;
+grant select,insert,update,delete on public.expense_accounting_project_mappings to service_role;
+drop policy if exists expense_accounting_projects_service on public.expense_accounting_project_mappings;
+create policy expense_accounting_projects_service on public.expense_accounting_project_mappings
+  for all to service_role using(true) with check(true);
+
 create table if not exists public.expense_accounting_tax_mappings (
   company_id uuid not null references public.companies(id),
   connection_id uuid not null references public.accounting_connections(id) on delete cascade,
@@ -120,6 +134,7 @@ begin
     delete from public.expense_accounting_category_mappings where connection_id=new.id;
     delete from public.expense_accounting_payee_mappings where connection_id=new.id;
     delete from public.expense_accounting_tax_mappings where connection_id=new.id;
+    delete from public.expense_accounting_project_mappings where connection_id=new.id;
   end if;
   return new;
 end; $$;
@@ -377,6 +392,7 @@ begin
       'configurationSnapshot',v_event.connection_bindings->c.id::text->'configuration',
       'categoryAccountSnapshot',v_event.connection_bindings->c.id::text->'categoryAccountId',
       'employeeIdSnapshot',v_event.connection_bindings->c.id::text->'employeeId',
+      'projectMappingsSnapshot',v_event.connection_bindings->c.id::text->'projectMappings',
       'providerIdentitySnapshot',v_event.connection_bindings->c.id::text->'providerIdentity'),v_event.created_at
   from public.accounting_connections c
   join public.companies company on company.id=v_event.company_id and company.deleted_at is null
@@ -399,6 +415,12 @@ begin
   ) then raise exception 'Expense reversal source mismatch' using errcode='23514'; end if;
   select coalesce(jsonb_object_agg(c.id::text,jsonb_build_object('configuration',s.configuration,'providerEnvironment',c.provider_environment,
     'categoryAccountId',m.external_account_id,'employeeId',p.external_employee_id,
+    'projectMappings',(select coalesce(jsonb_object_agg(pm.project_id::text,pm.external_project_id),'{}'::jsonb)
+      from public.expense_accounting_project_mappings pm
+      join public.projects project on project.id=pm.project_id and project.company_id=p_expense.company_id
+      where pm.connection_id=c.id and pm.company_id=p_expense.company_id
+        and exists(select 1 from jsonb_array_elements(coalesce(p_snapshot->'allocations','[]'::jsonb)) a
+          where a->>'project_id'=pm.project_id::text)),
     'providerIdentity',case c.provider when 'quickbooks' then c.realm_id_lookup else c.sage_business_id_lookup end)),'{}'::jsonb)
     into v_bindings from public.accounting_connections c
     left join public.expense_accounting_settings s on s.connection_id=c.id and s.company_id=p_expense.company_id
@@ -680,10 +702,11 @@ grant execute on function public.prepare_expense_accounting_write(uuid,text,json
   public.finalize_expense_accounting_sync(uuid,text,text,text,timestamptz) to service_role;
 
 drop function if exists public.save_expense_accounting_settings(uuid,uuid,jsonb,jsonb,jsonb,jsonb);
+drop function if exists public.save_expense_accounting_settings(uuid,uuid,jsonb,jsonb,jsonb,jsonb,text,text,text);
 create or replace function public.save_expense_accounting_settings(
   p_actor_user_id uuid,p_connection_id uuid,p_configuration jsonb,
   p_category_mappings jsonb,p_payee_mappings jsonb,p_tax_mappings jsonb default null,
-  p_expected_provider text default null,p_expected_environment text default null,p_expected_identity text default null)
+  p_expected_provider text default null,p_expected_environment text default null,p_expected_identity text default null,p_project_mappings jsonb default null)
 returns void language plpgsql security definer set search_path='' set lock_timeout='1s' as $$
 declare v_company uuid; v_provider text; v_mapping jsonb; v_id uuid; v_connection public.accounting_connections;
 begin
@@ -733,6 +756,27 @@ begin
       raise exception 'Expense employee mapping invalid' using errcode='22023';
     end if;
   end loop;
+  if p_project_mappings is not null then
+    if jsonb_typeof(p_project_mappings) is distinct from 'array' or jsonb_array_length(p_project_mappings)>1000 then
+      raise exception 'Invalid expense project mappings' using errcode='22023';
+    end if;
+    for v_mapping in select value from jsonb_array_elements(p_project_mappings) loop
+      v_id:=(v_mapping->>'projectId')::uuid;
+      if not exists(select 1 from public.projects project where project.id=v_id and project.company_id=v_company
+        and (project.deleted_at is null or exists(select 1 from public.expense_accounting_project_mappings m
+          where m.connection_id=p_connection_id and m.company_id=v_company and m.project_id=project.id
+            and m.external_project_id=v_mapping->>'externalProjectId'))) then
+        raise exception 'Expense project unavailable' using errcode='42501';
+      end if;
+      if nullif(btrim(v_mapping->>'externalProjectId'),'') is null then
+        raise exception 'Expense project mapping required' using errcode='22023';
+      end if;
+    end loop;
+    delete from public.expense_accounting_project_mappings where connection_id=p_connection_id and company_id=v_company;
+    insert into public.expense_accounting_project_mappings(connection_id,company_id,project_id,external_project_id)
+      select p_connection_id,v_company,(value->>'projectId')::uuid,value->>'externalProjectId'
+        from jsonb_array_elements(p_project_mappings);
+  end if;
   insert into public.expense_accounting_settings(connection_id,company_id,configuration)
     values(p_connection_id,v_company,p_configuration)
     on conflict(connection_id) do update set configuration=excluded.configuration,updated_at=clock_timestamp()
@@ -757,8 +801,8 @@ begin
   end if;
 
 end; $$;
-revoke all on function public.save_expense_accounting_settings(uuid,uuid,jsonb,jsonb,jsonb,jsonb,text,text,text) from public,anon,authenticated;
-grant execute on function public.save_expense_accounting_settings(uuid,uuid,jsonb,jsonb,jsonb,jsonb,text,text,text) to service_role;
+revoke all on function public.save_expense_accounting_settings(uuid,uuid,jsonb,jsonb,jsonb,jsonb,text,text,text,jsonb) from public,anon,authenticated;
+grant execute on function public.save_expense_accounting_settings(uuid,uuid,jsonb,jsonb,jsonb,jsonb,text,text,text,jsonb) to service_role;
 
 revoke all on function private.queue_expense_accounting_event(uuid),
   private.append_expense_accounting_event(public.expenses,text,jsonb,uuid),
@@ -772,7 +816,7 @@ create or replace function public.retry_expense_accounting_before_write(p_actor_
 returns jsonb language plpgsql security definer set search_path='' set lock_timeout='1s' as $$
 declare v_company uuid; v_queue public.accounting_sync_queue;
   v_connection public.accounting_connections; v_event public.expense_accounting_events;
-  v_configuration jsonb; v_category text; v_employee text;
+  v_configuration jsonb; v_category text; v_employee text; v_projects jsonb;
 begin
   select u.company_id into v_company from public.users u join public.companies c on c.id=u.company_id
     where u.id=p_actor_user_id and u.is_active and u.deleted_at is null and c.deleted_at is null
@@ -819,10 +863,16 @@ begin
     where connection_id=v_connection.id and company_id=v_company and category_id::text=v_event.source_snapshot->>'category_id';
   select external_employee_id into v_employee from public.expense_accounting_payee_mappings
     where connection_id=v_connection.id and company_id=v_company and user_id::text=v_event.source_snapshot->>'submitted_by';
+  select coalesce(jsonb_object_agg(pm.project_id::text,pm.external_project_id),'{}'::jsonb) into v_projects
+    from public.expense_accounting_project_mappings pm
+    join public.projects project on project.id=pm.project_id and project.company_id=v_company
+    where pm.connection_id=v_connection.id and pm.company_id=v_company
+      and exists(select 1 from jsonb_array_elements(coalesce(v_event.source_snapshot->'allocations','[]'::jsonb)) a
+        where a->>'project_id'=pm.project_id::text);
   update public.accounting_sync_queue set status='pending',attempts=0,run_after=clock_timestamp(),
     locked_at=null,locked_by=null,last_error=null,updated_at=clock_timestamp(),
     payload_snapshot=payload_snapshot||jsonb_build_object('configurationSnapshot',v_configuration,
-      'categoryAccountSnapshot',v_category,'employeeIdSnapshot',v_employee,
+      'categoryAccountSnapshot',v_category,'employeeIdSnapshot',v_employee,'projectMappingsSnapshot',v_projects,
       'retryAuthorizedBy',p_actor_user_id,'retryAuthorizedAt',clock_timestamp())
     where id=p_queue_id;
   return jsonb_build_object('queueId',p_queue_id,'status','pending');
