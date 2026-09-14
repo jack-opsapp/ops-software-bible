@@ -2243,3 +2243,25 @@ A separate inventory operation accepts absolute counts for exact current variant
 Approved production migrations: catalog kernel source `20260908221635_agent_catalog_authoring.sql` applied as ledger `20260909021307`, and exact trial source `20260909015000_catalog_trial_oauth.sql` applied as `20260909021401`. Both seed zero catalog proposals, bindings or effect approvals. The restricted MAVERICK trial requires a separately reviewed catalog effect seal, fresh exact-subject OAuth binding and real consent. Every business save still requires the named operator's approval inside OPS. Public exposure and Phase16 financial authority remain unchanged. See chapters 03/04/07 for transaction, authority, source provenance, review and current release boundaries.
 
 Clearing a variant price or cost override previews the effective family fallback explicitly, and seals the family relationship used to derive it. Physical stock-unit histories and selected/scaled recipes return `needs_input` for their existing dedicated workflows; they are never silently converted to a fixed recipe or ordinary shelf count.
+
+## Expense reimbursement and provider ledger (2026-09-14; local, unreleased)
+
+Jackson confirmed that crew-paid receipts remain owed until **Mark paid**. Approval records an obligation; it does not record a reimbursement. Gross receipt `amount` already includes any `tax_amount`. Personal-card and legacy cash receipts enter crew reimbursement totals; company-card receipts are company-funded purchases and never create crew debt. Cash has no separate payer discriminator, so existing crew-funded semantics are preserved.
+
+The private iOS/web changes remove synchronous provider delivery from approval/early-clear. Company-funded-only envelopes appear in history without payout controls; mixed envelopes show the crew-funded reimbursement amount while retaining every receipt. iOS source commits `de994bca` and `f3e7fa28` passed 60 focused tests; screenshot proof is committed at `982e7c6d`. These expense builds have not been installed on the phone or released to customers.
+
+Provider delivery records crew approval as a liability and **Mark paid** as a separate payment. QuickBooks uses an Employee-referenced JournalEntry and a Purchase against the same original liability; no Vendor/Bill substitution. Sage Accounting v3.1 uses journals and other_payments, preserving the liability ledger separately from the bank resource. Company-card expenses create a purchase using an explicit funding account. Undo/correction creates reversal events retaining original accounts, employee, projects and tax treatment.
+
+Native tax components, recoverability, account capabilities, currency and provider region must be verified. Missing/ambiguous/unsupported treatment remains in review; US taxed QBO purchases and unsupported regional Sage recoverable-tax journal treatment are not fabricated. Automated local/fake-provider tests do not establish tax-return or live reconciliation acceptance. Supplier-bill/AP treatment remains separate.
+
+Existing connected company/environment/write gates continue to apply. Exact source snapshots and provider payload custody prevent a changed account or expired/uncertain request from silently resending money. Legacy external IDs require explicit reconciliation, with no migration backfill of provider transactions.
+
+Sources: OPS-Web `src/lib/accounting/expenses/provider-mappers.ts`, configuration service, expense queue processor and pending `20260912203328_expense_accounting_lifecycle.sql`; provider verification notes `docs/artifacts/2026-09-12-expense-provider-contract.md` and database proof `docs/artifacts/2026-09-14-expense-accounting-database-proof.md`.
+
+### Payroll readiness compatibility (2026-09-14; local, unapplied)
+
+Pending `20260914200910_expense_payroll_reimbursement_projection.sql` changes the existing system payroll read to use `expense_batches.reimbursement_amount`. Eligible receipt counts/currencies use the same approved/reimbursed, nondeleted, non-company-card set. Company-funded-only envelopes do not consume reimbursement source bounds; zero-sum crew receipts retain currency evidence; missing/invalid projections remain visible as invalid evidence. Mark paid and undo continue to use `paid_at`.
+
+The exact production function was fetched read-only September 14; its authority/grant/revision checks, bounds, output shape and execution ACL remain intact. Before replacing it, the migration verifies both required schema and the exact expected function hash (or already-migrated hash). A changed live function requires fresh review. Payroll read source revisions invalidate once across replay. Seventeen isolated PostgreSQL assertions plus the existing payroll runtime fixture pass; no payroll capability is activated.
+
+Local source commits: expense ledger/authority `1d252530a`, payroll projection `0b74a9ad7`, provider relink/settings `f8701c301`, recovery controls `0b35d06b4`. Expense-owned project mapping safeguards are still being completed before local integration.

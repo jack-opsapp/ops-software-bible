@@ -7252,3 +7252,19 @@ A revoked, RLS-enabled private token table distinguishes authorized v2 field cha
 On iOS the snapshot is encoded inside existing `answerValueData`; DTOs move it to/from the separate server column. There is no new stored SwiftData property, version or frozen-schema change. This migration is not production-applied, and its new column/triggers change the pinned Phase 19 contract fingerprint. Deployment requires the release owner's explicit review of that boundary; this work does not reseal effects or activate MCP/company policies.
 
 Local server integration: OPS-Web commit `7d715b9d4`, merged to local main at `dcaa6056d0df06ca191222d9cc57518ad3139039`. Dedicated PostgreSQL 17 verification passes 262 checks (71 existing phone/function checks and 191 choice/recovery checks). It includes real anon-role calls, source-byte preservation of existing functions except the precise v1 projection correction, and unchanged original request bytes through explicit v1→v2 recovery. This is not a production migration or customer-runtime claim.
+
+## Expense accounting ledger (2026-09-14; local, unapplied)
+
+Pending source: `migrations/pending/20260912203328_expense_accounting_lifecycle.sql`, dependent on pending `20260912012607_expense_decision_company_authority.sql`. This is a private implementation, not a statement of installed production schema.
+
+`expense_batches.reimbursement_amount numeric` projects the gross amount of approved/reimbursed, nondeleted, non-company-card receipts. It excludes rejected receipts and does not add tax a second time. The nullable rollout field allows older servers to coexist with the new client fallback. Projection backfill creates no provider financial events.
+
+`expense_accounting_events` preserves immutable company/expense identity, ordered event kind (`accrual`, `purchase`, `settlement`, `reversal`, `review`), source financial snapshot, original-event relationship, and per-connection decision bindings. Bindings freeze provider identity/environment, configuration, category account and employee. `private.expense_accounting_state` tracks current financial state and whether legacy history requires review. Existing external IDs never establish a safe implicit posting history.
+
+`expense_accounting_postings` freezes the exact queue-owned provider payload and posting graph before HTTP. Event and posting rows are service-readable but ordinary service-role updates cannot rewrite them; owner-only RPCs govern mutations. The existing accounting queue supports entity `expense` and source `expense_accounting_events`.
+
+Exact-company tables `expense_accounting_settings`, `expense_accounting_category_mappings`, `expense_accounting_payee_mappings` and `expense_accounting_tax_mappings` are tied to a specific connection. Expense tax settings do not mutate supplier-bill/AP tax mappings. Settings replacement is atomic, with independent SQL checks of actor permissions and OPS category/crew ownership. Unchanged archived crew mappings may be retained; new archived-user mappings are rejected.
+
+Direct receipt, allocation and batch payment edits retain approval authority. Crew cannot forge paid fields or alter a reimbursed financial snapshot. Own under-threshold automatic approval retains allocation editing. Notifications and review queue transitions commit together.
+
+Pending `20260914200910_expense_payroll_reimbursement_projection.sql` updates the existing payroll-read function to consume this projection and invalidates payroll read revisions once. It preserves function security/ACL and refuses unreviewed source drift. See chapter 09 for the corrected zero-debt and currency semantics.

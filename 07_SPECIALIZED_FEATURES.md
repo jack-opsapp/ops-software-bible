@@ -5091,6 +5091,12 @@ Emitted by the daily envelope sweep (`public.expense_envelope_sweep()`, pg_cron 
 
 Migration: `migrations/20260601213757_expense_envelope_sweep_deep_link_expense.sql` (supersedes the initial `…211633` cut that used the non-routable `invoice_detail`).
 
+### §14.3.4a Expense accounting review (2026-09-14; local, unreleased)
+
+Pending migration `20260912203328_expense_accounting_lifecycle.sql` creates a durable `accounting_sync` notification when an expense queue row becomes blocked, needs review or fails. Recipients must be active in the exact company and hold both `accounting.manage_connections` and `expenses.approve` at all scope. The queue state and notification commit together, avoiding a lost alert after worker failure.
+
+Title: “Expense sync needs review”; body: “Review the expense in accounting settings.”; action: “Review expenses” linking to `/settings?section=accounting&expenseConnection=<connectionId>`. Dedupe identity `expense-accounting:<queueId>` is scoped per recipient/company. Repeated failure reopens that incident; starting a retry does not falsely resolve it. Only succeeded/cancelled terminal work resolves the exact notification. The settings modal opens the named exact connection, including read-only issues when disconnected.
+
 ### §14.3.4b Expenses Paid Out (`expense_paid`, 2026-07-10)
 
 Dispatched **client-side by OPS-Web** (`notification-dispatch.ts → dispatchExpensePaid`, fired from `useMarkBatchPaid` after the `mark_expense_batch_paid` RPC succeeds) to tell the submitter their approved batch was settled up. Registered in the web rail meta (`NOTIF_TYPE_META.expense_paid` — `PAID` / `receipt-text` / ambient) and safe on shipped iOS via the type-switch `default:` fallbacks (renders with the generic icon + `OPEN`). Rides the `expense_approved` channel preference in the dispatch route — a submitter who wants approval pings wants payout pings; no separate settings toggle.
