@@ -3320,3 +3320,14 @@ This document provides complete architectural context for OPS iOS app, the offli
 - `03_DATA_ARCHITECTURE.md` - Data models, Bubble fields, and Supabase schema
 - `04_API_AND_INTEGRATION.md` - API endpoints, sync details, and migration API
 - `10_ANDROID_CONVERSION_PLAN.md` - Android conversion strategy
+
+
+## Automatic reporting of permanent central sync failures (2026-09-14; local implementation)
+
+Bug `39654ecf-9adb-4a1c-b926-0077aa4eca14`: `SyncBugReporter` now covers permanent outbound rejection in both `DataActor` and fallback `OutboundProcessor`, after duplicate-create/tombstone reconciliation, plus permanent inbound entity failures through `SyncTelemetry`. It preserves the original operation state/retry outcome. Transient failures, cancellation, auth-refresh cases and successful reconciliation do not file reports.
+
+Reports reuse existing `AutoBugReporter` and server `record_auto_bug` deduplication. The fingerprint is stable across central sync implementations and record IDs: company, logical entity/operation, typed error code and shared suspected source. Only allowlisted diagnostics are submitted; no queued payload, row ID, raw server message, customer content or token. Capture company, OPS user UUID and Firebase UID before suspension; recheck identity before delivery so an old-account failure cannot become a new-account report. Client suppression is company-scoped and starts only after successful delivery; concurrent reports share in-flight suppression and retain occurrence counts.
+
+These changes do not add semantic matching against manual reports with no dedupe key, and do not make the in-memory reporting buffer durable across app restarts. Existing analytics events remain separate from bug reports. See the iOS P6 verification record for exact test results and release boundaries.
+
+Verified locally: iOS `5d0e6da1` passes 159 focused tests; OPS-Web `2a7f6ff3d` passes 30 disposable database assertions. [Evidence and release boundary](docs/artifacts/2026-09-14-ios-bugs-p6-verification.md).

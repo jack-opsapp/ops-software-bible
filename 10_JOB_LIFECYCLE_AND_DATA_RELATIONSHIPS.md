@@ -3616,3 +3616,14 @@ A project remains the job anchor; an existing `project_tasks` occurrence is the 
 ## Additional-scope draft lineage (Phase 15, dormant)
 
 A change-order draft belongs to an exact client/project and approved/converted baseline estimate. Its delta total is proposed scope, not customer acceptance or a project-value update. New revisions preserve existing documents; `parent_id` remains the predecessor and `baseline_estimate_id` remains the accepted baseline. See [Phase 15 contract](specs/2026-09-07-ops-mcp-financial-document-approval.md) for authority, arithmetic, locks, verification and release evidence and separate activation gates.
+
+
+## Explicit scheduling on archived projects (2026-09-14; local implementation)
+
+Bug `facfecfe-6e28-4a1e-b332-2aa406cc00c6` is addressed by an explicit schedule action reopening a live archived project: a future active task gives `accepted`; a task starting now or earlier gives `in_progress`. Task metadata-only/no-op edits, unscheduled tasks, and completed/cancelled tasks do not reopen an archive. Other project status behavior and task permissions are preserved; reopening also requires the existing exact project-edit scope. Missing server revision metadata requires sync before the local schedule is changed.
+
+`DataController.updateTaskSchedule`, `updateTaskFields`, model/DTO task creation and batch `applySchedulePlan` persist project reopening, task dates and all required queue entries in one local transaction. Incomplete queue staging rolls back both model changes. Task/project/review forms preserve original dates until this writer runs. Batch scheduling emits one reopen per affected project, using its earliest changed active placement. Automatic task pairs wait for both the project reopen and their predecessor create. The separate Unscheduled Review server workflow continues to require an already-active project.
+
+Reopen commands are immutable, survive retry/expiry, cannot be coalesced into another update, and cannot be discarded while unresolved task writes depend on them. Later project writes wait behind them. A replay cannot undo a newer archive. This requires the pending receipt RPC described in chapter 04 before distributing the client; local tests do not establish physical-device or customer-live acceptance.
+
+Verified locally: iOS `5d0e6da1` passes 159 focused tests; OPS-Web `2a7f6ff3d` passes 30 disposable database assertions. [Evidence and release boundary](docs/artifacts/2026-09-14-ios-bugs-p6-verification.md).

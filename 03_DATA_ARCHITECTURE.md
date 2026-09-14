@@ -7272,3 +7272,12 @@ Exact-company tables `expense_accounting_settings`, `expense_accounting_category
 Direct receipt, allocation and batch payment edits retain approval authority. Crew cannot forge paid fields or alter a reimbursed financial snapshot. Own under-threshold automatic approval retains allocation editing. Notifications and review queue transitions commit together.
 
 Pending `20260914200910_expense_payroll_reimbursement_projection.sql` updates the existing payroll-read function to consume this projection and invalidates payroll read revisions once. It preserves function security/ACL and refuses unreviewed source drift. See chapter 09 for the corrected zero-debt and currency semantics.
+
+
+## Archived-project task reopen receipts (2026-09-14; pending migration)
+
+`20260914210950_project_task_reopen_receipts.sql` is prepared locally in OPS-Web `2a7f6ff3d` and mirrored byte-for-byte in `migrations/pending/`. It is not production-installed. The new private `project_task_reopen_receipts` table stores an immutable command UUID, actor/company/project UUID references, the exact expected project `updated_at`, target status (`accepted` or `in_progress`), committed result revision, and creation time. The actor/company/project foreign keys each have an index. RLS is enabled; public/anon/authenticated/service-role have no direct table grants. The owner-executed RPC is the only insertion route.
+
+The client adds no SwiftData stored properties or schema version. `ProjectRevisionCache` retains the raw server revision string under company/project identifiers because `Date` formatting loses Postgres microseconds. The immutable command copies this revision into the existing `SyncOperation.payload`; its UUID also identifies the queued operation. Scheduled task writes use the existing persisted `dependsOnId`.
+
+Verified locally: iOS `5d0e6da1` passes 159 focused tests; OPS-Web `2a7f6ff3d` passes 30 disposable database assertions. [Evidence and release boundary](docs/artifacts/2026-09-14-ios-bugs-p6-verification.md).

@@ -5192,3 +5192,14 @@ Deployment order remains separately approval-gated: prerequisite expense authori
 `GET /api/integrations/accounting/expense-issues?connectionId=<uuid>&offset=<integer>` exposes bounded, named expense issues for the exact permitted company/connection across QuickBooks and Sage. `POST` accepts only `{queueId}` and invokes the service-only retry RPC using the authenticated actor; a confirmed `pending` or safely superseded `cancelled` receipt triggers canonical readback. User-facing errors are classified and localized instead of displaying raw provider failures. A frozen or uncertain provider write requires reconciliation and has no resend control.
 
 Payroll read compatibility is separately additive in pending `20260914200910_expense_payroll_reimbursement_projection.sql`; it depends on the reimbursement projection and guards against unreviewed live-function drift. It changes no API signature, execution grant, OAuth scope or capability activation.
+
+
+## Reopen an archived project for scheduled work (2026-09-14; pending release)
+
+`public.reopen_project_for_task(p_command_id uuid, p_project_id uuid, p_expected_updated_at timestamptz, p_target_status text)` returns `{command_id, project_id, company_id, status, updated_at, changed, replayed}`. Source: OPS-Web migration `20260914210950_project_task_reopen_receipts.sql`, local commit `2a7f6ff3d`; the migration remains unapplied.
+
+The request requires an active signed-in operator and canonical `projects.edit` scope for the exact live project. Firebase bridge anon and authenticated roles can execute; an unresolved actor or service-only caller cannot. The function locks company authority, actor, command identity and project, checks archived status plus the exact unrounded revision, then reopens and stores a receipt in one transaction. Existing status-version and actor-attributed lifecycle/outbox triggers run normally. Invalid input/command reuse returns `22023`, missing authority `42501`, and a stale snapshot `P0001`.
+
+An identical retry rechecks current authority and returns the original receipt without applying another status change. This remains true after a newer archive; the receipt describes historical execution, not current project state. iOS `ProjectRepository.reopenForTask` validates exact command/receipt identity and target. Neither outbound processor copies receipt status back onto a current model. The client sends a distinct `reopenForTask` operation before its dependent task writes; metadata keys are never forwarded as project PATCH columns.
+
+Verified locally: iOS `5d0e6da1` passes 159 focused tests; OPS-Web `2a7f6ff3d` passes 30 disposable database assertions. [Evidence and release boundary](docs/artifacts/2026-09-14-ios-bugs-p6-verification.md).
