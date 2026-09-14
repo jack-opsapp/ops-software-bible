@@ -1,0 +1,767 @@
+{
+  "status": "database_applied_verified_phone_installed_verified",
+  "verificationUTC": "2026-09-14T03:44:42.339998+00:00",
+  "migrations": [
+    {
+      "version": "20260912213224",
+      "name": "site_visit_single_choice_v2",
+      "source_bytes": 41531,
+      "source_md5": "0b720c6c9d2f77e5d9d74b336e68334e"
+    },
+    {
+      "version": "20260912213347",
+      "name": "site_visit_mcp_choice_coexistence",
+      "source_bytes": 24328,
+      "source_md5": "d96bf1cc1924161b4e0cc364f3e33579"
+    }
+  ],
+  "functionReadback": [
+    {
+      "name": "private.apply_site_visit_rows_v2",
+      "body_md5": "e37c9dca505f416ba444d8d9231c00c4",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres}"
+    },
+    {
+      "name": "private.site_visit_choice_value_valid",
+      "body_md5": "f1ccaf312e325663bb21098b7687dd2b",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres}"
+    },
+    {
+      "name": "private.site_visit_fields_strict_v2",
+      "body_md5": "7e9439951bba0187810340355fb5c2b4",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres}"
+    },
+    {
+      "name": "private.site_visit_guard_choice_write",
+      "body_md5": "294d96bcaa2be2866c4118a829e23590",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres}"
+    },
+    {
+      "name": "private.site_visit_review_rows_v2",
+      "body_md5": "d56c5d80599e3c8935602a70026e297c",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres}"
+    },
+    {
+      "name": "private.site_visit_single_choice_valid",
+      "body_md5": "34b474eaf65e9157c664ccf9937beb07",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres}"
+    },
+    {
+      "name": "public.apply_site_visit_write_v2",
+      "body_md5": "0a676e2c98f324d01e8eda3cab599de6",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "name": "public.resolve_site_visit_write",
+      "body_md5": "f6c1f01acb260f0d3fa2112e39cc141d",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "name": "public.resolve_site_visit_write_v2",
+      "body_md5": "4246548f1f5da25ad9fd936a20cb44c9",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "name": "public.review_site_visit_write_v2",
+      "body_md5": "8d4f6c08c55f577f2b0aace0613daad6",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres}"
+    },
+    {
+      "name": "private.agent_site_visit_workflow_apply",
+      "body_md5": "d6ed1fd6f88fe8a71848715ee45d5c13",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "proacl": "{postgres=X/postgres}"
+    },
+    {
+      "name": "private.agent_site_visit_workflow_compile",
+      "body_md5": "7ae5c1bf47f28dc14eff19211b052f52",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "proacl": "{postgres=X/postgres}"
+    }
+  ],
+  "boundaryBefore": {
+    "columns": [
+      {
+        "type": "uuid",
+        "table": "site_visit_checklist_answers",
+        "column": "id",
+        "default": "gen_random_uuid()",
+        "nullable": "NO"
+      },
+      {
+        "type": "uuid",
+        "table": "site_visit_checklist_answers",
+        "column": "site_visit_id",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "company_id",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "uuid",
+        "table": "site_visit_checklist_answers",
+        "column": "opportunity_id",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "site_visit_type_id",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "field_id",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "label",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "kind",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "boolean",
+        "table": "site_visit_checklist_answers",
+        "column": "required",
+        "default": "false",
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "help_text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "integer",
+        "table": "site_visit_checklist_answers",
+        "column": "sort_order",
+        "default": "0",
+        "nullable": "NO"
+      },
+      {
+        "type": "jsonb",
+        "table": "site_visit_checklist_answers",
+        "column": "answer_value",
+        "default": "'{}'::jsonb",
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "created_by",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_checklist_answers",
+        "column": "created_at",
+        "default": "now()",
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_checklist_answers",
+        "column": "updated_at",
+        "default": "now()",
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_checklist_answers",
+        "column": "deleted_at",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "bigint",
+        "table": "site_visit_checklist_answers",
+        "column": "write_revision",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "bigint",
+        "table": "site_visit_checklist_answers",
+        "column": "write_base_revision",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "answer_state",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "jsonb",
+        "table": "site_visit_checklist_answers",
+        "column": "answer_evidence",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_types",
+        "column": "id",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_types",
+        "column": "company_id",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_types",
+        "column": "slug",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_types",
+        "column": "name",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_types",
+        "column": "description_text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "boolean",
+        "table": "site_visit_types",
+        "column": "is_system_template",
+        "default": "false",
+        "nullable": "NO"
+      },
+      {
+        "type": "boolean",
+        "table": "site_visit_types",
+        "column": "is_default",
+        "default": "false",
+        "nullable": "NO"
+      },
+      {
+        "type": "integer",
+        "table": "site_visit_types",
+        "column": "sort_order",
+        "default": "0",
+        "nullable": "NO"
+      },
+      {
+        "type": "jsonb",
+        "table": "site_visit_types",
+        "column": "fields",
+        "default": "'[]'::jsonb",
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_types",
+        "column": "created_at",
+        "default": "now()",
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_types",
+        "column": "updated_at",
+        "default": "now()",
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_types",
+        "column": "deleted_at",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "bigint",
+        "table": "site_visit_types",
+        "column": "write_revision",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "bigint",
+        "table": "site_visit_types",
+        "column": "write_base_revision",
+        "default": null,
+        "nullable": "YES"
+      }
+    ],
+    "captured_at": "2026-09-12T21:31:48.609988+00:00",
+    "rls_fingerprint": "120443dcaaca3b06c2f8a3e5e605dc4c",
+    "compatibility_rows": 0,
+    "catalog_policy_hash": "8d1aa9eb32e2b8b5d7724814ff15324b",
+    "financial_policy_hash": "8a67ad050564154047a3c5ce8e705d71",
+    "site_visit_effect_rows": 0
+  },
+  "boundaryAfter": {
+    "columns": [
+      {
+        "type": "uuid",
+        "table": "site_visit_checklist_answers",
+        "column": "id",
+        "default": "gen_random_uuid()",
+        "nullable": "NO"
+      },
+      {
+        "type": "uuid",
+        "table": "site_visit_checklist_answers",
+        "column": "site_visit_id",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "company_id",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "uuid",
+        "table": "site_visit_checklist_answers",
+        "column": "opportunity_id",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "site_visit_type_id",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "field_id",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "label",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "kind",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "boolean",
+        "table": "site_visit_checklist_answers",
+        "column": "required",
+        "default": "false",
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "help_text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "integer",
+        "table": "site_visit_checklist_answers",
+        "column": "sort_order",
+        "default": "0",
+        "nullable": "NO"
+      },
+      {
+        "type": "jsonb",
+        "table": "site_visit_checklist_answers",
+        "column": "answer_value",
+        "default": "'{}'::jsonb",
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "created_by",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_checklist_answers",
+        "column": "created_at",
+        "default": "now()",
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_checklist_answers",
+        "column": "updated_at",
+        "default": "now()",
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_checklist_answers",
+        "column": "deleted_at",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "bigint",
+        "table": "site_visit_checklist_answers",
+        "column": "write_revision",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "bigint",
+        "table": "site_visit_checklist_answers",
+        "column": "write_base_revision",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_checklist_answers",
+        "column": "answer_state",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "jsonb",
+        "table": "site_visit_checklist_answers",
+        "column": "answer_evidence",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "jsonb",
+        "table": "site_visit_checklist_answers",
+        "column": "choice_snapshot",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_types",
+        "column": "id",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_types",
+        "column": "company_id",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_types",
+        "column": "slug",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_types",
+        "column": "name",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "type": "text",
+        "table": "site_visit_types",
+        "column": "description_text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "boolean",
+        "table": "site_visit_types",
+        "column": "is_system_template",
+        "default": "false",
+        "nullable": "NO"
+      },
+      {
+        "type": "boolean",
+        "table": "site_visit_types",
+        "column": "is_default",
+        "default": "false",
+        "nullable": "NO"
+      },
+      {
+        "type": "integer",
+        "table": "site_visit_types",
+        "column": "sort_order",
+        "default": "0",
+        "nullable": "NO"
+      },
+      {
+        "type": "jsonb",
+        "table": "site_visit_types",
+        "column": "fields",
+        "default": "'[]'::jsonb",
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_types",
+        "column": "created_at",
+        "default": "now()",
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_types",
+        "column": "updated_at",
+        "default": "now()",
+        "nullable": "NO"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "site_visit_types",
+        "column": "deleted_at",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "bigint",
+        "table": "site_visit_types",
+        "column": "write_revision",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "type": "bigint",
+        "table": "site_visit_types",
+        "column": "write_base_revision",
+        "default": null,
+        "nullable": "YES"
+      }
+    ],
+    "captured_at": "2026-09-14T03:44:42.339998+00:00",
+    "rls_fingerprint": "120443dcaaca3b06c2f8a3e5e605dc4c",
+    "compatibility_rows": 0,
+    "catalog_policy_hash": "8d1aa9eb32e2b8b5d7724814ff15324b",
+    "financial_policy_hash": "8a67ad050564154047a3c5ce8e705d71",
+    "site_visit_effect_rows": 0
+  },
+  "unauthenticatedProbe": "all three v2 endpoints reject with SQLSTATE 42501 in a READ ONLY transaction",
+  "localSqlReverification": "31 coexistence assertions plus existing workflow boundary/timezone/discovery and lock checks passed",
+  "advisorDelta": [
+    {
+      "name": "rls_enabled_no_policy",
+      "beforeCount": 203,
+      "afterCount": 204,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy",
+      "newFindings": [
+        {
+          "detail": "Table \\`private.site_visit_choice_write_tokens\\` has RLS enabled, but no policies exist",
+          "metadata": {
+            "name": "site_visit_choice_write_tokens",
+            "type": "table",
+            "schema": "private"
+          },
+          "observed_at": "2026-09-14T03:45:02.606Z"
+        }
+      ]
+    },
+    {
+      "name": "anon_security_definer_function_executable",
+      "beforeCount": 129,
+      "afterCount": 132,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0028_anon_security_definer_function_executable",
+      "newFindings": [
+        {
+          "detail": "Function `public.apply_site_visit_write_v2(p_command_id uuid, p_command jsonb, p_expected_actor uuid)` can be executed by the `anon` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/apply_site_visit_write_v2`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+          "metadata": {
+            "name": "apply_site_visit_write_v2",
+            "schema": "public",
+            "language": "plpgsql",
+            "arguments": "p_command_id uuid, p_command jsonb, p_expected_actor uuid",
+            "security_definer": true
+          },
+          "observed_at": "2026-09-14T03:45:02.606Z"
+        },
+        {
+          "detail": "Function `public.resolve_site_visit_write_v2(p_resolution_id uuid, p_original_id uuid, p_command jsonb, p_choice text, p_current jsonb, p_expected_actor uuid)` can be executed by the `anon` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/resolve_site_visit_write_v2`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+          "metadata": {
+            "name": "resolve_site_visit_write_v2",
+            "schema": "public",
+            "language": "plpgsql",
+            "arguments": "p_resolution_id uuid, p_original_id uuid, p_command jsonb, p_choice text, p_current jsonb, p_expected_actor uuid",
+            "security_definer": true
+          },
+          "observed_at": "2026-09-14T03:45:02.606Z"
+        },
+        {
+          "detail": "Function `public.review_site_visit_write_v2(p_command jsonb, p_expected_actor uuid)` can be executed by the `anon` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/review_site_visit_write_v2`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+          "metadata": {
+            "name": "review_site_visit_write_v2",
+            "schema": "public",
+            "language": "plpgsql",
+            "arguments": "p_command jsonb, p_expected_actor uuid",
+            "security_definer": true
+          },
+          "observed_at": "2026-09-14T03:45:02.606Z"
+        }
+      ]
+    },
+    {
+      "name": "authenticated_security_definer_function_executable",
+      "beforeCount": 150,
+      "afterCount": 153,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable",
+      "newFindings": [
+        {
+          "detail": "Function `public.apply_site_visit_write_v2(p_command_id uuid, p_command jsonb, p_expected_actor uuid)` can be executed by the `authenticated` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/apply_site_visit_write_v2`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+          "metadata": {
+            "name": "apply_site_visit_write_v2",
+            "schema": "public",
+            "language": "plpgsql",
+            "arguments": "p_command_id uuid, p_command jsonb, p_expected_actor uuid",
+            "security_definer": true
+          },
+          "observed_at": "2026-09-14T03:45:02.606Z"
+        },
+        {
+          "detail": "Function `public.resolve_site_visit_write_v2(p_resolution_id uuid, p_original_id uuid, p_command jsonb, p_choice text, p_current jsonb, p_expected_actor uuid)` can be executed by the `authenticated` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/resolve_site_visit_write_v2`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+          "metadata": {
+            "name": "resolve_site_visit_write_v2",
+            "schema": "public",
+            "language": "plpgsql",
+            "arguments": "p_resolution_id uuid, p_original_id uuid, p_command jsonb, p_choice text, p_current jsonb, p_expected_actor uuid",
+            "security_definer": true
+          },
+          "observed_at": "2026-09-14T03:45:02.606Z"
+        },
+        {
+          "detail": "Function `public.review_site_visit_write_v2(p_command jsonb, p_expected_actor uuid)` can be executed by the `authenticated` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/review_site_visit_write_v2`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+          "metadata": {
+            "name": "review_site_visit_write_v2",
+            "schema": "public",
+            "language": "plpgsql",
+            "arguments": "p_command jsonb, p_expected_actor uuid",
+            "security_definer": true
+          },
+          "observed_at": "2026-09-14T03:45:02.606Z"
+        }
+      ]
+    }
+  ],
+  "advisorDisposition": "one intentionally private owner-only token table with RLS/no policies and three intentional guarded v2 phone RPCs for anon/authenticated; no other newly introduced findings",
+  "phone": {
+    "device": "jPhone",
+    "model": "iPhone 16 Pro",
+    "bundleId": "co.opsapp.ops.OPS",
+    "version": "3.0.5",
+    "bundleVersion": "3.0.5",
+    "developerBuilt": true,
+    "installExitCode": 0,
+    "readbackExitCode": 0,
+    "installReceiptMatchesIndependentInventory": true,
+    "bundleLocationChangedFromPrior": true,
+    "launched": false,
+    "uninstalled": false,
+    "appStoreReleased": false,
+    "verifiedAt": "2026-09-14T04:12:38.761Z",
+    "source": "2e46d7285170b7520ee73a7a12be0751b0713c9e",
+    "binarySha256": "99ae6e98834bf5cda03dd92057fc6c5269654a3263da07f7a099c9a536496d38",
+    "signatureReverified": true,
+    "installStatus": "success_independent_inventory_verified",
+    "evidenceCommit": "b34a142b2365cf44fee491f9304b7826a4658310",
+    "physicalWorkflowAcceptance": "not_performed"
+  },
+  "exclusions": [
+    "expense migrations",
+    "host/company activation",
+    "effect resealing",
+    "business-record test writes",
+    "provider messages",
+    "web push/deploy"
+  ]
+}

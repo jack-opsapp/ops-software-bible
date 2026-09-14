@@ -1,5 +1,7 @@
 # Site-visit MCP / phone-choice coexistence — 2026-09-12
 
+**Subsequent approved release:** both migrations below are now production-installed and independently reverified on 2026-09-14 UTC. The local checkpoint in this file is historical; see [the release receipt](2026-09-14-site-visit-choice-release.md) for current database and phone-install status.
+
 The MCP compatibility repair is locally integrated and independently reviewed. **The new phone choice and MCP coexistence migrations remain unapplied; site-visit write activation remains disabled.**
 
 ## Local repair and proof

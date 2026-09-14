@@ -354,6 +354,8 @@ Actual ledger archives, in the same order: `20260912003437_site_visit_concurrenc
 
 ## iOS bug repairs — UNAPPLIED local candidates (2026-09-11)
 
+**Release update:** Jackson approved the phone choice migration, applied as `20260912213224_site_visit_single_choice_v2.sql`. Its ledger statement matches the prepared source's 41,531 bytes and MD5 `0b720c6c9d2f77e5d9d74b336e68334e`; SHA-256 is unchanged. The `pending/` choice copy below is retained only as a historical prepared-source alias. The expense migration remains unapplied and outside this rollout. [Production verification](../docs/artifacts/2026-09-14-site-visit-choice-release.md).
+
 The two files in `pending/` are byte-identical to the verified OPS-Web sources and are not production ledger entries. Local integration does not authorize applying either migration. The choice extension depends on the released Phase 19 phone protocol; it changes the contract fingerprint without resealing effects or activating company/host policies. The expense repair preserves client decision APIs and does not enable accounting provider delivery.
 
 | Pending source | Bytes | SHA-256 |
@@ -362,6 +364,8 @@ The two files in `pending/` are byte-identical to the verified OPS-Web sources a
 | [`20260912012607_expense_decision_company_authority.sql`](pending/20260912012607_expense_decision_company_authority.sql) | 10,005 | `93f4d57097e05cda31b993d84445356bde43d21a44cb20acdf9575524d04b939` |
 
 ## P19 MCP choice coexistence — UNAPPLIED local candidate (2026-09-12)
+
+**Release update:** the approved repair was applied after the phone extension as `20260912213347_site_visit_mcp_choice_coexistence.sql`. Its ledger statement matches the prepared source's 24,328 bytes and MD5 `d96bf1cc1924161b4e0cc364f3e33579`; SHA-256 is unchanged. The `pending/` copy below is retained as a prepared-source alias, not an outstanding migration. Company compatibility/effect enrollment remains zero. [Production verification](../docs/artifacts/2026-09-14-site-visit-choice-release.md).
 
 This SQL-only repair depends on the six released P19 migrations and the pending phone choice extension above. It replaces two existing owner-only private function bodies without adding public signatures, schemas, scopes, grants, company enrollment or effect resealing. Its CLI-generated source timestamp is not a production ledger version. Local OPS-Web commit `babe8ec1da3a15b417399eb872f979057278d755`; [verification record](../docs/artifacts/2026-09-12-site-visit-choice-coexistence.md). The separate expense candidate is not a prerequisite and is outside this release scope.
 
