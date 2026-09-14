@@ -2033,6 +2033,14 @@ The security-definer RPC:
 
 Mention-edit notification rows use the durable key `mention-edit:<event_uuid>`. The partial unique index on `(user_id, company_id, type, dedupe_key)` is intentionally independent of read/resolved state so a retry cannot create a second rail item.
 
+#### Note attachment edits (2026-09-14; prepared, unapplied)
+
+Pending `20260914224026_project_note_mentions_attachments.sql` adds nullable `requested_attachments jsonb` and `attachments_snapshot jsonb` to the immutable mention-edit event table. Historical events remain untouched. One defaulted five-argument RPC replaces the existing four-argument signature without overload ambiguity. Explicit arrays are removal-only ordered subsequences; blank legacy entries cannot keep an otherwise empty note alive. Omitted/SQL-NULL attachment input preserves the existing text/mention response and UPDATE-column semantics. The project gallery and `photo_url` subject are untouched.
+
+Current function/helper/schema/ACL/dependency and proof-storage guards fail closed before replacement. Existing author/company/mention authority and exact replay are preserved; the recreated function grants EXECUTE only to postgres, anon and authenticated. OPS-Web local main `7ccb38e84` contains the repair. Independent disposable PostgreSQL verification passed 62 SQL assertions plus 24 concurrency/migration-adversarial checks. This migration remains unapplied; current production still exposes the four-argument API.
+
+A related mixed-media/text discard repair is prepared in isolated iOS `7ef35203`, with 13 new regression cases awaiting permission to resume iOS verification after the cleanup pause. It has not been integrated into iOS main or runtime-verified. Evidence: `ops-ios/docs/artifacts/ios-bugs-release-20260914/photo-attachments.md`.
+
 ### `projects.trade` (Migration `20260507140000_projects_trade`)
 
 Adds an optional trade category enum-as-text to projects so the workspace IdentityTab can scope workflow defaults (task templates, weather alert thresholds, default work hours) to the trade.

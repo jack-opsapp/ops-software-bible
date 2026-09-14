@@ -1172,6 +1172,12 @@ Content-Type: application/json
 
 The resolver accepts only those two keys. It loads `project_note_mention_events`, verifies actor/company ownership, rejects proofs older than 29 days, confirms the note is still an editable human note, intersects the event's newly added recipients with the note's current mention list, and revalidates active same-company users. The derived rail key is `mention-edit:<uuid>`; push retries reuse the event UUID within OneSignal's 30-day idempotency window. Notification previews humanize canonical mention tokens back to `@Display Name` / `@All Team`, so recipient UUIDs and reserved authority targets never appear in rail or push copy.
 
+### Attachment-aware note persistence (2026-09-14; prepared, unapplied)
+
+Before notification dispatch, the pending note-edit RPC accepts `p_note_id uuid, p_content text, p_mentioned_user_ids text[], p_event_id uuid, p_attachments jsonb DEFAULT NULL`. The first four named parameters preserve existing clients. Explicit attachment arrays may only detach current note attachments and return their immutable committed snapshot; omitted/SQL-NULL input preserves the existing response keys. Existing mention dispatch still uses the same persisted event UUID and recipient delta, with no extra notification path.
+
+Migration `20260914224026_project_note_mentions_attachments.sql` is on local OPS-Web main `7ccb38e84` and remains unapplied. It is independent of the pending accounting migrations. Production currently has only the four-argument function; a changed-media call cannot resolve until the reviewed replacement is authorized and installed. See chapter03's note-attachment section and iOS `docs/artifacts/ios-bugs-release-20260914/photo-attachments.md` for verification and release limits.
+
 ### Legacy iOS wrapper methods
 
 | Method | Type | Title | Self-Skip |
