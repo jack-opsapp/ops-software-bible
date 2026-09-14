@@ -4174,6 +4174,25 @@ specific correction copy for their blocking condition. Source:
 `ops-web/src/lib/api/services/phase-c-bilateral-event-consumer-runtime.ts`,
 OPS-Web `22eca1b89`.
 
+### Phase C actor-unavailable reply notifications (2026-09-14; built, NOT deployed)
+
+The router no longer turns an inbox backlog into one persistent notification
+per email thread. An inbound CUSTOMER thread with no linked opportunity retires
+its legacy `phase-c-actor-unavailable:<threadId>` system row and contributes to
+one standard, dismissible company digest: `<n> replies need review`, action
+`REVIEW REPLIES`, deep-linked to `/inbox`, and deduped by
+`phase-c-unlinked-replies:<companyId>`. Outbound orphan threads retire the
+legacy row without creating a reply alert.
+
+A thread linked to a real opportunity keeps a per-thread alert because the
+operator can act on that exact lead. It is a standard `leads_waiting` row with
+specific owner/review copy, `deep_link_type = lead`, and action URL
+`/inbox/<threadId>?opportunityId=<opportunityId>`. Existing open legacy rows are
+refreshed in place with the corrected copy, dismissibility, and route. The
+router still clears `category_classified_at` so owed work is retried after the
+lead receives an eligible actor. Source:
+`ops-web/src/lib/api/services/phase-c-autonomy-router.ts`, OPS-Web `29b2153e2`.
+
 **Phase 14 addition (2026-09-06, dormant; migration applied 2026-09-07):** `approve_schedule_change` preparation creates an actor-owned persistent review notification linking to the approval desk. Commit/rejection resolves it atomically. Successful task changes retain existing assignment/schedule in-app and preference-dependent OneSignal push events; receipt language reports queued effects, never delivered pushes. No automatic customer-message event is created. See [Phase 14 contract](specs/2026-09-06-ops-mcp-schedule-crew-approval.md).
 
 ### Overview
@@ -7707,21 +7726,25 @@ drifts from the parser, the drift costs one clean self-describing skip.
 Migrations `20260830113100` and `20260830113200`; the latter widens the queue's
 completion-shape constraint for the new reason.
 
-#### Actor-unavailable is visible and re-driven (d3e9b50d item 7, 51032567 item 5)
+#### Actor-unavailable is visible, collapsed, and re-driven (d3e9b50d item 7, 51032567 item 5; revised 2026-09-14)
 
 `noop_actor_unavailable` was silent: the router returned the outcome and
 dropped the thread until new mail happened to arrive. On an actionable CUSTOMER
 thread at an autonomy level that promised action (`auto_draft` and above), that
-is a customer reply nobody learns about. The router now raises one persistent,
-open-deduped rail notification per thread (dedupe key
-`phase-c-actor-unavailable:<threadId>`, action `Assign this lead`, deep-linked
-to `/inbox/<threadId>`, recipient resolved server-side as the recorded company
-admin or an active admin user) and re-defers the thread by clearing
-`category_classified_at` so the next classification sweep runs it again as soon
-as an assignee exists. The alert never throws — a routing decision must not fail
-because its alert could not be written — and placement-only passes,
-non-CUSTOMER threads, non-actionable threads, and levels below `auto_draft` are
-excluded.
+is a customer reply nobody learns about. The first repair raised one persistent,
+open-deduped system notification per thread, including threads with no linked
+opportunity. The 2026-09-14 repair keeps per-thread alerts only when a real
+opportunity exists: the standard `leads_waiting` row says what must happen,
+routes to `/inbox/<threadId>?opportunityId=<opportunityId>`, and remains deduped
+by `phase-c-actor-unavailable:<threadId>`. Threads without an opportunity instead
+retire that legacy row and feed one dismissible company digest keyed
+`phase-c-unlinked-replies:<companyId>`; outbound orphan threads create no
+waiting-reply digest. The recipient is still resolved server-side as the
+recorded company admin or an active admin user. The router still re-defers the
+thread by clearing `category_classified_at`, and notification failures never
+change the routing result. Placement-only passes, non-CUSTOMER threads,
+non-actionable threads, and levels below `auto_draft` remain excluded. Current
+source commit: OPS-Web `29b2153e2` (built, not deployed).
 
 #### Placement recovery ages out (bf45611d residual)
 
