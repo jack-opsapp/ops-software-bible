@@ -7298,3 +7298,19 @@ OPS-Web `134be2424` adds pending `20260914214748_expense_admin_correction_review
 The pending migration extends the uploader-only edit trigger and placement functions without broadening ordinary saves. Source-body drift guards allow only the captured baseline or this exact replacement. Dependencies are the pending expense decision authority, accounting lifecycle and payroll projection migrations. The source is mirrored byte-for-byte in `migrations/pending/`; no correction RPC/history table is installed in production at the final read.
 
 Integrated iOS source `3353ecce` passes 115 focused simulator tests with zero failures/skips; evidence commit `95bfaf20` includes three inspected crew-history renders. [Exact verification and pending release](docs/artifacts/2026-09-14-ios-expense-correction-verification.md).
+
+
+## Try OPS sample-demo ledger (2026-09-14; local, unapplied)
+
+Pending migration `20260915000120_tryops_demo_funnel.sql` adds four service-only tables. It depends on the released trustworthy TryOps experiment schema and existing canonical users/companies. It does not activate an experiment, create a company, stamp a trial, or claim/send a welcome email.
+
+| Table | Grain and constraints |
+|---|---|
+| `tryops_demo_sessions` | One server-issued opaque identity, stored only as a unique SHA-256 token hash; version `crew-job-v1`; fixed lifetime up to 30 days; optional foreign key to an already-existing experiment assignment. |
+| `tryops_demo_events` | UUID event identity, session, finite action/step, bounded elapsed milliseconds, optional finite error code and server receipt time. First-reach actions have a unique session/action index; replay cannot inflate them. |
+| `tryops_demo_bindings` | One verified actor and one unique demo session; pending/attached/rejected state, attempt count, next retry time and bounded producer reason. It is not stored in user-editable setup progress. |
+| `tryops_demo_trials` | One canonical company, one verified owner and one original demo session; canonical trial timestamp plus association receipt time. Each identity is unique. |
+
+All four tables enable RLS and revoke access from PUBLIC, anon and authenticated; only the service role receives the required table privileges. The five RPCs are invoker-security functions with an empty search path and service-role-only execution: `create_tryops_demo_session`, `collect_tryops_demo_event`, `stage_tryops_demo_signup`, `retry_tryops_demo_trial`, and `reconcile_tryops_demo`. They use actor/session locks, immutable original timing, eligibility rechecks and idempotent constraints. Browser claims cannot supply a trusted owner/company association.
+
+Reconciliation holds a transaction-scoped advisory lease and processes at most 100 due bindings. Invalid/inactive actors leave the pending queue; not-yet-created trials retry after five minutes and expire under the original session boundary. A transient per-item failure does not starve later batches. Local connected PostgreSQL/PostgREST proof includes RLS/grants, duplicate events, expiry, identity replay, actual company/trial creation, delayed recovery and 110 invalid actors preceding a valid trial. This pending migration has not been applied to production.

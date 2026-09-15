@@ -129,6 +129,26 @@ The new account snapshot and server diagnostics require `VERCEL_ENV=production`,
 
 Primary source files: `ops-web/src/lib/analytics/signup-attribution.ts`, `setup-save-client.ts`, `setup-save-server.ts`, `analytics-service.ts`, `product-events.ts`; `ops-web/src/app/api/auth/sync-user/route.ts`; `ops-web/src/app/api/setup/progress/route.ts`; `ops-web/src/app/(onboarding)/setup/page.tsx`. Deployment is verified; natural production event readback remains necessary before claiming end-to-end signup telemetry proof.
 
+### Try OPS sample-demo diagnostics (2026-09-14; local, unreleased)
+
+The replacement `/demo` uses version `crew-job-v1`. Its approved action names are `started`, `job_assigned`, `crew_viewed`, `task_completed`, `back`, `restart`, `exit`, `signup_clicked`, and `error`; steps are `assign`, `crew`, and `complete`. Timing is a bounded integer in milliseconds, and errors use only `asset_unavailable`, `storage_unavailable`, or `render_failed`. No customer details or free-form event properties are accepted.
+
+`POST /api/demo/session` issues an opaque, 30-day `__ops_demo` cookie with Secure, HttpOnly, SameSite=Lax, Path=/ and Domain=.opsapp.co. SQL stores its SHA-256 hash. Existing identities are checked rather than accepted as caller-selected new sessions, and their lifetime is not extended on refresh. The optional association with an existing experiment assignment is lookup-only.
+
+`POST /api/demo/events` validates the strict payload and exact production host/origin, rejects oversized JSON, and excludes localhost, previews, QA, prefetch and recognized automated traffic. Retries reuse an event UUID; conflicting payloads are rejected. The database keeps at most one of each first-reach milestone per session and caps accepted events at 256. HTTP 204 means excluded, 201/200 means recorded/replayed, validation/conflict responses reject the event, and storage failure remains 503. An unavailable collector is never reported as zero activity or successful persistence.
+
+The browser shares one session-establishment attempt across effects, checks its response, and retries transient errors at most three times. A hard deadline covers both response headers and session-body decoding. Tracking never gates the sample interaction or the native signup link. Failed establishment/event delivery is diagnosed without showing implementation detail in the visitor flow. This bounded delivery is not a durable offline event queue; exhausted attempts can lose measurement.
+
+`elapsedMs` starts at document mount, resets on reload and includes idle/background time. It is not active attention or total time across a 30-day session identity. Session expiry stops new attribution; it is not an automated ledger-retention purge.
+
+OPS-Web stages the opaque session only after resolving a cryptographically verified account. A service-only binding survives subsequent cookie loss and attaches only to that account's eligible canonical owner trial, using the original session/trial times. The existing authenticated acquisition cron performs bounded demo reconciliation independently of experiment activation. A staging failure gets bounded post-response retries; exhausted staging is explicitly reported as lost measurement, not a durable promise.
+
+The existing cron remains daily at 09:00 UTC, with at most 100 due bindings per run. Five minutes is the earliest next-attempt timestamp, not a five-minute scheduled recovery guarantee. Normal setup requests can also retry attachment.
+
+The additive migration `20260915000120_tryops_demo_funnel.sql` requires explicit production approval. Local connected proof exercises actual source handlers, PostgREST, PostgreSQL, company/trial RPCs, replay/expiry, delayed attachment, invalid-actor queue drainage and concurrent welcome-claim uniqueness. It creates no production account and sends no email. Final source hashes and release state belong to the project verification record; no conversion lift or production end-to-end success is claimed. Definitions: [22_GROWTH_MEASUREMENT_CONTRACT.md § 9](./22_GROWTH_MEASUREMENT_CONTRACT.md#9-optional-try-ops-sample-demo-2026-09-14-local-implementation).
+
+Primary sources: TryOps `lib/demo/`, `app/api/demo/`, `app/api/ab-cron/route.ts`, and the pending migration; OPS-Web `src/lib/pmf/demo-attribution.ts`, `src/app/api/auth/sync-user/route.ts` and `src/app/api/setup/progress/route.ts`.
+
 ### Firebase conversion allowlist
 
 Firebase is conversion QA and Google optimization telemetry, not product or business truth. The iOS release candidate explicitly logs only these OPS-managed conversion signals:

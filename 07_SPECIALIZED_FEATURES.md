@@ -367,6 +367,14 @@ private func updateMapForNavigation() {
 
 ## 2. Tutorial & Demo Mode
 
+### Public Try OPS sample demo (2026-09-14; local, unreleased)
+
+The acquisition website now has a separate `/demo` implementation, version `crew-job-v1`, in TryOps `components/demo/` and `app/demo/`. It uses one fictional siding-repair job and two explicit actions: assign the sample crew to reveal its address/note/site-reference photo, then complete a sample task to see the owner receipt. This does not modify the native tutorial described below, create real jobs/tasks, or issue business notifications.
+
+The sample is phone-first, with 44px minimum controls and a 52px primary action. Short-phone crew/completion actions follow the content so they cannot mask the note/photo or receipt. Back preserves sample task truth; Restart resets it; versioned, exact-type session storage supports reload recovery. A neutral initialization and a recoverable error screen preserve native Exit/trial links. Motion never gates progression; reduced motion uses a short opacity transition.
+
+The optional landing entry is **See it in action**, after the product screenshot selectors so it does not delay the image on phones. Direct canonical signup remains primary. Old public tutorial variants redirect to this one path. The native `/demo/start-trial` handoff leads to canonical OPS-Web registration; demo completion is not onboarding completion, a company trial, or a sent welcome email. Canonical signup/setup owns those outcomes. See chapters 04, 21 and 22 for exact API, diagnostic and conversion contracts. All changes in this subsection remain local until separately approved migration/application release.
+
 ### Overview
 Interactive tutorial system with 30 phase definitions (excluding `notStarted` and `completed`) across two flows plus a pipeline extension: Company Creator (~30 seconds), Employee (~20 seconds), and Pipeline phases (admin/office crew only). Features demo data, overlay tooltips, and progressive task guidance.
 

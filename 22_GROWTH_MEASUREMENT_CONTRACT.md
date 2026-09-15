@@ -169,3 +169,19 @@ The web/database contract is production truth. Full cross-platform release certi
 - seven finalized production days pass without unexplained gaps, duplicates, privacy findings, or reconciliation drift.
 
 There is no new analytics-vendor subscription. Production backfills and retention still consume current Vercel, Google API, and Supabase capacity, so plan headroom and quotas must be confirmed before enablement.
+
+## 9. Optional Try OPS sample demo (2026-09-14; local implementation)
+
+The optional `/demo` acquisition experience demonstrates one sample crew assignment and one sample task completion. It does not create OPS users, companies, projects or tasks. Its interaction milestones are diagnostics, never business conversions. The canonical registration and company-setup routes remain responsible for real account/trial creation and welcome eligibility.
+
+- **Demo started:** a fresh sample experience opens. Restoring already-assigned/completed local state does not fabricate a new action or completion.
+- **Crew value reached:** the visitor assigns the sample crew and opens the address, note and site-reference photo. Count the first accepted `crew_viewed` event per demo session.
+- **Demo completed:** the visitor explicitly marks the sample task done. Count the first accepted `task_completed` event per demo session; hydration, Back and Restart cannot inflate this count.
+- **Signup clicked:** a native trial link is selected. This is intent only; it is not an account, trial, activation or email-delivery event.
+- **Demo-associated trial:** a trusted server binding joins the original demo session to a verified owner and an eligible canonical company trial. The existing `companies.trial_start_date` remains the source of the trial timestamp. This diagnostic association does not overwrite the canonical acquisition channel or experiment assignment.
+
+Report distinct sessions and distinct canonical companies with their denominators. A missing/rejected event, excluded QA request or failed collector is not proof the visitor did not act. No historical demo completions or associations are reconstructed. A completed synthetic task is never the first real project, activated company or first-value milestone defined in § 2.
+
+The demo entry remains optional after the landing page's product screenshot selectors; direct canonical signup stays primary. Only the root landing page is eligible for experiment enrollment. A demo visit, seven fixed paid landing pages, legacy redirects and signup handoffs do not allocate an experiment arm or manufacture exposure. Local and preview verification are excluded from production collection.
+
+**Evidence boundary:** the combined two-action UI passes 231 local checks and a TryOps production build. Eleven connected local HTTP/PostgREST/PostgreSQL groups independently verify canonical trial association, recovery and welcome-claim uniqueness; the harness does not perform production signup or send email. Phone-size browser emulation verifies the demo at six required sizes plus a short-phone case. No conversion lift, ordinary-user time-to-value, physical-phone performance, production signup or welcome delivery is established. Primary source: `try-ops/components/demo/`, `lib/demo/`, `app/demo/`, and `components/landing/ProductProof.tsx`. [Exact local verification and release boundary](docs/artifacts/2026-09-14-tryops-demo-verification.md).
