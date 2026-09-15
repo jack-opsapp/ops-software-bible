@@ -1,5 +1,7 @@
 # Try OPS visual refinement verification — September 14, 2026
 
+> Subsequent release: both applications and the additive schema are live. See [the September 15 production release record](2026-09-15-tryops-production-release.md) for exact identities and live proof. The original local verification below is retained as historical evidence.
+
 ## Source and status
 
 TryOps `29679e5a818e35b69fcfa4cef23040c32b024cac`, a direct child of the previously verified combined candidate `262caad0a229a43ff2b007e8a7571a578adf7ef5`. PM and independent QA accepted the refined presentation after resolving five observed visual/interaction issues. The clean commit and technical verification were shared with the separate release task; this record establishes local acceptance, not production authorization or deployment completion.

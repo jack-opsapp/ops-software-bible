@@ -1,5 +1,7 @@
 # Try OPS demo verification — September 14, 2026
 
+> Subsequent release: both applications and the additive schema are live. See [the September 15 production release record](2026-09-15-tryops-production-release.md) for exact identities and live proof. The original local verification below is retained as historical evidence.
+
 Local implementation; migration unapplied, applications unreleased. No production signup or email was performed.
 
 ## Exact source

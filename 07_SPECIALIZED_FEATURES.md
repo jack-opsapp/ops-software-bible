@@ -367,7 +367,7 @@ private func updateMapForNavigation() {
 
 ## 2. Tutorial & Demo Mode
 
-### Public Try OPS sample demo (2026-09-14; local, unreleased)
+### Public Try OPS sample demo (2026-09-14; released 2026-09-15)
 
 The acquisition website now has a separate `/demo` implementation, version `crew-job-v1`, in TryOps `components/demo/` and `app/demo/`. It uses one fictional siding-repair job and two explicit actions: assign the sample crew to reveal its address/note/site-reference photo, then complete a sample task to see the owner receipt. This does not modify the native tutorial described below, create real jobs/tasks, or issue business notifications.
 
@@ -377,7 +377,7 @@ The sample is phone-first, with 44px minimum controls and a 52px primary action.
 
 The existing Framer Motion dependency supplies synchronous `domMax` layout features through `LazyMotion` and `m` elements. Only the persistent job/task anchors use position projection, with the canonical 350ms easing; destination details resolve in 150ms and the photo in 200ms after that movement, for 500–550ms composed transitions. Initial/restored content does not wait for the choreography. State, native links and current controls update immediately, with no animation completion callback or retained exit-control queue. A live `matchMedia` subscription responds to reduced-motion changes and cleans up on unmount; CSS suppresses projected transforms and replaces delayed/spatial reveals with 150ms opacity. The existing state/funnel contracts and two-action progression remain unchanged.
 
-The optional landing entry is **See it in action**, after the product screenshot selectors so it does not delay the image on phones. Direct canonical signup remains primary. Old public tutorial variants redirect to this one path. The native `/demo/start-trial` handoff leads to canonical OPS-Web registration; demo completion is not onboarding completion, a company trial, or a sent welcome email. Canonical signup/setup owns those outcomes. See chapters 04, 21 and 22 for exact API, diagnostic and conversion contracts. All changes in this subsection remain local until separately approved migration/application release.
+The optional landing entry is **See it in action**, after the product screenshot selectors so it does not delay the image on phones. Direct canonical signup remains primary. Old public tutorial variants redirect to this one path. The native `/demo/start-trial` handoff leads to canonical OPS-Web registration; demo completion is not onboarding completion, a company trial, or a sent welcome email. Canonical signup/setup owns those outcomes. See chapters 04, 21 and 22 for exact API, diagnostic and conversion contracts. The additive schema and both application releases are live following explicit deployment approval. [The coordinated production receipt](docs/artifacts/2026-09-15-tryops-production-release.md) records exact identities and proof limits.
 
 ### Overview
 Interactive tutorial system with 30 phase definitions (excluding `notStarted` and `completed`) across two flows plus a pipeline extension: Company Creator (~30 seconds), Employee (~20 seconds), and Pipeline phases (admin/office crew only). Features demo data, overlay tooltips, and progressive task guidance.
