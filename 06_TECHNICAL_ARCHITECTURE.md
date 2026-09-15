@@ -1761,10 +1761,15 @@ onto the versioned write path (`SiteVisitVersionedSync`, protocol
 the authenticated actor and never rewrites it on update — and an operation that
 does not carry its own bound actor (`siteVisitWriteActorId`) parks as a legacy
 payload rather than adopting the current session user (commit `83f5a6b0`). So the
-outbound heal no longer runs for answers; `SiteVisitRepository.upsertChecklistAnswer`
-is retired and throws `legacyPayload`. An answer row's local `created_by` is
-healed only by the launch backfill. Visits, artifacts and identity drafts still
-heal at the outbound boundary as described above.
+outbound heal no longer runs for answers. The REST answer path it lived on is gone
+(2026-09-15): `SiteVisitRemoteWriting` declares no answer upsert, the outbound
+entity switch has no answer case — `SiteVisitVersionedSync.handles` claims every
+`siteVisitChecklistAnswer` operation before it — `UpsertSiteVisitChecklistAnswerDTO`
+no longer exists (the versioned command's row values are the only outbound answer
+wire), and the transport rejects a `site_visit_checklist_answers` upsert as a
+`schemaCapability` error. An answer row's local `created_by` is healed only by the
+launch backfill. Visits, artifacts and identity drafts still heal at the outbound
+boundary as described above.
 
 **`declined` — the operator stopped a send (2026-08-13, bug f7431c17).** PENDING
 WORK is a sync-recovery surface: its rows are queued SENDS, so DELETE there means
