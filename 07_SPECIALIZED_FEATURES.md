@@ -805,6 +805,14 @@ struct CalendarSchedulerSheet: View {
 ### Overview
 Two-tier image storage: local file system for offline, S3 for cloud sync. Automatic queue-based upload when connectivity available.
 
+### Storage access contract — every S3 prefix must be granted public read (2026-09-15)
+
+`ops-app-files-prod` is private by default; readability is granted **per key prefix** by the bucket policy (`s3:GetObject`, `Principal: *`, `arn:aws:s3:::ops-app-files-prod/<prefix>/*`). Neither client has a signed-read path for media: the web renders stored URLs directly and iOS (`PhotoThumbnailLoader.fetchRemote`) downloads them with a plain GET. Only `bug-reports/*` is deliberately private and read through `getSignedUrl`.
+
+Verified 2026-09-15 with `curl -I` on real objects: `projects/*` → 200, `deck_designs/*` → 200, **`site-visits/*` → 403**. The site-visit prefix (introduced 2026-07/08 by `SiteVisitMediaSyncManager` → `/api/uploads/presign`) was never added to the policy, so every site-visit photo, markup and thumbnail ever uploaded (110 objects for CanPro on 2026-09-15) is unreadable by the phone, the web and the MCP tools. This is the third occurrence of the same omission after `opportunities/*` (§03 Images contract, 2026-07-25) and `annotations/*` (§"Cross-device overlay visibility" below). **Rule:** introducing a new upload prefix is not done until the bucket policy statement exists and a `curl -I` on a real object returns 200. Fix for `site-visits/*`: add `{"Sid":"PublicReadSiteVisits","Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::ops-app-files-prod/site-visits/*"}`; no re-upload needed. Bug `ab7b0f10`.
+
+Phone-side resilience (ops-ios, 2026-09-15): after an upload succeeds the uploaded bytes are cached under the remote URL's key (`ImageFileManager.saveImage(data:localID:allowEviction: false)`) before the artifact's local pointer is replaced, and `SiteVisitOwnCopyRepair` re-seeds that cache from the original capture file (`Documents/ProjectImages/capture_<id>.jpg`, or the legacy `site_visit_<ID>.jpg`) whenever a visit's artifacts load — so the phone that took a photo shows it regardless of bucket policy or connectivity.
+
 ### ImageSyncManager (iOS)
 **Location:** `OPS/OPS/Network/ImageSyncManager.swift` (570 lines)
 
