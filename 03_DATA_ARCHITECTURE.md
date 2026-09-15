@@ -6937,7 +6937,7 @@ Source: OPS-Web commit `d0879395f`. The three migrations named below are mirrore
 
 ---
 
-## Google Ads engine ledger (2026-09-10; migration applied to production, code NOT deployed)
+## Google Ads engine ledger (2026-09-10; migration applied to production; engine code live 2026-09-10, guardrail episodes and pair tests live 2026-09-15)
 
 Source: `ops-web/supabase/migrations/20260910120000_ads_engine.sql`, applied to production 2026-09-08 (ledger row `20260909012547 ads_engine`; verified by object — `ops-web/docs/artifacts/ads-engine/p3/migration-verify.txt`), mirrored at `migrations/20260910120000_ads_engine.sql`. Self-contained: references only `public.notifications`, so it orders freely against the phase 1 warehouse migrations. Every table has RLS enabled, no policy, public/anon/authenticated revoked, service_role CRUD. Every function is `security invoker` with `search_path=''` and executable by service_role only. Harness: `ops-web/tests/sql/ads-engine-runtime.mjs` (PG17, carries the production notification dedupe indexes).
 
