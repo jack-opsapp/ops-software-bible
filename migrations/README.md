@@ -36,6 +36,34 @@ _None._
 
 `20260914203418_site_visit_oauth_trial.sql` is the exact production ledger archive of web source alias `20260914200524_site_visit_oauth_trial.sql`: one statement, 22,061 bytes, SHA-256 `849d7b420c530d78f9092bf333aee893e50d007e788203cb92b61a0a103d764a`. Ledger/source/archive match independently. It adds a private immutable two-hour subject binding and nine fingerprint-guarded lifecycle/review updates, but seeds no clients, grants, company compatibility, effects or business rows. Existing function settings and ACLs are unchanged. [Release evidence](../docs/artifacts/2026-09-14-site-visit-trial-release.md).
 
+## Expense release and project task reopen (2026-09-15 UTC)
+
+- `20260915062403_expense_release_atomic.sql` — applied 2026-09-15T06:24:03Z. 146,738 bytes,
+  MD5 `4d1122b53e9e0218df4d243149fcae0d`,
+  SHA-256 `4d53da61929337ab783070818f387ac1e8650cd900230fd7685418a32c543d22`.
+- `20260915062603_project_task_reopen_receipts.sql` — applied 2026-09-15T06:26:03Z. 12,417 bytes,
+  MD5 `b9472e0fd4867fe627796963a8dd9183`,
+  SHA-256 `18845d0b67e5b6116ec4e41c165e5a85e4472e22e8f99a60580a462e004b2657`.
+  Prepared under filename version `20260914210950_project_task_reopen_receipts.sql`; applied unchanged.
+
+For both files the whole-file MD5 (trailing newline included) equals the ledger `statements[1]` MD5,
+so each archive is byte-identical to what production ran.
+
+The expense release was submitted as one atomic bundle. It supersedes four prepared constituents that
+were never applied under their own versions:
+
+| Prepared version | Name | SHA-256 |
+|---|---|---|
+| `20260912012607` | `expense_decision_company_authority` | `07b6791dbeb19e365d20361242d5cb1103cff6b5037ce0a56d3c4e5a3b3d6cef` |
+| `20260912203328` | `expense_accounting_lifecycle` | `77b420827c616996a062f35787e6bb257141b1c7da468a4253a61536ee922e23` |
+| `20260914200910` | `expense_payroll_reimbursement_projection` | `78db2cee099061cd5d31be11a8de4c174cbb6022a0c66c590f08feb53902dc0b` |
+| `20260914214748` | `expense_admin_correction_review` | `f5a6d66815c8e9468817fc28d24a5fe1d7caa68dcb671b3b379a1ad227b5f015` |
+
+Their exact bodies are archived under `20260915062403_expense_release_atomic/constituents/` for
+provenance and as test fixtures only — the OPS-Web SQL harnesses load them from there. They must never
+be replayed; production already carries their effects through `20260915062403`. Full mapping:
+[`20260915062403_expense_release_atomic/SUPERSESSION.md`](20260915062403_expense_release_atomic/SUPERSESSION.md).
+
 ## Naming quirks (historical)
 
 - Ledger names sometimes embed an older working name, giving double-stamped or dated filenames, e.g.
