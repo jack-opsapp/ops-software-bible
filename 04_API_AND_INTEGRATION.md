@@ -5233,6 +5233,8 @@ Integrated iOS source `3353ecce` passes 115 focused simulator tests with zero fa
 
 ## Try OPS demo and canonical signup handoff (2026-09-14; local, unreleased)
 
+**Release status (2026-09-15 UTC):** schema ledger `20260915032402` is live and independently verified. OPS-Web source `e26310f4c836868d19e4539965abb58172dd9a85` is live at `app.opsapp.co` in READY deployment `dpl_ARcDA9dFLFEndpgyDo8vQa6dUhrt`; the full production typecheck and 484 generated pages passed. Its registration shell and exact missing-credential validation responses passed excluded live probes. The newer TryOps demo presentation is still undergoing final review before its separate application push. No production account or outbound-email canary has been performed.
+
 The public acquisition demo is consolidated at `/demo`. A prefilled sample assignment opens the crew's job address, note and before-work reference photo; a second explicit action completes only the sample task and shows the owner view. No synthetic work reaches business tables. Back reviews without undoing sample truth; Restart resets local progress; exact-type/version validation protects reload recovery. Native Exit and trial links remain available during initialization and error recovery.
 
 | Route | Prepared behavior |
