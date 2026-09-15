@@ -1,3 +1,93 @@
+-- Apply once, in one transaction. These captured prerequisites make the
+-- timestamp command, current actor and normal lifecycle side effects safe.
+do $preflight$
+declare
+  v_expected record;
+  v_oid oid;
+begin
+  if current_user <> 'postgres' then
+    raise exception 'project_reopen_migration_owner_required' using errcode = '55000';
+  end if;
+  if to_regclass('private.project_task_reopen_receipts') is not null
+     or exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+                where n.nspname='public' and p.proname='reopen_project_for_task') then
+    raise exception 'project_reopen_partial_or_existing_install' using errcode = '55000';
+  end if;
+  for v_expected in select * from (values
+    ('private.get_current_user_id()', '127ffd06387933500d95f96aba24b605'),
+    ('private.get_user_company_id()', '3de642ffe4b81ee8827c1cc6507f85c4'),
+    ('private.user_can_edit_project(uuid,uuid)', '9c6d2bf27fe10e2788a85c9297c2ce45'),
+    ('private.lock_lead_assignment_company(uuid)', '66a84a1311ffb22c79458cafbcca76bf'),
+    ('private.canonicalize_address_text(text)', 'f700967f856963374263b3091a7d0c07'),
+    ('private.normalize_property_address(text,boolean)', 'ef1f73d414c5c840005071c88965c3ed'),
+    ('private.normalize_address(text)', '064c23779001fb85a0d08a408a2d785d'),
+    ('private.project_address_dedupe_lock_key(uuid,text)', '734f1475691b2f5c3075aa2e868e3692'),
+    ('private.email_project_dedupe_lock_key(uuid,uuid)', '3249d09b839e9280c4289cd1f450b049'),
+    ('private.acquire_project_identity_locks(bigint[],bigint[],boolean)', 'c13bdce14cda13efd961d85af511a4c8'),
+    ('private.serialize_project_email_identity_change()', '840c7c50c54b3bb821a6b0f31a5dda33'),
+    ('private.bump_project_status_version()', '70fa2575cfb0d49820ee969e2d409b0f'),
+    ('private.enqueue_project_status_lifecycle()', '9035f951e618e5a63211480255e39a73'),
+    ('public.update_timestamp()', '93ab639fada1299eae91e1456a216b6d')
+  ) expected(signature, definition_md5)
+  loop
+    v_oid := to_regprocedure(v_expected.signature);
+    if v_oid is null or not exists (
+      select 1 from pg_proc p where p.oid=v_oid
+       and pg_get_userbyid(p.proowner)='postgres'
+       and md5(pg_get_functiondef(p.oid))=v_expected.definition_md5
+    ) then
+      raise exception 'project_reopen_dependency_drift: %', v_expected.signature
+        using errcode = '55000';
+    end if;
+  end loop;
+  for v_expected in select * from (values
+    ('projects_enqueue_status_lifecycle', 'CREATE TRIGGER projects_enqueue_status_lifecycle AFTER UPDATE OF status ON public.projects FOR EACH ROW WHEN ((old.status IS DISTINCT FROM new.status)) EXECUTE FUNCTION private.enqueue_project_status_lifecycle()'),
+    ('projects_serialize_email_identity_change', 'CREATE TRIGGER projects_serialize_email_identity_change BEFORE INSERT OR DELETE OR UPDATE OF company_id, client_id, address, status, deleted_at, opportunity_id, opportunity_ref ON public.projects FOR EACH ROW EXECUTE FUNCTION private.serialize_project_email_identity_change()'),
+    ('update_projects_timestamp', 'CREATE TRIGGER update_projects_timestamp BEFORE UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION update_timestamp()'),
+    ('zz_projects_bump_status_version', 'CREATE TRIGGER zz_projects_bump_status_version BEFORE UPDATE OF status, status_version ON public.projects FOR EACH ROW EXECUTE FUNCTION private.bump_project_status_version()')
+  ) expected(trigger_name, definition)
+  loop
+    if not exists (
+      select 1 from pg_trigger t
+       where t.tgrelid=to_regclass('public.projects')
+         and t.tgname=v_expected.trigger_name and not t.tgisinternal
+         and t.tgenabled='O'
+         and pg_get_triggerdef(t.oid)=v_expected.definition
+    ) then
+      raise exception 'project_reopen_trigger_drift: %', v_expected.trigger_name
+        using errcode = '55000';
+    end if;
+  end loop;
+  for v_expected in select * from (values
+    ('public.projects', 'id', 'uuid', true),
+    ('public.projects', 'company_id', 'uuid', true),
+    ('public.projects', 'status', 'text', true),
+    ('public.projects', 'updated_at', 'timestamp with time zone', false),
+    ('public.projects', 'status_version', 'bigint', true),
+    ('public.projects', 'deleted_at', 'timestamp with time zone', false),
+    ('public.users', 'id', 'uuid', true),
+    ('public.users', 'company_id', 'uuid', false),
+    ('public.users', 'auth_id', 'text', false),
+    ('public.users', 'firebase_uid', 'text', false),
+    ('public.users', 'deleted_at', 'timestamp with time zone', false),
+    ('public.users', 'is_active', 'boolean', false),
+    ('public.companies', 'id', 'uuid', true)
+  ) expected(table_name, column_name, type_name, requires_not_null)
+  loop
+    if not exists (
+      select 1 from pg_attribute a
+       where a.attrelid=to_regclass(v_expected.table_name)
+         and a.attname=v_expected.column_name and not a.attisdropped
+         and format_type(a.atttypid,a.atttypmod)=v_expected.type_name
+         and (not v_expected.requires_not_null or a.attnotnull)
+    ) then
+      raise exception 'project_reopen_column_drift: %.%', v_expected.table_name, v_expected.column_name
+        using errcode = '55000';
+    end if;
+  end loop;
+end;
+$preflight$;
+
 -- Scheduling on an explicitly archived project carries one durable reopen
 -- command. This is separate from task PATCHes: stale offline schedules never
 -- acquire permission to reopen a project as a trigger side effect.
@@ -62,7 +152,12 @@ begin
      and actor.company_id = v_company_id
      and actor.deleted_at is null and coalesce(actor.is_active, false)
    for share;
-  if not found or not private.user_can_edit_project(v_actor_user_id, p_project_id) then
+  -- Identity may have been unlinked while this request waited for the company
+  -- lock. Re-resolve it after locking the actor row, before writes or replay.
+  if not found
+     or private.get_current_user_id() is distinct from v_actor_user_id
+     or private.get_user_company_id() is distinct from v_company_id
+     or not private.user_can_edit_project(v_actor_user_id, p_project_id) then
     raise exception 'project_reopen_forbidden' using errcode = '42501';
   end if;
   perform pg_advisory_xact_lock(hashtextextended(
@@ -72,7 +167,10 @@ begin
   select * into v_project from public.projects
    where id = p_project_id and company_id = v_company_id and deleted_at is null
    for update;
-  if not found or not private.user_can_edit_project(v_actor_user_id, p_project_id) then
+  if not found
+     or private.get_current_user_id() is distinct from v_actor_user_id
+     or private.get_user_company_id() is distinct from v_company_id
+     or not private.user_can_edit_project(v_actor_user_id, p_project_id) then
     raise exception 'project_reopen_forbidden' using errcode = '42501';
   end if;
 
@@ -122,3 +220,24 @@ revoke all on function public.reopen_project_for_task(uuid, uuid, timestamptz, t
 -- always requires that actor and the canonical active-company edit scope.
 grant execute on function public.reopen_project_for_task(uuid, uuid, timestamptz, text)
   to anon, authenticated;
+
+-- Reject unexpected default grants rather than expose a new write boundary.
+do $postflight$
+begin
+  if (select array_agg(a::text order by a::text)
+        from pg_proc p, unnest(p.proacl) a
+       where p.oid='public.reopen_project_for_task(uuid,uuid,timestamptz,text)'::regprocedure)
+     is distinct from array['anon=X/postgres','authenticated=X/postgres','postgres=X/postgres']::text[]
+     or exists (
+       select 1 from pg_class c,
+         lateral aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
+       where c.oid='private.project_task_reopen_receipts'::regclass
+         and a.grantee<>c.relowner
+     )
+     or not (select relrowsecurity from pg_class
+              where oid='private.project_task_reopen_receipts'::regclass) then
+    raise exception 'project_reopen_unexpected_grants' using errcode = '55000';
+  end if;
+end;
+$postflight$;
+notify pgrst, 'reload schema';
