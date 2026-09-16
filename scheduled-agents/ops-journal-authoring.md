@@ -1,6 +1,6 @@
 # OPS Journal authoring (Cloud Routine)
 
-Status (2026-09-15): **created and enabled** — `trig_01NbGDkXXigXTR9K2FYPjZCk`, environment `OPS Journal` (`env_01Rb152WvLvqkQHhHFHmBbQz`), created 2026-09-10 via the RemoteTrigger API, connectors cleared, enabled by Jackson 2026-09-10. First scheduled runs 2026-09-13: 06:05 Vancouver wrote `weekly:2026-09-14` (AUTHORED), 14:05 found nothing (IDLE, 16 s). Prompt updated to v2 on 2026-09-15 (art direction for a generated photograph replaces the plate line).
+Status (2026-09-15): **created and enabled** — `trig_01NbGDkXXigXTR9K2FYPjZCk`, environment `OPS Journal` (`env_01Rb152WvLvqkQHhHFHmBbQz`), created 2026-09-10 via the RemoteTrigger API, connectors cleared, enabled by Jackson 2026-09-10. First scheduled runs 2026-09-13: 06:05 Vancouver wrote `weekly:2026-09-14` (AUTHORED), 14:05 found nothing (IDLE, 16 s). Prompt updated to v2 on 2026-09-15 (art direction for a generated photograph replaces the plate line). Prompt v3 (`journal-routine-prompt-2026-09-16-v3`, the topic funnel) is written and awaits deployment of the matching ops-web release; it must be installed only after that release is live, because v3 posts a pitch the older server does not accept.
 
 | Field | Value |
 |---|---|
