@@ -1803,6 +1803,33 @@ Consumers that must know the status:
   Checklist-id canonicalization fails closed on unrecognized lifecycles, so a
   declined operation must read as settled — never migrated, never a collision.
 
+**Checklist logical-ID collisions — two reviewable versions (2026-09-10, commit
+`83f5a6b0`).** A checklist answer carries two identities: its row id and its
+logical identity (`site_visit_id` + `field_id`). A server row can arrive under a
+new id on a logical identity the phone already owns — the same field answered
+twice, once locally and once by another writer.
+`SiteVisitServerMerge.resolveChecklistAnswer` decides between converging the two
+and keeping both:
+
+- **A settled local row** — not `needsSync`, no open `writeState.baseRevision`,
+  and every queued operation on it `completed` or `declined` — adopts the
+  server's id and its whole snapshot, and the row converges. Settled operations
+  are finished with the row, so none of them is carried across: there is nothing
+  left to send for them.
+- **A local row with unsent work** — dirty, an open base revision, or any
+  operation not yet `completed`/`declined` — keeps its own id, its own value and
+  its own queued operations, and parks the server row in `writeState.remoteRow`
+  as the reviewable second version. It is not marked synced. An attempted write
+  is immutable: it is never retargeted at a different server row, so a parked or
+  failed send can never be silently orphaned. Its payload is never even decoded,
+  so a corrupt envelope on a parked send cannot wedge inbound sync for the rest
+  of the visit.
+
+Two active local rows on one logical identity are an ambiguity and throw, as does
+a rekey whose destination id already carries unsent queue work. Both checks run
+inside `validate(bundle:)`, before the merge transaction opens, so a refused
+bundle writes nothing. Coverage: `OPSTests/Sync/SiteVisitServerMergeTests.swift`.
+
 Site-visit failures retain their structured origin through this pipeline.
 `SiteVisitRepositoryError.server(code:message:detail:hint:)` preserves the four
 PostgREST fields and composes them through `LocalizedError`, so the stored
