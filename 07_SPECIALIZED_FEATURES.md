@@ -3407,7 +3407,7 @@ EstimatePreviewSheet (display)   →   generateEstimate() (persist)
 
 1. Parse `deck_designs.drawing_data` → walk the `components[]` projection (one row per visible railing / deck_board / stair_set / gate / post_set, emitted by `ComponentEmitter` on every save).
 2. For each component, look up `company_default_products[component_type]` to find the default `Product`.
-3. For each `ProductOption` on that product, read `option_default_source` (e.g. `$design.color`) and pull the matching value from the component's `metadata`. Fall back to `default_value` if missing.
+3. For each `ProductOption` on that product, read `option_default_source` (e.g. `$design.color`) and pull the matching value from the component's `metadata`. Fall back to `default_value` if missing — for `select` and `boolean` options only. An `integer` count comes only from a whole-number drawing measurement (the `$design` key, or the takeoff key its name matches); a count the drawing did not measure is left off the line blank, never `0` and never `default_value` (2026-09-17).
 4. Compute quantity from geometry: `linear_feet` for railing, `sqft` for deck_board, `count`/`tread_count` for others.
 5. Apply `ProductPricingModifier` rows whose triggers match the resolved options. Compute `resolved_unit_price`.
 6. Emit `DesignToEstimateAdapter.GeneratedLineItem` carrying the snapshot (`productId`, `componentType`, `quantity`, `configuredOptions`, `resolvedUnitPrice`, `resolvedOptionsLabel`, `lineTotal`).
