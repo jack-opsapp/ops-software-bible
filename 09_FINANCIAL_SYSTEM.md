@@ -1095,6 +1095,40 @@ The Books EXPENSES segment (`ops-web/src/components/books/segments/expenses-segm
 
 **Deep link**: `/books?segment=expenses&batch=<id>` selects the batch and switches to its home bucket (consumed once). Stored `expense_submitted` action_urls (`/accounting?tab=expenses&batch=…`) keep resolving through the middleware's param-preserving 308.
 
+### Branded expense spreadsheet export (OPS-Web, 2026-09-17)
+
+**EXPORT** in the batch detail header downloads one person's expenses for one period as a real, branded `.xlsx` — the document crews previously built by hand in a spreadsheet template and emailed to the office ("Expenses Invoice": colour bar, company identity, Date / Address / Item / Store / Note / Cost, total).
+
+**Entry point.** `src/components/expenses/batch-detail-panel.tsx`, header row beside the status chip — a quiet ghost control, deliberately not in the footer, which belongs to the lifecycle verb (APPROVE ALL / MARK PAID). Available in every batch state; the document carries the batch's status, so an `open` envelope exports honestly as `FILLING` rather than hiding the button. Disabled with a reason when the batch has no lines. **There is no multi-person or whole-console export** — recording spend against jobs across everyone is the accounting sync's job; this document mirrors how the crew invoices and how the office pays.
+
+**Route.** `GET /api/expenses/batches/[batchId]/export` (`src/app/api/expenses/batches/[batchId]/export/route.ts`). Read-only. Gated on the permission model, never a role: `expenses.approve` (scope `all`) exports anyone's envelope; otherwise the caller must be the submitter **and** hold `expenses.view` (scope `own`). A batch outside the caller's company is a 404, not a 403 — `batch_number` is not unique across companies, so every read is company-scoped.
+
+**Source files.**
+
+| File | Role |
+|---|---|
+| `src/lib/expenses/export/expense-export-model.ts` | Pure view-model. Every money, split, overhead, recurring and rejection rule. No I/O, no ExcelJS, no i18n. |
+| `src/lib/expenses/export/expense-workbook.ts` | The only file that imports ExcelJS. Lays out and brands the sheet. |
+| `src/lib/expenses/export/expense-export-source.ts` | Server-side loader (company-scoped; loads **every** allocation). |
+| `src/lib/expenses/export/expense-export-logo.ts` | Fetches, rasterises and downsamples the logo via `sharp`. |
+| `src/lib/expenses/export/expense-export-labels.ts` | Resolves document strings from the `books` dictionary. |
+
+**The two totals, and why both appear.** `linesTotal` is every live line summed — the console header's TOTAL, and what `recalculate_expense_batch_total` stores (it sums all non-deleted lines regardless of status, so rejected lines stay in it). `payableTotal` is `batchOwedAmount` — the figure behind MARK PAID. When they match, the document prints one `TOTAL`. When they differ it prints `TOTAL`, `NOT REIMBURSED` and `PAYABLE`, so the reader can reconcile instead of guessing which number they are looking at. When `reimbursement_amount = 0` the envelope is company-funded: the person block reads `SUBMITTED BY` rather than `PAYABLE TO`, and the totals say `COMPANY-FUNDED — NO REIMBURSEMENT DUE` with no payable figure.
+
+**Per-line eligibility.** A line is not owed to the person when its status is `rejected` (rendered greyed, cost still shown, reason in NOTE) or when `payment_method = 'company_card'` — the same marker `private.execute_expense_decision` uses to decide which lines become `reimbursed` on payout. The NOTE column is otherwise empty: it carries only what the office needs to trust the number (recurring, missing-receipt reason, rejection). On a company-funded envelope the per-line "Company card" note is suppressed, because the totals block already says it.
+
+**JOB, not Address.** The column resolves `projects.title`, joined with ` · ` for a split line and `—` for overhead. Two jobs on one property (e.g. "Deck 1 - 10 Example St" / "Deck 2 - 10 Example St") share one street address, so `projects.address` cannot tell them apart; the reference template's own "Address" column contains job nicknames anyway. The loader reads **all** allocations — unlike `expense-approval-service.ts`, which collapses to `allocations[0]` for its scan rows.
+
+**Branding.** `portal_branding.accent_color` (default `#417394`), the same single source the estimate/invoice PDFs use — no second brand-colour source was introduced. Logo resolution is `portal_branding.logo_url ?? companies.logo_url`, fetched server-side (browser CORS would block it, and S3 prefixes are public only where the bucket policy says so), rasterised and downsampled through `sharp` (which also handles SVG). Every logo failure is non-fatal — the masthead reflows with no gap and no placeholder. Header text on the brand fill is chosen by WCAG relative luminance, so a company that picks a pale accent still gets a readable table header.
+
+**Library.** `exceljs` 4.4.0 (MIT, free, $0). The already-installed SheetJS Community build (`xlsx`, used for parsing catalog uploads) **cannot** produce this document: it silently drops every fill, font and border on write — a styled cell round-trips to a `styles.xml` with zero fills and one default Calibri font — and it cannot embed images. Cell styling and image writing are SheetJS Pro features.
+
+**Fonts — a deliberate design-system divergence.** The workbook uses **Arial**, not Mohave / JetBrains Mono / Cake Mono. An exported spreadsheet is a customer-branded portable document that opens in Excel, Numbers or Google Sheets on someone else's machine, where the OPS brand fonts are not installed and would substitute unpredictably. The portable equivalent of "numbers are always tabular lining" is a real number format on a right-aligned cell (`"$"#,##0.00`, `mm/dd/yyyy`) — which is also what makes the figures add up in the reader's spreadsheet instead of being dead text. Likewise the palette is the *company's* accent on white paper, not the OPS dark canvas and steel-blue accent. Light-canvas document tokens are defined once at the top of `expense-workbook.ts`.
+
+**Page setup.** Landscape Letter, fit to one page wide, header row repeats on every page, frozen panes above the lines, no filler rows. Filename: `<Company> - Expenses - <Person> - <Period>.xlsx`. Document strings follow the **company's** locale (`companies.locale`), not the exporter's, so two admins reading the app in different languages cannot produce differently-worded copies of one record. Copy lives under `expenses.export.*` in `books.json` (en + es).
+
+**Tests.** `src/lib/expenses/export/__tests__/` (model rules + a round-trip that re-opens the written file and asserts cells, number formats, fills and the embedded image) and `tests/integration/expense-export-route.test.ts` (the permission gate and response headers).
+
 ### Receipt OCR (Apple Vision)
 
 On-device OCR using Apple's Vision framework (`VNRecognizeTextRequest` with `.accurate` recognition level). No external vendor dependency.
