@@ -6048,7 +6048,7 @@ Additive + nullable — iOS cross-release safe (shipped clients ignore unknown c
 ### Placement trigger, sweep, RLS
 
 - `trg_place_expense` (AFTER INSERT or UPDATE OF status, expense_date, batch_id on `expenses`) → `place_expense(uuid)` files every non-draft, unbatched expense into its envelope by the expense's date. `migrations/20260601210846_place_expense_trigger.sql`.
-- pg_cron `expense_envelope_sweep_daily` (15:15 UTC) → `expense_envelope_sweep()` auto-sends due envelopes, adopts orphans (safety net), rolls stragglers forward. `migrations/20260601213757_expense_envelope_sweep_deep_link_expense.sql`.
+- pg_cron `expense_envelope_sweep_daily` (06:24 UTC through `private.run_expense_envelope_sweep_controlled()`; schedule verified in `cron.job` 2026-09-17) → `expense_envelope_sweep()` auto-sends due envelopes, adopts orphans (safety net), rolls stragglers forward. `migrations/20260601213757_expense_envelope_sweep_deep_link_expense.sql`.
 - `expense_batches_approve_scope` — RESTRICTIVE UPDATE RLS policy gating `approved`/`auto_approved` transitions to `expenses.approve` holders. `migrations/20260601211914_expense_batches_rls_approve_scope.sql`.
 
 ## Cashflow Forecast (2026-05-11)
@@ -7369,3 +7369,49 @@ Source migration `20260915000120_tryops_demo_funnel.sql` adds four service-only 
 All four tables enable RLS and revoke access from PUBLIC, anon and authenticated; only the service role receives the required table privileges. The five RPCs are invoker-security functions with an empty search path and service-role-only execution: `create_tryops_demo_session`, `collect_tryops_demo_event`, `stage_tryops_demo_signup`, `retry_tryops_demo_trial`, and `reconcile_tryops_demo`. They use actor/session locks, immutable original timing, eligibility rechecks and idempotent constraints. Browser claims cannot supply a trusted owner/company association.
 
 Reconciliation holds a transaction-scoped advisory lease and processes at most 100 due bindings. Invalid/inactive actors leave the pending queue; not-yet-created trials retry after five minutes and expire under the original session boundary. A transient per-item failure does not starve later batches. Local connected PostgreSQL/PostgREST proof includes RLS/grants, duplicate events, expiry, identity replay, actual company/trial creation, delayed recovery and 110 invalid actors preceding a valid trial. Independent production readback verified all 25 columns, 25 validated constraints, 12 valid indexes, five exact function bodies/signatures/defaults, RLS and service-only privileges. Production PostgREST exposes all five intended RPC signatures. Advisors report expected informational notices for policy-free service tables and unused new indexes, with no new-object warning/error. This establishes the deployed schema, not a production signup or welcome-email canary.
+
+## Recurring reimbursements (2026-09-17; applied to production)
+
+A fixed monthly amount the office pays a crew member with their expenses. Behaviour: `09_FINANCIAL_SYSTEM.md § Recurring reimbursements`. Migration: `migrations/20260917023953_expense_recurring_reimbursements.sql`.
+
+### `expense_recurring_reimbursements`
+
+| Column | Type | Rule |
+|---|---|---|
+| `id` | `uuid` PK, default `gen_random_uuid()` | |
+| `company_id` | `uuid NOT NULL` | |
+| `user_id` | `uuid NOT NULL` | The crew member paid. |
+| `name` | `text NOT NULL` | Trimmed, 1–80 characters (`char_length`), no control characters. |
+| `amount` | `numeric NOT NULL` | Greater than 0, at most 10,000, two decimals. |
+| `currency` | `text NOT NULL` | `^[A-Z]{3}$`; the company currency at creation. |
+| `category_id` | `uuid` → `expense_categories(id)` | Optional. |
+| `first_period` | `date NOT NULL` | First day of a month. |
+| `last_period` | `date` | First day of a month, not before `first_period`. `NULL` runs until ended. |
+| `next_period` | `date NOT NULL` | Generator watermark: first month not yet considered; not before `first_period`. |
+| `created_by`, `updated_by` | `uuid NOT NULL` | |
+| `created_at`, `updated_at` | `timestamptz NOT NULL`, default `clock_timestamp()` | `updated_at` is the optimistic-concurrency token; only the commands change it (the generator moves `next_period` without touching it). |
+| `deleted_at`, `deleted_by` | `timestamptz`, `uuid` | Set together. |
+
+Indexes: `(company_id, user_id) WHERE deleted_at IS NULL`, `(next_period) WHERE deleted_at IS NULL`, `(category_id) WHERE category_id IS NOT NULL`.
+
+RLS read policy `expense_recurring_reimbursements_read`: same company and (admin, `expenses.view` at all, `expenses.approve` at all, or the person paid). `anon`/`authenticated` hold SELECT only; `service_role` holds full access. All writes go through the commands. In the `supabase_realtime` publication with `REPLICA IDENTITY FULL`.
+
+### `expenses` additions (nullable)
+
+| Column | Type | Rule |
+|---|---|---|
+| `recurring_reimbursement_id` | `uuid` → `expense_recurring_reimbursements(id)` | Set on the monthly line a setup files; `NULL` for receipts. |
+| `recurring_period` | `date` | First day of the month the line pays for. |
+
+Check `expenses_recurring_period_check`: both set or both null, and the period is a first of month. Unique index `expenses_recurring_reimbursement_period_key` on `(recurring_reimbursement_id, recurring_period)` where set; it includes soft-deleted (skipped) rows, so a skipped month is never filed again.
+
+### Private objects and replaced functions
+
+- `private.expense_recurring_reimbursement_scope (transaction_id xid8, company_id uuid, actor_id uuid)`, primary key `(transaction_id, company_id)`: a per-transaction capability proving a setup command is running. RLS enabled, no grants.
+- Trigger `enforce_expense_recurring_line_authority` (BEFORE INSERT/UPDATE/DELETE on `expenses`) keeps lines office-owned.
+- `private.enforce_expense_edit_authority()` replaced to honour the scope (definition MD5 `1955996bf8bcff1b568ab1ea3776b47c`).
+- `public.expense_envelope_sweep()` replaced to file due months first and to auto-send job-less per-job envelopes (definition MD5 `b8aef34bc63889db33a6a2dd6cbf6ace`).
+
+The company data manifest classifies `expense_recurring_reimbursements` as company-scoped, soft-deletable, exported and retained on purge (OPS-Web `src/lib/data/company-data-manifest.ts`, manifest version `2026-09-17`).
+
+iOS reads the columns as `ExpenseDTO.recurringReimbursementId` / `recurringPeriod` (`var … = nil`, so fixtures predating them still compile and rows from older servers still decode) and the setup as `ExpenseRecurringReimbursementDTO` with `lines: [RecurringLineSummary]`.

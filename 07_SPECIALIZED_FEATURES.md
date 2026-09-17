@@ -5100,7 +5100,7 @@ The iOS reporter's POINT AT IT step lets the operator pick the element the repor
 
 ### §14.3.4 Expenses Ready for Review — server-side auto-send (2026-06-01)
 
-Emitted by the daily envelope sweep (`public.expense_envelope_sweep()`, pg_cron `expense_envelope_sweep_daily` at 15:15 UTC) when an `open` expense envelope passes `period_end + expense_settings.auto_submit_grace_days` and is auto-sent (flipped `open → pending_review`). **One notification per envelope per approver** — not per expense. This is the server-authoritative replacement for the iOS client's on-submit notification: even a stale app version's expenses now get an envelope and a single review notification when the sweep sends. See `09_FINANCIAL_SYSTEM.md § Server-Authoritative Expense Envelopes (2026-06-01)`.
+Emitted by the daily envelope sweep (`public.expense_envelope_sweep()`, pg_cron `expense_envelope_sweep_daily` at 06:24 UTC through `private.run_expense_envelope_sweep_controlled()`; schedule verified in `cron.job` 2026-09-17) when an `open` expense envelope passes `period_end + expense_settings.auto_submit_grace_days` and is auto-sent (flipped `open → pending_review`). **One notification per envelope per approver** — not per expense. This is the server-authoritative replacement for the iOS client's on-submit notification: even a stale app version's expenses now get an envelope and a single review notification when the sweep sends. See `09_FINANCIAL_SYSTEM.md § Server-Authoritative Expense Envelopes (2026-06-01)`.
 
 | Field | Value |
 |-------|-------|
@@ -5138,6 +5138,23 @@ Dispatched **client-side by OPS-Web** (`notification-dispatch.ts → dispatchExp
 | `persistent` | `false` (dismissible) |
 
 Undoing a payout (`unmark_expense_batch_paid`) intentionally sends nothing — a correction shouldn't ping the crew twice.
+
+### §14.3.4c Recurring reimbursement notices (`expense_recurring`, 2026-09-17)
+
+Written server-side by the recurring reimbursement commands (`09_FINANCIAL_SYSTEM.md § Recurring reimbursements`), one row per event, to the person paid. Nobody is notified about a change to their own reimbursement.
+
+| Event | `title` | `body` | `dedupe_key` |
+|---|---|---|---|
+| Added | Recurring reimbursement added | `<name> · <money> a month, starting <Mon YYYY>` | `expense-recurring:<id>:added` |
+| Amount changed | Recurring reimbursement updated | `<name> · <money> a month` | `expense-recurring:<id>:updated:<updated_at in µs>` |
+| Ending set | Recurring reimbursement ending | `<name> · last month <Mon YYYY>` | `expense-recurring:<id>:ends:<YYYY-MM>` |
+| End removed | Recurring reimbursement resumed | `<name> · <money> a month` | `expense-recurring:<id>:resumed:<updated_at in µs>` |
+| Month skipped | Recurring reimbursement skipped | `<name> · <Mon YYYY>` | `expense-recurring-skip:<expense_id>` — resolved (`resolution_reason = recurring_reimbursement_restored`) when the month is restored |
+| Removed | Recurring reimbursement removed | `<name>` | `expense-recurring:<id>:removed` |
+
+Common fields: `type = expense_recurring`, `deep_link_type = expense`, `batch_id` = the envelope holding the latest live month (the skipped month's envelope for a skip; `NULL` on removal), `action_url = /books?segment=expenses` plus `&batch=<batch_id>` when set, `action_label = View expenses`, `persistent = false`. Money renders with its currency prefix (`CA$275.00`); a name change alone sends nothing.
+
+Rendering: the web rail registers `NOTIF_TYPE_META.expense_recurring` (`RECURRING` / `repeat` / ambient) and the dashboard notifications widget labels it "Recurring". iOS `NotificationListView` shows the repeat icon in secondary text and routes the row like every expense notice (batch-aware through `deep_link_type = expense`); `AppDelegate` push routing includes the type. Shipped iOS builds without the icon fall back to the generic bell and still route through `deep_link_type`.
 
 ### §14.3.5 Lead / Opportunity lifecycle notification contract (2026-06-09)
 

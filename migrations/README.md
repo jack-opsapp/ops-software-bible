@@ -30,6 +30,16 @@ and rename the file to `<ledger_version>_<ledger_name>.sql`, then delete its ent
 
 _None._
 
+## Recurring reimbursements (2026-09-17 UTC)
+
+`20260917023953_expense_recurring_reimbursements.sql` — applied 2026-09-17T02:39:53Z through the Supabase MCP. 54,696 bytes,
+MD5 `40a89c159083c997785490c93666e819`,
+SHA-256 `c90a9a0a84c942fc3c984d6ac480a65cef17b81b8cb46ad744273ad7ae741c00`.
+The whole-file MD5 (trailing newline included) equals the ledger `statements[1]` MD5, so the archive is
+byte-identical to what production ran. Prepared as OPS-Web
+`supabase/migrations/20260917030000_expense_recurring_reimbursements.sql` (branch `feat/recurring-reimbursements`)
+and applied unchanged.
+
 ## Site-visit restricted OAuth trial (2026-09-14 UTC)
 
 `20260914204329_site_visit_trial_subject_indexes.sql` archives the additive actor/company FK indexes (source alias `20260914204207`): 420 bytes, SHA-256 `bb75e739b1a3e7a48d199aecd071ee863cbcfcf89ae4c45b93fbeed06558efd7`. All three trial subject FKs now have leading indexes; no row or authority state changed.
