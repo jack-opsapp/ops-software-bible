@@ -7322,6 +7322,8 @@ Exact-company tables `expense_accounting_settings`, `expense_accounting_category
 
 Direct receipt, allocation and batch payment edits retain approval authority. Crew cannot forge paid fields or alter a reimbursed financial snapshot. Own under-threshold automatic approval retains allocation editing. Notifications and review queue transitions commit together.
 
+Export and account closure of all seven tables: § Company data export and account closure (2026-09-17).
+
 Pending `20260914200910_expense_payroll_reimbursement_projection.sql` updates the existing payroll-read function to consume this projection and invalidates payroll read revisions once. It preserves function security/ACL and refuses unreviewed source drift. See chapter 09 for the corrected zero-debt and currency semantics.
 
 
@@ -7372,6 +7374,8 @@ All four tables enable RLS and revoke access from PUBLIC, anon and authenticated
 
 Reconciliation holds a transaction-scoped advisory lease and processes at most 100 due bindings. Invalid/inactive actors leave the pending queue; not-yet-created trials retry after five minutes and expire under the original session boundary. A transient per-item failure does not starve later batches. Local connected PostgreSQL/PostgREST proof includes RLS/grants, duplicate events, expiry, identity replay, actual company/trial creation, delayed recovery and 110 invalid actors preceding a valid trial. Independent production readback verified all 25 columns, 25 validated constraints, 12 valid indexes, five exact function bodies/signatures/defaults, RLS and service-only privileges. Production PostgREST exposes all five intended RPC signatures. Advisors report expected informational notices for policy-free service tables and unused new indexes, with no new-object warning/error. This establishes the deployed schema, not a production signup or welcome-email canary.
 
+Export and account closure of the company-reachable Try OPS tables: § Company data export and account closure (2026-09-17).
+
 ## Recurring reimbursements (2026-09-17; applied to production)
 
 A fixed monthly amount the office pays a crew member with their expenses. Behaviour: `09_FINANCIAL_SYSTEM.md § Recurring reimbursements`. Migration: `migrations/20260917023953_expense_recurring_reimbursements.sql`.
@@ -7417,3 +7421,61 @@ Check `expenses_recurring_period_check`: both set or both null, and the period i
 The company data manifest classifies `expense_recurring_reimbursements` as company-scoped, soft-deletable, exported and retained on purge (OPS-Web `src/lib/data/company-data-manifest.ts`, manifest version `2026-09-17`).
 
 iOS reads the columns as `ExpenseDTO.recurringReimbursementId` / `recurringPeriod` (`var … = nil`, so fixtures predating them still compile and rows from older servers still decode) and the setup as `ExpenseRecurringReimbursementDTO` with `lines: [RecurringLineSummary]`.
+
+Account closure of a company with a live recurring line is refused by `enforce_expense_recurring_line_authority` until the pending authority repair is applied; see § Company data export and account closure (2026-09-17).
+
+## Company data export and account closure: expense accounting, Try OPS and Ads tables (2026-09-17; source ready, migrations unapplied)
+
+Source: OPS-Web branch `fix/expense-accounting-data-manifest` on main `7c3be79f4` — `7d2730306` (authority repair), `337673773` (classification, snapshots, ledger closure), `faa98757a` (PostgreSQL proof), `d197e45ed` (plan). Not pushed. Migrations `20260917050651_expense_authority_account_closure.sql` (SHA-256 `ec2af97d2750c96ef857ed5fe6773e539e1cab48ac65b0e4f3ce118a9fd1e6f4`) and `20260917050826_expense_accounting_company_data_lifecycle.sql` (SHA-256 `6982f2099c991bca9acba18bcb326888d36a3f99c6546d60a5c9cc7b88b7bb4b`) are mirrored byte-identical in `migrations/pending/`. Neither is applied to production.
+
+### Snapshots and version
+
+`company-data-scope-snapshot.ts` regenerated from production 2026-09-17: 282 in-scope tables (241 carrying `company_id`, 41 reaching one by foreign key), 5 auth-identity tables out of scope. The 2026-09-04 snapshot lacked 15; `expense_recurring_reimbursements` moves from the staged list into the live snapshot. `company-data-privilege-snapshot.ts`: 420 public base tables, 376 fully available to `service_role`, 44 blocked — `expense_accounting_events` and `expense_accounting_postings` grant SELECT only. All 15 tables are absent from `database.types.ts` and listed in `UNTYPED_TABLE_ALLOWLIST` with their creating ledger. `MANIFEST_VERSION` is `2026-09-17.2`; production already emits `2026-09-17` for the recurring reimbursement classification, so a same-day change takes a `.N` suffix.
+
+### Classification
+
+| Table | Scope | Closure | Export | Reason |
+|---|---|---|---|---|
+| `expense_accounting_settings` | `company_id uuid` | hard | no | Provider posting configuration for one connection (currency, country, liability, reimbursement, company-card and tax-component account ids). |
+| `expense_accounting_category_mappings` | `company_id uuid` | hard | no | Expense category → provider account id. |
+| `expense_accounting_payee_mappings` | `company_id uuid` | hard | no | Crew member → provider employee id. |
+| `expense_accounting_project_mappings` | `company_id uuid` | hard | no | Project → provider project id. |
+| `expense_accounting_tax_mappings` | `company_id uuid` | hard | no | Tax rate → provider tax code id. |
+| `expense_accounting_postings` | `company_id uuid` | hard, through `purge_company_rows` | no | Frozen provider payloads, posting graphs and provider ids. |
+| `expense_accounting_events` | `company_id uuid` | hard, through `purge_company_rows` | no | Append-only posting ledger derived from expenses. |
+| `ads_conversion_events` | `company_id uuid` | hard | no | Google Ads conversion upload outbox; queued conversions are never sent for a closed account. |
+| `tryops_demo_trials`, `tryops_outcomes`, `tryops_trial_links` | `company_id uuid` | hard | no | Try OPS experiment and demo measurement. |
+| `tryops_demo_bindings`, `tryops_signup_bindings` | parent `users.actor_id` | hard | no | Actor-keyed bindings; `tryops_signup_bindings.company_id` stays null until the trial attaches. |
+| `tryops_health_notifications` | parent `notifications.notification_id` | hard | no | Platform alert delivery receipt; its NO ACTION reference would otherwise refuse the notification purge. |
+
+Mappings and settings are the same connection-bound provider bookkeeping as the supplier-bill mappings. OPS is not the books of record: the expenses the ledgers derive from are exported and tombstoned, and the retained set (`expense_batches`, `expense_categories`, `expense_recurring_reimbursements`, `audit_log`, `billing_events`, the SPEC ledger) is unchanged.
+
+### Closure order and side effects
+
+- `expense_accounting_postings` and the five connection-bound tables are purged before `accounting_connections` and `accounting_sync_queue`. Postings reference both with NO ACTION, and deleting a connection cascades into its queue.
+- `expense_accounting_events` is purged after `expenses`. Tombstoning an approved expense appends reversal events (or a review event for legacy history) through `zz_capture_expense_accounting`.
+- Deleting allocations (a parent-scoped step, first in the plan) queues `zz_capture_expense_accounting_allocation`, DEFERRABLE INITIALLY DEFERRED. Left alone it re-creates `private.expense_accounting_state` rows and review events at COMMIT.
+- `purge_company_rows('expense_accounting_events')` therefore runs `SET CONSTRAINTS public.zz_capture_expense_accounting_allocation IMMEDIATE` when that constraint trigger exists, deletes `private.expense_accounting_state` for the company, then deletes the ledger. The allowlist grows to 44 tables. Definition MD5 `b549970fec8be3a60c85f3a5987cac72` (released 2026-09-04) → `f3e452f5b8139b2bd0df33b0aab27b17`.
+
+### Closure defect in production since 2026-09-15
+
+`public.purge_company_data` runs inside the API session (login `authenticator`, role `service_role`) and clears `request.jwt.claims`. Three authority triggers recognised maintenance only as `v_role='service_role' or (v_role is null and session_user='postgres')`. PostgREST 12 and later never set `request.jwt.claim.role`, so the closure of any company with an expense allocation, a live expense or a live recurring line raised 42501 and rolled back. Production 2026-09-17: 3 of 55 live companies affected; no company closed after 2026-09-15 06:24Z. The authority repair adds one condition to each — empty claims are maintenance, the contract `enforce_expense_edit_authority` and `purge_company_data` already follow. Only `purge_company_data` (EXECUTE: service_role) clears claims inside an API session; every client check after the maintenance test is unchanged.
+
+| Function | Released MD5 | Repaired MD5 |
+|---|---|---|
+| `private.enforce_expense_accounting_authority()` | `15919972aa7bced567a0ae3dfff5a807` | `78a83536fed8e07cd68f2ab06fc9b9c6` |
+| `private.enforce_expense_accounting_related_authority()` | `2385c486b3afbadff7144d40b7c670f5` | `3877ccc6e2eeaf301a8c034c5f5ec39d` |
+| `private.enforce_expense_recurring_line_authority()` | `770938427ea5240134ea97e82968dae6` | `dd60236cf95314a46902076b130e3aec` |
+
+The recurring reimbursement migration's own baseline guard pins the released `enforce_expense_accounting_authority` MD5; it is already applied and must not be replayed after the repair.
+
+Without this change the manifest served today also fails closures of companies with frozen provider postings at `accounting_connections`, retains `expense_accounting_events` and private accounting state for every other closed company, and a Try OPS health receipt refuses its notification's purge.
+
+### Release order
+
+1. Apply `20260917050651_expense_authority_account_closure`, then `20260917050826_expense_accounting_company_data_lifecycle`. Each refuses to install over drift from the 2026-09-17 definitions and reapplies safely.
+2. Only then deploy the web change. Deployed first, every closure fails at `purge_company_rows('expense_accounting_postings')` with 42501.
+
+### Proof
+
+`scripts/test-company-data-purge-expense-postgres.sh` on disposable PostgreSQL 17.11: 34 closure-path function definitions, 27 triggers, 34 foreign keys, 21 service_role privilege sets and the PostgREST identities match production; both migrations install exactly and reapply; 3 drift rejections leave nothing installed. `tests/integration/company-data-purge-expense-postgres-runtime.test.ts` (7 tests) closes a seeded company the way the delete-account route does and reproduces today's 42501 failure, today's manifest failing on postings and a Try OPS receipt and then silently keeping events and private state, an early ledger step and a skipped capture flush leaving history behind, crew sessions still refused after the repair, and a complete closure with tombstones and retained rows intact and a byte-identical bystander company. Accounting (123), recurring reimbursement (96) and correction (69) assertions and 7 contention graphs give identical results with the repair. `tests/integration/company-data-manifest.test.ts` 88/88; `tsc --noEmit` shows only the 6 pre-existing test-file errors.
