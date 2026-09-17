@@ -7422,15 +7422,15 @@ The company data manifest classifies `expense_recurring_reimbursements` as compa
 
 iOS reads the columns as `ExpenseDTO.recurringReimbursementId` / `recurringPeriod` (`var … = nil`, so fixtures predating them still compile and rows from older servers still decode) and the setup as `ExpenseRecurringReimbursementDTO` with `lines: [RecurringLineSummary]`.
 
-Account closure of a company with a live recurring line is refused by `enforce_expense_recurring_line_authority` until the pending authority repair is applied; see § Company data export and account closure (2026-09-17).
+Until the authority repair of 2026-09-17 16:54Z, `enforce_expense_recurring_line_authority` refused account closure of a company with a live recurring line; see § Company data export and account closure (2026-09-17).
 
-## Company data export and account closure: expense accounting, Try OPS and Ads tables (2026-09-17; source ready, migrations unapplied)
+## Company data export and account closure: expense accounting, Try OPS and Ads tables (2026-09-17; applied to production and deployed)
 
-Source: OPS-Web branch `fix/expense-accounting-data-manifest` on main `7c3be79f4` — `7d2730306` (authority repair), `337673773` (classification, snapshots, ledger closure), `faa98757a` (PostgreSQL proof), `d197e45ed` (plan). Not pushed. Migrations `20260917050651_expense_authority_account_closure.sql` (SHA-256 `ec2af97d2750c96ef857ed5fe6773e539e1cab48ac65b0e4f3ce118a9fd1e6f4`) and `20260917050826_expense_accounting_company_data_lifecycle.sql` (SHA-256 `6982f2099c991bca9acba18bcb326888d36a3f99c6546d60a5c9cc7b88b7bb4b`) are mirrored byte-identical in `migrations/pending/`. Neither is applied to production.
+Source: OPS-Web PR #134, branch `fix/expense-accounting-data-manifest` — `7d2730306` (authority repair), `337673773` (classification, snapshots, ledger closure), `faa98757a` (PostgreSQL proof), `d197e45ed` (plan) — merged to main as `7c5784e1a` at 2026-09-17T16:58:58Z. Production deployment `dpl_7ZaTz5amxi9A6wKiY5zJPoGDZvWT` (READY, aliased to `app.opsapp.co`) serves that commit. Migrations applied unchanged before the deploy: ledger `20260917165432_expense_authority_account_closure` (OPS-Web source `20260917050651_…`, SHA-256 `ec2af97d2750c96ef857ed5fe6773e539e1cab48ac65b0e4f3ce118a9fd1e6f4`) and `20260917165552_expense_accounting_company_data_lifecycle` (source `20260917050826_…`, SHA-256 `6982f2099c991bca9acba18bcb326888d36a3f99c6546d60a5c9cc7b88b7bb4b`), archived byte-identical in `migrations/`.
 
 ### Snapshots and version
 
-`company-data-scope-snapshot.ts` regenerated from production 2026-09-17: 282 in-scope tables (241 carrying `company_id`, 41 reaching one by foreign key), 5 auth-identity tables out of scope. The 2026-09-04 snapshot lacked 15; `expense_recurring_reimbursements` moves from the staged list into the live snapshot. `company-data-privilege-snapshot.ts`: 420 public base tables, 376 fully available to `service_role`, 44 blocked — `expense_accounting_events` and `expense_accounting_postings` grant SELECT only. All 15 tables are absent from `database.types.ts` and listed in `UNTYPED_TABLE_ALLOWLIST` with their creating ledger. `MANIFEST_VERSION` is `2026-09-17.2`; production already emits `2026-09-17` for the recurring reimbursement classification, so a same-day change takes a `.N` suffix.
+`company-data-scope-snapshot.ts` regenerated from production 2026-09-17: 282 in-scope tables (241 carrying `company_id`, 41 reaching one by foreign key), 5 auth-identity tables out of scope. The 2026-09-04 snapshot lacked 15; `expense_recurring_reimbursements` moves from the staged list into the live snapshot. `company-data-privilege-snapshot.ts`: 420 public base tables, 376 fully available to `service_role`, 44 blocked — `expense_accounting_events` and `expense_accounting_postings` grant SELECT only. All 15 tables are absent from `database.types.ts` and listed in `UNTYPED_TABLE_ALLOWLIST` with their creating ledger. `MANIFEST_VERSION` is `2026-09-17.2`: production had emitted `2026-09-17` for the recurring reimbursement classification earlier that day, so a same-day change takes a `.N` suffix.
 
 ### Classification
 
@@ -7457,7 +7457,7 @@ Mappings and settings are the same connection-bound provider bookkeeping as the 
 - Deleting allocations (a parent-scoped step, first in the plan) queues `zz_capture_expense_accounting_allocation`, DEFERRABLE INITIALLY DEFERRED. Left alone it re-creates `private.expense_accounting_state` rows and review events at COMMIT.
 - `purge_company_rows('expense_accounting_events')` therefore runs `SET CONSTRAINTS public.zz_capture_expense_accounting_allocation IMMEDIATE` when that constraint trigger exists, deletes `private.expense_accounting_state` for the company, then deletes the ledger. The allowlist grows to 44 tables. Definition MD5 `b549970fec8be3a60c85f3a5987cac72` (released 2026-09-04) → `f3e452f5b8139b2bd0df33b0aab27b17`.
 
-### Closure defect in production since 2026-09-15
+### Closure defect in production 2026-09-15 to 2026-09-17 (repaired)
 
 `public.purge_company_data` runs inside the API session (login `authenticator`, role `service_role`) and clears `request.jwt.claims`. Three authority triggers recognised maintenance only as `v_role='service_role' or (v_role is null and session_user='postgres')`. PostgREST 12 and later never set `request.jwt.claim.role`, so the closure of any company with an expense allocation, a live expense or a live recurring line raised 42501 and rolled back. Production 2026-09-17: 3 of 55 live companies affected; no company closed after 2026-09-15 06:24Z. The authority repair adds one condition to each — empty claims are maintenance, the contract `enforce_expense_edit_authority` and `purge_company_data` already follow. Only `purge_company_data` (EXECUTE: service_role) clears claims inside an API session; every client check after the maintenance test is unchanged.
 
@@ -7469,12 +7469,15 @@ Mappings and settings are the same connection-bound provider bookkeeping as the 
 
 The recurring reimbursement migration's own baseline guard pins the released `enforce_expense_accounting_authority` MD5; it is already applied and must not be replayed after the repair.
 
-Without this change the manifest served today also fails closures of companies with frozen provider postings at `accounting_connections`, retains `expense_accounting_events` and private accounting state for every other closed company, and a Try OPS health receipt refuses its notification's purge.
+Before this release the manifest (version `2026-09-17`) also failed closures of companies with frozen provider postings at `accounting_connections`, retained `expense_accounting_events` and private accounting state for every other closed company, and let a Try OPS health receipt refuse its notification's purge.
 
-### Release order
+### Release (2026-09-17)
 
-1. Apply `20260917050651_expense_authority_account_closure`, then `20260917050826_expense_accounting_company_data_lifecycle`. Each refuses to install over drift from the 2026-09-17 definitions and reapplies safely.
-2. Only then deploy the web change. Deployed first, every closure fails at `purge_company_rows('expense_accounting_postings')` with 42501.
+1. 16:54:32Z — authority repair applied (ledger `20260917165432`). Readback: the three repaired MD5s above, all five triggers attached and enabled, no client EXECUTE.
+2. 16:55:52Z — ledger closure applied (ledger `20260917165552`). Readback: `purge_company_rows` MD5 `f3e452f5b8139b2bd0df33b0aab27b17`, both ledgers allowlisted, EXECUTE service_role only, `purge_company_data` unchanged (`e355caad23bdb8038b18d60146cb9274`). Both ledger statements are byte-identical to the source files.
+3. 16:58:58Z — PR #134 merged (`7c5784e1a`); 17:06Z production deployment READY on `app.opsapp.co`. The order is load-bearing: the web change deployed before the ledger migration would make every closure fail at `purge_company_rows('expense_accounting_postings')` with 42501.
+
+Security advisors after the release: no finding mentions either purge function, the three authority functions, the two ledgers or `private.expense_accounting_state`. The `lint-and-test` CI failure on PR #134 is the pre-existing `mcp-v3-synthetic-canary-runtime.sql` permission error also failing on main `7c3be79f4`.
 
 ### Proof
 

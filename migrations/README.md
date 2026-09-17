@@ -30,6 +30,23 @@ and rename the file to `<ledger_version>_<ledger_name>.sql`, then delete its ent
 
 _None._
 
+## Account closure: expense authority and expense ledgers (2026-09-17 UTC)
+
+`20260917165432_expense_authority_account_closure.sql` — applied 2026-09-17T16:54:32Z through the Supabase MCP. 13,572 bytes,
+MD5 `6d911de4d22ef90ef79b965646e4b82f`,
+SHA-256 `ec2af97d2750c96ef857ed5fe6773e539e1cab48ac65b0e4f3ce118a9fd1e6f4`.
+Prepared as OPS-Web `supabase/migrations/20260917050651_expense_authority_account_closure.sql`.
+
+`20260917165552_expense_accounting_company_data_lifecycle.sql` — applied 2026-09-17T16:55:52Z through the Supabase MCP. 10,255 bytes,
+MD5 `5af5743ff8e534f20513fb71cf65a4ce`,
+SHA-256 `6982f2099c991bca9acba18bcb326888d36a3f99c6546d60a5c9cc7b88b7bb4b`.
+Prepared as OPS-Web `supabase/migrations/20260917050826_expense_accounting_company_data_lifecycle.sql`.
+
+Both were applied unchanged, authority repair first, before OPS-Web PR #134 (merge `7c5784e1a`) deployed. Each
+whole-file MD5 (trailing newline included) equals its ledger `statements[1]` MD5, so the archives are byte-identical to
+what production ran. They replace the `pending/` copies added in `a3eb9bd`. Behaviour:
+`03_DATA_ARCHITECTURE.md` § Company data export and account closure (2026-09-17).
+
 ## Recurring reimbursements (2026-09-17 UTC)
 
 `20260917023953_expense_recurring_reimbursements.sql` — applied 2026-09-17T02:39:53Z through the Supabase MCP. 54,696 bytes,
