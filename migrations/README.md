@@ -28,7 +28,11 @@ A file here with no ledger row is an exception to the 1:1 coverage guarantee and
 until it is applied. On apply, read the stamped version back from `supabase_migrations.schema_migrations`
 and rename the file to `<ledger_version>_<ledger_name>.sql`, then delete its entry here.
 
-_None._
+- `20260918060000_site_visits_capture_permission.sql` — CREW SITE VISITS P1 part B (registers and grants
+  `site_visits.capture`). Must be applied in the same window as the OPS-Web release of branch
+  `feat/site-visits-capture-permission`: `private.assert_canonical_role_permission_payload` requires the web
+  editor registry to match `private.lead_permission_editor_registry` exactly, so either side alone breaks web
+  role saves. Guard: refuses to run unless part A (`20260918054412_site_visit_assignee_access`) is applied.
 
 ## Account closure: expense authority and expense ledgers (2026-09-17 UTC)
 

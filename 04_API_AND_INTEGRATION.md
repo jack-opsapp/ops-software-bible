@@ -2040,6 +2040,26 @@ Operator UI is `Settings → Operations → Site Visit Types` and requires `sett
 
 Rollout order is strict: apply the migration; regenerate live database types and the live company-data scope snapshot; add `site_visit_types` to the export/account-closure manifest; deploy the compatible web contract; then distribute the signed iOS client. The first four gates completed on 2026-08-06: production migration version `20260806211208`, live-derived scope/privilege snapshots, lifecycle manifest/tests, and OPS-Web production commit `7e41c289`. Verified iOS source is published on `main` at `fd6d6e7d`; all eight focused checklist/settings simulator tests pass. Signed device/App Store distribution remains pending and must not be inferred from the source push.
 
+## Site-visit assignee access (production live 2026-09-18)
+
+**Release status:** ledger `20260918054412_site_visit_assignee_access` (md5 `1bae7bd7e865107522a29a964f3048f2`, mirrored in `migrations/`) is live. Part B `20260918060000_site_visits_capture_permission` is checked in, NOT applied (see `migrations/README.md` § Pending). Design: `specs/2026-09-18-crew-site-visit-access.md`.
+
+**Rule:** assignment is the grant. A user whose id is in `site_visits.assignee_ids` (case-insensitive; active member of the visit's company) holds, for that visit only and with no `pipeline.*` permission:
+- READ of the visit row (restrictive `assigned_lead_scope_select` = lead/project view OR `private.current_user_is_site_visit_assignee(company_id, assignee_ids)`), including cancelled and deleted rows so cancellations and tombstones reach the phone;
+- READ/WRITE of its artifacts, checklist answers and identity drafts while the visit is not deleted (`private.current_user_can_access_site_visit_child`), which also admits `apply_site_visit_write(_v2)` answer commands;
+- `save_site_visit_capture` on an existing visit with `opportunity_id`, `project_id`, `project_ref`, `client_id`, `client_ref` and `deleted_at` unchanged (any change → 42501 `SITE_VISIT_AUTHORITY_DENIED`); a closed visit still answers 55000 `SITE_VISIT_CAPTURE_CLOSED`;
+- `complete_site_visit_capture` / `complete_site_visit_guarded`.
+
+It never grants: `delete_site_visit_capture`, `discard_site_visit_capture`, book / reschedule / cancel, `apply_site_visit_stage_command`, lead creation, conversion, or any read of `opportunities` rows (lead RLS unchanged). Direct table updates stay lead/project-scoped (RLS update policy unchanged).
+
+**Walk-up capture:** `save_site_visit_capture` creating a visit with no lead and no project requires `has_permission(actor,'site_visits.capture','all')` or a non-null `private.effective_pipeline_scope_for_user(actor, company, 'pipeline.convert')`. Until part B registers and grants `site_visits.capture`, only convert holders (and admins through the bypass) pass.
+
+### `public.read_site_visit_briefs(p_site_visit_ids uuid[]) → setof (site_visit_id uuid, opportunity_id uuid, contact_name text, title text, address text, ai_summary text, description text)`
+
+SECURITY DEFINER, `authenticated` only, ≤ 200 ids (22023 `SITE_VISIT_BRIEF_REQUEST_INVALID`), no signed-in user → 42501. One row per requested, non-deleted visit in the caller's company that the caller can currently read (lead/project view or assignee); an absent id means the caller can no longer read that visit. Lead columns come from the linked non-deleted opportunity and are filled only when the caller is assigned to the visit or can view the lead; null for a leadless visit. Consumer: the iOS Schedule's `CalendarSiteVisitLeadResolver` (lead display fields + the set of still-readable booked visits).
+
+**Proof (2026-09-18):** the same role-play script ran rolled back before apply and again against the live functions: an assigned Crew user with no pipeline grants reads the visit, its answers and its brief but not the lead row; saves with unchanged links; is refused re-linking, client change, soft delete, delete RPC, booking cancel and (before part B) walk-up; writes an answer; completes. An unassigned Crew user reads nothing and is refused every write. The owner's reads, saves and walk-up are unchanged. After an office cancellation the assignee still reads the visit and every write is closed.
+
 ## Site-visit booking RPCs (production live 2026-08-11)
 
 **Release status:** migrations `20260810194251_site_visit_booking.sql` (columns, indexes, trigger gate), `20260811053942_site_visit_booking_rpcs.sql` (the three functions), and `20260811054117_site_visit_booking_trigger_fn_acl.sql` (trigger-function grant hygiene) are applied in production and mirrored in `migrations/`. Design: `specs/2026-08-10-site-visit-booking-calendar-design.md`.

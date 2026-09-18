@@ -23,17 +23,17 @@
 
 New helpers (`private`, SECURITY DEFINER, `search_path ''`, revoked from app roles):
 - `actor_is_site_visit_assignee(p_actor uuid, p_company text, p_assignee_ids text[]) → boolean` — actor is an active, non-deleted member of `p_company` (company not deleted) and `lower(p_actor::text) = any(lower(ids))`. READ authority.
-- `actor_can_work_site_visit_as_assignee(p_actor uuid, p_visit public.site_visits) → boolean` — the above AND `deleted_at is null` AND `status <> 'cancelled'`. WRITE authority.
 - `current_user_is_site_visit_assignee(company text, assignee_ids text[])` — READ wrapper over `private.get_current_user_id()`, company must equal the caller's.
 
 Changed:
 - RLS `site_visits.assigned_lead_scope_select` (restrictive) → `current_user_can_view_site_visit(...) OR current_user_is_site_visit_assignee(company_id, assignee_ids)`. Insert/update/delete policies unchanged (assignee writes go through definer RPCs).
-- `current_user_can_access_site_visit_child` → add assignee branch: read = READ authority; write = WRITE authority on the parent row. Covers artifacts / answers / identity-draft RLS and `apply_site_visit_write(_v2)`.
+- `current_user_can_access_site_visit_child` → add the assignee branch for read and write; the helper already requires a non-deleted parent. (As built: a single assignee predicate; closed/cancelled refusals come from each capture RPC's own checks — `SITE_VISIT_CAPTURE_CLOSED`, `capture_closed` conflicts, `cannot_complete_cancelled_site_visit` — so phones settle gracefully instead of parking on 42501.) Covers artifacts / answers / identity-draft RLS and `apply_site_visit_write(_v2)`.
 - `save_site_visit_capture` → existing visit: allowed if lead/project authority on current AND proposed links (today), OR assignee of the current row AND all five link columns unchanged. New visit: lead/project authority as today; additionally a leadless, projectless new visit requires `site_visits.capture` or any-scope `pipeline.convert` (`has_permission(actor,'site_visits.capture','all')` or `private.effective_pipeline_scope_for_user(actor, company, 'pipeline.convert') is not null`).
 - `apply_site_visit_rows`, `apply_site_visit_rows_v2`, `site_visit_review_rows`, `site_visit_review_rows_v2` (answer branch) → `actor_can_edit_site_visit(...) OR actor_is_site_visit_assignee(...)` on the locked visit row.
 - `complete_site_visit_guarded` → `current_user_can_edit_site_visit(...) OR current_user_is_site_visit_assignee(...)`.
 - New `public.read_site_visit_briefs(p_site_visit_ids uuid[]) → setof (site_visit_id uuid, opportunity_id uuid, contact_name text, title text, address text, ai_summary text, description text)`; SECURITY DEFINER; `authenticated` only; ≤ 200 distinct ids. One row per requested visit the caller can currently READ (lead/project view OR assignee), same company, visit not deleted; lead columns filled from the linked, non-deleted opportunity (null for a leadless visit). Lead columns mirror `CalendarSiteVisitLeadDetails` exactly. Absence of a requested id = the caller cannot read that visit.
-- Assignee WRITE branches (`save_site_visit_capture`, answer rows, review rows, completion, child write) use `actor_can_work_site_visit_as_assignee` on the row locked `for update`.
+- Assignee branches in `save_site_visit_capture`, answer rows, review rows and completion use `actor_is_site_visit_assignee` on the row locked `for update`; each function's existing closed/cancelled checks then apply.
+- **Delivery split (as built):** part A (everything above except the permission) is ledger `20260918054412`, live. Part B (registry row, preset grants, pipeline flag) ships with the OPS-Web registry release because web role saves require both registries to match exactly.
 - Permission `site_visits.capture`: `private.lead_permission_editor_registry` row (`{all}`), `role_permissions` rows for the five presets, added to `feature_flags('pipeline').permissions`.
 - Every replaced function is md5-guarded against its reviewed live definition.
 

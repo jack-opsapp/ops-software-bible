@@ -1635,6 +1635,8 @@ Timeline includes:
 
 ## Site Visits
 
+**Who may work a visit (2026-09-18).** Lead/project authority as before, plus: anyone listed in `assignee_ids` may open, capture and complete that visit with no `pipeline.*` permission, but never re-link, delete, reschedule or move the lead's stage. Starting a walk-up capture needs `site_visits.capture` (part B, pending) or any-scope `pipeline.convert`. Contract: `04_API_AND_INTEGRATION.md` § Site-visit assignee access.
+
 ### Creating a Site Visit (as-built 2026-08-12)
 
 A site visit exists in exactly **two** shapes, separated by one column:
