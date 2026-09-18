@@ -1944,6 +1944,30 @@ Initial missing/incomplete visit with a current matching target returns not_read
 
 Verification:34/34 local synthetic PostgreSQL17 cases passed at the final source commit; real auth/permission, legacy move/manual-boundary and activity auto-advance bodies are used, external sinks are simulated. Explicit approval, fresh schema/fingerprint read, exact applied-ledger archive, and catalog/grants/RLS readback are complete. Independent postapply comparison confirms23 dependency functions,100 public columns and13 public policies unchanged. Both exact HTTP RPC parameter sets resolve and return42501/401 to anonymous callers before function invocation, proving schema-cache routing and the deny boundary without business-data writes. Authenticated transport snapshot and physical iPhone measurement remain separate verification steps before claiming the full client flow verified. No mutating production canary or provider fan-out proof was performed.
 
+### `POST /api/uploads/presign` — generic `folder` lane and reserved namespaces
+
+Any request without `targetType` or `purpose` — the urlencoded (iOS) and JSON (web) presign shapes, and the multipart direct upload — builds its key as `{folder}/{timestamp}-{random}.{ext}`. The folder is checked by `authorizeFolder` (`ops-web/src/lib/s3/path-auth.ts`); `/api/uploads/share-photo` and `storeImageObject` (email-signature logos) run the same check. After trimming, removing empty segments and leading/trailing slashes, the folder is refused with `403` when:
+
+- it contains `..`, a control character, a `.`-only segment, or a character outside `[A-Za-z0-9._-]`;
+- the **first** segment that names a company (a bare UUID or `company-{uuid}`) is not the caller's company, or any `company-{uuid}` segment names another company. A bare UUID after the caller's company is allowed because it is an entity id (project, lead, user). A folder that names no company gets the caller's company id appended;
+- it is in a **reserved namespace** — keys that only a dedicated writer creates, matched case-insensitively (ops-web branch `fix/presign-reserved-prefixes`, commit `0900113df`, 2026-09-17 — not live until merged). Refused, never rewritten:
+
+| Reserved first segment | Owner |
+|---|---|
+| `site-visits/` | this route, `targetType=site_visit` (checks the caller can read the visit) |
+| `expenses/` | this route, `purpose=expense_receipt` (per-user tree `expenses/{co}/{user}/{expense}/…`) |
+| `bug-reports/` | `/api/bug-reports/screenshot` (private; signed reads) |
+| `documents/` | `/api/documents/generate-pdf` |
+| `blog/` (incl. `blog/weekly/`) | `/api/admin/blog/upload`, weekly journal image store |
+| `shop/` | `/api/admin/shop/upload` |
+| `social-media/` | social asset store |
+| `quarantine/`, `accepted-original/`, `safe-derivative/` | external-intake pipeline (its own bucket by config; reserved in case the buckets are ever shared) |
+| `{companyId}/supplier-bills/` (second segment under a bare company root) | accounting supplier-bill document custody |
+
+**Legacy receipt exception:** exactly `expenses/{callerCompanyId}` (or `expenses`, which becomes that) is still accepted. App builds from before the typed receipt contract (iOS commit `7bee6c04`, 2026-07-19) upload receipts through the generic lane in that shape, and `MARKETING_VERSION` has been 3.0.5 since June, so the build number can't show when those phones are gone. The random filename sits directly under the company, outside every per-user receipt tree. Anything deeper under `expenses/` is refused.
+
+Generic-lane folders in use today (all still accepted): web — `uploads` (default), `profiles`, `projects/{co}/leads/{opportunityId}`; iOS — `projects/{co}/{projectId}`, `projects/{co}/leads/{opportunityId}`, `notes/{co}/{projectId}`, `photos/{co}/{entityType}/{entityId}`, `annotations/{co}/{projectId}[/strokes]`, `measurements/{co}/{projectId}`, `deck_designs/{co}`, `client-images/{co}`, `profiles/{co}`, `logos/{co}`, `training_data/…/{co}/…` (JSON allowed only here); server — `projects/{co}/{projectId}` (share-photo), `company-{co}/logos` (signature logos). **A new writer that needs its own namespace must get a dedicated, permission-checked branch and be added to `RESERVED_ROOT_SEGMENTS`.** It also needs a bucket-policy statement if it must be publicly readable.
+
 ### `POST /api/uploads/presign` — `targetType=site_visit`
 
 Site-visit media uses the existing authenticated presign endpoint with a closed target contract:
