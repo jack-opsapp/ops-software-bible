@@ -2834,15 +2834,20 @@ OPS must be tested in **real field conditions**:
 - Upload 20+ images to one project
 - Test with 10+ team members
 
-### Automated Testing Gaps
+### Automated Testing (updated 2026-09-18)
 
-**Current State**: OPS has **no automated tests** (UI tests, unit tests, integration tests).
+The iOS app carries an XCTest suite in ops-ios: `OPSTests` (unit, SwiftData, sync and hosted SwiftUI/snapshot tests — 5,821 cases on 2026-09-18) and `OPSUITests` (a small set of UI flows). Both run on an iOS 26.5 simulator from a worktree with its own DerivedData and `-clonedSourcePackagesDirPath .spm-local`, with `OPS/Utilities/Secrets.xcconfig` copied in (ops-ios `CLAUDE.md`, Build Guidelines). A serial full `OPSTests` run on 2026-09-18 passed 5,815, skipped 5 by design (listed below) and failed one: `SiteVisitTypeSettingsKeyboardTests.testDoneFollowsFocusBetweenAllThreeSettingsInputsWithoutLosingDrafts`, which passes on its own and in an 800-test site-visit run, but after some 5,000 earlier tests in the same process finds the keyboard still up once DONE has resigned its field — held by a responder outside the sheet, left over from an earlier test. It failed the same way in the 2026-09-17 full run, before that day's changes.
 
-**Reason**: Startup prioritizing shipping features over test coverage.
+Some tests depend on the host rather than the code. Each detects that and skips with the fix, instead of failing on the wrong cause:
 
-**Risk**: Regressions caught in production, reliance on manual testing.
+- **Accessibility bridging.** `TabBarHitTargetTests` measures SwiftUI accessibility frames, which a simulator publishes only with `com.apple.Accessibility` `AccessibilityEnabled` and `ApplicationAccessibilityEnabled` switched on and the device rebooted. A control probe skips with that command on a fresh simulator.
+- **Keyboard pixels.** Two tests in `SiteVisitTypeSettingsKeyboardTests` prove the software keyboard's DONE with the simulator's real screen, which an app-hosted test cannot capture (`drawHierarchy` omits the remote keyboard; `XCUIScreen` needs UI-testing authority). `scripts/testing/capture_keyboard_screens.py --udid <udid> --max-seconds 600` takes the screenshots from the host with `simctl io`. While it runs it keeps a heartbeat, `capture-bridge.json`, in the app's `Caches/OPSKeyboardScreenshotProof`; with no fresh heartbeat for their simulator the tests skip with that command, and a running bridge that does not answer is a real failure. Run the suite with `-parallel-testing-enabled NO` (a parallel clone's udid cannot be known to the bridge in advance).
+- **Copied device stores.** `AppUpdateMigrationTests` proves migrations against real phone stores only when `OPS_V15_STORE_FIXTURE_DIR` / `OPS_V25_STORE_FIXTURE_DIR` point at copied stores, which never enter the (public) repo.
+- **Pick-time text.** `BugReportPointAtItRoundTripTests` waits for the POINT AT IT session's Vision read before it lifts, as an operator's aim does. The session gives an instant tap one second of grace before naming a component by its role; Vision needs about 1.5 s on a serial simulator and longer under load, so a test that lifted at once raced the read and lost under parallel runs.
 
-**Future**: Add tests for critical paths (auth, sync, offline mode).
+`TaskDetailSheetSnapshotTests.testRenderTeamPickerExpanded` also skips by design: a unit-test host builds no accessibility tree, so the inline picker cannot be opened there; `testRenderTeamPickerPanel` captures the shipping panel instead.
+
+Parallel full runs (several simulator clones on one 16 GB machine) show load-dependent failures that pass serially — on 2026-09-17: `BugReportPointAtItSnapshotTests`, `ClientInteractionPolicyTests`, `DeckLabelPersistenceTests`, `DeckViewerEdgeLabelRenderingTests`, `DeckViewportUpdateBudgetTests`, `SiteVisitSingleChoiceControlTests` and, in `OPSUITests`, `ClientSearchActionsUITests`, `OPSUITestsLaunchTests` and `SiteVisitContactImportUITests`; every `OPSTests` case among them passed in the 2026-09-18 serial run. Treat a failure that appears only in a parallel run as load until a serial run reproduces it.
 
 ---
 
