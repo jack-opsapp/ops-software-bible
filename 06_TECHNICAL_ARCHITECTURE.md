@@ -1799,6 +1799,16 @@ Consumers that must know the status:
   them. Counting `declined` as unresolved is what makes the decline stick, and it
   also makes a genuine later edit revive that same operation via `enqueue` instead
   of duplicating it.
+- `SiteVisitPersistenceCoordinator.queueDirtyWork` (saving a visit, since typing
+  went local-only on 2026-09-15) honours it too (2026-09-17): a declined visit,
+  artifact or identity-draft send restarts only for a record edited on the phone
+  after the decline — recorded on the send as `restart_mark`, void once a later
+  attempt, RETRY or decline changes the stop — an answer whose declined command
+  already carries its values gets no successor, and a declined photo upload is
+  never restarted by a save. `dependencyRoot` never picks a declined send as the
+  send new work waits behind: dependencies are satisfied only by `completed`, so
+  that work would wait forever (07 § "Site-visit capture saves locally until the
+  operator saves").
 - `SiteVisitServerMerge.checklistResolvedStatuses` = `{completed, declined}`.
   Checklist-id canonicalization fails closed on unrecognized lifecycles, so a
   declined operation must read as settled — never migrated, never a collision.
